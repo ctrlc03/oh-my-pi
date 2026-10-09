@@ -16,6 +16,7 @@ import { SessionAlert } from "./components/shell/SessionAlert";
 import { SessionsSheet } from "./components/shell/SessionsSheet";
 import { SessionsSidebar } from "./components/shell/SessionsSidebar";
 import { Toasts } from "./components/shell/Toasts";
+import { UpdateBar } from "./components/shell/UpdateBar";
 import { UsageSheet } from "./components/shell/UsageSheet";
 import { Transcript } from "./components/transcript/Transcript";
 import { collectChanges } from "./lib/changes";
@@ -290,43 +291,45 @@ export function App(): ReactNode {
 		if (!client) document.title = "omp collab";
 	}, [client]);
 
-	if (!client || !link) {
-		return (
-			<ConnectScreen
-				defaultName={storedName()}
-				error={connectError}
-				rooms={rooms}
-				companion={pairing ? companion : null}
-				push={push}
-				onConnect={(next, name) => {
-					resumedRef.current = false;
-					connect(next, name);
-				}}
-				onForget={forget}
-				onPair={pair}
-				onUnpair={() => {
-					if (window.confirm("Unpair this computer? You will need its pairing code to pair again.")) pair(null);
-				}}
-			/>
-		);
-	}
 	return (
-		<Session
-			key={link}
-			client={client}
-			link={link}
-			openedInstance={opened?.link === link ? opened.instanceId : null}
-			companion={pairing ? companion : null}
-			push={push}
-			rooms={rooms}
-			onLeave={leave}
-			onRejoin={rejoin}
-			onRemember={remember}
-			onRoomGone={roomGone}
-			onRoomReplaced={replaceRoom}
-			onOpenHost={openHost}
-			onOpenLink={openLink}
-		/>
+		<>
+			<UpdateBar />
+			{!client || !link ? (
+				<ConnectScreen
+					defaultName={storedName()}
+					error={connectError}
+					rooms={rooms}
+					companion={pairing ? companion : null}
+					push={push}
+					onConnect={(next, name) => {
+						resumedRef.current = false;
+						connect(next, name);
+					}}
+					onForget={forget}
+					onPair={pair}
+					onUnpair={() => {
+						if (window.confirm("Unpair this computer? You will need its pairing code to pair again.")) pair(null);
+					}}
+				/>
+			) : (
+				<Session
+					key={link}
+					client={client}
+					link={link}
+					openedInstance={opened?.link === link ? opened.instanceId : null}
+					companion={pairing ? companion : null}
+					push={push}
+					rooms={rooms}
+					onLeave={leave}
+					onRejoin={rejoin}
+					onRemember={remember}
+					onRoomGone={roomGone}
+					onRoomReplaced={replaceRoom}
+					onOpenHost={openHost}
+					onOpenLink={openLink}
+				/>
+			)}
+		</>
 	);
 }
 

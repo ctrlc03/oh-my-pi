@@ -98,7 +98,7 @@ describe("GuestClient frame apply", () => {
 		expect(new GuestClient(LINK, "tester").getSnapshot().readOnly).toBe(true);
 	});
 
-	it("times out stalled snapshot chunks and resets the clock on progress", () => {
+	it("retries a stalled snapshot on a fresh connection and resets the clock on progress", () => {
 		vi.useFakeTimers();
 		try {
 			const firstEntry = messageEntry("e1", { role: "user", content: "hi", timestamp: 1 });
@@ -116,8 +116,9 @@ describe("GuestClient frame apply", () => {
 			expect(client.getSnapshot().phase).toBe("connecting");
 			vi.advanceTimersByTime(1);
 			const snap = client.getSnapshot();
-			expect(snap.phase).toBe("ended");
-			expect(snap.endedReason).toBe("timed out waiting for the host's session snapshot");
+			expect(snap.phase).toBe("reconnecting");
+			expect(snap.loading).toBeNull();
+			client.close();
 
 			const completeClient = new GuestClient(LINK, "tester");
 			completeClient.applyFrameForTest(welcomeFrame(1));

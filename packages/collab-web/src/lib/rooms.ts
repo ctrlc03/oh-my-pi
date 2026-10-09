@@ -26,6 +26,8 @@ export interface RecentRoom {
 	title: string;
 	cwd: string | null;
 	readOnly: boolean;
+	/** omp process the paired computer lists for this room; absent from rooms never seen through a companion. */
+	instanceId?: string;
 	/** epoch ms of the last successful join. */
 	lastSeen: number;
 }
@@ -39,6 +41,7 @@ function isRoom(value: unknown): value is RecentRoom {
 		typeof r.title === "string" &&
 		(r.cwd === null || typeof r.cwd === "string") &&
 		typeof r.readOnly === "boolean" &&
+		(r.instanceId === undefined || typeof r.instanceId === "string") &&
 		typeof r.lastSeen === "number"
 	);
 }
@@ -77,6 +80,20 @@ export function forgetRoom(roomId: string): RecentRoom[] {
 	);
 	if (roomIdOf(activeLink() ?? "") === roomId) setActiveLink(null);
 	return next;
+}
+
+/**
+ * The host replaced room `from` with `to` for the same omp process (session switch,
+ * relaunch after a relay drop, access upgrade): carry the unsent draft and queued
+ * prompts over, then forget `from`. Call before the client for `to` is created,
+ * which loads its queue on construction.
+ */
+export function moveRoom(from: string, to: string): RecentRoom[] {
+	const draft = loadDraft(from);
+	if (draft && !loadDraft(to)) saveDraft(to, draft);
+	const queue = loadPromptQueue(from);
+	if (queue.length > 0) savePromptQueue(to, [...loadPromptQueue(to), ...queue]);
+	return forgetRoom(from);
 }
 
 /**

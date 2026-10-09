@@ -124,6 +124,8 @@
         "@oh-my-pi/pi-utils": "catalog:",
         "@oh-my-pi/pi-wire": "catalog:",
         "d3-force": "catalog:",
+        "highlight.js": "catalog:",
+        "highlightjs-solidity": "catalog:",
         "jsqr": "catalog:",
         "katex": "catalog:",
         "lucide-react": "catalog:",
@@ -381,6 +383,8 @@
     "d3-force": "^3.0.0",
     "diff": "^9.0.0",
     "fastembed": "3.0.0",
+    "highlight.js": "^11.12.0",
+    "highlightjs-solidity": "^2.0.6",
     "jsqr": "^1.4.0",
     "katex": "^0.18.4",
     "kitty-vt-wasm": "^0.2.0",
@@ -1201,6 +1205,10 @@
     "has-flag": ["has-flag@4.0.0", "", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
 
     "has-property-descriptors": ["has-property-descriptors@1.0.2", "", { "dependencies": { "es-define-property": "^1.0.0" } }, "sha512-55JNKuIW+vq4Ke1BjOTjM2YctQIvCT7GFzHwmfZPGo5wnrgkid0YQtnAleFSqumZm4az3n2BS+erby5ipJdgrg=="],
+
+    "highlight.js": ["highlight.js@11.12.0", "", {}, "sha512-nbfWpyRMcMrPMmDwJB+dhX/eiaPKtc2RB+0QZskqJ3WjRA/FDS0e9hZrx8EC/lbEv8gXy98FcDbNa/dspAaJMg=="],
+
+    "highlightjs-solidity": ["highlightjs-solidity@2.0.6", "", {}, "sha512-DySXWfQghjm2l6a/flF+cteroJqD4gI8GSdL4PtvxZSsAHie8m3yVe2JFoRg03ROKT6hp2Lc/BxXkqerNmtQYg=="],
 
     "html-entities": ["html-entities@2.3.3", "", {}, "sha512-DV5Ln36z34NNTDgnz0EWGBLZENelNAtkiFA4kyNOG2tDI6Mz1uSWiq1wAKdyjnJwyDiDO7Fa2SO1CTxPXL8VxA=="],
 

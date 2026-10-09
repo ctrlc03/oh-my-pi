@@ -43,6 +43,8 @@
     "@oh-my-pi/pi-utils": "catalog:",
     "@oh-my-pi/pi-wire": "catalog:",
     "d3-force": "catalog:",
+    "highlight.js": "catalog:",
+    "highlightjs-solidity": "catalog:",
     "jsqr": "catalog:",
     "lucide-react": "catalog:",
     "katex": "catalog:",

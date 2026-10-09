@@ -30,6 +30,7 @@
 - Added a git flow to the companion: *New git worktree* in *Start session* (a new branch from HEAD in `~/.omp/worktrees/<repo>/<branch>`), a *Branch* tab in *Changes* that reviews the branch against its base (`origin/HEAD`, else main/master) with commits and per-file diffs from the merge-base, and confirm-first *Commit*, *Push*, *Create PR*, and one-tap *Commit, push & open PR* actions through `git` and `gh`. Writes are refused while the agent is working or on the base branch
 - Added a *Usage* screen through the companion: cost, tokens (with cache), requests, and cache hit rate across every omp session on the computer for 24h / 7d / 30d / 90d / all time, a cost-or-tokens bar chart, and the top models and projects by spend. Read from omp's stats database (`@oh-my-pi/omp-stats`), synced at most once a minute
 - Added a *Code map* through the companion: navigate the session's repository by folder, file, and symbol, with what uses each and what it uses, cross-language links (Solidity events, Rust decoders, Noir circuits), multi-step flows, search, a force-directed folder map on wider screens, and *View source* at the symbol's line
+- Added syntax highlighting to the file viewer (highlight.js, loaded on first open; Solidity, Rust, TypeScript, Go, Python, Noir via the Rust grammar, and common config formats). Files over 256 KB stay plain
 - Added *All sessions* through the companion: past and live sessions across projects, grouped by folder with spend, searchable, with *Open*, *Share*, or *Resume* on each row
 
 ### Changed
@@ -41,6 +42,8 @@
 
 ### Fixed
 
+- A session no longer ends when the host is slow to answer: a connection the host does not welcome, or a snapshot that stops arriving, within 30 s is dropped and retried instead of showing *Session ended* (common when a phone returns from the background)
+- With a paired computer, a session follows its omp process to a new room instead of ending: when the host switches sessions, upgrades the room to control, or relaunches its room after losing the relay (a laptop that slept), the app asks the companion for the current link and rejoins, carrying the unsent draft and queued prompts. This also applies on a cold launch of the home-screen app. *Session ended* shows only once the computer no longer lists the process or still reports the ended room after 10 s
 - Fixed the transcript losing its bottom position when the on-screen keyboard opens or the composer grows
 - Fixed the composer floating above the keyboard by the home-indicator inset, and the connection banner sliding under the status bar in standalone mode
 - Fixed slow reconnects after the phone wakes: returning to the foreground or coming back online now retries immediately instead of waiting out a backoff of up to 30 seconds

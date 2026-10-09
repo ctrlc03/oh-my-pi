@@ -50,6 +50,8 @@
 			"d3-force": "^3.0.0",
 			"diff": "^9.0.0",
 			"fastembed": "3.0.0",
+			"highlight.js": "^11.12.0",
+			"highlightjs-solidity": "^2.0.6",
 			"jsqr": "^1.4.0",
 			"katex": "^0.18.4",
 			"kitty-vt-wasm": "^0.2.0",

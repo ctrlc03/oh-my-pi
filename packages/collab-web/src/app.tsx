@@ -28,6 +28,7 @@ import {
 	extractLink,
 	forgetRoom,
 	loadRooms,
+	moveRoom,
 	type RecentRoom,
 	rememberRoom,
 	roomIdOf,
@@ -36,6 +37,7 @@ import {
 import { readJson, writeJson } from "./lib/storage";
 import { sumUsage } from "./lib/usage";
 import { type CompanionHandle, useCompanion } from "./lib/use-companion";
+import { useHostRecovery } from "./lib/use-host-recovery";
 import { useGuestSnapshot } from "./lib/use-guest";
 import type { ToolRenderHost } from "./tool-render";
 import "./components/shell/shell.css";
@@ -86,6 +88,8 @@ export function App(): ReactNode {
 	const [pairing, setPairing] = useState<string | null>(loadPairing);
 	/** Companion host to open once the companion is live (notification tap). */
 	const [pendingOpen, setPendingOpen] = useState<string | null>(null);
+	/** The companion process the current link was fetched from, until the session's welcome identifies it. */
+	const [opened, setOpened] = useState<{ link: string; instanceId: string } | null>(null);
 	const credsRef = useRef<Creds | null>(null);
 	/** The current session was reopened from storage, not chosen by the user this launch. */
 	const resumedRef = useRef(false);
@@ -137,6 +141,18 @@ export function App(): ReactNode {
 
 	const remember = useCallback((room: Omit<RecentRoom, "lastSeen">): void => setRooms(rememberRoom(room)), []);
 
+	// The host replaced the session's room: follow it, carrying the draft and queued prompts.
+	const replaceRoom = useCallback(
+		(from: string, next: string, instanceId: string): void => {
+			const to = roomIdOf(next);
+			if (to !== null) setRooms(moveRoom(from, to));
+			resumedRef.current = false;
+			connect(next, credsRef.current?.name ?? storedName());
+			setOpened({ link: next, instanceId });
+		},
+		[connect],
+	);
+
 	const pair = useCallback((link: string | null): void => {
 		savePairing(link);
 		setPairing(link);
@@ -151,6 +167,7 @@ export function App(): ReactNode {
 			if (!next) throw new Error("the computer returned an unreadable link");
 			resumedRef.current = false;
 			connect(next, credsRef.current?.name ?? storedName());
+			setOpened({ link: next, instanceId });
 		},
 		[companionClient, connect],
 	);
@@ -295,6 +312,7 @@ export function App(): ReactNode {
 			key={link}
 			client={client}
 			link={link}
+			openedInstance={opened?.link === link ? opened.instanceId : null}
 			companion={pairing ? companion : null}
 			push={push}
 			rooms={rooms}
@@ -302,6 +320,7 @@ export function App(): ReactNode {
 			onRejoin={rejoin}
 			onRemember={remember}
 			onRoomGone={roomGone}
+			onRoomReplaced={replaceRoom}
 			onOpenHost={openHost}
 			onOpenLink={openLink}
 		/>
@@ -311,6 +330,7 @@ export function App(): ReactNode {
 interface SessionProps {
 	client: GuestClient;
 	link: string;
+	openedInstance: string | null;
 	companion: CompanionHandle | null;
 	push: PushControl;
 	rooms: readonly RecentRoom[];
@@ -318,6 +338,7 @@ interface SessionProps {
 	onRejoin(): void;
 	onRemember(room: Omit<RecentRoom, "lastSeen">): void;
 	onRoomGone(roomId: string): void;
+	onRoomReplaced(from: string, link: string, instanceId: string): void;
 	onOpenHost(instanceId: string): Promise<void>;
 	onOpenLink(link: string): void;
 }
@@ -340,6 +361,7 @@ interface SearchState {
 function Session({
 	client,
 	link,
+	openedInstance,
 	companion,
 	push,
 	rooms,
@@ -347,6 +369,7 @@ function Session({
 	onRejoin,
 	onRemember,
 	onRoomGone,
+	onRoomReplaced,
 	onOpenHost,
 	onOpenLink,
 }: SessionProps): ReactNode {
@@ -404,12 +427,28 @@ function Session({
 	const roomId = useMemo(() => roomIdOf(link), [link]);
 	const live = snap.phase === "live";
 	const cwd = snap.state?.cwd ?? snap.header?.cwd ?? null;
+	// The computer's process for this room. Matched by session id once welcomed; until
+	// then (and after the host switched sessions) the one it was opened from or last seen as.
+	const storedInstance = rooms.find(room => room.roomId === roomId)?.instanceId;
+	const instanceId = hostId ?? openedInstance ?? storedInstance ?? null;
 	useEffect(() => {
-		if (live && roomId !== null) onRemember({ roomId, link, title, cwd, readOnly: snap.readOnly });
-	}, [live, roomId, link, title, cwd, snap.readOnly, onRemember]);
+		if (live && roomId !== null)
+			onRemember({ roomId, link, title, cwd, readOnly: snap.readOnly, instanceId: instanceId ?? undefined });
+	}, [live, roomId, link, title, cwd, snap.readOnly, instanceId, onRemember]);
+
+	// A room the host replaced reopens through the paired computer; "ended" and
+	// forgetting the room wait until the computer has answered.
+	const followRoom = useCallback(
+		(next: string): void => {
+			if (roomId !== null && instanceId !== null) onRoomReplaced(roomId, next, instanceId);
+		},
+		[roomId, instanceId, onRoomReplaced],
+	);
+	const recovery = useHostRecovery(companion, instanceId, snap.phase, roomId, followRoom);
+	const ended = snap.phase === "ended" && recovery === "absent";
 
 	// The relay no longer knows this room: the host closed it.
-	const gone = snap.phase === "ended" && snap.endedReason === "no such room";
+	const gone = ended && snap.endedReason === "no such room";
 	useEffect(() => {
 		if (gone && roomId !== null) onRoomGone(roomId);
 	}, [gone, roomId, onRoomGone]);
@@ -607,7 +646,7 @@ function Session({
 				</>
 			)}
 			<Banners
-				phase={snap.phase}
+				phase={snap.phase === "ended" && !ended ? "reconnecting" : snap.phase}
 				endedReason={snap.endedReason}
 				loading={snap.loading}
 				onRejoin={onRejoin}

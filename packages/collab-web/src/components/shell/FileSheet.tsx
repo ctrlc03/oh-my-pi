@@ -1,8 +1,9 @@
 import { LoaderCircle, RefreshCw, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
-import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CompanionClient, FileContent } from "../../lib/companion";
 import { fmtBytes } from "../../lib/format";
+import { HIGHLIGHT_MAX_CHARS, languageOf, loadHighlighter } from "../../lib/highlight";
 import { useRequest } from "../../lib/use-request";
 import { Sheet } from "./Sheet";
 
@@ -60,6 +61,27 @@ function FileBody({ file, line }: { file: FileContent; line?: number }): ReactNo
 	// One gutter column of numbers beside one text block: both are `pre` with the
 	// same line height, so rows line up without a DOM node per line.
 	const gutter = useMemo(() => lines.map((_, i) => i + 1).join("\n"), [lines]);
+	// Plain text paints at once; the highlighted markup (tagged with the text it
+	// was made from, so a stale result is never shown) swaps in when the grammar
+	// chunk is ready. Same characters in the same font: no layout shift.
+	const [highlighted, setHighlighted] = useState<{ source: string; html: string } | null>(null);
+	useEffect(() => {
+		const source = file.text;
+		const language = languageOf(file.path);
+		if (source === null || language === undefined || source.length > HIGHLIGHT_MAX_CHARS) return;
+		let live = true;
+		loadHighlighter().then(
+			hljs => {
+				if (live)
+					setHighlighted({ source, html: hljs.highlight(source, { language, ignoreIllegals: true }).value });
+			},
+			// Offline or chunk missing: the file simply stays plain.
+			() => {},
+		);
+		return () => {
+			live = false;
+		};
+	}, [file.text, file.path]);
 	const view = useRef<HTMLDivElement>(null);
 	const text = useRef<HTMLPreElement>(null);
 	// Put the target line about a third of the way down the viewer.
@@ -96,7 +118,11 @@ function FileBody({ file, line }: { file: FileContent; line?: number }): ReactNo
 						{line !== undefined && (
 							<span className="sh-file-hit" style={{ "--hit-line": line } as CSSProperties} aria-hidden />
 						)}
-						{file.text}
+						{highlighted !== null && highlighted.source === file.text ? (
+							<code className="sh-file-code" dangerouslySetInnerHTML={{ __html: highlighted.html }} />
+						) : (
+							<code className="sh-file-code">{file.text}</code>
+						)}
 					</pre>
 				</div>
 			)}

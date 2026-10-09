@@ -84,9 +84,9 @@ export interface GuestSnapshot {
 
 const MAX_NOTICES = 50;
 const TRANSCRIPT_TIMEOUT_MS = 10_000;
-/** Mirrors the TUI guest's WELCOME_TIMEOUT_MS: a host that never answers hello ends the join. */
+/** A connection the host has not welcomed within this window is dropped and retried. */
 const WELCOME_TIMEOUT_MS = 30_000;
-/** Mirrors the TUI guest's SNAPSHOT_PROGRESS_TIMEOUT_MS: every snapshot chunk must make progress. */
+/** Each snapshot chunk must arrive within this window, or the connection is dropped and retried. */
 const SNAPSHOT_PROGRESS_TIMEOUT_MS = 30_000;
 /** Commit delay when `requestAnimationFrame` is unavailable (tests, non-DOM hosts). */
 const FRAME_FALLBACK_MS = 16;
@@ -203,12 +203,6 @@ export class GuestClient {
 			this.#commit();
 		}
 		this.#socket.connect();
-		if (!this.#welcomed && this.#welcomeTimer === null) {
-			this.#welcomeTimer = setTimeout(() => {
-				this.#welcomeTimer = null;
-				if (!this.#welcomed) this.#end("timed out waiting for the host's welcome");
-			}, WELCOME_TIMEOUT_MS);
-		}
 	}
 
 	close(): void {
@@ -313,10 +307,19 @@ export class GuestClient {
 		this.#socket.send({ t: "hello", proto: COLLAB_PROTO, name: this.#name, writeToken: this.#writeToken });
 		this.#phase = this.#everConnected ? "reconnecting" : "waiting";
 		this.#everConnected = true;
+		// Every connection must be welcomed. A host that stays silent (a relay still
+		// holding a dead host socket, a laptop asleep) is retried, not given up on:
+		// a phone coming back from the background lands here routinely.
+		this.#clearWelcomeTimer();
+		this.#welcomeTimer = setTimeout(() => {
+			this.#welcomeTimer = null;
+			this.#socket.reconnect("timed out waiting for the host's welcome");
+		}, WELCOME_TIMEOUT_MS);
 		this.#commit();
 	}
 
 	#handleClose(reason: string, willReconnect: boolean): void {
+		this.#clearWelcomeTimer();
 		this.#clearSnapshotProgressTimer();
 		if (this.#phase === "ended") return;
 		if (willReconnect) {
@@ -355,9 +358,10 @@ export class GuestClient {
 
 	#armSnapshotProgressTimer(): void {
 		this.#clearSnapshotProgressTimer();
+		// A stalled snapshot restarts on a fresh connection; the transcript already on screen stays.
 		this.#snapshotProgressTimer = setTimeout(() => {
 			this.#snapshotProgressTimer = null;
-			this.#end("timed out waiting for the host's session snapshot");
+			this.#socket.reconnect("timed out waiting for the host's session snapshot");
 		}, SNAPSHOT_PROGRESS_TIMEOUT_MS);
 	}
 

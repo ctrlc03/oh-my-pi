@@ -113,4 +113,27 @@ describe("browser guest room recovery", () => {
 		vi.advanceTimersByTime(30_000);
 		expect(ScriptedWebSocket.instances).toHaveLength(1);
 	});
+
+	it("retries a connection the host never welcomes instead of ending the session", () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(0.5);
+		installScriptedWebSocket();
+		const client = new GuestClient(LINK, "tester");
+
+		try {
+			client.connect();
+			instance(0).open();
+			vi.advanceTimersByTime(30_000);
+			expect(client.getSnapshot().phase).toBe("reconnecting");
+			expect(instance(0).readyState).toBe(ScriptedWebSocket.CLOSED);
+
+			vi.advanceTimersByTime(1_000);
+			instance(1).open();
+			vi.advanceTimersByTime(29_999);
+			expect(client.getSnapshot().phase).toBe("reconnecting");
+			expect(ScriptedWebSocket.instances).toHaveLength(2);
+		} finally {
+			client.close();
+		}
+	});
 });

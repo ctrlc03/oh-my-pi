@@ -1,5 +1,5 @@
 import type { SessionCommand, SessionHeader, SessionState, WireModel } from "@oh-my-pi/pi-wire";
-import { Ellipsis, Layers, LogOut, PanelRight, Search, ShieldCheck } from "lucide-react";
+import { Ellipsis, LogOut, PanelLeft, PanelRight, Search, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback, useState } from "react";
 import type { ConnectionPhase } from "../../lib/client";
@@ -31,10 +31,11 @@ export interface HeaderBarProps {
 	onLeave(): void;
 	searchOpen: boolean;
 	onToggleSearch(): void;
-	/** Opens the session switcher; null when there is nothing to switch to. */
-	onSwitch: (() => void) | null;
+	/** Toggles the sessions sidebar; null when there is nothing to list. */
+	onToggleSidebar: (() => void) | null;
+	sidebarOpen: boolean;
 	/** Another session on the paired computer is waiting for input. */
-	switchAlert: boolean;
+	sidebarAlert: boolean;
 	chat: boolean;
 	onChatChange(chat: boolean): void;
 	changeCount: number;
@@ -65,8 +66,9 @@ export const HeaderBar = memo(function HeaderBar({
 	onLeave,
 	searchOpen,
 	onToggleSearch,
-	onSwitch,
-	switchAlert,
+	onToggleSidebar,
+	sidebarOpen,
+	sidebarAlert,
 	chat,
 	onChatChange,
 	changeCount,
@@ -95,6 +97,29 @@ export const HeaderBar = memo(function HeaderBar({
 	return (
 		<header className="sh-header">
 			<div className="sh-header-left">
+				{onToggleSidebar && (
+					<button
+						type="button"
+						className={
+							sidebarOpen
+								? "sh-btn sh-btn-icon sh-btn-on sh-sidebar-toggle"
+								: "sh-btn sh-btn-icon sh-sidebar-toggle"
+						}
+						onClick={onToggleSidebar}
+						title={sidebarAlert ? "sessions · one needs input" : sidebarOpen ? "hide sessions" : "show sessions"}
+						aria-label={
+							sidebarAlert
+								? "sessions, another session needs input"
+								: sidebarOpen
+									? "hide sessions"
+									: "show sessions"
+						}
+						aria-pressed={sidebarOpen}
+					>
+						<PanelLeft size={16} />
+						{sidebarAlert && <span className="sh-badge sh-badge-dot" />}
+					</button>
+				)}
 				<span className="sh-brand" aria-label="omp collab">
 					<OmpMark />
 					<span className="sh-brand-slash">/</span>
@@ -169,18 +194,6 @@ export const HeaderBar = memo(function HeaderBar({
 				>
 					<Search size={16} />
 				</button>
-				{onSwitch && (
-					<button
-						type="button"
-						className="sh-btn sh-btn-icon"
-						onClick={onSwitch}
-						title={switchAlert ? "switch session · one needs input" : "switch session"}
-						aria-label={switchAlert ? "switch session, another session needs input" : "switch session"}
-					>
-						<Layers size={16} />
-						{switchAlert && <span className="sh-badge sh-badge-dot" />}
-					</button>
-				)}
 				<button
 					type="button"
 					className={railOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}

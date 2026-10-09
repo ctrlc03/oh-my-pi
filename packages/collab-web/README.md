@@ -47,12 +47,12 @@ Inside a session:
 - **New since you left**: rejoining a room shows a divider before the first entry you have not seen and an *N new* pill that jumps to it. The last seen entry is stored per room (50 rooms).
 - **Session controls** (⋯): switch the host's model (session only, not saved as the default), set the thinking level, or compact with optional instructions. Shown only on full links to hosts whose omp supports guest session commands; older hosts hide them.
 - **Usage** (⋯): session cost and input/output/cache tokens summed from the assistant replies, plus the last turn.
-- **Keyboard** (desktop): ⌘K / Ctrl+K opens the session switcher, `/` opens find, Esc closes the top sheet or find, otherwise stops a running turn. Shortcuts other than Esc are ignored while typing.
+- **Keyboard** (desktop): ⌘K / Ctrl+K toggles the sessions sidebar, `/` opens find, Esc closes the top sheet or find, otherwise stops a running turn. Shortcuts other than Esc are ignored while typing.
 - A **Latest** button appears once you scroll away from the tail, and every code block has a **Copy** button.
 
 ### Companion: every session on your computer
 
-`bun run companion` (in this package) opens one long-lived encrypted room on the relay and pairs the app with the computer it runs on. Scan the QR code it prints, or open the printed `https://…/#pair:<link>` URL, once. From then on the connect screen lists every omp session on that computer that is hosting `/collab` (name, cwd, working / idle / needs input, guests), refreshed every few seconds, and a tap joins one with full control. No per-session link is needed. Inside a session, the header's switcher button lists the same sessions plus recent rooms (with a dot while another session needs input), and a banner offers a one-tap jump when another session starts waiting on input.
+`bun run companion` (in this package) opens one long-lived encrypted room on the relay and pairs the app with the computer it runs on. Scan the QR code it prints, or open the printed `https://…/#pair:<link>` URL, once. From then on the connect screen lists every omp session on that computer that is hosting `/collab` (name, cwd, working / idle / needs input, guests), refreshed every few seconds, and a tap joins one with full control. No per-session link is needed. Inside a session, the sessions sidebar (header button at the left; docked on wide screens, a drawer on phones) lists the same sessions plus recent rooms (the button shows a dot while another session needs input), and a banner offers a one-tap jump when another session starts waiting on input.
 
 ```sh
 bun scripts/companion.ts                       # print the pairing QR, then serve

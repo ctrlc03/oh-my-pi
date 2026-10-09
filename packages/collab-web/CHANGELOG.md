@@ -14,7 +14,7 @@
 - Added a chat view, chosen per device from the session sheet (default on phones): prompts and replies only, each run of tool calls folded into one expandable line, and one live status line while the agent works
 - Added find in session over prompts and replies, a jump-to-latest button, and copy buttons on code blocks
 - Added a *Changes* sheet listing every file the agent changed through its edit tools, with diffs
-- Added a session switcher to the header and a banner when another session on the paired computer starts waiting for input
+- Added a sessions sidebar for switching sessions: docked beside the transcript on wide screens (open state remembered), a slide-over drawer on tablets and phones. It lists every session on the paired computer with working / needs-input state, sessions not sharing yet, and recent rooms, with Start session, Usage and All sessions at the bottom. A banner also appears when another session on the paired computer starts waiting for input
 - Added Web Push notifications through the companion when a session needs input or finishes a turn, sent with the companion's own VAPID key (no extra server). The text is the pending question or the start of the reply, read from the session file
 - Added `--install`, `--uninstall`, and `--pair` to the companion: run it as a macOS LaunchAgent that starts at login and restarts on exit, and pair devices while it runs
 - Added a *Working tree* tab to the *Changes* sheet through the companion: branch, ahead/behind, changed files with diffs against HEAD (including shell edits), and recent commits
@@ -25,7 +25,7 @@
 - Added session cost and token usage to the session sheet
 - Added a *New since you left* divider and jump pill when rejoining a room
 - Added an offline prompt queue: prompts sent while disconnected are kept per room and sent once the session is live again
-- Added desktop keyboard shortcuts: ⌘K / Ctrl+K switch session, `/` find, Esc close or stop the running turn
+- Added desktop keyboard shortcuts: ⌘K / Ctrl+K toggle the sessions sidebar, `/` find, Esc close or stop the running turn
 - Added sandboxed sessions to *Start session* (macOS): omp runs under `sandbox-exec` with only file read, search, and edit tools. Writes are confined to the chosen folder (except `.git`, `.omp`, `.claude`, `.vscode`, `.envrc`, `.mcp.json`), credential stores are unreadable, and nothing can run commands. Sandboxed sessions carry a badge in the session lists, header, and session sheet
 - Added a git flow to the companion: *New git worktree* in *Start session* (a new branch from HEAD in `~/.omp/worktrees/<repo>/<branch>`), a *Branch* tab in *Changes* that reviews the branch against its base (`origin/HEAD`, else main/master) with commits and per-file diffs from the merge-base, and confirm-first *Commit*, *Push*, *Create PR*, and one-tap *Commit, push & open PR* actions through `git` and `gh`. Writes are refused while the agent is working or on the base branch
 - Added a *Usage* screen through the companion: cost, tokens (with cache), requests, and cache hit rate across every omp session on the computer for 24h / 7d / 30d / 90d / all time, a cost-or-tokens bar chart, and the top models and projects by spend. Read from omp's stats database (`@oh-my-pi/omp-stats`), synced at most once a minute

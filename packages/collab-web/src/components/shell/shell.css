@@ -84,6 +84,68 @@
 	display: none;
 }
 
+/* Sessions sidebar: docked left of the panel on wide screens, mirroring the
+ * agents rail; a slide-over drawer below the dock breakpoint. */
+.sh-sidebar-dock {
+	width: 272px;
+	flex: none;
+	min-height: 0;
+	margin-right: 8px;
+	display: flex;
+}
+
+.sh-sidebar-backdrop {
+	display: none;
+}
+
+.sh-sidebar {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.sh-sidebar-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 6px 4px 6px 10px;
+}
+
+.sh-sidebar-title {
+	font-size: 13px;
+	font-weight: 600;
+}
+
+/* The header toggle closes it where it docks. */
+.sh-sidebar-head .sh-sidebar-close {
+	display: none;
+}
+
+.sh-sidebar-body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	padding: 4px 6px 12px 14px;
+}
+
+.sh-sidebar-foot {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 8px 6px 2px 10px;
+	border-top: 1px solid var(--border);
+}
+
+.sh-sidebar-foot .sh-btn:not(.sh-btn-icon) {
+	flex: 1;
+}
+
 /* ---- shared controls ---- */
 .sh-btn {
 	display: inline-flex;
@@ -1165,6 +1227,11 @@
 	opacity: 0.6;
 }
 
+.sh-recent-join[aria-current] {
+	opacity: 1;
+	background: var(--selected);
+}
+
 /* ---- paired computer (companion) ---- */
 .sh-companion-head {
 	display: flex;
@@ -1743,12 +1810,43 @@
 /* ---- responsive mobile styles ---- */
 /* Tablet widths: the full chip row (model, thinking, context, people) leaves the
  * title zero width, and the title is the tap target for the session sheet that
- * shows all of them. Drop the chips; the phone rules below go further. */
+ * shows all of them. Drop the chips; the phone rules below go further. The
+ * sessions sidebar stops docking here too, so the panel keeps ~500px beside
+ * both rails. */
 @media (max-width: 1100px) {
 	.sh-header .sh-chip,
 	.sh-header .sh-gauge,
 	.sh-header .sh-avatars {
 		display: none;
+	}
+	.sh-sidebar-dock {
+		position: absolute;
+		left: 8px;
+		top: 0;
+		bottom: 8px;
+		z-index: 30;
+		width: 300px;
+		max-width: 86vw;
+		margin: 0;
+		padding: 6px;
+		background: var(--glass);
+		backdrop-filter: blur(18px) saturate(160%);
+		-webkit-backdrop-filter: blur(18px) saturate(160%);
+		border: 1px solid var(--border-strong);
+		border-radius: var(--radius-xl);
+		box-shadow: var(--rail-mobile-shadow);
+		animation: sh-drawer-in 220ms var(--ease-out) backwards;
+	}
+	.sh-sidebar-backdrop {
+		display: block;
+		position: absolute;
+		inset: 0;
+		z-index: 25;
+		background: var(--backdrop);
+		animation: sh-fade-in 150ms ease-out;
+	}
+	.sh-sidebar-head .sh-sidebar-close {
+		display: inline-flex;
 	}
 }
 
@@ -1780,6 +1878,17 @@
 	}
 }
 
+@keyframes sh-drawer-in {
+	from {
+		transform: translateX(-24px);
+		opacity: 0;
+	}
+	to {
+		transform: none;
+		opacity: 1;
+	}
+}
+
 @keyframes sh-fade-in {
 	from {
 		opacity: 0;
@@ -1798,6 +1907,18 @@
 		border-width: 1px 0 0;
 		border-radius: 0;
 		box-shadow: none;
+	}
+	/* Full height from the left edge, clear of the notch and home indicator. */
+	.sh-sidebar-dock {
+		left: 0;
+		bottom: 0;
+		padding-left: max(6px, env(safe-area-inset-left, 0px));
+		padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
+		border-width: 1px 1px 0 0;
+		border-radius: 0 var(--radius-xl) 0 0;
+	}
+	.sh-sidebar-toggle ~ .sh-brand {
+		display: none;
 	}
 	.sh-header {
 		gap: 4px;

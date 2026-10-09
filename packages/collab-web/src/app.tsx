@@ -12,7 +12,7 @@ import { HeaderBar } from "./components/shell/HeaderBar";
 import { SearchBar } from "./components/shell/SearchBar";
 import { SessionAlert } from "./components/shell/SessionAlert";
 import { SessionsSheet } from "./components/shell/SessionsSheet";
-import { SessionSwitcher } from "./components/shell/SessionSwitcher";
+import { SessionsSidebar } from "./components/shell/SessionsSidebar";
 import { Toasts } from "./components/shell/Toasts";
 import { UsageSheet } from "./components/shell/UsageSheet";
 import { Transcript } from "./components/transcript/Transcript";
@@ -43,6 +43,10 @@ import "./components/shell/companion.css";
 const NAME_KEY = "omp.collab.name";
 /** Chat view preference (boolean); absent: phones get chat, larger screens the full transcript. */
 const CHAT_KEY = "omp.collab.chat";
+/** Docked sessions sidebar preference (boolean, docked widths only); absent: open. */
+const SIDEBAR_KEY = "omp.collab.sidebar";
+/** Matches the shell.css breakpoint where the sessions sidebar stops docking beside the panel. */
+const SIDEBAR_DOCK_QUERY = "(min-width: 1101px)";
 const PHONE_QUERY = "(max-width: 640px)";
 /** Hash a notification tap launches the app with (see scripts/build-sw.ts): `#open:<instanceId>`. */
 const OPEN_PREFIX = "open:";
@@ -321,6 +325,11 @@ function initialChat(): boolean {
 	return typeof stored === "boolean" ? stored : matchMedia(PHONE_QUERY).matches;
 }
 
+/** Wide screens restore the docked sidebar; elsewhere it is a drawer and starts closed. */
+function initialSidebar(): boolean {
+	return matchMedia(SIDEBAR_DOCK_QUERY).matches && readJson(SIDEBAR_KEY) !== false;
+}
+
 interface SearchState {
 	query: string;
 	target: string | null;
@@ -419,10 +428,17 @@ function Session({
 	const [changesOpen, setChangesOpen] = useState(false);
 	const openChanges = useCallback(() => setChangesOpen(true), []);
 
-	const [switcherOpen, setSwitcherOpen] = useState(false);
+	const [sidebarOpen, setSidebarOpen] = useState(initialSidebar);
 	const otherHosts = companion?.snap.hosts.filter(host => host.sessionId !== sessionId) ?? [];
 	const canSwitch = otherHosts.length > 0 || rooms.some(room => room.roomId !== roomId);
-	const openSwitcher = useCallback(() => setSwitcherOpen(true), []);
+	// Only the docked sidebar's state is remembered: a drawer reopening on the next
+	// launch would cover the transcript.
+	const changeSidebar = useCallback((next: boolean): void => {
+		if (matchMedia(SIDEBAR_DOCK_QUERY).matches) writeJson(SIDEBAR_KEY, next);
+		setSidebarOpen(next);
+	}, []);
+	const toggleSidebar = useCallback(() => changeSidebar(!sidebarOpen), [changeSidebar, sidebarOpen]);
+	const closeSidebar = useCallback(() => changeSidebar(false), [changeSidebar]);
 	const [statsSheet, setStatsSheet] = useState<"usage" | "sessions" | null>(null);
 	const openUsage = useCallback(() => setStatsSheet("usage"), []);
 	const openSessions = useCallback(() => setStatsSheet("sessions"), []);
@@ -437,7 +453,8 @@ function Session({
 
 	// Desktop shortcuts. Typing in a field suppresses everything but Esc; an open sheet or
 	// drawer owns Esc itself, and the composer aborts a running turn on its own Esc.
-	const canOpenSwitcher = canSwitch || companion !== null;
+	const canShowSidebar = canSwitch || companion !== null;
+	const showSidebar = sidebarOpen && canShowSidebar;
 	const readOnly = snap.readOnly;
 	const working = snap.working;
 	const searchOpen = search !== null;
@@ -455,14 +472,15 @@ function Session({
 			if (e.key === "Escape") {
 				if (dialogOpen) return;
 				if (searchOpen) closeSearch();
+				else if (showSidebar && !matchMedia(SIDEBAR_DOCK_QUERY).matches) setSidebarOpen(false);
 				else if (live && !readOnly && working) client.sendAbort();
 				return;
 			}
 			if (typing || dialogOpen || e.altKey) return;
 			if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k" && !e.shiftKey) {
-				if (!canOpenSwitcher) return;
+				if (!canShowSidebar) return;
 				e.preventDefault();
-				setSwitcherOpen(true);
+				toggleSidebar();
 			} else if (e.key === "/" && !e.metaKey && !e.ctrlKey && !searchOpen) {
 				e.preventDefault();
 				setSearch({ query: "", target: null });
@@ -470,7 +488,7 @@ function Session({
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [canOpenSwitcher, client, closeSearch, live, readOnly, searchOpen, working]);
+	}, [canShowSidebar, client, closeSearch, live, readOnly, searchOpen, showSidebar, toggleSidebar, working]);
 
 	return (
 		<div className="sh-app">
@@ -487,8 +505,9 @@ function Session({
 				onLeave={onLeave}
 				searchOpen={search !== null}
 				onToggleSearch={toggleSearch}
-				onSwitch={canSwitch || companion ? openSwitcher : null}
-				switchAlert={otherHosts.some(host => host.inputRequired)}
+				onToggleSidebar={canShowSidebar ? toggleSidebar : null}
+				sidebarOpen={showSidebar}
+				sidebarAlert={otherHosts.some(host => host.inputRequired)}
 				chat={chat}
 				onChatChange={changeChat}
 				changeCount={changes.length}
@@ -502,6 +521,24 @@ function Session({
 				push={push}
 			/>
 			<main className="sh-main">
+				{showSidebar && (
+					<>
+						<div className="sh-sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
+						<aside className="sh-sidebar-dock">
+							<SessionsSidebar
+								companion={companion}
+								rooms={rooms}
+								currentSessionId={sessionId}
+								currentRoomId={roomId}
+								onOpenHost={onOpenHost}
+								onOpenLink={onOpenLink}
+								onOpenUsage={companion ? openUsage : null}
+								onOpenSessions={companion ? openSessions : null}
+								onClose={closeSidebar}
+							/>
+						</aside>
+					</>
+				)}
 				<section className="sh-panel" data-rail={railOpen ? "true" : "false"}>
 					{search && <SearchBar entries={snap.entries} onSearch={onSearch} onClose={closeSearch} />}
 					<div className="sh-transcript">
@@ -572,17 +609,6 @@ function Session({
 			/>
 			<Toasts notices={snap.notices} />
 			{companion && <SessionAlert hosts={companion.snap.hosts} currentSessionId={sessionId} onOpen={onOpenHost} />}
-			{switcherOpen && (
-				<SessionSwitcher
-					companion={companion}
-					rooms={rooms}
-					currentSessionId={sessionId}
-					currentRoomId={roomId}
-					onOpenHost={onOpenHost}
-					onOpenLink={onOpenLink}
-					onClose={() => setSwitcherOpen(false)}
-				/>
-			)}
 			{statsSheet === "usage" && companionClient !== null && (
 				<UsageSheet client={companionClient} onClose={() => setStatsSheet(null)} />
 			)}

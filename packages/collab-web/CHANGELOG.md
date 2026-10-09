@@ -7,6 +7,10 @@
 - Made the web client an installable app: a service worker precaches the build for instant and offline launches, and the manifest and every emitted URL are relative, so the build also works under a path prefix such as a GitHub Pages project site
 - Added recent sessions to the connect screen: a home-screen launch reopens the last session, or lists rooms joined before for one-tap rejoin. Rooms the relay reports gone are dropped
 - Added *Paste link* and *Scan QR* to the connect screen, plus Android share-sheet intake (`share_target`)
+- Added image attachments to the composer: photo library, camera, or pasted screenshots, downscaled on the device before sending
+- Added editable one-tap quick replies above the empty composer
+- Kept unsent composer text per room across reloads and app restarts
+- Added the collab companion (`bun run companion`): pair the app with a computer once, then pick any session hosting `/collab` on it from the connect screen, with live working / needs-input state
 
 ### Changed
 

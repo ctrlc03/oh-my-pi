@@ -9,9 +9,11 @@
  */
 
 import { parseCollabLink } from "./link";
+import { readJson, writeJson } from "./storage";
 
 const ROOMS_KEY = "omp.collab.rooms";
 const ACTIVE_KEY = "omp.collab.active";
+const DRAFT_PREFIX = "omp.collab.draft.";
 const MAX_ROOMS = 12;
 
 export interface RecentRoom {
@@ -22,24 +24,6 @@ export interface RecentRoom {
 	readOnly: boolean;
 	/** epoch ms of the last successful join. */
 	lastSeen: number;
-}
-
-function readJson(key: string): unknown {
-	try {
-		const raw = localStorage.getItem(key);
-		return raw === null ? null : JSON.parse(raw);
-	} catch {
-		return null;
-	}
-}
-
-function writeRaw(key: string, value: string | null): void {
-	try {
-		if (value === null) localStorage.removeItem(key);
-		else localStorage.setItem(key, value);
-	} catch {
-		// storage unavailable (private mode, quota) — recents are best-effort
-	}
 }
 
 function isRoom(value: unknown): value is RecentRoom {
@@ -74,15 +58,29 @@ export function rememberRoom(room: Omit<RecentRoom, "lastSeen">): RecentRoom[] {
 		0,
 		MAX_ROOMS,
 	);
-	writeRaw(ROOMS_KEY, JSON.stringify(next));
+	writeJson(ROOMS_KEY, next);
 	return next;
 }
 
 export function forgetRoom(roomId: string): RecentRoom[] {
 	const next = loadRooms().filter(r => r.roomId !== roomId);
-	writeRaw(ROOMS_KEY, JSON.stringify(next));
+	writeJson(ROOMS_KEY, next);
+	writeJson(DRAFT_PREFIX + roomId, null);
 	if (roomIdOf(activeLink() ?? "") === roomId) setActiveLink(null);
 	return next;
+}
+
+/**
+ * Unsent composer text for a room. Saved on every keystroke so it survives the
+ * OS killing a backgrounded home-screen app, cleared on send and on forget.
+ */
+export function loadDraft(roomId: string): string {
+	const raw = readJson(DRAFT_PREFIX + roomId);
+	return typeof raw === "string" ? raw : "";
+}
+
+export function saveDraft(roomId: string, text: string): void {
+	writeJson(DRAFT_PREFIX + roomId, text ? text : null);
 }
 
 /**
@@ -96,7 +94,7 @@ export function activeLink(): string | null {
 }
 
 export function setActiveLink(link: string | null): void {
-	writeRaw(ACTIVE_KEY, link === null ? null : JSON.stringify(link));
+	writeJson(ACTIVE_KEY, link);
 }
 
 /**

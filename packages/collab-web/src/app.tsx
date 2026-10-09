@@ -9,6 +9,7 @@ import { HeaderBar } from "./components/shell/HeaderBar";
 import { Toasts } from "./components/shell/Toasts";
 import { Transcript } from "./components/transcript/Transcript";
 import { GuestClient } from "./lib/client";
+import { extractPairing, loadPairing, savePairing } from "./lib/companion";
 import { registerServiceWorker, takeSharedLink } from "./lib/pwa";
 import { activeLink, forgetRoom, loadRooms, type RecentRoom, rememberRoom, roomIdOf, setActiveLink } from "./lib/rooms";
 import { useGuestSnapshot } from "./lib/use-guest";
@@ -47,6 +48,7 @@ export function App(): ReactNode {
 	const [link, setLink] = useState<string | null>(null);
 	const [connectError, setConnectError] = useState<string | null>(null);
 	const [rooms, setRooms] = useState<RecentRoom[]>(loadRooms);
+	const [pairing, setPairing] = useState<string | null>(loadPairing);
 	const credsRef = useRef<Creds | null>(null);
 	/** The current session was reopened from storage, not chosen by the user this launch. */
 	const resumedRef = useRef(false);
@@ -96,6 +98,11 @@ export function App(): ReactNode {
 
 	const remember = useCallback((room: Omit<RecentRoom, "lastSeen">): void => setRooms(rememberRoom(room)), []);
 
+	const pair = useCallback((link: string | null): void => {
+		savePairing(link);
+		setPairing(link);
+	}, []);
+
 	// A room reopened from storage that the host has since closed: go straight to the
 	// session list instead of parking on an "ended" card the user never asked for.
 	const roomGone = useCallback(
@@ -127,17 +134,24 @@ export function App(): ReactNode {
 		};
 	}, []);
 
-	// Launch: a deep link in the hash wins, then a share-sheet payload, then the
-	// session this client was showing when the OS last killed it (home-screen launches
-	// open `start_url`, which carries no fragment).
+	// Launch: a pairing link opens the session list; otherwise a deep link in the hash
+	// wins, then a share-sheet payload, then the session this client was showing when
+	// the OS last killed it (home-screen launches open `start_url`, which carries no fragment).
 	useEffect(() => {
 		registerServiceWorker();
-		const explicit = hashLink() ?? takeSharedLink();
+		const hash = hashLink();
+		const companion = hash ? extractPairing(hash) : null;
+		if (companion) {
+			pair(companion);
+			history.replaceState(null, "", window.location.pathname + window.location.search);
+			return;
+		}
+		const explicit = hash ?? takeSharedLink();
 		const initial = explicit ?? activeLink();
 		if (!initial) return;
 		connect(initial, storedName());
 		resumedRef.current = explicit === null;
-	}, [connect]);
+	}, [connect, pair]);
 
 	// Back from the background or offline: reconnect now, not when the backoff expires.
 	useEffect(() => {
@@ -165,11 +179,16 @@ export function App(): ReactNode {
 				defaultName={storedName()}
 				error={connectError}
 				rooms={rooms}
+				pairing={pairing}
 				onConnect={(next, name) => {
 					resumedRef.current = false;
 					connect(next, name);
 				}}
 				onForget={forget}
+				onPair={pair}
+				onUnpair={() => {
+					if (window.confirm("Unpair this computer? You will need its pairing code to pair again.")) pair(null);
+				}}
 			/>
 		);
 	}
@@ -274,12 +293,14 @@ function Session({ client, link, onLeave, onRejoin, onRemember, onRoomGone }: Se
 						/>
 					</div>
 					<Composer
+						key={roomId}
 						client={client}
 						phase={snap.phase}
 						readOnly={snap.readOnly}
 						uiRequest={snap.uiRequest}
 						working={snap.working}
 						queuedMessageCount={snap.state?.queuedMessageCount ?? 0}
+						draftKey={roomId}
 					/>
 				</section>
 				{railOpen && (

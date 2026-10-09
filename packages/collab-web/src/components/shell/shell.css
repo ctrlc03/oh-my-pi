@@ -494,6 +494,156 @@
 	flex: none;
 }
 
+.sh-attach {
+	flex: none;
+	align-self: flex-end;
+	margin-left: -4px;
+}
+
+/* ---- quick replies (chip row above the composer) ---- */
+.sh-quick {
+	display: grid;
+	gap: 8px;
+	padding-bottom: 8px;
+}
+
+.sh-quick-row {
+	display: flex;
+	gap: 6px;
+	overflow-x: auto;
+	scrollbar-width: none;
+	overscroll-behavior-x: contain;
+	-webkit-overflow-scrolling: touch;
+}
+
+.sh-quick-row::-webkit-scrollbar {
+	display: none;
+}
+
+.sh-quick-editing .sh-quick-row {
+	flex-wrap: wrap;
+	overflow: visible;
+}
+
+.sh-quick-chip {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 4px;
+	max-width: 70vw;
+	height: 30px;
+	padding: 0 12px;
+	font-size: 13px;
+	color: var(--fg-muted);
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	transition:
+		background 120ms ease-out,
+		color 120ms ease-out;
+}
+
+.sh-quick-chip:hover:not(:disabled),
+.sh-quick-chip:active:not(:disabled) {
+	color: var(--fg);
+	background: var(--hover);
+}
+
+.sh-quick-chip:disabled {
+	opacity: 0.45;
+}
+
+.sh-quick-chip-icon {
+	width: 30px;
+	padding: 0;
+	justify-content: center;
+}
+
+.sh-quick-chip-edit {
+	padding-right: 4px;
+	color: var(--fg);
+}
+
+.sh-quick-text {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.sh-quick-remove {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	color: var(--fg-faint);
+	background: transparent;
+	border: 0;
+	border-radius: 999px;
+}
+
+.sh-quick-remove:hover {
+	color: var(--err);
+	background: var(--hover);
+}
+
+.sh-quick-add {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.sh-quick-add .sh-input {
+	flex: 1;
+	min-width: 0;
+}
+
+/* ---- image attachments (thumbnails above the composer) ---- */
+.sh-attachments {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding-bottom: 8px;
+}
+
+.sh-attachment {
+	position: relative;
+	width: 56px;
+	height: 56px;
+	flex: none;
+}
+
+.sh-attachment img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-attachment-remove {
+	position: absolute;
+	top: -6px;
+	right: -6px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	color: var(--fg-inverse);
+	background: var(--fg);
+	border: 2px solid var(--bg);
+	border-radius: 999px;
+}
+
+.sh-attachments-error {
+	font-size: 12.5px;
+	color: var(--err);
+}
+
 .sh-composer-ask {
 	display: grid;
 	gap: 10px;
@@ -668,6 +818,12 @@
 	gap: 8px;
 	max-width: 340px;
 	margin-left: auto;
+	/* Toasts float over the composer: only the dismissable (error) ones take taps. */
+	pointer-events: none;
+}
+
+.sh-toast-error {
+	pointer-events: auto;
 }
 
 .sh-toast {
@@ -973,6 +1129,72 @@
 	overflow: hidden;
 	white-space: nowrap;
 	text-overflow: ellipsis;
+}
+
+.sh-recent-join:disabled {
+	cursor: default;
+	opacity: 0.6;
+}
+
+/* ---- paired computer (companion) ---- */
+.sh-companion-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin: -6px 0 -4px;
+}
+
+.sh-companion-head .sh-recents-title {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	color: var(--fg);
+}
+
+.sh-companion-empty,
+.sh-companion-offline {
+	font-size: 13px;
+	color: var(--fg-muted);
+}
+
+.sh-companion-offline {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding-right: 4px;
+}
+
+.sh-companion-people {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	flex: none;
+}
+
+.sh-host-state {
+	flex: none;
+	color: var(--fg-muted);
+}
+
+.sh-host-state-busy {
+	color: var(--accent);
+}
+
+.sh-host-state-input {
+	color: var(--warn);
+}
+
+.sh-spin {
+	animation: sh-spin 0.9s linear infinite;
+}
+
+@keyframes sh-spin {
+	to {
+		transform: rotate(360deg);
+	}
 }
 
 /* ---- session sheet (header title / ⋯) ---- */
@@ -1349,8 +1571,9 @@
 	.sh-recents {
 		padding: 14px 8px 8px 16px;
 	}
+	/* Above the composer and its quick-reply row. */
 	.sh-toasts {
-		bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+		bottom: calc(124px + env(safe-area-inset-bottom, 0px));
 	}
 }
 

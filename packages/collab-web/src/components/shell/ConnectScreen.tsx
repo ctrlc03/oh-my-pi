@@ -1,8 +1,10 @@
 import { ArrowRight, ClipboardPaste, Eye, Lock, ScanLine, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
+import { extractPairing } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
+import { CompanionCard } from "./CompanionCard";
 import { OmpMark } from "./OmpMark";
 import { QrScanner } from "./QrScanner";
 import { ThemeToggle } from "./ThemeToggle";
@@ -12,16 +14,30 @@ export interface ConnectScreenProps {
 	error: string | null;
 	/** Recently joined rooms, newest first. */
 	rooms: readonly RecentRoom[];
+	/** Companion room link of the paired computer, if any. */
+	pairing: string | null;
 	onConnect(link: string, name: string): void;
 	onForget(roomId: string): void;
+	onPair(link: string): void;
+	onUnpair(): void;
 }
 
-export function ConnectScreen({ defaultName, error, rooms, onConnect, onForget }: ConnectScreenProps): ReactNode {
+export function ConnectScreen({
+	defaultName,
+	error,
+	rooms,
+	pairing,
+	onConnect,
+	onForget,
+	onPair,
+	onUnpair,
+}: ConnectScreenProps): ReactNode {
 	const [link, setLink] = useState("");
 	const [name, setName] = useState(defaultName);
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [scanning, setScanning] = useState(false);
 
+	/** Joins a session link, or pairs when handed a companion pairing link. */
 	const join = (raw: string): void => {
 		const trimmed = raw.trim();
 		if (!trimmed) {
@@ -29,6 +45,12 @@ export function ConnectScreen({ defaultName, error, rooms, onConnect, onForget }
 			return;
 		}
 		setLocalError(null);
+		const companion = extractPairing(trimmed);
+		if (companion) {
+			setLink("");
+			onPair(companion);
+			return;
+		}
 		onConnect(extractLink(trimmed) ?? trimmed, name.trim() || "guest");
 	};
 
@@ -47,8 +69,7 @@ export function ConnectScreen({ defaultName, error, rooms, onConnect, onForget }
 			setLocalError("Clipboard access was blocked. Long-press the field and paste instead.");
 			return;
 		}
-		const found = extractLink(text);
-		if (found) join(found);
+		if (extractPairing(text) || extractLink(text)) join(text);
 		else {
 			setLink(text.trim());
 			setLocalError("The clipboard does not hold an omp collab link.");
@@ -71,6 +92,16 @@ export function ConnectScreen({ defaultName, error, rooms, onConnect, onForget }
 				<ThemeToggle />
 			</div>
 			<div className="sh-connect-stack">
+				{pairing && (
+					<CompanionCard
+						pairing={pairing}
+						onJoin={next => {
+							setLocalError(null);
+							onConnect(next, name.trim() || "guest");
+						}}
+						onUnpair={onUnpair}
+					/>
+				)}
 				{rooms.length > 0 && (
 					<section className="sh-connect-card sh-recents" aria-label="recent sessions">
 						<h2 className="sh-recents-title">Recent sessions</h2>

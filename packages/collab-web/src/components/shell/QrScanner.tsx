@@ -2,6 +2,7 @@ import { X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { extractPairing } from "../../lib/companion";
 import { extractLink } from "../../lib/rooms";
 
 /** Frames analysed per second: enough to feel instant without cooking the phone. */
@@ -86,7 +87,8 @@ export function QrScanner({ onLink, onClose }: QrScannerProps): ReactNode {
 					const text = await decode(video).catch(() => null);
 					if (stopped) return;
 					if (text !== null) {
-						const link = extractLink(text);
+						// Pairing codes pass through whole: the connect screen tells them apart.
+						const link = extractPairing(text) ? text : extractLink(text);
 						if (link) {
 							stopped = true;
 							onLinkRef.current(link);

@@ -9,7 +9,7 @@
  * of the fixture JSONL — exactly the frames a real `omp /collab` host emits.
  */
 
-import type { AgentSnapshot, HostFrame, SessionEntry, SessionState, WireFrame } from "@oh-my-pi/pi-wire";
+import type { AgentSnapshot, HostFrame, ImageContent, SessionEntry, SessionState, WireFrame } from "@oh-my-pi/pi-wire";
 import { generateRoomKey, importRoomKey, open, seal } from "../src/lib/codec";
 import { COLLAB_PROTO, formatCollabLink, generateRoomId, packEnvelope, unpackEnvelope } from "../src/lib/link";
 import {
@@ -208,7 +208,7 @@ function handleHello(name: string, proto: number, fromPeer: number): void {
 	broadcastState();
 }
 
-function handlePrompt(text: string, fromPeer: number): void {
+function handlePrompt(text: string, images: ImageContent[] | undefined, fromPeer: number): void {
 	liveEntrySeq++;
 	appendEntry({
 		id: `live-${liveEntrySeq}`,
@@ -216,7 +216,7 @@ function handlePrompt(text: string, fromPeer: number): void {
 		timestamp: new Date().toISOString(),
 		type: "custom_message",
 		customType: "collab-prompt",
-		content: text,
+		content: images && images.length > 0 ? [{ type: "text", text }, ...images] : text,
 		details: { from: peerName(fromPeer) },
 		display: true,
 	});
@@ -256,7 +256,7 @@ function handleFrame(frame: WireFrame, fromPeer: number): void {
 			handleHello(frame.name, frame.proto, fromPeer);
 			break;
 		case "prompt":
-			handlePrompt(frame.text, fromPeer);
+			handlePrompt(frame.text, frame.images, fromPeer);
 			break;
 		case "abort":
 			handleAbort(fromPeer);

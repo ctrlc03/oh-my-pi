@@ -1,8 +1,11 @@
-import type { CollabUiRequest } from "@oh-my-pi/pi-wire";
-import { SendHorizontal, Square } from "lucide-react";
-import type { KeyboardEvent, ReactNode, RefObject } from "react";
-import { memo, useCallback, useLayoutEffect, useRef, useState } from "react";
+import type { CollabUiRequest, ImageContent } from "@oh-my-pi/pi-wire";
+import { ImagePlus, SendHorizontal, Square, X } from "lucide-react";
+import type { ClipboardEvent, KeyboardEvent, ReactNode, RefObject } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ConnectionPhase, GuestClient } from "../../lib/client";
+import { MAX_ATTACHMENTS, toImageContent } from "../../lib/images";
+import { loadDraft, saveDraft } from "../../lib/rooms";
+import { QuickReplies } from "./QuickReplies";
 
 export interface ComposerProps {
 	client: GuestClient;
@@ -14,6 +17,8 @@ export interface ComposerProps {
 	working: boolean;
 	/** Prompts queued behind the running turn. */
 	queuedMessageCount: number;
+	/** Room the unsent draft is saved under; null keeps it in memory only. */
+	draftKey: string | null;
 }
 
 /** Textarea metrics: line-height 20px + 8px vertical padding × 2 (kept in sync with shell.css). */
@@ -129,9 +134,13 @@ export const Composer = memo(function Composer({
 	uiRequest,
 	working,
 	queuedMessageCount,
+	draftKey,
 }: ComposerProps): ReactNode {
-	const [text, setText] = useState("");
+	const [text, setText] = useState(() => (draftKey ? loadDraft(draftKey) : ""));
+	const [images, setImages] = useState<ImageContent[]>([]);
+	const [attachError, setAttachError] = useState<string | null>(null);
 	const taRef = useRef<HTMLTextAreaElement | null>(null);
+	const fileRef = useRef<HTMLInputElement | null>(null);
 	const { composingRef, onCompositionStart, onCompositionEnd } = useCompositionGuard();
 
 	const live = phase === "live";
@@ -144,12 +153,43 @@ export const Composer = memo(function Composer({
 		autosize(taRef.current);
 	}, [text, uiRequest?.reqId]);
 
-	const send = useCallback((): void => {
-		const trimmed = text.trim();
-		if (!trimmed || !live || readOnly) return;
-		client.sendPrompt(trimmed);
-		setText("");
-	}, [client, live, readOnly, text]);
+	useEffect(() => {
+		if (draftKey) saveDraft(draftKey, text);
+	}, [draftKey, text]);
+
+	/** Sends `override` (a quick reply) or the typed text, with any attached images. */
+	const send = useCallback(
+		(override?: string): void => {
+			const trimmed = (override ?? text).trim();
+			if (!trimmed || !live || readOnly) return;
+			client.sendPrompt(trimmed, images);
+			setImages([]);
+			setAttachError(null);
+			if (override === undefined) setText("");
+		},
+		[client, images, live, readOnly, text],
+	);
+
+	const attach = async (files: readonly File[]): Promise<void> => {
+		const picked = files.filter(f => f.type.startsWith("image/"));
+		if (picked.length === 0) return;
+		const room = MAX_ATTACHMENTS - images.length;
+		setAttachError(picked.length > room ? `Up to ${MAX_ATTACHMENTS} images per prompt.` : null);
+		try {
+			const converted = await Promise.all(picked.slice(0, Math.max(0, room)).map(toImageContent));
+			setImages(prev => [...prev, ...converted].slice(0, MAX_ATTACHMENTS));
+		} catch (err) {
+			setAttachError(`Could not attach the image: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	};
+
+	// Screenshots pasted from the clipboard attach; plain text pastes as usual.
+	const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>): void => {
+		const files = Array.from(e.clipboardData.files).filter(f => f.type.startsWith("image/"));
+		if (files.length === 0) return;
+		e.preventDefault();
+		void attach(files);
+	};
 
 	const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
 		if (shouldSubmitOnEnter(e, composingRef.current, isTouch())) {
@@ -216,21 +256,68 @@ export const Composer = memo(function Composer({
 
 	return (
 		<div className="sh-composer">
+			{canPrompt && !text && <QuickReplies disabled={!live} onPick={send} />}
+			{(images.length > 0 || attachError) && (
+				<div className="sh-attachments">
+					{images.map((image, i) => (
+						<div key={`${i}-${image.data.length}`} className="sh-attachment">
+							<img src={`data:${image.mimeType};base64,${image.data}`} alt={`attachment ${i + 1}`} />
+							<button
+								type="button"
+								className="sh-attachment-remove"
+								onClick={() => setImages(prev => prev.filter((_, j) => j !== i))}
+								aria-label={`remove attachment ${i + 1}`}
+							>
+								<X size={12} />
+							</button>
+						</div>
+					))}
+					{attachError && <span className="sh-attachments-error">{attachError}</span>}
+				</div>
+			)}
 			<div className="sh-composer-inner">
+				{!readOnly && (
+					<>
+						<input
+							ref={fileRef}
+							type="file"
+							accept="image/*"
+							multiple
+							hidden
+							onChange={e => {
+								void attach(Array.from(e.target.files ?? []));
+								e.target.value = "";
+							}}
+						/>
+						<button
+							type="button"
+							className="sh-btn sh-btn-icon sh-attach"
+							onClick={() => fileRef.current?.click()}
+							disabled={!canPrompt || images.length >= MAX_ATTACHMENTS}
+							aria-label="attach images"
+							title="attach images"
+						>
+							<ImagePlus size={16} />
+						</button>
+					</>
+				)}
 				<textarea
 					ref={taRef}
 					className="sh-composer-input"
 					value={text}
 					onChange={e => setText(e.target.value)}
 					onKeyDown={onKeyDown}
+					onPaste={onPaste}
 					onCompositionStart={onCompositionStart}
 					onCompositionEnd={onCompositionEnd}
 					placeholder={
 						readOnly
 							? "Read-only session — watching only"
-							: live
-								? "Prompt the host agent…"
-								: "Waiting for the session…"
+							: !live
+								? "Waiting for the session…"
+								: images.length > 0
+									? "Say something about the image…"
+									: "Prompt the host agent…"
 					}
 					disabled={!canPrompt}
 					rows={1}
@@ -257,7 +344,7 @@ export const Composer = memo(function Composer({
 					<button
 						type="button"
 						className="sh-btn sh-btn-primary"
-						onClick={send}
+						onClick={() => send()}
 						disabled={!canSend}
 						title="send (Enter)"
 					>

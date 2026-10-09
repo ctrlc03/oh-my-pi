@@ -2,7 +2,7 @@
 import type { ReactNode } from "react";
 import type { Tone } from "../parts";
 import { Badge, InvalidArg, Kv, KvGrid, Output, PathText, ResultText, Row } from "../parts";
-import type { ToolRenderer, ToolRenderProps } from "../types";
+import type { ToolRenderer, ToolRenderHost, ToolRenderProps } from "../types";
 import { detailsRecord, normalizeWs, num, resultTextOf, str, truncate } from "../util";
 
 /** `file:line:col [severity] message` — the diagnostics line format the tool emits. */
@@ -70,7 +70,7 @@ function ArgKv({ k, raw, val }: { k: string; raw: unknown; val: ReactNode }): Re
 	return <Kv k={k}>{val == null || val === false ? <InvalidArg what={k} /> : val}</Kv>;
 }
 
-function DiagnosticRows({ text, rows }: { text: string; rows: DiagRow[] }): ReactNode {
+function DiagnosticRows({ text, rows, host }: { text: string; rows: DiagRow[]; host?: ToolRenderHost }): ReactNode {
 	const errMatch = text.match(/(\d+)\s+error\(s\)/);
 	const warnMatch = text.match(/(\d+)\s+warning\(s\)/);
 	const shown = rows.slice(0, MAX_ROWS);
@@ -93,7 +93,7 @@ function DiagnosticRows({ text, rows }: { text: string; rows: DiagRow[] }): Reac
 			<div className="tv-list">
 				{shown.map((d, i) => (
 					<Row key={i} k={<Badge tone={severityTone(d.severity)}>{d.severity}</Badge>}>
-						<PathText path={d.file} sel={`${d.line}:${d.col}`} />
+						<PathText path={d.file} sel={`${d.line}:${d.col}`} host={host} />
 						{d.message && <span className="tv-muted"> {truncate(d.message, 160)}</span>}
 					</Row>
 				))}
@@ -107,7 +107,7 @@ function DiagnosticRows({ text, rows }: { text: string; rows: DiagRow[] }): Reac
 	);
 }
 
-function LocationRows({ text, rows }: { text: string; rows: LocRow[] }): ReactNode {
+function LocationRows({ text, rows, host }: { text: string; rows: LocRow[]; host?: ToolRenderHost }): ReactNode {
 	const refMatch = text.match(/(\d+)\s+reference\(s\)/);
 	const shown = rows.slice(0, MAX_ROWS);
 	return (
@@ -122,7 +122,7 @@ function LocationRows({ text, rows }: { text: string; rows: LocRow[] }): ReactNo
 			<div className="tv-list">
 				{shown.map((l, i) => (
 					<Row key={i}>
-						<PathText path={l.file} sel={`${l.line}:${l.col}`} />
+						<PathText path={l.file} sel={`${l.line}:${l.col}`} host={host} />
 					</Row>
 				))}
 				{rows.length > shown.length && (
@@ -155,7 +155,7 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Body({ args, result, host }: ToolRenderProps): ReactNode {
 	const details = detailsRecord(result);
 	const file = str(args.file);
 	const line = num(args.line);
@@ -182,7 +182,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 				<ArgKv
 					k="file"
 					raw={args.file}
-					val={file === "*" ? <Badge>workspace</Badge> : file && <PathText path={file} from={line} />}
+					val={file === "*" ? <Badge>workspace</Badge> : file && <PathText path={file} from={line} host={host} />}
 				/>
 				{!file && <ArgKv k="line" raw={args.line} val={line} />}
 				<ArgKv k="symbol" raw={args.symbol} val={symbol && truncate(normalizeWs(symbol), 120)} />
@@ -199,9 +199,9 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 			</KvGrid>
 			{payload && <Output text={payload} lang="json" variant="code" maxLines={8} title="payload" />}
 			{diags.length > 0 ? (
-				<DiagnosticRows text={text} rows={diags} />
+				<DiagnosticRows text={text} rows={diags} host={host} />
 			) : locs.length > 0 ? (
-				<LocationRows text={text} rows={locs} />
+				<LocationRows text={text} rows={locs} host={host} />
 			) : (
 				<ResultText result={result} maxLines={12} />
 			)}

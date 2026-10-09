@@ -144,10 +144,13 @@ export const Composer = memo(function Composer({
 	const { composingRef, onCompositionStart, onCompositionEnd } = useCompositionGuard();
 
 	const live = phase === "live";
+	// Host-driven controls (ask answers, quick replies, stop) need the live session; typed
+	// prompts do not: while not live the client queues them and sends them in order on reconnect.
 	const canPrompt = live && !readOnly;
+	const canType = !readOnly && phase !== "ended";
 	const busy = working;
 	const queued = queuedMessageCount;
-	const canSend = canPrompt && text.trim().length > 0;
+	const canSend = canType && text.trim().length > 0;
 
 	useLayoutEffect(() => {
 		autosize(taRef.current);
@@ -161,13 +164,13 @@ export const Composer = memo(function Composer({
 	const send = useCallback(
 		(override?: string): void => {
 			const trimmed = (override ?? text).trim();
-			if (!trimmed || !live || readOnly) return;
+			if (!trimmed || !canType) return;
 			client.sendPrompt(trimmed, images);
 			setImages([]);
 			setAttachError(null);
 			if (override === undefined) setText("");
 		},
-		[client, images, live, readOnly, text],
+		[canType, client, images, text],
 	);
 
 	const attach = async (files: readonly File[]): Promise<void> => {
@@ -192,6 +195,12 @@ export const Composer = memo(function Composer({
 	};
 
 	const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
+		if (e.key === "Escape" && busy && canPrompt) {
+			e.preventDefault();
+			e.stopPropagation();
+			client.sendAbort();
+			return;
+		}
 		if (shouldSubmitOnEnter(e, composingRef.current, isTouch())) {
 			e.preventDefault();
 			send();
@@ -293,7 +302,7 @@ export const Composer = memo(function Composer({
 							type="button"
 							className="sh-btn sh-btn-icon sh-attach"
 							onClick={() => fileRef.current?.click()}
-							disabled={!canPrompt || images.length >= MAX_ATTACHMENTS}
+							disabled={!canType || images.length >= MAX_ATTACHMENTS}
 							aria-label="attach images"
 							title="attach images"
 						>
@@ -314,12 +323,12 @@ export const Composer = memo(function Composer({
 						readOnly
 							? "Read-only session — watching only"
 							: !live
-								? "Waiting for the session…"
+								? "Offline — prompts send when you're back"
 								: images.length > 0
 									? "Say something about the image…"
 									: "Prompt the host agent…"
 					}
-					disabled={!canPrompt}
+					disabled={!canType}
 					rows={1}
 					spellCheck={false}
 					enterKeyHint={isTouch() ? "enter" : "send"}
@@ -346,7 +355,7 @@ export const Composer = memo(function Composer({
 						className="sh-btn sh-btn-primary"
 						onClick={() => send()}
 						disabled={!canSend}
-						title="send (Enter)"
+						title={live ? "send (Enter)" : "queue until reconnected (Enter)"}
 					>
 						<SendHorizontal size={12} /> <span className="sh-btn-label">Send</span>
 					</button>

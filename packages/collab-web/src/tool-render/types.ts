@@ -44,6 +44,8 @@ export interface ToolRenderHost {
 	hasAgent?(id: string): boolean;
 	/** Open the sub-session/transcript view for an agent id. */
 	openAgent?(id: string): void;
+	/** Open a read-only viewer for a project file; absent where the host cannot read files. */
+	openFile?(path: string): void;
 }
 
 export interface ToolRenderProps {

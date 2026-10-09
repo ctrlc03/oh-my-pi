@@ -233,6 +233,8 @@ export interface SessionState {
 	contextUsage?: ContextUsage;
 	participants: Participant[];
 	isAborting?: boolean;
+	/** Thinking levels the current model accepts, for a `session-cmd` `thinking`; absent on hosts without `session-cmd`. */
+	thinkingLevels?: string[];
 }
 
 export interface AgentSnapshot {
@@ -341,7 +343,18 @@ export type GuestFrame =
 	| { t: "ui-response"; reqId: number; value?: CollabUiResponseValue }
 	| { t: "abort" }
 	| { t: "agent-cmd"; cmd: "chat" | "kill" | "revive"; agentId: string; text?: string }
-	| { t: "fetch-transcript"; reqId: number; agentId: string; fromByte: number };
+	| { t: "fetch-transcript"; reqId: number; agentId: string; fromByte: number }
+	/**
+	 * Run a host session control. `compact`: `arg` is optional custom
+	 * instructions. `model`: `arg` is `provider/id` of one of `welcome.models`.
+	 * `thinking`: `arg` is one of `state.thinkingLevels`. Write access required.
+	 * Hosts that predate the frame ignore it, so guests offer these controls
+	 * only when `welcome.models` is present.
+	 */
+	| { t: "session-cmd"; cmd: SessionCommand; arg?: string };
+
+/** Host session controls a writer may run through `session-cmd`. */
+export type SessionCommand = "compact" | "model" | "thinking";
 
 /** EventBus channels mirrored to guests (task subagent traffic only). */
 export type BusChannel = "task:subagent:progress" | "task:subagent:lifecycle";
@@ -362,6 +375,12 @@ export type HostFrame =
 			entryCount: number;
 			/** True when this peer joined through a read-only (view) link. */
 			readOnly?: boolean;
+			/**
+			 * Models a writer may switch to with `session-cmd` `model`. Sent to
+			 * writers only, by hosts that accept `session-cmd`; its presence is the
+			 * capability signal.
+			 */
+			models?: WireModel[];
 	  }
 	/**
 	 * Targeted snapshot fragment delivered after `welcome`. Hosts split the

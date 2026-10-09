@@ -20,14 +20,17 @@ import type {
 	CollabUiResponseValue,
 	HostFrame,
 	ImageContent,
+	SessionCommand,
 	SessionEntry,
 	SessionHeader,
 	SessionState,
 	SubagentLifecyclePayload,
 	SubagentProgressPayload,
+	WireModel,
 } from "@oh-my-pi/pi-wire";
 import { importRoomKey } from "./codec";
 import { COLLAB_PROTO, encodeBase64Url, parseCollabLink } from "./link";
+import { loadPromptQueue, type QueuedPrompt, savePromptQueue } from "./rooms";
 import { CollabSocket } from "./socket";
 
 export type ConnectionPhase = "connecting" | "waiting" | "live" | "reconnecting" | "ended";
@@ -73,6 +76,10 @@ export interface GuestSnapshot {
 	notices: readonly Notice[];
 	/** Snapshot download progress between `welcome` and its final chunk, else null. */
 	loading: { received: number; total: number } | null;
+	/** Prompts typed while not live, oldest first; sent in order once the session is live. */
+	queued: readonly QueuedPrompt[];
+	/** Models the host lets this writer switch to; null when the host predates `session-cmd`. */
+	models: readonly WireModel[] | null;
 }
 
 const MAX_NOTICES = 50;
@@ -153,6 +160,11 @@ export class GuestClient {
 	#activeTools: ReadonlyMap<string, ActiveTool> = new Map();
 	#working = false;
 	#readOnly = false;
+	#models: readonly WireModel[] | null = null;
+	/** Room the offline prompt queue is persisted under. */
+	readonly #roomId: string;
+	#queue: QueuedPrompt[] = [];
+	#queueSeq = 0;
 	#uiRequest: CollabUiRequest | null = null;
 	#uiRequestQueue: CollabUiRequest[] = [];
 	#notices: readonly Notice[] = [];
@@ -174,6 +186,9 @@ export class GuestClient {
 		if ("error" in parsed) throw new Error(parsed.error);
 		this.#name = displayName;
 		this.#writeToken = parsed.writeToken ? encodeBase64Url(parsed.writeToken) : undefined;
+		this.#roomId = parsed.roomId;
+		// A view link never queues: the host would drop every prompt.
+		if (this.#writeToken !== undefined) this.#queue = loadPromptQueue(parsed.roomId);
 		this.#socket = new CollabSocket({ wsUrl: parsed.wsUrl, role: "guest", key: importRoomKey(parsed.key) });
 		this.#socket.onOpen = () => this.#handleOpen();
 		this.#socket.onFrame = frame => this.#applyFrameSafe(frame);
@@ -219,8 +234,36 @@ export class GuestClient {
 		return this.#snapshot;
 	}
 
+	/**
+	 * Sends a prompt, or, while the connection is not live, queues it (and
+	 * persists the queue) to go out in order once the next welcome completes.
+	 * View-link guests never queue and never send.
+	 */
 	sendPrompt(text: string, images?: ImageContent[]): void {
-		this.#socket.send({ t: "prompt", text, images: images && images.length > 0 ? images : undefined });
+		if (this.#isReadOnly()) return;
+		const attached = images && images.length > 0 ? images : undefined;
+		if (this.#phase !== "live") {
+			this.#queue = [
+				...this.#queue,
+				{ id: `${Date.now().toString(36)}-${++this.#queueSeq}`, text, images: attached },
+			];
+			savePromptQueue(this.#roomId, this.#queue);
+			this.#commit();
+			return;
+		}
+		this.#socket.send({ t: "prompt", text, images: attached });
+	}
+
+	/** Drops a queued prompt before it is sent. */
+	cancelQueued(id: string): void {
+		this.#queue = this.#queue.filter(prompt => prompt.id !== id);
+		savePromptQueue(this.#roomId, this.#queue);
+		this.#commit();
+	}
+
+	/** Runs a host session control (compact / model / thinking); the host reports failures as `error` frames. */
+	sendSessionCommand(cmd: SessionCommand, arg?: string): void {
+		this.#socket.send({ t: "session-cmd", cmd, arg });
 	}
 
 	sendUiResponse(reqId: number, value?: CollabUiResponseValue): void {
@@ -364,6 +407,7 @@ export class GuestClient {
 				this.#unlistedBusIds.clear();
 				this.#working = frame.state.isStreaming;
 				this.#readOnly = frame.readOnly === true;
+				this.#models = frame.models ?? null;
 				this.#clearUiRequests();
 				this.#welcomed = true;
 				this.#clearWelcomeTimer();
@@ -483,8 +527,23 @@ export class GuestClient {
 				// unknown frame type from a newer host — ignore
 				break;
 		}
+		if (this.#phase === "live" && this.#queue.length > 0) this.#flushQueue();
 		if (isCoalescable(frame)) this.#scheduleCommit();
 		else this.#commit();
+	}
+
+	/** View links, and hosts that downgrade the guest, are read-only; before the first welcome the link decides. */
+	#isReadOnly(): boolean {
+		return this.#welcomed ? this.#readOnly : this.#writeToken === undefined;
+	}
+
+	/** Hands queued prompts to the socket in order. Dequeued first, so a prompt is never sent twice. */
+	#flushQueue(): void {
+		const queued = this.#queue;
+		this.#queue = [];
+		savePromptQueue(this.#roomId, this.#queue);
+		if (this.#readOnly) return;
+		for (const prompt of queued) this.#socket.send({ t: "prompt", text: prompt.text, images: prompt.images });
 	}
 
 	/**
@@ -642,13 +701,15 @@ export class GuestClient {
 			streamDone: this.#streamDone,
 			activeTools: this.#activeTools,
 			working: this.#working,
-			readOnly: this.#readOnly,
+			readOnly: this.#isReadOnly(),
 			uiRequest: this.#uiRequest,
 			notices: this.#notices,
 			loading: this.#pendingSnapshot && {
 				received: this.#pendingSnapshot.entries.length,
 				total: this.#pendingSnapshot.total,
 			},
+			queued: this.#queue,
+			models: this.#models,
 		};
 	}
 

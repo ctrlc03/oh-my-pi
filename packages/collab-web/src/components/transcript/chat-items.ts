@@ -20,8 +20,9 @@ export type ChatItem =
 	/** A prompt, host-injected message, or divider, rendered as in the full view. */
 	| { kind: "entry"; key: string; entry: SessionEntry }
 	| { kind: "text"; key: string; entryId: string | null; text: string; pending: boolean; lead: boolean }
-	| { kind: "tools"; key: string; calls: ChatToolCall[]; lead: boolean }
-	| { kind: "stop"; key: string; stopReason: "error" | "aborted"; errorMessage?: string };
+	/** `entryId`: the entry of the run's first call; null for live tools not yet committed. */
+	| { kind: "tools"; key: string; entryId: string | null; calls: ChatToolCall[]; lead: boolean }
+	| { kind: "stop"; key: string; entryId: string | null; stopReason: "error" | "aborted"; errorMessage?: string };
 
 /**
  * `lead` marks the first agent item after a prompt, which carries the "agent"
@@ -35,17 +36,23 @@ export function buildChatItems(
 	tailTools: readonly ActiveTool[],
 ): ChatItem[] {
 	const items: ChatItem[] = [];
-	let run: { calls: ChatToolCall[]; lead: boolean } | null = null;
+	let run: { calls: ChatToolCall[]; lead: boolean; entryId: string | null } | null = null;
 	let inAgentTurn = false;
 
 	const flush = (): void => {
 		if (run === null) return;
-		items.push({ kind: "tools", key: `tools:${run.calls[0]?.id}`, calls: run.calls, lead: run.lead });
+		items.push({
+			kind: "tools",
+			key: `tools:${run.calls[0]?.id}`,
+			entryId: run.entryId,
+			calls: run.calls,
+			lead: run.lead,
+		});
 		run = null;
 	};
-	const addCall = (call: ChatToolCall): void => {
+	const addCall = (call: ChatToolCall, entryId: string | null): void => {
 		if (run === null) {
-			run = { calls: [], lead: !inAgentTurn };
+			run = { calls: [], lead: !inAgentTurn, entryId };
 			inAgentTurn = true;
 		}
 		run.calls.push(call);
@@ -70,7 +77,7 @@ export function buildChatItems(
 				});
 				inAgentTurn = true;
 			} else if (block.type === "toolCall") {
-				addCall({ id: block.id, name: block.name, intent: block.intent, args: block.arguments, pending });
+				addCall({ id: block.id, name: block.name, intent: block.intent, args: block.arguments, pending }, entryId);
 			}
 		});
 		const stop = message.stopReason;
@@ -79,6 +86,7 @@ export function buildChatItems(
 			items.push({
 				kind: "stop",
 				key: `stop:${entryId ?? "stream"}`,
+				entryId,
 				stopReason: stop,
 				errorMessage: message.errorMessage,
 			});
@@ -105,7 +113,7 @@ export function buildChatItems(
 	}
 	if (stream !== null) assistant(stream, null, !streamDone);
 	for (const tool of tailTools) {
-		addCall({ id: tool.toolCallId, name: tool.toolName, intent: tool.intent, args: tool.args, pending: true });
+		addCall({ id: tool.toolCallId, name: tool.toolName, intent: tool.intent, args: tool.args, pending: true }, null);
 	}
 	flush();
 	return items;

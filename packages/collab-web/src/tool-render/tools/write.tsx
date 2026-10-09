@@ -1,6 +1,6 @@
 /** `write` — file create/overwrite: content preview plus write confirmation. */
 import type { ReactNode } from "react";
-import { Badge, Badges, CodeBlock, InvalidArg, Note, Output, PathText, ResultText } from "../parts";
+import { Badge, Badges, CodeBlock, InvalidArg, Kv, KvGrid, Note, Output, PathText, ResultText } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import { detailsRecord, isRecord, languageFromPath, str } from "../util";
 
@@ -41,13 +41,20 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Body({ args, result, host }: ToolRenderProps): ReactNode {
 	const path = str(args.file_path ?? args.path);
 	const content = str(args.content);
 	const details = detailsRecord(result);
 	const diagnostics = diagnosticsOf(details);
 	return (
 		<>
+			{path !== null && host?.openFile !== undefined && (
+				<KvGrid>
+					<Kv k="file">
+						<PathText path={path} host={host} />
+					</Kv>
+				</KvGrid>
+			)}
 			<Badges
 				items={[
 					details?.madeExecutable === true && <Badge tone="ok">made executable</Badge>,

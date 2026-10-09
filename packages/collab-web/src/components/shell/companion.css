@@ -1,0 +1,306 @@
+/* Companion features: working tree, file viewer, start session, share idle sessions.
+ * Builds on the shell.css sheet, button and recents primitives; token colours only. */
+
+/* ---- card / switcher actions ---- */
+.sh-card-action {
+	align-self: flex-start;
+	margin-top: 2px;
+}
+
+.sh-idle {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-top: 6px;
+}
+
+.sh-idle-info {
+	cursor: default;
+}
+
+.sh-idle-info:hover {
+	background: transparent;
+}
+
+.sh-idle-share {
+	flex: none;
+}
+
+/* ---- start a session ---- */
+.sh-btn.sh-start-new {
+	height: 44px;
+	font-size: 14px;
+}
+
+.sh-sheet-head .sh-start-title {
+	flex: 1;
+}
+
+.sh-start-progress {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 10px;
+	padding: 20px 8px 12px;
+	text-align: center;
+	color: var(--fg-muted);
+}
+
+.sh-start-progress-title {
+	font-size: 14px;
+	font-weight: 500;
+	color: var(--fg);
+	overflow-wrap: anywhere;
+}
+
+/* ---- file viewer ---- */
+.sh-sheet-head .sh-file-path {
+	flex: 1;
+	font: 500 13px / 1.4 var(--font-mono);
+	letter-spacing: 0;
+}
+
+.sh-file-actions {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 2px;
+}
+
+.sh-file-status {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sh-file-meta {
+	display: flex;
+	gap: 12px;
+	font: 400 11.5px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+.sh-file-note {
+	padding: 8px 10px;
+	font-size: 12.5px;
+	color: var(--warn);
+	background: color-mix(in srgb, var(--warn) 12%, transparent);
+	border-radius: var(--radius);
+}
+
+.sh-file-view {
+	display: flex;
+	max-height: calc(var(--viewport-height, 100dvh) - 230px);
+	overflow: auto;
+	font: 400 12px / 1.5 var(--font-mono);
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-file-gutter {
+	position: sticky;
+	left: 0;
+	flex: none;
+	margin: 0;
+	padding: 8px 8px 8px 10px;
+	text-align: right;
+	color: var(--fg-faint);
+	background: var(--bg-inset);
+	border-right: 1px solid var(--border);
+	user-select: none;
+}
+
+.sh-file-text {
+	flex: none;
+	margin: 0;
+	padding: 8px 12px;
+	tab-size: 4;
+	color: var(--fg);
+}
+
+/* ---- tabs ---- */
+.sh-tabs {
+	display: flex;
+	gap: 4px;
+	padding: 3px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-tab {
+	flex: 1;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	min-height: 36px;
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--fg-muted);
+	background: transparent;
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.sh-tab[aria-selected="true"] {
+	color: var(--fg);
+	background: var(--bg-overlay);
+}
+
+.sh-tab-count {
+	font: 400 11px / 1 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+/* ---- working tree ---- */
+.sh-tree-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.sh-tree-branch {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	font: 500 13px / 1.4 var(--font-mono);
+}
+
+.sh-tree-branch svg {
+	flex: none;
+	color: var(--fg-faint);
+}
+
+.sh-tree-branch-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-tree-sync {
+	flex: none;
+	display: inline-flex;
+	gap: 6px;
+	font: 400 11.5px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+.sh-tree-error {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 10px;
+}
+
+.sh-tree-open {
+	align-self: flex-start;
+}
+
+.sh-status-badge {
+	flex: none;
+	display: inline-grid;
+	place-items: center;
+	width: 20px;
+	height: 20px;
+	font: 600 11px / 1 var(--font-mono);
+	border-radius: var(--radius-sm);
+	color: var(--fg-muted);
+	background: var(--hover);
+}
+
+.sh-status-badge-add {
+	color: var(--ok);
+	background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+.sh-status-badge-mod {
+	color: var(--warn);
+	background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+
+.sh-status-badge-del {
+	color: var(--err);
+	background: color-mix(in srgb, var(--err) 14%, transparent);
+}
+
+.sh-status-badge-move {
+	color: var(--accent);
+	background: var(--accent-muted);
+}
+
+.sh-commits {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-commit {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 8px 0;
+	border-bottom: 1px solid var(--border);
+}
+
+.sh-commit-subject {
+	font-size: 13.5px;
+	overflow-wrap: anywhere;
+}
+
+/* ---- unified diff ---- */
+.sh-udiff {
+	display: grid;
+	grid-template-columns: minmax(100%, max-content);
+	padding: 4px 0;
+	overflow-x: auto;
+	font: 400 12px / 1.5 var(--font-mono);
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-udiff-row {
+	padding: 0 10px;
+	white-space: pre;
+	tab-size: 4;
+}
+
+.sh-udiff-add {
+	color: var(--ok);
+	background: color-mix(in srgb, var(--ok) 11%, transparent);
+}
+
+.sh-udiff-del {
+	color: var(--err);
+	background: color-mix(in srgb, var(--err) 11%, transparent);
+}
+
+.sh-udiff-hunk {
+	color: var(--fg-faint);
+}
+
+/* ---- phones: 44px touch targets ---- */
+@media (max-width: 640px) {
+	.sh-btn.sh-card-action,
+	.sh-btn.sh-idle-share,
+	.sh-btn.sh-tree-open {
+		height: 44px;
+	}
+
+	.sh-tab {
+		min-height: 44px;
+	}
+
+	.sh-file-actions .sh-btn-icon,
+	.sh-tree-head .sh-btn-icon {
+		width: 44px;
+		height: 44px;
+	}
+}

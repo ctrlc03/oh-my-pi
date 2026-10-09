@@ -15,6 +15,7 @@ import type {
 	ParsedCollabLink,
 	Participant,
 	AgentSnapshot as WireAgentSnapshot,
+	WireModel,
 } from "@oh-my-pi/pi-wire";
 import {
 	DEFAULT_RELAY_URL,
@@ -71,6 +72,8 @@ export type CollabFrame =
 			entryCount: number;
 			/** True when this peer joined through a read-only (view) link. */
 			readOnly?: boolean;
+			/** Models a writer may switch to with `session-cmd`; sent to writers only, its presence signals support. */
+			models?: WireModel[];
 	  }
 	/**
 	 * Targeted snapshot fragment delivered after `welcome`. Splits a large

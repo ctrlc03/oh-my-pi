@@ -63,6 +63,7 @@ export function makeHostContext(snapshot: Snapshot, seen: HostObservations): Int
 			sessionName: "queue",
 			model: undefined,
 			thinkingLevel: undefined,
+			getAvailableEffortSelectors: () => [],
 			subscribe: (listener: (event: unknown) => void) => {
 				listeners.push(listener);
 				return () => {

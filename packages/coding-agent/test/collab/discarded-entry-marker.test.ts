@@ -18,6 +18,7 @@ function makeHostContext(manager: SessionManager): InteractiveModeContext {
 			sessionName: "discard marker",
 			model: undefined,
 			thinkingLevel: undefined,
+			getAvailableEffortSelectors: () => [],
 			subscribe: () => () => {},
 			emitNotice: () => {},
 			promptCustomMessage: () => Promise.resolve(),

@@ -16,7 +16,14 @@ import { sanitizeDisplayLine } from "@oh-my-pi/pi-tui/overlays/extensions/displa
 import type { InteractiveModeContext } from "../modes/types";
 import { TRUNCATE_LENGTHS, truncateToWidth } from "@oh-my-pi/pi-tui/render/render-utils";
 import { CollabHost, CollabHostStoppedError, CollabRelayUnavailableError } from "./host";
-import type { CollabAccess } from "./registry";
+import {
+	type CollabAccess,
+	type CollabHostPublication,
+	type CollabIdleSnapshot,
+	type CollabIdleStartResult,
+	CollabLinkError,
+	publishCollabIdle,
+} from "./registry";
 
 import { cfgCollabAutoStart, cfgCollabRelayUrl, cfgCollabWebUrl } from "./settings";
 
@@ -38,7 +45,15 @@ export interface CollabStartOptions {
 	access: CollabAccess;
 	/** Relay override (`host[:port]` or a full URL); defaults to `collab.relayUrl`. */
 	relay?: string;
+	/**
+	 * Request from another process (`omp collab start`): a live room that does
+	 * not already grant `access` is never stopped or upgraded — its guests would
+	 * be dropped — and the request fails with `access_unavailable` instead.
+	 */
+	external?: boolean;
 }
+
+const EXTERNAL_UPGRADE_REFUSED = "the running room is view-only; stop it (/collab stop) first";
 
 export class CollabController {
 	readonly instanceId: string;
@@ -62,11 +77,88 @@ export class CollabController {
 	#relaunchStreak = 0;
 	#lastRelaunchCauseAt: number | undefined;
 	#relaunchTimer: Timer | undefined;
+	/** Process start, reported by the idle registry entry. */
+	readonly #startedAt = Date.now() - Math.round(process.uptime() * 1000);
+	/** Resolves to the idle registry entry once published (`null` when publication failed). */
+	#idlePublication: Promise<CollabHostPublication | null> | undefined;
 
 	constructor(ctx: InteractiveModeContext) {
 		this.#ctx = ctx;
 		// 64 random bits: unique per process on one machine, short enough for `omp collab link <id>` and socket paths.
 		this.instanceId = randomBytes(8).toString("hex");
+	}
+
+	/**
+	 * Make this process discoverable by `omp collab list` while it hosts
+	 * nothing, and startable by `omp collab start`. The entry lives as long as
+	 * the controller; it reports itself unavailable (so listings omit it)
+	 * whenever a live room, a guest session, or shutdown means the process
+	 * cannot be started, and becomes visible again once that ends. Failure is
+	 * logged: discovery is never required for the session to work.
+	 */
+	publishIdle(): Promise<void> {
+		if (this.#shutdown || this.#idlePublication) return Promise.resolve();
+		const publishing = publishCollabIdle(
+			{ snapshot: () => this.#idleSnapshot(), start: access => this.#startFromRegistry(access) },
+			{ instanceId: this.instanceId },
+		).catch(err => {
+			logger.warn("Collab idle registry publication failed", { error: String(err) });
+			return null;
+		});
+		this.#idlePublication = publishing;
+		return publishing.then(() => {});
+	}
+
+	#idleSnapshot(): CollabIdleSnapshot {
+		if (this.#shutdown) throw new Error("collab controller shut down");
+		if (this.#ctx.collabGuest) throw new Error("collab guest owns the session");
+		if (this.host) throw new Error("already hosting");
+		if (this.#ctx.session.isSessionTransitioning) throw new Error("session transition in progress");
+		const model = this.#ctx.session.model;
+		return {
+			instanceId: this.instanceId,
+			pid: process.pid,
+			sessionId: this.#ctx.sessionManager.getSessionId(),
+			sessionName: this.#ctx.session.sessionName ?? null,
+			cwd: this.#ctx.sessionManager.getCwd(),
+			model: model ? { provider: model.provider, id: model.id } : null,
+			startedAt: this.#startedAt,
+			busy: this.#ctx.session.isStreaming,
+		};
+	}
+
+	/**
+	 * `omp collab start`: the `/collab` path ({@link start}) on behalf of another
+	 * process. A live room is never replaced or upgraded from outside — its
+	 * guests would be dropped — so an existing room only answers when it already
+	 * grants the requested access.
+	 */
+	async #startFromRegistry(access: CollabAccess): Promise<CollabIdleStartResult> {
+		if (this.#shutdown) throw new CollabLinkError("not_startable", "omp is shutting down");
+		if (this.#ctx.collabGuest) {
+			throw new CollabLinkError("not_startable", "this session is joined to another room as a guest");
+		}
+		// A room may still be connecting (its links are not usable yet) or about
+		// to be replaced; let in-flight launches settle before looking at it.
+		await this.#ops;
+		if (this.#shutdown) throw new CollabLinkError("not_startable", "omp is shutting down");
+		if (this.#ctx.collabGuest) {
+			throw new CollabLinkError("not_startable", "this session is joined to another room as a guest");
+		}
+		const existing = this.host;
+		let host: CollabHost;
+		try {
+			// `external` makes start() refuse, rather than tear down, a room that
+			// does not grant `access` — at arrival and again once queued.
+			host = await this.start({ access, external: true });
+		} catch (err) {
+			if (err instanceof CollabLinkError) throw err;
+			throw new CollabLinkError("start_failed", err instanceof Error ? err.message : String(err));
+		}
+		if (!existing) this.#ctx.showStatus(`Collab started from omp collab start (${access} access)`, { dim: true });
+		const url = access === "view" ? host.webViewLink : host.webLink;
+		if (!url) throw new CollabLinkError("start_failed", "the room has no link yet; try again");
+		return { generation: host.generation, access, url };
 	}
 
 	/** The live room for the current session; stale or ending rooms are absent. */
@@ -146,6 +238,7 @@ export class CollabController {
 		if (this.#ctx.collabGuest) throw new CollabHostStoppedError("collab guest owns the session");
 		const existing = this.host;
 		if (existing && (existing.access === "control" || options.access === "view")) return existing;
+		if (existing && options.external) throw new CollabLinkError("access_unavailable", EXTERNAL_UPGRADE_REFUSED);
 		const stopEpoch = this.#stopEpoch;
 		// Abort an in-flight or stale room before queuing behind its startup.
 		const stopping =
@@ -158,6 +251,7 @@ export class CollabController {
 			// this request waited. Reuse or upgrade it rather than racing its launch.
 			const current = this.host;
 			if (current && (current.access === "control" || options.access === "view")) return current;
+			if (current && options.external) throw new CollabLinkError("access_unavailable", EXTERNAL_UPGRADE_REFUSED);
 			if (current) await this.#stopHost(current, "restarting with control access");
 			return this.#launch(options.access, stopEpoch, options.relay);
 		});
@@ -198,10 +292,14 @@ export class CollabController {
 		this.#relaunchTimer = undefined;
 		this.#unsubscribeSessionChange?.();
 		this.#unsubscribeSessionChange = undefined;
+		// Withdraw the idle entry before the (possibly slow) room teardown so no
+		// start request arrives for a process that is going away.
+		const withdrawn = this.#idlePublication?.then(publication => publication?.close());
 		// Stop before draining the chain: a room still connecting is aborted at
 		// once instead of holding shutdown for the relay connect timeout.
 		await this.stop(reason);
 		await this.#ops;
+		await withdrawn;
 	}
 
 	#resolveRelayUrl(relay?: string): string {

@@ -166,7 +166,7 @@ describe("collab host registry (two-process smoke)", () => {
 		expect({ code: listed.code, stderr: listed.stderr }).toEqual({ code: 0, stderr: "" });
 		const listJson: CollabListJsonOutput = JSON.parse(listed.stdout);
 		const hosts = await listCollabHosts({ dir: path.join(home, ".omp", "run", "collab-hosts") });
-		expect(listJson).toEqual({ version: COLLAB_REGISTRY_VERSION, hosts });
+		expect(listJson).toEqual({ version: COLLAB_REGISTRY_VERSION, hosts, idle: [] });
 		expect(listJson.hosts).toHaveLength(1);
 		expect(listJson.hosts[0]).toMatchObject({ instanceId, pid: child.pid });
 		expect(listJson.hosts[0]).not.toHaveProperty("url");
@@ -201,5 +201,69 @@ describe("collab host registry (two-process smoke)", () => {
 			return result.code === 0 && json.hosts.length === 0;
 		}, CLI_TIMEOUT_MS);
 		expect(afterStop).toBe(true);
+	}, 120_000);
+
+	it("lists an idle process apart from a host and starts it through the real CLI, after which it is a host", async () => {
+		const home = await tempDir("omp-collab-smoke-idle-");
+		const env: Record<string, string | undefined> = { ...process.env, HOME: home, USERPROFILE: home, NO_COLOR: "1" };
+		delete env.PI_CONFIG_DIR;
+		delete env.PI_PROFILE;
+		delete env.OMP_PROFILE;
+		delete env.PI_CODING_AGENT_DIR;
+		const hosting = spawnHelper([], {
+			...env,
+			OMP_SMOKE_MARKER: "hosting",
+			OMP_SMOKE_INSTANCE_ID: "hosting-proc",
+		});
+		const idling = spawnHelper([], {
+			...env,
+			OMP_SMOKE_MARKER: "idling",
+			OMP_SMOKE_INSTANCE_ID: "idling-proc",
+			OMP_SMOKE_MODE: "idle",
+		});
+		for (const helper of [hosting, idling]) {
+			expect(await readUntil(helper.child.stdout, "READY", READY_TIMEOUT_MS)).toBe(true);
+			expect(helper.stderr()).toBe("");
+		}
+
+		const runCli = async (args: string[]): Promise<{ code: number; stdout: string; stderr: string }> => {
+			const cli = Bun.spawn([process.execPath, CLI_PATH, "collab", ...args], {
+				cwd: path.resolve(import.meta.dir, "../.."),
+				env,
+				stdin: "ignore",
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			liveChildren.push(cli);
+			const [code, stdout, stderr] = await Promise.all([
+				cli.exited,
+				new Response(cli.stdout).text(),
+				new Response(cli.stderr).text(),
+			]);
+			return { code, stdout, stderr };
+		};
+
+		const before: CollabListJsonOutput = JSON.parse((await runCli(["list", "--json"])).stdout);
+		expect(before.hosts.map(host => host.instanceId)).toEqual(["hosting-proc"]);
+		expect(before.idle).toMatchObject([{ instanceId: "idling-proc", pid: idling.child.pid, busy: false }]);
+		expect(JSON.stringify(before)).not.toContain("https://collab.example");
+
+		const started = await runCli(["start", String(idling.child.pid), "--json"]);
+		expect({ code: started.code, stderr: started.stderr }).toEqual({ code: 0, stderr: "" });
+		expect(JSON.parse(started.stdout)).toEqual({
+			version: COLLAB_REGISTRY_VERSION,
+			instanceId: "idling-proc",
+			generation: 1,
+			access: "control",
+			url: "https://collab.example/control/idling",
+		});
+
+		const after: CollabListJsonOutput = JSON.parse((await runCli(["list", "--json"])).stdout);
+		expect(after.hosts.map(host => host.instanceId)).toEqual(["hosting-proc", "idling-proc"]);
+		expect(after.idle).toEqual([]);
+
+		// An already hosting process answers `start` with its existing link.
+		const again = await runCli(["start", "idling-proc", "--view"]);
+		expect(again).toEqual({ code: 0, stdout: "https://collab.example/view/idling\n", stderr: "" });
 	}, 120_000);
 });

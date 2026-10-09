@@ -70,6 +70,7 @@ function makeHostContext(snapshot: SizedSnapshot): InteractiveModeContext {
 			sessionName: "large",
 			model: undefined,
 			thinkingLevel: undefined,
+			getAvailableEffortSelectors: () => [],
 			subscribe: () => () => {},
 			emitNotice: () => {},
 			promptCustomMessage: () => Promise.resolve(),

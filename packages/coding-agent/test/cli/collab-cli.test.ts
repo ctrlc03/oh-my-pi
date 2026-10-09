@@ -8,8 +8,11 @@ import {
 	COLLAB_REGISTRY_VERSION,
 	type CollabHostPublication,
 	type CollabHostSnapshot,
+	type CollabIdleRegistrySource,
+	type CollabIdleSnapshot,
 	CollabLinkError,
 	publishCollabHost,
+	publishCollabIdle,
 	resolveCollabHostLink,
 } from "@oh-my-pi/pi-coding-agent/collab/registry";
 import Collab from "@oh-my-pi/pi-coding-agent/commands/collab";
@@ -83,6 +86,29 @@ async function publish(dir: string, fixture: HostFixture): Promise<void> {
 	publications.push(pub);
 }
 
+const IDLE: CollabIdleSnapshot = {
+	instanceId: "idle-delta",
+	pid: process.pid,
+	sessionId: "sess-delta",
+	sessionName: "Delta Session",
+	cwd: "/tmp/work/delta",
+	model: { provider: "test", id: "delta-model" },
+	startedAt: 1_700_000_200_000,
+	busy: false,
+};
+
+async function publishIdle(dir: string, source: Partial<CollabIdleRegistrySource> = {}): Promise<void> {
+	const pub = await publishCollabIdle(
+		{
+			snapshot: () => IDLE,
+			start: async access => ({ generation: 1, access, url: `https://collab.test/#delta-${access}-url` }),
+			...source,
+		},
+		{ dir, instanceId: IDLE.instanceId },
+	);
+	publications.push(pub);
+}
+
 interface Collector {
 	print: (line: string) => void;
 	plain: () => string;
@@ -102,17 +128,22 @@ function collector(): Collector {
 async function runCommand(argv: string[], dir: string, out: Collector): Promise<void> {
 	const list = collabCli.runCollabListCommand;
 	const link = collabCli.runCollabLinkCommand;
+	const start = collabCli.runCollabStartCommand;
 	const listSpy = spyOn(collabCli, "runCollabListCommand").mockImplementation(args =>
 		list({ ...args, registry: { dir } }, out.print),
 	);
 	const linkSpy = spyOn(collabCli, "runCollabLinkCommand").mockImplementation(args =>
 		link({ ...args, registry: { dir } }, out.print),
 	);
+	const startSpy = spyOn(collabCli, "runCollabStartCommand").mockImplementation(args =>
+		start({ ...args, registry: { dir } }, out.print),
+	);
 	try {
 		await new Collab(argv, CONFIG).run();
 	} finally {
 		listSpy.mockRestore();
 		linkSpy.mockRestore();
+		startSpy.mockRestore();
 	}
 }
 
@@ -180,7 +211,7 @@ describe("Collab CLI", () => {
 		const out = collector();
 		await runCommand(["list", "--json"], dir, out);
 
-		const expected = { version: COLLAB_REGISTRY_VERSION, hosts: [ALPHA.snapshot, BRAVO.snapshot] };
+		const expected = { version: COLLAB_REGISTRY_VERSION, hosts: [ALPHA.snapshot, BRAVO.snapshot], idle: [] };
 		expect(out.plain()).toBe(JSON.stringify(expected, null, 2));
 		for (const fixture of [ALPHA, BRAVO]) {
 			expect(out.plain()).not.toContain(fixture.controlUrl);
@@ -189,6 +220,84 @@ describe("Collab CLI", () => {
 		const again = collector();
 		await runCommand(["-j"], dir, again);
 		expect(again.plain()).toBe(out.plain());
+	});
+
+	it("lists idle sessions in their own section, apart from hosts, and under `idle` in JSON", async () => {
+		const dir = await makeTmpDir();
+		await publish(dir, ALPHA);
+		await publishIdle(dir);
+		const text = collector();
+		await runCommand(["list"], dir, text);
+
+		const plain = text.plain();
+		expect(plain).toContain("1 active Collab host");
+		expect(plain).toContain("1 idle omp session (not shared)");
+		expect(plain).toContain("idle-delta  Delta Session (sess-delta)  /tmp/work/delta");
+		expect(plain).toContain("omp collab start <instanceId|pid>");
+		// Hosts come first; the idle process is not rendered as a host row.
+		expect(plain.indexOf("host-alpha")).toBeLessThan(plain.indexOf("1 idle omp session"));
+		expect(plain.indexOf("idle-delta")).toBeGreaterThan(plain.indexOf("1 idle omp session"));
+		expect(plain).not.toContain("gen 1");
+
+		const json = collector();
+		await runCommand(["list", "--json"], dir, json);
+		expect(JSON.parse(json.plain())).toEqual({
+			version: COLLAB_REGISTRY_VERSION,
+			hosts: [ALPHA.snapshot],
+			idle: [IDLE],
+		});
+	});
+
+	it("starts an idle session with control by default or view on request and prints only that link", async () => {
+		const dir = await makeTmpDir();
+		const requested: string[] = [];
+		await publishIdle(dir, {
+			start: async access => {
+				requested.push(access);
+				return { generation: 3, access, url: `https://collab.test/#delta-${access}-url` };
+			},
+		});
+		const control = collector();
+		await runCommand(["start", String(process.pid)], dir, control);
+		expect(control.calls).toEqual(["https://collab.test/#delta-control-url"]);
+		const view = collector();
+		await runCommand(["start", IDLE.instanceId, "--view"], dir, view);
+		expect(view.calls).toEqual(["https://collab.test/#delta-view-url"]);
+		expect(requested).toEqual(["control", "view"]);
+
+		const json = collector();
+		await runCommand(["start", IDLE.instanceId, "-j"], dir, json);
+		expect(JSON.parse(json.plain())).toEqual({
+			version: COLLAB_REGISTRY_VERSION,
+			instanceId: IDLE.instanceId,
+			generation: 3,
+			access: "control",
+			url: "https://collab.test/#delta-control-url",
+		});
+	});
+
+	it("reports why an idle session could not start as a nonzero failure without output", async () => {
+		const dir = await makeTmpDir();
+		await publishIdle(dir, {
+			start: () => Promise.reject(new Error("No relay configured.\nSet collab.relayUrl")),
+		});
+		const errors: string[] = [];
+		spyOn(process.stderr, "write").mockImplementation(chunk => {
+			errors.push(String(chunk));
+			return true;
+		});
+		const previousExitCode = process.exitCode;
+		const out = collector();
+		try {
+			await runCommand(["start", IDLE.instanceId], dir, out);
+			expect(process.exitCode).toBe(1);
+			expect(errors.join("")).toBe(
+				`error: session ${IDLE.instanceId} failed to start hosting: No relay configured. Set collab.relayUrl\n`,
+			);
+			expect(out.calls).toEqual([]);
+		} finally {
+			process.exitCode = previousExitCode ?? 0;
+		}
 	});
 
 	it("prints only the control URL when linking by instance ID", async () => {
@@ -270,16 +379,25 @@ describe("Collab CLI", () => {
 		}
 	});
 
-	const usageRejections: string[][] = [["list", "--view"], ["list", "extra"], ["link"], ["link", "a", "b"]];
+	const usageRejections: string[][] = [
+		["list", "--view"],
+		["list", "extra"],
+		["link"],
+		["link", "a", "b"],
+		["start"],
+		["start", "a", "b"],
+	];
 	for (const argv of usageRejections) {
 		it(`rejects ${JSON.stringify(argv)} through the usage path before invoking the registry`, async () => {
 			const unexpected = new Error("registry must not be invoked for invalid usage");
-			const listSpy = spyOn(registry, "listCollabHosts").mockRejectedValue(unexpected);
+			const listSpy = spyOn(registry, "listCollabSessions").mockRejectedValue(unexpected);
 			const linkSpy = spyOn(registry, "resolveCollabHostLink").mockRejectedValue(unexpected);
+			const startSpy = spyOn(registry, "startCollabSession").mockRejectedValue(unexpected);
 
 			await expect(new Collab(argv, CONFIG).run()).rejects.toBeInstanceOf(CliUsageError);
 			expect(listSpy).not.toHaveBeenCalled();
 			expect(linkSpy).not.toHaveBeenCalled();
+			expect(startSpy).not.toHaveBeenCalled();
 		});
 	}
 });

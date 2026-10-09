@@ -8,6 +8,7 @@
  * a room when the relay reports it gone.
  */
 
+import type { ImageContent } from "@oh-my-pi/pi-wire";
 import { parseCollabLink } from "./link";
 import { readJson, writeJson } from "./storage";
 
@@ -15,6 +16,9 @@ const ROOMS_KEY = "omp.collab.rooms";
 const ACTIVE_KEY = "omp.collab.active";
 const DRAFT_PREFIX = "omp.collab.draft.";
 const MAX_ROOMS = 12;
+const QUEUE_PREFIX = "omp.collab.queue.";
+const SEEN_KEY = "omp.collab.seen";
+const MAX_SEEN_ROOMS = 50;
 
 export interface RecentRoom {
 	roomId: string;
@@ -66,6 +70,11 @@ export function forgetRoom(roomId: string): RecentRoom[] {
 	const next = loadRooms().filter(r => r.roomId !== roomId);
 	writeJson(ROOMS_KEY, next);
 	writeJson(DRAFT_PREFIX + roomId, null);
+	writeJson(QUEUE_PREFIX + roomId, null);
+	writeJson(
+		SEEN_KEY,
+		loadSeenMap().filter(seen => seen.roomId !== roomId),
+	);
 	if (roomIdOf(activeLink() ?? "") === roomId) setActiveLink(null);
 	return next;
 }
@@ -81,6 +90,60 @@ export function loadDraft(roomId: string): string {
 
 export function saveDraft(roomId: string, text: string): void {
 	writeJson(DRAFT_PREFIX + roomId, text ? text : null);
+}
+
+/** A prompt typed while the connection was down, waiting to be handed to the socket once live. */
+export interface QueuedPrompt {
+	id: string;
+	text: string;
+	images?: ImageContent[];
+}
+
+function isQueuedPrompt(value: unknown): value is QueuedPrompt {
+	if (typeof value !== "object" || value === null) return false;
+	const q = value as Record<string, unknown>;
+	return typeof q.id === "string" && typeof q.text === "string" && (q.images === undefined || Array.isArray(q.images));
+}
+
+/** Prompts queued offline for a room; persisted so an app kill keeps them. */
+export function loadPromptQueue(roomId: string): QueuedPrompt[] {
+	const raw = readJson(QUEUE_PREFIX + roomId);
+	return Array.isArray(raw) ? raw.filter(isQueuedPrompt) : [];
+}
+
+export function savePromptQueue(roomId: string, queue: readonly QueuedPrompt[]): void {
+	writeJson(QUEUE_PREFIX + roomId, queue.length > 0 ? queue : null);
+}
+
+interface SeenEntry {
+	roomId: string;
+	entryId: string;
+}
+
+/** Newest first. */
+function loadSeenMap(): SeenEntry[] {
+	const raw = readJson(SEEN_KEY);
+	if (!Array.isArray(raw)) return [];
+	return raw.filter(
+		(v): v is SeenEntry =>
+			typeof v === "object" &&
+			v !== null &&
+			typeof (v as SeenEntry).roomId === "string" &&
+			typeof (v as SeenEntry).entryId === "string",
+	);
+}
+
+/** Id of the last transcript entry the user saw in a room, or null when unknown. */
+export function loadSeen(roomId: string): string | null {
+	return loadSeenMap().find(seen => seen.roomId === roomId)?.entryId ?? null;
+}
+
+/** Remember the last entry seen in a room; the 50 most recently updated rooms are kept. */
+export function saveSeen(roomId: string, entryId: string): void {
+	writeJson(
+		SEEN_KEY,
+		[{ roomId, entryId }, ...loadSeenMap().filter(seen => seen.roomId !== roomId)].slice(0, MAX_SEEN_ROOMS),
+	);
 }
 
 /**

@@ -1,26 +1,45 @@
 /**
  * omp collab companion: keeps one encrypted relay room open on this computer
- * so the collab web app can list every omp session hosting `/collab` here and
- * join any of them without fetching a new link.
+ * so the collab web app can list every omp session on it, read its git state,
+ * start new sessions, and join any hosted session without fetching a new link.
  *
- *   bun scripts/companion.ts            # print the pairing link + QR, then serve
- *   bun scripts/companion.ts --rotate   # new room key: unpairs every device
+ *   bun scripts/companion.ts             # print the pairing link + QR, then serve
+ *   bun scripts/companion.ts --rotate    # new room key: unpairs every device
+ *   bun scripts/companion.ts --pair      # print the pairing link + QR and exit
+ *   bun scripts/companion.ts --install   # macOS: run at login as a LaunchAgent
+ *   bun scripts/companion.ts --install --dry-run   # print the LaunchAgent plist only
+ *   bun scripts/companion.ts --uninstall # remove the LaunchAgent
  *
  * Pair once by scanning the QR code (or pasting the link) in the web app. The
  * room id and key persist in `<config>/agent/collab-companion.json` (mode 0600),
  * so restarts keep devices paired. Anyone holding the pairing link can join
  * every session on this computer with full control, exactly as if they held
- * each session's control link.
+ * each session's control link, and can read files under each session's
+ * repository and start omp in any folder.
+ *
+ * `--install` writes `~/Library/LaunchAgents/sh.omp.collab-companion.plist`
+ * (RunAtLoad + KeepAlive, absolute bun/script/omp paths, log in
+ * `~/Library/Logs/omp-collab-companion.log`) and loads it. Only one companion
+ * may hold the room: stop a manually running one first, or the two fight over
+ * it (relay close 4009). `--pair` shows the link while the agent runs.
  *
  * Session data comes from the installed omp CLI (`omp collab list --json`,
- * `omp collab link <id> --json`), so the companion works with whichever omp
- * version runs the sessions. Set OMP_BIN when `omp` is not on PATH (launchd).
+ * `omp collab link <id> --json`, `omp collab start <id> --json`), so the
+ * companion works with whichever omp version runs the sessions; features the
+ * CLI lacks (listing and sharing idle sessions) simply stay empty. Set OMP_BIN
+ * when `omp` is not on PATH (launchd).
+ *
+ * Starting a session (`start` request) needs tmux: omp runs in a detached
+ * `omp-<id>` tmux session with a companion-owned config overlay
+ * (`<config>/agent/collab-companion-overlay.yml`) that hosts it with control
+ * access. Attach from a terminal with `tmux attach -t omp-<id>`.
  *
  * Web Push: devices that turn notifications on hand over a push subscription;
  * the companion then keeps polling while it runs and notifies them when a
- * session needs input or finishes a turn, sending straight to the browser's
- * push service with its own VAPID key (no server in between). A device that is
- * showing the app is skipped: it alerts in-app instead.
+ * session needs input (with the pending question) or finishes a turn (with the
+ * start of the reply), sending straight to the browser's push service with its
+ * own VAPID key (no server in between). A device that is showing the app is
+ * skipped: it alerts in-app instead.
  */
 
 import * as fs from "node:fs/promises";
@@ -30,6 +49,7 @@ import { QrCode, renderQrHalfBlocks } from "@oh-my-pi/pi-tui/chrome/qrcode";
 import { generateRoomKey, importRoomKey } from "../src/lib/codec";
 import {
 	type CompanionHost,
+	type CompanionIdleSession,
 	type CompanionReply,
 	type CompanionRequest,
 	PAIR_PREFIX,
@@ -45,6 +65,16 @@ import {
 	parseCollabLink,
 } from "../src/lib/link";
 import { CollabSocket } from "../src/lib/socket";
+import { gitDiff, gitSnapshot, readRepoFile } from "./companion-git";
+import { installLaunchAgent, launchLogPath, uninstallLaunchAgent } from "./companion-launchd";
+import {
+	lastAssistantSummary,
+	pendingQuestion,
+	readSessionTail,
+	recentFolders,
+	SAFE_ID_RE,
+} from "./companion-sessions";
+import { findTmux, killTmuxSession, launchInTmux } from "./companion-start";
 import { generateVapidKeys, isPushSubscription, sendPush, type VapidKeys } from "./web-push";
 
 /** Host list refresh while at least one device is connected. */
@@ -55,8 +85,14 @@ const PUSH_POLL_MS = 6_000;
 const RECONNECT_MS = 5_000;
 const DEFAULT_WEB_URL = "https://my.omp.sh/";
 
-const statePath = path.join(os.homedir(), process.env.PI_CONFIG_DIR || ".omp", "agent", "collab-companion.json");
+const configDir = path.join(os.homedir(), process.env.PI_CONFIG_DIR || ".omp");
+const statePath = path.join(configDir, "agent", "collab-companion.json");
+const sessionsDir = path.join(configDir, "agent", "sessions");
+const overlayPath = path.join(configDir, "agent", "collab-companion-overlay.yml");
 const ompBin = process.env.OMP_BIN || Bun.which("omp") || path.join(os.homedir(), ".bun", "bin", "omp");
+/** How long `start` waits for the new omp to appear in `omp collab list`. */
+const START_WAIT_MS = 45_000;
+const START_POLL_MS = 1_000;
 
 interface CompanionState {
 	relayUrl: string;
@@ -80,6 +116,17 @@ interface ListedHost {
 	inputRequired: boolean;
 	busy?: boolean | null;
 	access: "view" | "control";
+}
+
+/** An `idle` row of `omp collab list --json`; absent from omp CLIs that predate sharing idle sessions. */
+interface ListedIdle {
+	instanceId: string;
+	sessionId: string;
+	sessionName: string | null;
+	cwd: string;
+	model: { provider: string; id: string } | null;
+	startedAt: number;
+	busy: boolean | null;
 }
 
 async function omp(args: string[]): Promise<string> {
@@ -142,10 +189,10 @@ async function loadState(relayUrl: string, rotate: boolean): Promise<CompanionSt
 	return state;
 }
 
-/** Control-capable hosts only: the app joins with full control or not at all. */
-async function listHosts(): Promise<CompanionHost[]> {
-	const parsed = JSON.parse(await omp(["collab", "list", "--json"])) as { hosts?: ListedHost[] };
-	return (parsed.hosts ?? [])
+/** Control-capable hosts (the app joins with full control or not at all) and idle sessions that could be shared. */
+async function listSessions(): Promise<{ hosts: CompanionHost[]; idle: CompanionIdleSession[] }> {
+	const parsed = JSON.parse(await omp(["collab", "list", "--json"])) as { hosts?: ListedHost[]; idle?: ListedIdle[] };
+	const hosts = (parsed.hosts ?? [])
 		.filter(host => host.access === "control")
 		.map(host => ({
 			instanceId: host.instanceId,
@@ -160,6 +207,19 @@ async function listHosts(): Promise<CompanionHost[]> {
 			relayConnected: host.relayConnected,
 		}))
 		.sort((a, b) => b.startedAt - a.startedAt);
+	const idle = (Array.isArray(parsed.idle) ? parsed.idle : [])
+		.filter(row => typeof row?.instanceId === "string" && typeof row.cwd === "string")
+		.map(row => ({
+			instanceId: row.instanceId,
+			sessionId: row.sessionId,
+			sessionName: row.sessionName ?? null,
+			cwd: row.cwd,
+			model: row.model ? `${row.model.provider}/${row.model.id}` : null,
+			startedAt: row.startedAt,
+			busy: row.busy ?? null,
+		}))
+		.sort((a, b) => b.startedAt - a.startedAt);
+	return { hosts, idle };
 }
 
 async function resolveLink(instanceId: string): Promise<string> {
@@ -168,9 +228,22 @@ async function resolveLink(instanceId: string): Promise<string> {
 	return parsed.url;
 }
 
+/** Make an idle session host collab (`omp collab start`); resolves with its control link. */
+async function shareSession(instanceId: string): Promise<string> {
+	const parsed = JSON.parse(await omp(["collab", "start", instanceId, "--json"])) as { url?: unknown };
+	if (typeof parsed.url !== "string" || !parsed.url) throw new Error("omp returned no link");
+	return parsed.url;
+}
+
 // ── startup ──────────────────────────────────────────────────────────────────
 
-const rotate = Bun.argv.includes("--rotate");
+const flags = Bun.argv.slice(2);
+if (flags.includes("--uninstall")) {
+	const existed = await uninstallLaunchAgent();
+	console.log(existed ? "companion LaunchAgent removed" : "companion LaunchAgent was not installed");
+	process.exit(0);
+}
+const rotate = flags.includes("--rotate");
 const relayUrl = (await configValue("collab.relayUrl")) || DEFAULT_RELAY_URL;
 const webUrl = (await configValue("collab.webUrl")) || DEFAULT_WEB_URL;
 const state = await loadState(relayUrl, rotate);
@@ -185,6 +258,20 @@ console.log("omp collab companion");
 console.log(`pair a device: scan the code or open ${pairUrl}`);
 for (const row of renderQrHalfBlocks(QrCode.encodeText(pairUrl, "M"))) console.log(` ${row}`);
 console.log(`pairing stored in ${statePath}; --rotate unpairs every device`);
+
+if (flags.includes("--install")) {
+	const dryRun = flags.includes("--dry-run");
+	const { plistPath, plist } = await installLaunchAgent({ ompBin, script: import.meta.path, dryRun });
+	if (dryRun) {
+		console.log(`dry run: would write ${plistPath}:\n${plist}`);
+	} else {
+		console.log(`LaunchAgent installed (${plistPath}); the companion now starts at login and restarts if it exits`);
+		console.log(`log: ${launchLogPath()}`);
+		console.log("stop any manually running companion: two of them fight over the room (relay close 4009)");
+	}
+	process.exit(0);
+}
+if (flags.includes("--pair")) process.exit(0);
 
 // ── room ─────────────────────────────────────────────────────────────────────
 
@@ -201,6 +288,9 @@ let lastHostsJson = "";
 let pollTimer: Timer | undefined;
 /** Per-host state at the previous poll; null until a poll after (re)starting to watch. */
 let seen: Map<string, { busy: boolean | null; inputRequired: boolean }> | null = null;
+/** Sessions from the latest `omp collab list`; requests naming an instance resolve against these. */
+let knownHosts: CompanionHost[] = [];
+let knownIdle: CompanionIdleSession[] = [];
 
 function errorText(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
@@ -239,6 +329,26 @@ function notify(host: CompanionHost, body: string): void {
 	}
 }
 
+/**
+ * Push the session's pending question or the start of its last reply, falling
+ * back to a fixed text when its file cannot be read. The session file may lag
+ * the edge by a moment, so a missing question is looked for once more.
+ */
+async function announce(host: CompanionHost, edge: "input" | "done"): Promise<void> {
+	let body = edge === "input" ? "Needs your input" : "Finished, your turn";
+	try {
+		const read = async () => {
+			const entries = await readSessionTail(sessionsDir, host.sessionId);
+			return edge === "input" ? pendingQuestion(entries) : lastAssistantSummary(entries);
+		};
+		const text = (await read()) ?? (await Bun.sleep(750).then(read));
+		if (text) body = text;
+	} catch (err) {
+		console.error(`companion: reading session text failed: ${errorText(err)}`);
+	}
+	notify(host, body);
+}
+
 /** Push on a session's needs-input and busy→idle edges since the previous poll. */
 function detectEdges(hosts: CompanionHost[]): void {
 	const prev = seen;
@@ -247,28 +357,93 @@ function detectEdges(hosts: CompanionHost[]): void {
 	for (const host of hosts) {
 		const before = prev.get(host.instanceId);
 		if (!before) continue;
-		if (host.inputRequired && !before.inputRequired) notify(host, "Needs your input");
-		else if (before.busy === true && host.busy === false && !host.inputRequired) notify(host, "Finished, your turn");
+		if (host.inputRequired && !before.inputRequired) void announce(host, "input");
+		else if (before.busy === true && host.busy === false && !host.inputRequired) void announce(host, "done");
 	}
+}
+
+async function loadSessions(): Promise<{ hosts: CompanionHost[]; idle: CompanionIdleSession[] }> {
+	const listed = await listSessions();
+	knownHosts = listed.hosts;
+	knownIdle = listed.idle;
+	return listed;
 }
 
 /** Broadcast the host list when it changed; otherwise answer only `targetPeer`, if any. */
 async function refresh(targetPeer?: number): Promise<void> {
-	let hosts: CompanionHost[];
+	let listed: { hosts: CompanionHost[]; idle: CompanionIdleSession[] };
 	try {
-		hosts = await listHosts();
+		listed = await loadSessions();
 	} catch (err) {
 		console.error(`companion: omp collab list failed: ${errorText(err)}`);
 		return;
 	}
-	detectEdges(hosts);
+	detectEdges(listed.hosts);
 	// Push-only polling: nobody to tell; a device's `list` on joining gets a fresh answer.
 	if (peers.size === 0) return;
-	const json = JSON.stringify(hosts);
-	const frame: CompanionReply = { t: "hosts", machine, hosts, vapidKey: state.vapid.publicKey };
+	const canStart = (await findTmux()) !== null;
+	const frame: CompanionReply = {
+		t: "hosts",
+		machine,
+		hosts: listed.hosts,
+		vapidKey: state.vapid.publicKey,
+		idle: listed.idle,
+		canStart,
+	};
+	const json = JSON.stringify(frame);
 	if (json !== lastHostsJson) socket.send(frame);
 	else if (targetPeer !== undefined) socket.send(frame, targetPeer);
 	lastHostsJson = json;
+}
+
+function checkInstanceId(value: unknown): string {
+	if (typeof value !== "string" || !SAFE_ID_RE.test(value)) throw new Error("invalid instance id");
+	return value;
+}
+
+/** Working directory of a listed session, refreshing the list once for an unknown instance. */
+async function sessionCwd(instanceId: unknown): Promise<string> {
+	const id = checkInstanceId(instanceId);
+	const find = () => [...knownHosts, ...knownIdle].find(s => s.instanceId === id);
+	let session = find();
+	if (!session) {
+		await loadSessions();
+		session = find();
+	}
+	if (!session) throw new Error("unknown session");
+	return session.cwd;
+}
+
+/** Start omp in a detached tmux session and wait until it hosts collab; resolves with its instance id. */
+async function startSession(cwd: unknown, resume: unknown): Promise<string> {
+	if (typeof cwd !== "string" || (resume !== undefined && typeof resume !== "string")) {
+		throw new Error("invalid request");
+	}
+	const tmux = await findTmux();
+	if (!tmux) throw new Error("tmux is not installed on this computer");
+	const before = new Set((await loadSessions()).hosts.map(h => h.instanceId));
+	const spawnedAt = Date.now();
+	const launched = await launchInTmux({ tmux, ompBin, overlayPath, cwd, resume });
+	while (Date.now() < spawnedAt + START_WAIT_MS) {
+		await Bun.sleep(START_POLL_MS);
+		let hosts: CompanionHost[];
+		try {
+			hosts = (await loadSessions()).hosts;
+		} catch {
+			continue;
+		}
+		for (const host of hosts) {
+			if (before.has(host.instanceId)) continue;
+			const hostCwd = await fs.realpath(host.cwd).catch(() => host.cwd);
+			const resumed = resume !== undefined && host.sessionId.startsWith(resume);
+			if (resumed || (hostCwd === launched.cwd && host.startedAt >= spawnedAt - 1_000)) {
+				await refresh();
+				return host.instanceId;
+			}
+		}
+	}
+	await killTmuxSession(tmux, launched.name);
+	throw new Error("omp did not start hosting in time");
 }
 
 /** Poll while a device is connected (fast) or one wants push notifications (slower). */
@@ -317,26 +492,74 @@ socket.onFrame = (frame, fromPeer) => {
 	// peer-joined control message predates this connection.
 	peers.add(fromPeer);
 	schedulePoll();
-	const fail = (reqId: number) => (err: unknown) =>
-		socket.send({ t: "error", reqId, message: errorText(err) }, fromPeer);
+	if ("reqId" in frame && typeof frame.reqId !== "number") return;
+	/** Answer a request with whatever `work` resolves to, or with its error. */
+	const respond = (reqId: number, work: () => Promise<CompanionReply>): void => {
+		work().then(
+			reply => socket.send(reply, fromPeer),
+			err => socket.send({ t: "error", reqId, message: errorText(err) }, fromPeer),
+		);
+	};
 	switch (frame.t) {
 		case "list":
 			void refresh(fromPeer);
 			return;
 		case "link":
-			resolveLink(frame.instanceId).then(
-				url => socket.send({ t: "link", reqId: frame.reqId, url }, fromPeer),
-				fail(frame.reqId),
-			);
+			respond(frame.reqId, async () => {
+				return { t: "link", reqId: frame.reqId, url: await resolveLink(checkInstanceId(frame.instanceId)) };
+			});
 			return;
 		case "push":
-			setSubscription(frame.subscription, frame.on).then(
-				() => socket.send({ t: "ok", reqId: frame.reqId }, fromPeer),
-				fail(frame.reqId),
-			);
+			respond(frame.reqId, async () => {
+				await setSubscription(frame.subscription, frame.on === true);
+				return { t: "ok", reqId: frame.reqId };
+			});
 			return;
 		case "presence":
 			presence.set(fromPeer, { endpoint: frame.endpoint, visible: frame.visible });
+			return;
+		case "git":
+			respond(frame.reqId, async () => ({
+				t: "git",
+				reqId: frame.reqId,
+				git: await gitSnapshot(await sessionCwd(frame.instanceId)),
+			}));
+			return;
+		case "git-diff":
+			respond(frame.reqId, async () => {
+				if (typeof frame.path !== "string") throw new Error("invalid path");
+				const { diff, truncated } = await gitDiff(await sessionCwd(frame.instanceId), frame.path);
+				return { t: "diff", reqId: frame.reqId, diff, truncated };
+			});
+			return;
+		case "file":
+			respond(frame.reqId, async () => {
+				if (typeof frame.path !== "string") throw new Error("invalid path");
+				return {
+					t: "file",
+					reqId: frame.reqId,
+					file: await readRepoFile(await sessionCwd(frame.instanceId), frame.path),
+				};
+			});
+			return;
+		case "folders":
+			respond(frame.reqId, async () => ({
+				t: "folders",
+				reqId: frame.reqId,
+				folders: await recentFolders(sessionsDir),
+			}));
+			return;
+		case "start":
+			respond(frame.reqId, async () => ({
+				t: "started",
+				reqId: frame.reqId,
+				instanceId: await startSession(frame.cwd, frame.resume),
+			}));
+			return;
+		case "share":
+			respond(frame.reqId, async () => {
+				return { t: "link", reqId: frame.reqId, url: await shareSession(checkInstanceId(frame.instanceId)) };
+			});
 			return;
 	}
 };

@@ -1,9 +1,11 @@
 import type { AssistantMessage, ImageContent, SessionEntry, TextContent, ToolResultMessage } from "@oh-my-pi/pi-wire";
-import { ArrowDown, ChevronRight } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ActiveTool, ConnectionPhase } from "../../lib/client";
 import { fmtTokens } from "../../lib/format";
+import type { NewSince } from "../../lib/new-since";
+import type { QueuedPrompt } from "../../lib/rooms";
 import type { ToolRenderHost } from "../../tool-render";
 import { buildChatItems, type ChatItem, type ChatToolCall } from "./chat-items";
 import { Markdown, StreamingMarkdown } from "./Markdown";
@@ -25,6 +27,16 @@ export interface TranscriptProps {
 	phase?: ConnectionPhase;
 	/** Find-in-session: highlight `query` and bring entry `target` into view. */
 	search?: { query: string; target: string | null };
+	/** Entries that arrived since the reader last left: the first gets a divider, a pill jumps to it. */
+	newSince?: NewSince;
+	/** The reader has reached the divider; the pill is gone, the divider stays. */
+	newSeen?: boolean;
+	onNewSeen?(): void;
+	/** Reader is at the tail of a live, visible transcript: `entryId` is the newest entry they have seen. */
+	onTail?(entryId: string): void;
+	/** Prompts waiting for the connection, shown as pending bubbles at the end. */
+	queued?: readonly QueuedPrompt[];
+	onCancelQueued?(id: string): void;
 }
 
 interface ScrollGeometry {
@@ -68,6 +80,14 @@ function Row({
 				{gutter}
 			</div>
 			<div className="tr-body">{children}</div>
+		</div>
+	);
+}
+
+function NewDivider(): ReactNode {
+	return (
+		<div className="tr-divider tr-divider--new" data-new-divider>
+			<span>New since you left</span>
 		</div>
 	);
 }
@@ -420,7 +440,24 @@ function paintSearch(root: HTMLElement, query: string, current: Element | null):
 }
 
 export function Transcript(props: TranscriptProps): ReactNode {
-	const { entries, stream, streamDone, activeTools, working, compact, chat, host, phase, search } = props;
+	const {
+		entries,
+		stream,
+		streamDone,
+		activeTools,
+		working,
+		compact,
+		chat,
+		host,
+		phase,
+		search,
+		newSince,
+		newSeen,
+		onNewSeen,
+		onTail,
+		queued,
+		onCancelQueued,
+	} = props;
 
 	// null follows the tail. A number pins the first mounted entry while the
 	// reader is scrolled away from the bottom, so appended entries never
@@ -456,7 +493,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	useEffect(() => {
 		const el = rootRef.current;
 		if (el !== null) followTranscriptTail(el, lockRef);
-	}, [entries, stream, activeTools, working]);
+	}, [entries, stream, activeTools, working, queued]);
 
 	// A shrinking viewport (mobile keyboard, rotation, composer growth) keeps a
 	// bottom-locked reader on the latest message instead of stranding them mid-scroll.
@@ -568,6 +605,74 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		followTranscriptTail(el, lockRef, true);
 	};
 
+	// "New since you left": the divider sits before the first new row that renders.
+	// When that entry is above the mounted window, the divider waits for the window to reach it.
+	const dividerAt = useMemo(() => {
+		if (newSince === undefined) return -1;
+		const at =
+			chatItems !== null
+				? chatItems.findIndex(item =>
+						newSince.ids.has(item.kind === "entry" ? item.entry.id : (item.entryId ?? "")),
+					)
+				: visible.findIndex(entry => newSince.ids.has(entry.id));
+		if (at === 0 && start > 0 && newSince.ids.has(entries[start - 1]?.id ?? "")) return -1;
+		return at;
+	}, [newSince, chatItems, visible, start, entries]);
+
+	const dividerInView = (): boolean => {
+		const el = rootRef.current;
+		const divider = el?.querySelector("[data-new-divider]");
+		if (!el || !divider) return false;
+		const root = el.getBoundingClientRect();
+		const rect = divider.getBoundingClientRect();
+		return rect.bottom > root.top && rect.top < root.bottom;
+	};
+	const pillActive = newSince !== undefined && newSeen !== true;
+	/** Set while waiting for the mounted window to reach an off-window divider. */
+	const scrollToNewRef = useRef(false);
+	const scrollToDivider = (el: HTMLElement): void => {
+		el.querySelector("[data-new-divider]")?.scrollIntoView({ block: "start" });
+		updateTranscriptTailLock(el, lockRef);
+		setAway(!lockRef.current);
+		onNewSeen?.();
+	};
+	useLayoutEffect(() => {
+		const el = rootRef.current;
+		if (el === null || dividerAt < 0) return;
+		if (scrollToNewRef.current) {
+			scrollToNewRef.current = false;
+			scrollToDivider(el);
+		} else if (pillActive && dividerInView()) {
+			onNewSeen?.();
+		}
+	}, [dividerAt, pillActive, onNewSeen, away, entries, chat]);
+
+	const jumpToNew = (): void => {
+		const el = rootRef.current;
+		if (el === null || newSince === undefined) return;
+		if (dividerAt >= 0) {
+			scrollToDivider(el);
+			return;
+		}
+		const index = entries.findIndex(entry => newSince.ids.has(entry.id));
+		if (index < 0) return;
+		lockRef.current = false;
+		scrollToNewRef.current = true;
+		setPinnedStart(index);
+	};
+
+	// The newest entry the reader has seen: only while they sit at the tail of a visible page.
+	useEffect(() => {
+		if (onTail === undefined || phase !== "live") return;
+		const report = (): void => {
+			const last = entries.at(-1);
+			if (last !== undefined && lockRef.current && document.visibilityState === "visible") onTail(last.id);
+		};
+		report();
+		document.addEventListener("visibilitychange", report);
+		return () => document.removeEventListener("visibilitychange", report);
+	}, [entries, phase, onTail, away]);
+
 	// While the snapshot downloads the banner reports progress; an empty transcript isn't "no activity".
 	const settled = phase === undefined || phase === "live";
 	// Chat view hides thinking: say something until reply text or a tool shows up.
@@ -591,6 +696,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 					setPinnedStart(start);
 				}
 				if (el.scrollTop <= EARLIER_TRIGGER_PX) showEarlier();
+				if (pillActive && dividerInView()) onNewSeen?.();
 			}}
 		>
 			{settled && entries.length === 0 && stream === null && !working && (
@@ -601,12 +707,25 @@ export function Transcript(props: TranscriptProps): ReactNode {
 					show {start.toLocaleString("en-US")} earlier
 				</button>
 			)}
+			{pillActive && (
+				<div className="tr-new-dock">
+					<button type="button" className="tr-new-pill" onClick={jumpToNew}>
+						<ArrowUp size={13} /> {newSince.count} new
+					</button>
+				</div>
+			)}
 			{chatItems !== null
-				? chatItems.map(item => (
-						<ChatRow key={item.key} item={item} results={results} active={activeTools} host={host} />
+				? chatItems.map((item, i) => (
+						<Fragment key={item.key}>
+							{i === dividerAt && <NewDivider />}
+							<ChatRow item={item} results={results} active={activeTools} host={host} />
+						</Fragment>
 					))
-				: visible.map(entry => (
-						<EntryRow key={entry.id} entry={entry} results={results} active={activeTools} host={host} />
+				: visible.map((entry, i) => (
+						<Fragment key={entry.id}>
+							{i === dividerAt && <NewDivider />}
+							<EntryRow entry={entry} results={results} active={activeTools} host={host} />
+						</Fragment>
 					))}
 			{chatItems === null && stream !== null && (
 				<Row kind="assistant" gutter="agent">
@@ -640,6 +759,27 @@ export function Transcript(props: TranscriptProps): ReactNode {
 					<div className="tr-shimmer">thinking…</div>
 				</Row>
 			)}
+			{queued?.map(prompt => (
+				<Row key={prompt.id} kind="user" gutter="queued">
+					<div className="tr-queued">
+						<div className="tr-queued-text">{prompt.text}</div>
+						{prompt.images !== undefined && prompt.images.length > 0 && (
+							<span className="tr-queued-meta">
+								{prompt.images.length} image{prompt.images.length === 1 ? "" : "s"}
+							</span>
+						)}
+						<button
+							type="button"
+							className="tr-queued-cancel"
+							onClick={() => onCancelQueued?.(prompt.id)}
+							aria-label="cancel queued prompt"
+							title="cancel — not sent yet"
+						>
+							<X size={13} />
+						</button>
+					</div>
+				</Row>
+			))}
 			{away && (
 				<div className="tr-jump-dock">
 					<button type="button" className="tr-jump" onClick={jumpToLatest}>

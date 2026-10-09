@@ -142,6 +142,7 @@ function makeControllerContext(over: { autoStart?: "off" | "view" | "control"; r
 			sessionName: "controller-test",
 			model: { provider: "test-provider", id: "test-model" },
 			thinkingLevel: undefined,
+			getAvailableEffortSelectors: () => [],
 			subscribe: () => () => {},
 			emitNotice: () => {},
 			promptCustomMessage: (message: { content: unknown }) => {

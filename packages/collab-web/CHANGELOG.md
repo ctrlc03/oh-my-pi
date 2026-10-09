@@ -15,7 +15,17 @@
 - Added find in session over prompts and replies, a jump-to-latest button, and copy buttons on code blocks
 - Added a *Changes* sheet listing every file the agent changed through its edit tools, with diffs
 - Added a session switcher to the header and a banner when another session on the paired computer starts waiting for input
-- Added Web Push notifications through the companion when a session needs input or finishes a turn, sent with the companion's own VAPID key (no extra server)
+- Added Web Push notifications through the companion when a session needs input or finishes a turn, sent with the companion's own VAPID key (no extra server). The text is the pending question or the start of the reply, read from the session file
+- Added `--install`, `--uninstall`, and `--pair` to the companion: run it as a macOS LaunchAgent that starts at login and restarts on exit, and pair devices while it runs
+- Added a *Working tree* tab to the *Changes* sheet through the companion: branch, ahead/behind, changed files with diffs against HEAD (including shell edits), and recent commits
+- Added a read-only file viewer: file paths in tool cards open the file through the companion, confined to the session's repository
+- Added *Start session* through the companion: start or resume omp in a recent folder inside a detached tmux session, shared with control access
+- Added *Not sharing* sessions to the companion lists, with a *Share* button that makes a running session host `/collab` (needs `omp collab start`)
+- Added model, thinking-level, and compaction controls to the session sheet for full links to hosts that accept guest session commands
+- Added session cost and token usage to the session sheet
+- Added a *New since you left* divider and jump pill when rejoining a room
+- Added an offline prompt queue: prompts sent while disconnected are kept per room and sent once the session is live again
+- Added desktop keyboard shortcuts: ⌘K / Ctrl+K switch session, `/` find, Esc close or stop the running turn
 
 ### Changed
 

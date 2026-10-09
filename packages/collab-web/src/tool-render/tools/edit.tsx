@@ -1,7 +1,7 @@
 /** `edit` / `apply_patch` — hashline patch application rendered as colored diffs. */
 import type { ReactNode } from "react";
 import { Badge, DiffBlock, InvalidArg, Kv, KvGrid, Note, Output, PathText, ResultText } from "../parts";
-import type { ToolRenderer, ToolRenderProps } from "../types";
+import type { ToolRenderer, ToolRenderHost, ToolRenderProps } from "../types";
 import { detailsRecord, isRecord, normalizeWs, num, str, truncate } from "../util";
 
 /** Path from a hashline `[path#TAG]` / `[path]` header line, or null. */
@@ -146,7 +146,15 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-function FileSection({ entry, fallbackPath }: { entry: FileEntry; fallbackPath?: string | null }): ReactNode {
+function FileSection({
+	entry,
+	fallbackPath,
+	host,
+}: {
+	entry: FileEntry;
+	fallbackPath?: string | null;
+	host?: ToolRenderHost;
+}): ReactNode {
 	const path = entry.path ?? fallbackPath ?? null;
 	const op = entry.op === "create" || entry.op === "delete" ? entry.op : null;
 	const diag = entry.diagnostics;
@@ -155,11 +163,13 @@ function FileSection({ entry, fallbackPath }: { entry: FileEntry; fallbackPath?:
 			{(path !== null || op !== null || entry.move !== null) && (
 				<div className="tv-row">
 					<span className="tv-row-val">
-						{path !== null && <PathText path={path} from={entry.isError ? null : entry.firstChangedLine} />}
+						{path !== null && (
+							<PathText path={path} from={entry.isError ? null : entry.firstChangedLine} host={host} />
+						)}
 						{entry.move !== null && (
 							<>
 								{" → "}
-								<PathText path={entry.move} />
+								<PathText path={entry.move} host={host} />
 							</>
 						)}
 						{op !== null && (
@@ -186,7 +196,7 @@ function FileSection({ entry, fallbackPath }: { entry: FileEntry; fallbackPath?:
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Body({ args, result, host }: ToolRenderProps): ReactNode {
 	const input = str(args.input) ?? str(args._input);
 	const details = detailsRecord(result);
 	const perFile: FileEntry[] = [];
@@ -197,7 +207,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 
 	let outcome: ReactNode;
 	if (perFile.length > 0) {
-		outcome = perFile.map((f, i) => <FileSection key={`${f.path ?? ""}:${i}`} entry={f} />);
+		outcome = perFile.map((f, i) => <FileSection key={`${f.path ?? ""}:${i}`} entry={f} host={host} />);
 	} else if (result?.isError === true) {
 		// Failed matches embed numbered file context — keep a generous window.
 		outcome = <ResultText result={result} maxLines={15} />;
@@ -205,7 +215,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 		const top = fileEntry(details);
 		outcome =
 			top.diff !== null || top.diagnostics !== null || top.move !== null ? (
-				<FileSection entry={top} fallbackPath={fallbackPath} />
+				<FileSection entry={top} fallbackPath={fallbackPath} host={host} />
 			) : (
 				<ResultText result={result} maxLines={8} />
 			);

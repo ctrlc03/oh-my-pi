@@ -470,6 +470,7 @@ function makeHostContext(): InteractiveModeContext {
 			sessionName: "proto test",
 			model: undefined,
 			thinkingLevel: undefined,
+			getAvailableEffortSelectors: () => [],
 			subscribe: () => () => {},
 			emitNotice: () => {},
 			promptCustomMessage: () => Promise.resolve(),

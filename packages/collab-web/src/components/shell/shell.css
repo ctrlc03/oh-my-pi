@@ -1393,6 +1393,118 @@
 	width: min(720px, calc(100vw - 24px));
 }
 
+.sh-segmented-wrap {
+	flex-wrap: wrap;
+}
+
+.sh-sheet-row .sh-sheet-usage,
+.sh-sheet-row .sh-sheet-compact {
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
+}
+
+.sh-sheet-usage .sh-sheet-faint {
+	font-size: 12px;
+}
+
+.sh-sheet-input {
+	width: 100%;
+	padding: 8px 10px;
+	font: inherit;
+	font-size: 13px;
+	color: var(--fg);
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	resize: none;
+}
+
+.sh-sheet-actions {
+	display: flex;
+	gap: 8px;
+	justify-content: flex-end;
+}
+
+/* Model picker: providers as headings, one tappable row per model. */
+.sh-model-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-height: 260px;
+	overflow-y: auto;
+	padding: 8px 0;
+	border-bottom: 1px solid var(--border);
+}
+
+.sh-model-provider {
+	padding: 2px 8px;
+	font-size: 11px;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--fg-faint);
+}
+
+.sh-model {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	width: 100%;
+	min-height: 36px;
+	padding: 0 8px;
+	font-size: 13.5px;
+	text-align: left;
+	color: var(--fg);
+	background: transparent;
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.sh-model:hover {
+	background: var(--hover);
+}
+
+.sh-model-on {
+	background: var(--accent-muted);
+	color: var(--accent);
+}
+
+/* Keyboard shortcuts only help where a precise pointer (so, a keyboard) is the primary input. */
+.sh-shortcuts {
+	display: none;
+	flex-direction: column;
+	gap: 4px;
+	font-size: 12.5px;
+	color: var(--fg-muted);
+}
+
+@media (pointer: fine) {
+	.sh-shortcuts {
+		display: flex;
+	}
+}
+
+.sh-shortcuts-title {
+	font-size: 13px;
+}
+
+.sh-shortcut {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.sh-shortcut kbd {
+	min-width: 86px;
+	padding: 1px 6px;
+	font: 500 11.5px var(--font-mono);
+	color: var(--fg);
+	background: var(--bg-inset);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+}
+
 /* ---- session switcher ---- */
 .sh-switch-section {
 	display: flex;

@@ -26,6 +26,7 @@ function makeHostContext(eventBus: EventBus): InteractiveModeContext {
 			sessionName: "host session",
 			model: undefined,
 			thinkingLevel: undefined,
+			getAvailableEffortSelectors: () => [],
 			subscribe: () => () => {},
 			emitNotice: () => {},
 			promptCustomMessage: () => Promise.resolve(),

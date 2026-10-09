@@ -334,6 +334,94 @@
 	cursor: pointer;
 }
 
+/* ---- new since you left ---- */
+
+.tr-divider--new {
+	color: var(--accent);
+	font-weight: 500;
+	scroll-margin-top: 12px;
+}
+
+.tr-divider--new::before,
+.tr-divider--new::after {
+	background: var(--accent-muted);
+}
+
+/* Zero-height sticky dock at the top: the pill floats over the first rows without shifting them. */
+.tr-new-dock {
+	position: sticky;
+	top: 4px;
+	z-index: 2;
+	display: flex;
+	justify-content: center;
+	height: 0;
+	overflow: visible;
+}
+
+.tr-new-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 30px;
+	padding: 0 14px;
+	font-size: 12.5px;
+	font-weight: 500;
+	color: var(--accent-fg);
+	background: var(--accent-gradient);
+	border: 0;
+	border-radius: 999px;
+	box-shadow: var(--shadow-overlay);
+	animation: rise 240ms var(--ease-out) backwards;
+	cursor: pointer;
+}
+
+/* ---- queued prompts (not sent yet) ---- */
+
+.tr-queued {
+	position: relative;
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+}
+
+/* The user card, dimmed with a dashed edge: pending, not yet in the session. */
+.tr-row--user .tr-body:has(> .tr-queued) {
+	opacity: 0.65;
+	border-style: dashed;
+}
+
+.tr-queued-text {
+	flex: 1;
+	min-width: 0;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.tr-queued-meta {
+	flex: none;
+	font-size: 11.5px;
+	color: var(--fg-faint);
+}
+
+.tr-queued-cancel {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	border: 0;
+	border-radius: 999px;
+	background: transparent;
+	color: var(--fg-muted);
+	cursor: pointer;
+}
+
+.tr-queued-cancel:hover {
+	background: var(--hover);
+	color: var(--fg);
+}
+
 /* ---- find in session ---- */
 
 ::highlight(tr-search) {

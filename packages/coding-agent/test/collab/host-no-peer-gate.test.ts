@@ -51,6 +51,7 @@ function makeFixture(): Fixture {
 			sessionName: "no-peer-test",
 			model: undefined,
 			thinkingLevel: undefined,
+			getAvailableEffortSelectors: () => [],
 			subscribe: (cb: Fixture["emit"]) => {
 				fixture.emit = cb;
 				return () => {};

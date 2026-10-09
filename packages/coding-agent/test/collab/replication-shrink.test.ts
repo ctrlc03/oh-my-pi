@@ -220,6 +220,7 @@ function makeHostHarness(sessionManager: HostReplicationSource): HostHarness {
 			sessionName: "big",
 			model: undefined,
 			thinkingLevel: undefined,
+			getAvailableEffortSelectors: () => [],
 			subscribe: () => () => {},
 			emitNotice: () => {},
 			promptCustomMessage: () => Promise.resolve(),

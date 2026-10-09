@@ -21,7 +21,7 @@ function headerPath(line: string): string | null {
 const APPLY_PATCH_HEADER_RE = /^\*{3} (?:Update|Add|Delete) File:\s*(.+)$/;
 
 /** File paths named by hashline or apply_patch section headers, in order. */
-function inputPaths(input: string): string[] {
+export function inputPaths(input: string): string[] {
 	const stripped = input.startsWith("\uFEFF") ? input.slice(1) : input;
 	const paths: string[] = [];
 	for (const rawLine of stripped.split("\n")) {
@@ -45,7 +45,7 @@ function countOps(input: string): number {
 	return count;
 }
 
-function diffStats(diff: string): { added: number; removed: number } {
+export function diffStats(diff: string): { added: number; removed: number } {
 	let added = 0;
 	let removed = 0;
 	for (const line of diff.split("\n")) {

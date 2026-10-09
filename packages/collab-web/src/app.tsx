@@ -3,20 +3,42 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentDrawer } from "./components/agents/AgentDrawer";
 import { AgentsPanel } from "./components/agents/AgentsPanel";
 import { Banners } from "./components/shell/Banners";
+import { ChangesSheet } from "./components/shell/ChangesSheet";
 import { Composer } from "./components/shell/Composer";
 import { ConnectScreen } from "./components/shell/ConnectScreen";
 import { HeaderBar } from "./components/shell/HeaderBar";
+import { SearchBar } from "./components/shell/SearchBar";
+import { SessionAlert } from "./components/shell/SessionAlert";
+import { SessionSwitcher } from "./components/shell/SessionSwitcher";
 import { Toasts } from "./components/shell/Toasts";
 import { Transcript } from "./components/transcript/Transcript";
+import { collectChanges } from "./lib/changes";
 import { GuestClient } from "./lib/client";
 import { extractPairing, loadPairing, savePairing } from "./lib/companion";
+import { type PushControl, usePush } from "./lib/push";
 import { registerServiceWorker, takeSharedLink } from "./lib/pwa";
-import { activeLink, forgetRoom, loadRooms, type RecentRoom, rememberRoom, roomIdOf, setActiveLink } from "./lib/rooms";
+import {
+	activeLink,
+	extractLink,
+	forgetRoom,
+	loadRooms,
+	type RecentRoom,
+	rememberRoom,
+	roomIdOf,
+	setActiveLink,
+} from "./lib/rooms";
+import { readJson, writeJson } from "./lib/storage";
+import { type CompanionHandle, useCompanion } from "./lib/use-companion";
 import { useGuestSnapshot } from "./lib/use-guest";
 import type { ToolRenderHost } from "./tool-render";
 import "./components/shell/shell.css";
 
 const NAME_KEY = "omp.collab.name";
+/** Chat view preference (boolean); absent: phones get chat, larger screens the full transcript. */
+const CHAT_KEY = "omp.collab.chat";
+const PHONE_QUERY = "(max-width: 640px)";
+/** Hash a notification tap launches the app with (see scripts/build-sw.ts): `#open:<instanceId>`. */
+const OPEN_PREFIX = "open:";
 /** Matches the shell.css breakpoint where the rail stops docking beside the transcript. */
 const WIDE_QUERY = "(min-width: 901px)";
 /** Visual viewport this much shorter than the layout viewport means an on-screen keyboard is up. */
@@ -49,9 +71,13 @@ export function App(): ReactNode {
 	const [connectError, setConnectError] = useState<string | null>(null);
 	const [rooms, setRooms] = useState<RecentRoom[]>(loadRooms);
 	const [pairing, setPairing] = useState<string | null>(loadPairing);
+	/** Companion host to open once the companion is live (notification tap). */
+	const [pendingOpen, setPendingOpen] = useState<string | null>(null);
 	const credsRef = useRef<Creds | null>(null);
 	/** The current session was reopened from storage, not chosen by the user this launch. */
 	const resumedRef = useRef(false);
+	const companion = useCompanion(pairing);
+	const push = usePush(companion.client, companion.snap.vapidKey);
 
 	const connect = useCallback((link: string, name: string): void => {
 		let next: GuestClient;
@@ -103,6 +129,59 @@ export function App(): ReactNode {
 		setPairing(link);
 	}, []);
 
+	const companionClient = companion.client;
+	const openHost = useCallback(
+		async (instanceId: string): Promise<void> => {
+			if (!companionClient) throw new Error("no paired computer");
+			const url = await companionClient.requestLink(instanceId);
+			const next = extractLink(url);
+			if (!next) throw new Error("the computer returned an unreadable link");
+			resumedRef.current = false;
+			connect(next, credsRef.current?.name ?? storedName());
+		},
+		[companionClient, connect],
+	);
+
+	const openLink = useCallback(
+		(next: string): void => {
+			resumedRef.current = false;
+			connect(next, credsRef.current?.name ?? storedName());
+		},
+		[connect],
+	);
+
+	// A notification tap: open its session as soon as the companion lists hosts.
+	const { phase: companionPhase, hosts } = companion.snap;
+	useEffect(() => {
+		if (pendingOpen === null || companionPhase !== "live") return;
+		setPendingOpen(null);
+		if (!hosts.some(host => host.instanceId === pendingOpen)) {
+			setConnectError("That session is no longer sharing.");
+			return;
+		}
+		openHost(pendingOpen).catch((err: unknown) => setConnectError(err instanceof Error ? err.message : String(err)));
+	}, [pendingOpen, companionPhase, hosts, openHost]);
+
+	useEffect(() => {
+		if (!("serviceWorker" in navigator)) return;
+		const onMessage = (e: MessageEvent): void => {
+			const data = e.data as { t?: unknown; instanceId?: unknown } | null;
+			if (data?.t === "open-session" && typeof data.instanceId === "string") setPendingOpen(data.instanceId);
+		};
+		navigator.serviceWorker.addEventListener("message", onMessage);
+		return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+	}, []);
+
+	// The companion holds pushes for this device while it shows the app.
+	const pushEndpoint = push.endpoint;
+	useEffect(() => {
+		if (!companionClient) return;
+		const report = (): void => companionClient.setPresence(pushEndpoint, document.visibilityState === "visible");
+		report();
+		document.addEventListener("visibilitychange", report);
+		return () => document.removeEventListener("visibilitychange", report);
+	}, [companionClient, pushEndpoint]);
+
 	// A room reopened from storage that the host has since closed: go straight to the
 	// session list instead of parking on an "ended" card the user never asked for.
 	const roomGone = useCallback(
@@ -140,9 +219,14 @@ export function App(): ReactNode {
 	useEffect(() => {
 		registerServiceWorker();
 		const hash = hashLink();
-		const companion = hash ? extractPairing(hash) : null;
-		if (companion) {
-			pair(companion);
+		const companionLink = hash ? extractPairing(hash) : null;
+		if (companionLink) {
+			pair(companionLink);
+			history.replaceState(null, "", window.location.pathname + window.location.search);
+			return;
+		}
+		if (hash?.startsWith(OPEN_PREFIX)) {
+			setPendingOpen(hash.slice(OPEN_PREFIX.length));
 			history.replaceState(null, "", window.location.pathname + window.location.search);
 			return;
 		}
@@ -179,7 +263,8 @@ export function App(): ReactNode {
 				defaultName={storedName()}
 				error={connectError}
 				rooms={rooms}
-				pairing={pairing}
+				companion={pairing ? companion : null}
+				push={push}
 				onConnect={(next, name) => {
 					resumedRef.current = false;
 					connect(next, name);
@@ -194,12 +279,18 @@ export function App(): ReactNode {
 	}
 	return (
 		<Session
+			key={link}
 			client={client}
 			link={link}
+			companion={pairing ? companion : null}
+			push={push}
+			rooms={rooms}
 			onLeave={leave}
 			onRejoin={rejoin}
 			onRemember={remember}
 			onRoomGone={roomGone}
+			onOpenHost={openHost}
+			onOpenLink={openLink}
 		/>
 	);
 }
@@ -207,13 +298,40 @@ export function App(): ReactNode {
 interface SessionProps {
 	client: GuestClient;
 	link: string;
+	companion: CompanionHandle | null;
+	push: PushControl;
+	rooms: readonly RecentRoom[];
 	onLeave(): void;
 	onRejoin(): void;
 	onRemember(room: Omit<RecentRoom, "lastSeen">): void;
 	onRoomGone(roomId: string): void;
+	onOpenHost(instanceId: string): Promise<void>;
+	onOpenLink(link: string): void;
 }
 
-function Session({ client, link, onLeave, onRejoin, onRemember, onRoomGone }: SessionProps): ReactNode {
+function initialChat(): boolean {
+	const stored = readJson(CHAT_KEY);
+	return typeof stored === "boolean" ? stored : matchMedia(PHONE_QUERY).matches;
+}
+
+interface SearchState {
+	query: string;
+	target: string | null;
+}
+
+function Session({
+	client,
+	link,
+	companion,
+	push,
+	rooms,
+	onLeave,
+	onRejoin,
+	onRemember,
+	onRoomGone,
+	onOpenHost,
+	onOpenLink,
+}: SessionProps): ReactNode {
 	const snap = useGuestSnapshot(client);
 	const [railOpen, setRailOpen] = useState(false);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -266,6 +384,27 @@ function Session({ client, link, onLeave, onRejoin, onRemember, onRoomGone }: Se
 	const toggleRail = useCallback(() => setRailOpen(open => !open), []);
 	const closeDrawer = useCallback(() => setSelectedId(null), []);
 
+	const [chat, setChat] = useState(initialChat);
+	const changeChat = useCallback((next: boolean): void => {
+		writeJson(CHAT_KEY, next);
+		setChat(next);
+	}, []);
+
+	const [search, setSearch] = useState<SearchState | null>(null);
+	const toggleSearch = useCallback(() => setSearch(open => (open ? null : { query: "", target: null })), []);
+	const closeSearch = useCallback(() => setSearch(null), []);
+	const onSearch = useCallback((query: string, target: string | null) => setSearch({ query, target }), []);
+
+	const changes = useMemo(() => collectChanges(snap.entries), [snap.entries]);
+	const [changesOpen, setChangesOpen] = useState(false);
+	const openChanges = useCallback(() => setChangesOpen(true), []);
+
+	const [switcherOpen, setSwitcherOpen] = useState(false);
+	const sessionId = snap.header?.id ?? null;
+	const otherHosts = companion?.snap.hosts.filter(host => host.sessionId !== sessionId) ?? [];
+	const canSwitch = otherHosts.length > 0 || rooms.some(room => room.roomId !== roomId);
+	const openSwitcher = useCallback(() => setSwitcherOpen(true), []);
+
 	return (
 		<div className="sh-app">
 			<div className="sh-ambient" />
@@ -278,9 +417,19 @@ function Session({ client, link, onLeave, onRejoin, onRemember, onRoomGone }: Se
 				railOpen={railOpen}
 				onToggleRail={toggleRail}
 				onLeave={onLeave}
+				searchOpen={search !== null}
+				onToggleSearch={toggleSearch}
+				onSwitch={canSwitch || companion ? openSwitcher : null}
+				switchAlert={otherHosts.some(host => host.inputRequired)}
+				chat={chat}
+				onChatChange={changeChat}
+				changeCount={changes.length}
+				onOpenChanges={openChanges}
+				push={push}
 			/>
 			<main className="sh-main">
 				<section className="sh-panel" data-rail={railOpen ? "true" : "false"}>
+					{search && <SearchBar entries={snap.entries} onSearch={onSearch} onClose={closeSearch} />}
 					<div className="sh-transcript">
 						<Transcript
 							entries={snap.entries}
@@ -290,6 +439,8 @@ function Session({ client, link, onLeave, onRejoin, onRemember, onRoomGone }: Se
 							working={snap.working}
 							host={toolHost}
 							phase={snap.phase}
+							chat={chat}
+							search={search ?? undefined}
 						/>
 					</div>
 					<Composer
@@ -340,6 +491,19 @@ function Session({ client, link, onLeave, onRejoin, onRemember, onRoomGone }: Se
 				onNewLink={onLeave}
 			/>
 			<Toasts notices={snap.notices} />
+			{companion && <SessionAlert hosts={companion.snap.hosts} currentSessionId={sessionId} onOpen={onOpenHost} />}
+			{switcherOpen && (
+				<SessionSwitcher
+					companion={companion}
+					rooms={rooms}
+					currentSessionId={sessionId}
+					currentRoomId={roomId}
+					onOpenHost={onOpenHost}
+					onOpenLink={onOpenLink}
+					onClose={() => setSwitcherOpen(false)}
+				/>
+			)}
+			{changesOpen && <ChangesSheet changes={changes} host={toolHost} onClose={() => setChangesOpen(false)} />}
 		</div>
 	);
 }

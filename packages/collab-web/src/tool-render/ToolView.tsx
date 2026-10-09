@@ -36,22 +36,23 @@ function normalizeArgs(raw: unknown): { args: Record<string, unknown>; intent: s
 	return { args, intent };
 }
 
-interface XdevDispatch {
+export interface XdevDispatch {
 	tool: string;
 	args: Record<string, unknown>;
 	inner: unknown;
 }
 
-function executeXdevDispatch(props: ToolViewProps): XdevDispatch | null {
-	if (props.name !== "write" || props.result?.isError === true || !isRecord(props.result?.details)) return null;
-	const xdev = props.result.details.xdev;
+/** The device tool a successful `write xd://<tool>` call ran, with its own args and details. */
+export function executeXdevDispatch(name: string, result: ToolResultLike | undefined): XdevDispatch | null {
+	if (name !== "write" || result?.isError === true || !isRecord(result?.details)) return null;
+	const xdev = result.details.xdev;
 	if (!isRecord(xdev) || xdev.mode !== "execute" || typeof xdev.tool !== "string") return null;
 	return { tool: xdev.tool, args: isRecord(xdev.args) ? xdev.args : {}, inner: xdev.inner };
 }
 
 export function ToolView(props: ToolViewProps): ReactNode {
 	const [open, setOpen] = useState(props.defaultOpen ?? false);
-	const xdev = executeXdevDispatch(props);
+	const xdev = executeXdevDispatch(props.name, props.result);
 	const { args, intent: argIntent } = normalizeArgs(props.args);
 	const intent = props.intent?.trim() || argIntent;
 	const name = xdev?.tool ?? props.name;

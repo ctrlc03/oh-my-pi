@@ -19,11 +19,14 @@ import { readJson, writeJson } from "./storage";
 
 export const PAIR_PREFIX = "pair:";
 const PAIRING_KEY = "omp.collab.companion";
-const LINK_TIMEOUT_MS = 15_000;
+/** How long a link or push request waits for the companion's answer. */
+const REQUEST_TIMEOUT_MS = 15_000;
 
 /** One collab-hosting omp process, as `omp collab list --json` reports it. */
 export interface CompanionHost {
 	instanceId: string;
+	/** Session id of the hosted conversation; matches the guest's `SessionHeader.id`. */
+	sessionId: string;
 	sessionName: string | null;
 	cwd: string;
 	/** `provider/id`, or null before a model is selected. */
@@ -37,12 +40,26 @@ export interface CompanionHost {
 	relayConnected: boolean;
 }
 
-export type CompanionRequest = { t: "list" } | { t: "link"; reqId: number; instanceId: string };
+/** `PushSubscription.toJSON()` as the browser hands it out. */
+export interface PushSubscriptionJson {
+	endpoint: string;
+	keys: { p256dh: string; auth: string };
+}
+
+export type CompanionRequest =
+	| { t: "list" }
+	| { t: "link"; reqId: number; instanceId: string }
+	/** Add (`on`) or drop this device's Web Push subscription. */
+	| { t: "push"; reqId: number; subscription: PushSubscriptionJson; on: boolean }
+	/** The device is showing the app (`visible`): the companion holds pushes to `endpoint` meanwhile. */
+	| { t: "presence"; endpoint: string | null; visible: boolean };
 
 export type CompanionReply =
-	| { t: "hosts"; machine: string; hosts: CompanionHost[] }
+	/** `vapidKey`: the companion's Web Push application server key (base64url). */
+	| { t: "hosts"; machine: string; hosts: CompanionHost[]; vapidKey: string }
 	| { t: "link"; reqId: number; url: string }
-	| { t: "link-error"; reqId: number; message: string };
+	| { t: "ok"; reqId: number }
+	| { t: "error"; reqId: number; message: string };
 
 /**
  * The companion room link inside a pasted message, scanned QR code, or URL
@@ -74,30 +91,38 @@ export interface CompanionSnapshot {
 	/** Machine name the companion reports. */
 	machine: string | null;
 	hosts: readonly CompanionHost[];
+	/** Web Push application server key, once the companion has listed hosts. */
+	vapidKey: string | null;
 	/** Why the room is unreachable while `offline`. */
 	error: string | null;
 }
 
-interface PendingLink {
-	resolve(url: string): void;
+interface Pending {
+	resolve(value: string): void;
 	reject(err: Error): void;
 	timer: Timer;
 }
+
+type CompanionCall = { t: "link"; instanceId: string } | { t: "push"; subscription: PushSubscriptionJson; on: boolean };
 
 /** Guest end of the companion room; `useSyncExternalStore`-compatible. */
 export class CompanionClient {
 	readonly #socket: CollabSocket<CompanionRequest, CompanionReply>;
 	readonly #listeners = new Set<() => void>();
-	readonly #pending = new Map<number, PendingLink>();
+	readonly #pending = new Map<number, Pending>();
 	#reqSeq = 0;
-	#snapshot: CompanionSnapshot = { phase: "connecting", machine: null, hosts: [], error: null };
+	#presence: Extract<CompanionRequest, { t: "presence" }> | null = null;
+	#snapshot: CompanionSnapshot = { phase: "connecting", machine: null, hosts: [], vapidKey: null, error: null };
 
 	/** @throws Error when the link does not parse. */
 	constructor(link: string) {
 		const parsed = parseCollabLink(link);
 		if ("error" in parsed) throw new Error(parsed.error);
 		this.#socket = new CollabSocket({ wsUrl: parsed.wsUrl, role: "guest", key: importRoomKey(parsed.key) });
-		this.#socket.onOpen = () => this.#socket.send({ t: "list" });
+		this.#socket.onOpen = () => {
+			this.#socket.send({ t: "list" });
+			if (this.#presence) this.#socket.send(this.#presence);
+		};
 		this.#socket.onFrame = frame => this.#apply(frame);
 		this.#socket.onClose = (reason, willReconnect) => {
 			this.#rejectPending(new Error(`companion disconnected: ${reason}`));
@@ -141,30 +166,52 @@ export class CompanionClient {
 
 	/** A fresh control link for one host, resolved by the companion via `omp collab link`. */
 	requestLink(instanceId: string): Promise<string> {
+		return this.#call({ t: "link", instanceId });
+	}
+
+	/** Register (`on`) or drop a Web Push subscription with the companion. */
+	async setPush(subscription: PushSubscriptionJson, on: boolean): Promise<void> {
+		await this.#call({ t: "push", subscription, on });
+	}
+
+	/** Tell the companion whether this device shows the app now; re-sent after reconnects. */
+	setPresence(endpoint: string | null, visible: boolean): void {
+		this.#presence = { t: "presence", endpoint, visible };
+		if (this.#snapshot.phase === "live") this.#socket.send(this.#presence);
+	}
+
+	#call(call: CompanionCall): Promise<string> {
 		const reqId = ++this.#reqSeq;
 		const { promise, resolve, reject } = Promise.withResolvers<string>();
 		const timer = setTimeout(() => {
 			this.#pending.delete(reqId);
 			reject(new Error("the companion did not answer"));
-		}, LINK_TIMEOUT_MS);
+		}, REQUEST_TIMEOUT_MS);
 		this.#pending.set(reqId, { resolve, reject, timer });
-		this.#socket.send({ t: "link", reqId, instanceId });
+		this.#socket.send({ ...call, reqId });
 		return promise;
 	}
 
 	#apply(frame: CompanionReply): void {
 		switch (frame.t) {
 			case "hosts":
-				this.#update({ phase: "live", machine: frame.machine, hosts: frame.hosts, error: null });
+				this.#update({
+					phase: "live",
+					machine: frame.machine,
+					hosts: frame.hosts,
+					vapidKey: frame.vapidKey,
+					error: null,
+				});
 				return;
 			case "link":
-			case "link-error": {
+			case "ok":
+			case "error": {
 				const pending = this.#pending.get(frame.reqId);
 				if (!pending) return;
 				this.#pending.delete(frame.reqId);
 				clearTimeout(pending.timer);
-				if (frame.t === "link") pending.resolve(frame.url);
-				else pending.reject(new Error(frame.message));
+				if (frame.t === "error") pending.reject(new Error(frame.message));
+				else pending.resolve(frame.t === "link" ? frame.url : "");
 				return;
 			}
 		}

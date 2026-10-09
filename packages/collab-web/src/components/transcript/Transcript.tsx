@@ -1,10 +1,11 @@
 import type { AssistantMessage, ImageContent, SessionEntry, TextContent, ToolResultMessage } from "@oh-my-pi/pi-wire";
-import { ChevronRight } from "lucide-react";
+import { ArrowDown, ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ActiveTool, ConnectionPhase } from "../../lib/client";
 import { fmtTokens } from "../../lib/format";
 import type { ToolRenderHost } from "../../tool-render";
+import { buildChatItems, type ChatItem, type ChatToolCall } from "./chat-items";
 import { Markdown, StreamingMarkdown } from "./Markdown";
 import { ToolCard } from "./ToolCard";
 import "./transcript.css";
@@ -16,10 +17,14 @@ export interface TranscriptProps {
 	activeTools: ReadonlyMap<string, ActiveTool>;
 	working: boolean;
 	compact?: boolean; // dense variant for the agent drawer
+	/** Chat view: prompts and replies only, tool runs folded into one line each. */
+	chat?: boolean;
 	/** Sub-session drill-down capabilities forwarded to tool renderers. */
 	host?: ToolRenderHost;
 	/** Main connection phase; absent for the agent drawer's compact transcript. */
 	phase?: ConnectionPhase;
+	/** Find-in-session: highlight `query` and bring entry `target` into view. */
+	search?: { query: string; target: string | null };
 }
 
 interface ScrollGeometry {
@@ -47,15 +52,18 @@ function Row({
 	kind,
 	gutter,
 	title,
+	entryId,
 	children,
 }: {
 	kind: "user" | "assistant" | "custom" | "marker";
 	gutter: ReactNode;
 	title?: string;
+	/** Session entry this row renders; search scrolls to it. */
+	entryId?: string;
 	children: ReactNode;
 }): ReactNode {
 	return (
-		<div className={`tr-row tr-row--${kind}`}>
+		<div className={`tr-row tr-row--${kind}`} data-entry={entryId}>
 			<div className="tr-gutter" title={title}>
 				{gutter}
 			</div>
@@ -191,13 +199,13 @@ const EntryRow = memo(function EntryRow({ entry, results, active, host }: EntryR
 			switch (msg.role) {
 				case "user":
 					return (
-						<Row kind="user" gutter="host" title={entry.timestamp}>
+						<Row kind="user" gutter="host" title={entry.timestamp} entryId={entry.id}>
 							<MsgContent content={msg.content} />
 						</Row>
 					);
 				case "assistant":
 					return (
-						<Row kind="assistant" gutter="agent" title={entry.timestamp}>
+						<Row kind="assistant" gutter="agent" title={entry.timestamp} entryId={entry.id}>
 							<AssistantBody message={msg} results={results} active={active} pending={false} host={host} />
 						</Row>
 					);
@@ -216,14 +224,19 @@ const EntryRow = memo(function EntryRow({ entry, results, active, host }: EntryR
 						? ((details as Record<string, unknown>).from as string)
 						: "guest";
 				return (
-					<Row kind="user" gutter={<span className="tr-badge">{from}</span>} title={entry.timestamp}>
+					<Row
+						kind="user"
+						gutter={<span className="tr-badge">{from}</span>}
+						title={entry.timestamp}
+						entryId={entry.id}
+					>
 						<MsgContent content={entry.content} />
 					</Row>
 				);
 			}
 			if (!entry.display) return null;
 			return (
-				<Row kind="custom" gutter="" title={entry.timestamp}>
+				<Row kind="custom" gutter="" title={entry.timestamp} entryId={entry.id}>
 					<div className="tr-custom">
 						<span className="tr-chip">{entry.customType}</span>
 						<MsgContent content={entry.content} />
@@ -261,6 +274,114 @@ const EntryRow = memo(function EntryRow({ entry, results, active, host }: EntryR
 	}
 }, entryRowEqual);
 
+const MAX_RUN_NAMES = 3;
+
+/**
+ * A folded run of tool calls: one line ("ran 7 tools · bash, edit, read", or the
+ * running call's intent) that expands to the normal cards.
+ */
+function ToolRun({
+	calls,
+	results,
+	active,
+	host,
+}: {
+	calls: readonly ChatToolCall[];
+	results: ReadonlyMap<string, ToolResultMessage>;
+	active: ReadonlyMap<string, ActiveTool>;
+	host?: ToolRenderHost;
+}): ReactNode {
+	const [open, setOpen] = useState(false);
+	const isRunning = (call: ChatToolCall): boolean => !results.has(call.id) && (active.has(call.id) || call.pending);
+	const running = calls.findLast(isRunning);
+	let failed = 0;
+	const names: string[] = [];
+	for (const call of calls) {
+		if (results.get(call.id)?.isError) failed++;
+		if (!names.includes(call.name)) names.push(call.name);
+	}
+	const shown =
+		names.slice(0, MAX_RUN_NAMES).join(", ") +
+		(names.length > MAX_RUN_NAMES ? ` +${names.length - MAX_RUN_NAMES}` : "");
+	const intent = running ? (active.get(running.id)?.intent ?? running.intent) : undefined;
+	return (
+		<div className={`tr-run${running ? " tr-run--live" : ""}`}>
+			<button type="button" className="tr-run-head" onClick={() => setOpen(v => !v)} aria-expanded={open}>
+				<ChevronRight size={12} className={`tr-chev${open ? " tr-chev--open" : ""}`} />
+				{running ? (
+					<span className="tr-run-label">
+						<span className="tr-run-tool">{running.name}</span>
+						{intent ? ` · ${intent}` : "…"}
+					</span>
+				) : (
+					<span className="tr-run-label">
+						ran {calls.length} tool{calls.length === 1 ? "" : "s"}
+						<span className="tr-run-names"> · {shown}</span>
+					</span>
+				)}
+				{failed > 0 && <span className="tr-run-failed">{failed} failed</span>}
+			</button>
+			{open &&
+				calls.map(call => {
+					const act = active.get(call.id);
+					return (
+						<ToolCard
+							key={call.id}
+							toolCallId={call.id}
+							name={call.name}
+							intent={call.intent ?? act?.intent}
+							args={act?.args ?? call.args}
+							result={results.get(call.id)}
+							host={host}
+							running={isRunning(call)}
+							partialResult={act?.partialResult}
+						/>
+					);
+				})}
+		</div>
+	);
+}
+
+function ChatRow({
+	item,
+	results,
+	active,
+	host,
+}: {
+	item: ChatItem;
+	results: ReadonlyMap<string, ToolResultMessage>;
+	active: ReadonlyMap<string, ActiveTool>;
+	host?: ToolRenderHost;
+}): ReactNode {
+	switch (item.kind) {
+		case "entry":
+			return <EntryRow entry={item.entry} results={results} active={active} host={host} />;
+		case "text":
+			return (
+				<Row kind="assistant" gutter={item.lead ? "agent" : ""} entryId={item.entryId ?? undefined}>
+					{item.pending ? <StreamingMarkdown text={item.text} /> : <Markdown text={item.text} />}
+				</Row>
+			);
+		case "tools":
+			return (
+				<Row kind="assistant" gutter={item.lead ? "agent" : ""}>
+					<ToolRun calls={item.calls} results={results} active={active} host={host} />
+				</Row>
+			);
+		case "stop":
+			return (
+				<Row kind="assistant" gutter="">
+					<div className="tr-stop">
+						<span className={`tr-chip ${item.stopReason === "error" ? "tr-chip--err" : "tr-chip--warn"}`}>
+							{item.stopReason}
+						</span>
+						{item.errorMessage && <span className="tr-stop-msg">{item.errorMessage}</span>}
+					</div>
+				</Row>
+			);
+	}
+}
+
 /**
  * Rows mounted at the tail. Large sessions carry thousands of entries; mounting
  * all of them makes every streamed token re-reconcile and re-lay-out the whole
@@ -270,8 +391,36 @@ const WINDOW = 100;
 /** Distance from the top (px) at which scrolling up mounts the previous window. */
 const EARLIER_TRIGGER_PX = 200;
 
+/**
+ * Paint every visible occurrence of `query` with the CSS Custom Highlight API
+ * (no DOM mutation, so React-owned and Markdown HTML stay untouched), the ones
+ * inside `current` in a stronger tone. No-op where the API is missing.
+ */
+function paintSearch(root: HTMLElement, query: string, current: Element | null): void {
+	const registry = typeof CSS !== "undefined" ? CSS.highlights : undefined;
+	if (!registry || typeof Highlight === "undefined") return;
+	registry.delete("tr-search");
+	registry.delete("tr-search-current");
+	const needle = query.trim().toLowerCase();
+	if (!needle) return;
+	const others: Range[] = [];
+	const inCurrent: Range[] = [];
+	const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+	for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+		const text = (node.textContent ?? "").toLowerCase();
+		for (let at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + needle.length)) {
+			const range = document.createRange();
+			range.setStart(node, at);
+			range.setEnd(node, at + needle.length);
+			(current?.contains(node) ? inCurrent : others).push(range);
+		}
+	}
+	registry.set("tr-search", new Highlight(...others));
+	registry.set("tr-search-current", new Highlight(...inCurrent));
+}
+
 export function Transcript(props: TranscriptProps): ReactNode {
-	const { entries, stream, streamDone, activeTools, working, compact, host, phase } = props;
+	const { entries, stream, streamDone, activeTools, working, compact, chat, host, phase, search } = props;
 
 	// null follows the tail. A number pins the first mounted entry while the
 	// reader is scrolled away from the bottom, so appended entries never
@@ -294,6 +443,8 @@ export function Transcript(props: TranscriptProps): ReactNode {
 
 	const rootRef = useRef<HTMLDivElement | null>(null);
 	const lockRef = useRef(true);
+	/** Scrolled away from the tail: offers the jump-to-latest button. */
+	const [away, setAway] = useState(false);
 	/**
 	 * First visible row and its offset from the viewport top, captured before
 	 * mounting earlier rows. Restoring against the row, not the total height
@@ -374,9 +525,56 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		return tail;
 	}, [committedToolIds, stream, activeTools]);
 
+	const chatItems = useMemo(
+		() => (chat ? buildChatItems(visible, stream, streamDone, tailTools) : null),
+		[chat, visible, stream, streamDone, tailTools],
+	);
+
+	// Find-in-session: mount the target's window if it is above it, then center it
+	// once per target (new entries repaint the highlights but never re-scroll).
+	const searchable = search !== undefined;
+	const searchQuery = search?.query ?? "";
+	const searchTarget = search?.target ?? null;
+	const scrolledToRef = useRef<string | null>(null);
+	useLayoutEffect(() => {
+		const el = rootRef.current;
+		if (el === null || !searchable) return;
+		const row = searchTarget === null ? null : el.querySelector(`[data-entry="${CSS.escape(searchTarget)}"]`);
+		if (searchTarget !== null && row === null) {
+			const index = entries.findIndex(entry => entry.id === searchTarget);
+			if (index >= 0 && index < start) {
+				lockRef.current = false;
+				setPinnedStart(index);
+			}
+		} else if (row !== null && scrolledToRef.current !== `${searchTarget}:${chat}`) {
+			scrolledToRef.current = `${searchTarget}:${chat}`;
+			row.scrollIntoView({ block: "center" });
+			// A match near the tail stays tail-following; one above it holds the reader there.
+			updateTranscriptTailLock(el, lockRef);
+			setAway(!lockRef.current);
+		}
+		if (searchTarget === null) scrolledToRef.current = null;
+		paintSearch(el, searchQuery, row);
+	}, [searchable, searchQuery, searchTarget, start, chat, entries]);
+	useEffect(() => {
+		if (searchable) return () => paintSearch(document.body, "", null);
+	}, [searchable]);
+
+	const jumpToLatest = (): void => {
+		const el = rootRef.current;
+		if (el === null) return;
+		setPinnedStart(null);
+		setAway(false);
+		followTranscriptTail(el, lockRef, true);
+	};
+
 	// While the snapshot downloads the banner reports progress; an empty transcript isn't "no activity".
 	const settled = phase === undefined || phase === "live";
-
+	// Chat view hides thinking: say something until reply text or a tool shows up.
+	const quietTurn =
+		working &&
+		activeTools.size === 0 &&
+		(stream === null || (chat === true && !stream.content.some(b => b.type === "text" || b.type === "toolCall")));
 	return (
 		<div
 			ref={rootRef}
@@ -385,6 +583,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 				const el = rootRef.current;
 				if (el === null) return;
 				updateTranscriptTailLock(el, lockRef);
+				if (away === lockRef.current) setAway(!lockRef.current);
 				// Back at the bottom: drop the pin so the window trims to the tail again.
 				if (lockRef.current) {
 					if (pinnedStart !== null) setPinnedStart(null);
@@ -402,10 +601,14 @@ export function Transcript(props: TranscriptProps): ReactNode {
 					show {start.toLocaleString("en-US")} earlier
 				</button>
 			)}
-			{visible.map(entry => (
-				<EntryRow key={entry.id} entry={entry} results={results} active={activeTools} host={host} />
-			))}
-			{stream !== null && (
+			{chatItems !== null
+				? chatItems.map(item => (
+						<ChatRow key={item.key} item={item} results={results} active={activeTools} host={host} />
+					))
+				: visible.map(entry => (
+						<EntryRow key={entry.id} entry={entry} results={results} active={activeTools} host={host} />
+					))}
+			{chatItems === null && stream !== null && (
 				<Row kind="assistant" gutter="agent">
 					<AssistantBody
 						message={stream}
@@ -416,7 +619,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 					/>
 				</Row>
 			)}
-			{tailTools.length > 0 && (
+			{chatItems === null && tailTools.length > 0 && (
 				<Row kind="assistant" gutter={stream === null ? "agent" : ""}>
 					{tailTools.map(tool => (
 						<ToolCard
@@ -432,10 +635,17 @@ export function Transcript(props: TranscriptProps): ReactNode {
 					))}
 				</Row>
 			)}
-			{working && stream === null && activeTools.size === 0 && (
+			{quietTurn && (
 				<Row kind="assistant" gutter="agent">
 					<div className="tr-shimmer">thinking…</div>
 				</Row>
+			)}
+			{away && (
+				<div className="tr-jump-dock">
+					<button type="button" className="tr-jump" onClick={jumpToLatest}>
+						<ArrowDown size={14} /> Latest
+					</button>
+				</div>
 			)}
 		</div>
 	);

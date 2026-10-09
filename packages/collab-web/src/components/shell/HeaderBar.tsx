@@ -1,12 +1,13 @@
 import type { SessionHeader, SessionState } from "@oh-my-pi/pi-wire";
-import { Ellipsis, LogOut, PanelRight } from "lucide-react";
+import { Ellipsis, Layers, LogOut, PanelRight, Search } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback, useState } from "react";
 import type { ConnectionPhase } from "../../lib/client";
 import { fmtPercent, shortenPath } from "../../lib/format";
+import type { PushControl } from "../../lib/push";
 import { OmpMark } from "./OmpMark";
-import { ThemeToggle } from "./ThemeToggle";
 import { SessionSheet } from "./SessionSheet";
+import { ThemeToggle } from "./ThemeToggle";
 
 const PHASE_LABEL: Record<ConnectionPhase, string> = {
 	connecting: "Connecting",
@@ -25,6 +26,17 @@ export interface HeaderBarProps {
 	railOpen: boolean;
 	onToggleRail(): void;
 	onLeave(): void;
+	searchOpen: boolean;
+	onToggleSearch(): void;
+	/** Opens the session switcher; null when there is nothing to switch to. */
+	onSwitch: (() => void) | null;
+	/** Another session on the paired computer is waiting for input. */
+	switchAlert: boolean;
+	chat: boolean;
+	onChatChange(chat: boolean): void;
+	changeCount: number;
+	onOpenChanges(): void;
+	push: PushControl;
 }
 
 /** Memoized on its snapshot fields, so streaming frames that leave them untouched skip it. */
@@ -37,6 +49,15 @@ export const HeaderBar = memo(function HeaderBar({
 	railOpen,
 	onToggleRail,
 	onLeave,
+	searchOpen,
+	onToggleSearch,
+	onSwitch,
+	switchAlert,
+	chat,
+	onChatChange,
+	changeCount,
+	onOpenChanges,
+	push,
 }: HeaderBarProps): ReactNode {
 	const title = header?.title ?? state?.sessionName ?? "session";
 	const [sheetOpen, setSheetOpen] = useState(false);
@@ -110,6 +131,28 @@ export const HeaderBar = memo(function HeaderBar({
 				<ThemeToggle />
 				<button
 					type="button"
+					className={searchOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
+					onClick={onToggleSearch}
+					title="find in session"
+					aria-label="find in session"
+					aria-pressed={searchOpen}
+				>
+					<Search size={16} />
+				</button>
+				{onSwitch && (
+					<button
+						type="button"
+						className="sh-btn sh-btn-icon"
+						onClick={onSwitch}
+						title={switchAlert ? "switch session · one needs input" : "switch session"}
+						aria-label={switchAlert ? "switch session, another session needs input" : "switch session"}
+					>
+						<Layers size={16} />
+						{switchAlert && <span className="sh-badge sh-badge-dot" />}
+					</button>
+				)}
+				<button
+					type="button"
 					className={railOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
 					onClick={onToggleRail}
 					title={railOpen ? "hide agents" : "show agents"}
@@ -144,6 +187,14 @@ export const HeaderBar = memo(function HeaderBar({
 					phaseLabel={PHASE_LABEL[phase]}
 					readOnly={readOnly}
 					contextPct={pct}
+					chat={chat}
+					onChatChange={onChatChange}
+					changeCount={changeCount}
+					onOpenChanges={() => {
+						setSheetOpen(false);
+						onOpenChanges();
+					}}
+					push={push}
 					onLeave={onLeave}
 					onClose={closeSheet}
 				/>

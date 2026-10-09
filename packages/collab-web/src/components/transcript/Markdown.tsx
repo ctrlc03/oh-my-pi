@@ -1,7 +1,7 @@
 import type { Token } from "@oh-my-pi/pi-utils/marked";
 import { Marked } from "@oh-my-pi/pi-utils/marked";
 import { listMayContinueAt } from "@oh-my-pi/pi-utils/marked-list";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { memo, useMemo, useRef } from "react";
 import { escapeHtml } from "../../lib/format";
 import { mathExtension } from "./math";
@@ -66,6 +66,13 @@ const md = new Marked({
 			if (cleaned === "") return "";
 			return escapeHtml(unescapeHtml(cleaned));
 		},
+		// Fenced and indented code, wrapped with a copy button handled by `onCopyClick`.
+		code({ text, lang, escaped }) {
+			const language = /^\S*/.exec(lang ?? "")?.[0] ?? "";
+			const code = `${text.replace(/\n$/, "")}\n`;
+			const cls = language ? ` class="language-${escapeHtml(language)}"` : "";
+			return `<div class="tr-code"><pre><code${cls}>${escaped ? code : escapeHtml(code)}</code></pre><button type="button" class="tr-copy" aria-label="copy code"></button></div>\n`;
+		},
 		link({ href, title, tokens }) {
 			const inner = this.parser.parseInline(tokens);
 			const url = safeHref(href);
@@ -86,9 +93,23 @@ function renderMarkdown(text: string): string {
 	}
 }
 
+/**
+ * Delegated handler for the copy buttons the `code` renderer emits. Marks the
+ * button `data-copied` briefly so CSS can confirm the copy.
+ */
+function onCopyClick(e: MouseEvent<HTMLDivElement>): void {
+	const button = (e.target as Element).closest(".tr-copy");
+	const code = button?.parentElement?.querySelector("code");
+	if (!button || !code) return;
+	void navigator.clipboard?.writeText(code.textContent ?? "").then(() => {
+		button.setAttribute("data-copied", "");
+		setTimeout(() => button.removeAttribute("data-copied"), 1500);
+	});
+}
+
 export const Markdown = memo(function Markdown({ text }: { text: string }): ReactNode {
 	const html = useMemo(() => renderMarkdown(text), [text]);
-	return <div className="tr-md" dangerouslySetInnerHTML={{ __html: html }} />;
+	return <div className="tr-md" onClick={onCopyClick} dangerouslySetInnerHTML={{ __html: html }} />;
 });
 
 /**
@@ -200,5 +221,5 @@ export const StreamingMarkdown = memo(function StreamingMarkdown({ text }: { tex
 		prefixRef.current = rendered.prefix;
 		return rendered.html;
 	}, [text]);
-	return <div className="tr-md" dangerouslySetInnerHTML={{ __html: html }} />;
+	return <div className="tr-md" onClick={onCopyClick} dangerouslySetInnerHTML={{ __html: html }} />;
 });

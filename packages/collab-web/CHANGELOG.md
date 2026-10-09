@@ -11,6 +11,11 @@
 - Added editable one-tap quick replies above the empty composer
 - Kept unsent composer text per room across reloads and app restarts
 - Added the collab companion (`bun run companion`): pair the app with a computer once, then pick any session hosting `/collab` on it from the connect screen, with live working / needs-input state
+- Added a chat view, chosen per device from the session sheet (default on phones): prompts and replies only, each run of tool calls folded into one expandable line, and one live status line while the agent works
+- Added find in session over prompts and replies, a jump-to-latest button, and copy buttons on code blocks
+- Added a *Changes* sheet listing every file the agent changed through its edit tools, with diffs
+- Added a session switcher to the header and a banner when another session on the paired computer starts waiting for input
+- Added Web Push notifications through the companion when a session needs input or finishes a turn, sent with the companion's own VAPID key (no extra server)
 
 ### Changed
 

@@ -240,6 +240,112 @@
 	animation: tr-pulse 1.4s ease-in-out infinite;
 }
 
+/* ---- chat view: folded tool runs ---- */
+
+.tr-run {
+	display: flex;
+	flex-direction: column;
+	align-self: stretch;
+	gap: 6px;
+}
+
+.tr-run-head {
+	display: inline-flex;
+	align-items: center;
+	align-self: flex-start;
+	gap: 5px;
+	max-width: 100%;
+	min-height: 26px;
+	padding: 2px 10px 2px 6px;
+	font-size: 12.5px;
+	color: var(--fg-muted);
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	cursor: pointer;
+}
+
+.tr-run-head:hover {
+	color: var(--fg);
+}
+
+.tr-run-label {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.tr-run-names {
+	color: var(--fg-faint);
+	font-family: var(--font-mono);
+	font-size: 11.5px;
+}
+
+.tr-run-tool {
+	font-family: var(--font-mono);
+	font-size: 11.5px;
+	color: var(--accent);
+}
+
+.tr-run--live .tr-run-head {
+	border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.tr-run--live .tr-run-label {
+	animation: tr-pulse 1.4s ease-in-out infinite;
+}
+
+.tr-run-failed {
+	flex: none;
+	font-size: 11.5px;
+	color: var(--err);
+}
+
+/* ---- jump to latest ---- */
+
+.tr-jump-dock {
+	position: sticky;
+	bottom: 4px;
+	z-index: 2;
+	display: flex;
+	justify-content: center;
+	height: 0;
+	overflow: visible;
+}
+
+.tr-jump {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 32px;
+	padding: 0 14px;
+	transform: translateY(-100%);
+	font-size: 12.5px;
+	font-weight: 500;
+	color: var(--fg);
+	background: var(--glass);
+	backdrop-filter: blur(14px) saturate(160%);
+	-webkit-backdrop-filter: blur(14px) saturate(160%);
+	border: 1px solid var(--border-strong);
+	border-radius: 999px;
+	box-shadow: var(--shadow-overlay);
+	animation: rise 240ms var(--ease-out) backwards;
+	cursor: pointer;
+}
+
+/* ---- find in session ---- */
+
+::highlight(tr-search) {
+	color: var(--fg);
+	background-color: color-mix(in srgb, var(--warn) 30%, transparent);
+}
+
+::highlight(tr-search-current) {
+	color: var(--fg-inverse);
+	background-color: var(--warn);
+}
+
 /* ---- tool cards ----
  * Cards themselves are rendered by src/tool-render (tv-* namespace);
  * only host-level layout lives here. */
@@ -351,6 +457,53 @@
 	background: none;
 	font-size: 12px;
 	line-height: 1.5;
+}
+
+.tr-code {
+	position: relative;
+}
+
+.tr-copy {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	height: 24px;
+	padding: 0 8px;
+	font: 500 11px / 1 var(--font-ui);
+	color: var(--fg-muted);
+	background: var(--bg-overlay);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+	opacity: 0;
+	transition: opacity 120ms ease-out;
+}
+
+.tr-copy::after {
+	content: "Copy";
+}
+
+.tr-copy[data-copied] {
+	color: var(--ok);
+}
+
+.tr-copy[data-copied]::after {
+	content: "Copied";
+}
+
+.tr-code:hover .tr-copy,
+.tr-copy:focus-visible,
+.tr-copy[data-copied] {
+	opacity: 1;
+}
+
+/* No hover on touch screens: keep the button visible, above the first line. */
+@media (hover: none) {
+	.tr-copy {
+		opacity: 0.85;
+	}
+	.tr-md .tr-code pre {
+		padding-top: 34px;
+	}
 }
 
 .tr-md blockquote {

@@ -9,6 +9,10 @@
  * how browsers notice an update. The new worker installs the new shell and drops the
  * old cache. All URLs are relative, so the build works under a path prefix (GitHub
  * Pages project sites).
+ *
+ * It also shows the companion's Web Push notifications (see scripts/companion.ts)
+ * and routes a tap to the session: an open window gets an `open-session` message,
+ * otherwise the app launches with `#open:<instanceId>`.
  */
 import * as path from "node:path";
 
@@ -60,6 +64,37 @@ self.addEventListener("fetch", event => {
 	const key = req.mode === "navigate" ? "./" : req;
 	event.respondWith(
 		caches.open(CACHE).then(cache => cache.match(key, { ignoreSearch: true })).then(hit => hit || fetch(req)),
+	);
+});
+
+self.addEventListener("push", event => {
+	let data = {};
+	try {
+		data = event.data ? event.data.json() : {};
+	} catch {}
+	const title = typeof data.title === "string" ? data.title : "omp collab";
+	event.waitUntil(
+		self.registration.showNotification(title, {
+			body: typeof data.body === "string" ? data.body : "",
+			icon: "./favicon-192x192.png",
+			tag: typeof data.instanceId === "string" ? data.instanceId : "omp-collab",
+			data: { instanceId: typeof data.instanceId === "string" ? data.instanceId : null },
+		}),
+	);
+});
+
+self.addEventListener("notificationclick", event => {
+	event.notification.close();
+	const instanceId = event.notification.data && event.notification.data.instanceId;
+	event.waitUntil(
+		self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(windows => {
+			const win = windows[0];
+			if (win) {
+				if (instanceId) win.postMessage({ t: "open-session", instanceId });
+				return win.focus();
+			}
+			return self.clients.openWindow(instanceId ? "./#open:" + instanceId : "./");
+		}),
 	);
 });
 `;

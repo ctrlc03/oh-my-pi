@@ -3,7 +3,9 @@ import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import { extractPairing } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
+import type { PushControl } from "../../lib/push";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
+import type { CompanionHandle } from "../../lib/use-companion";
 import { CompanionCard } from "./CompanionCard";
 import { OmpMark } from "./OmpMark";
 import { QrScanner } from "./QrScanner";
@@ -14,8 +16,9 @@ export interface ConnectScreenProps {
 	error: string | null;
 	/** Recently joined rooms, newest first. */
 	rooms: readonly RecentRoom[];
-	/** Companion room link of the paired computer, if any. */
-	pairing: string | null;
+	/** The paired computer's companion, if any. */
+	companion: CompanionHandle | null;
+	push: PushControl;
 	onConnect(link: string, name: string): void;
 	onForget(roomId: string): void;
 	onPair(link: string): void;
@@ -26,7 +29,8 @@ export function ConnectScreen({
 	defaultName,
 	error,
 	rooms,
-	pairing,
+	companion,
+	push,
 	onConnect,
 	onForget,
 	onPair,
@@ -92,9 +96,10 @@ export function ConnectScreen({
 				<ThemeToggle />
 			</div>
 			<div className="sh-connect-stack">
-				{pairing && (
+				{companion && (
 					<CompanionCard
-						pairing={pairing}
+						companion={companion}
+						push={push}
 						onJoin={next => {
 							setLocalError(null);
 							onConnect(next, name.trim() || "guest");

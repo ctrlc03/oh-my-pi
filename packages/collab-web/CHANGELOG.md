@@ -42,6 +42,7 @@
 - Read-only live terminal view of the tmux pane a session runs in
 - Path links in tool cards open the code map on that file, and the code map's file view lists the sessions that changed it
 - The code map's code loads on first open instead of with the app
+- The installed app now picks up new deploys: it checks when foregrounded and offers a reload, instead of running the old version until it is relaunched twice
 - Added *All sessions* through the companion: past and live sessions across projects, grouped by folder with spend, searchable, with *Open*, *Share*, or *Resume* on each row
 
 ### Changed

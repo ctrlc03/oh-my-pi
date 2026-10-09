@@ -1953,9 +1953,6 @@
 	.sh-queued-label {
 		display: none;
 	}
-	.sh-codemap-toggle {
-		display: none;
-	}
 	.sh-header .sh-mobile-only {
 		display: inline-flex;
 	}

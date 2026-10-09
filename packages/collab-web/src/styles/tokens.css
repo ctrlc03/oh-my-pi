@@ -60,6 +60,16 @@
 	--lang-go: #3fc7d3;
 	--lang-other: #7c7c86;
 
+	/* syntax: file viewer tokens, tuned against --bg-inset */
+	--syn-keyword: #e879c6;
+	--syn-string: #7fd6a0;
+	--syn-number: #f0b162;
+	--syn-comment: #7d7e88;
+	--syn-type: #6fc8e0;
+	--syn-function: #8ab4ff;
+	--syn-attr: #c9aef5;
+	--syn-meta: #b9a77f;
+
 	/* type — system stacks only */
 	--font-ui: "Inter var", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 	--font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
@@ -126,6 +136,16 @@
 	--lang-go: #0f8e9b;
 	--lang-other: #7a7a84;
 
+	/* syntax: file viewer tokens, tuned against --bg-inset */
+	--syn-keyword: #b0237f;
+	--syn-string: #157a4c;
+	--syn-number: #a35f00;
+	--syn-comment: #70707a;
+	--syn-type: #0e7a8c;
+	--syn-function: #2a5fc4;
+	--syn-attr: #6a42b8;
+	--syn-meta: #8a6a1e;
+
 	--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
 	--shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.16);
 	--rail-mobile-shadow: -12px 0 32px rgba(0, 0, 0, 0.12);
@@ -179,6 +199,16 @@
 		--lang-py: #1e8f4a;
 		--lang-go: #0f8e9b;
 		--lang-other: #7a7a84;
+
+		/* syntax: file viewer tokens, tuned against --bg-inset */
+		--syn-keyword: #b0237f;
+		--syn-string: #157a4c;
+		--syn-number: #a35f00;
+		--syn-comment: #70707a;
+		--syn-type: #0e7a8c;
+		--syn-function: #2a5fc4;
+		--syn-attr: #6a42b8;
+		--syn-meta: #8a6a1e;
 
 		--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
 		--shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.16);

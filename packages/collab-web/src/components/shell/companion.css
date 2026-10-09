@@ -181,6 +181,75 @@
 	pointer-events: none;
 }
 
+/* The code element must not pick up the UA monospace font size, or rows drift from the gutter. */
+.sh-file-code {
+	font: inherit;
+}
+
+/* Syntax tokens (highlight.js classes, palette in tokens.css). Colour only: weight and
+ * width stay as the plain text so the gutter and the hit band keep lining up. */
+.sh-file-code .hljs-comment,
+.sh-file-code .hljs-quote {
+	color: var(--syn-comment);
+	font-style: italic;
+}
+
+.sh-file-code .hljs-keyword,
+.sh-file-code .hljs-selector-tag,
+.sh-file-code .hljs-doctag,
+.sh-file-code .hljs-name,
+.sh-file-code .hljs-section {
+	color: var(--syn-keyword);
+}
+
+.sh-file-code .hljs-tag {
+	color: var(--fg-muted);
+}
+
+.sh-file-code .hljs-string,
+.sh-file-code .hljs-regexp,
+.sh-file-code .hljs-addition {
+	color: var(--syn-string);
+}
+
+.sh-file-code .hljs-number,
+.sh-file-code .hljs-literal,
+.sh-file-code .hljs-symbol,
+.sh-file-code .hljs-bullet {
+	color: var(--syn-number);
+}
+
+.sh-file-code .hljs-type,
+.sh-file-code .hljs-built_in,
+.sh-file-code .hljs-title.class_ {
+	color: var(--syn-type);
+}
+
+.sh-file-code .hljs-title,
+.sh-file-code .hljs-link {
+	color: var(--syn-function);
+}
+
+.sh-file-code .hljs-attr,
+.sh-file-code .hljs-attribute,
+.sh-file-code .hljs-property,
+.sh-file-code .hljs-selector-id,
+.sh-file-code .hljs-selector-class {
+	color: var(--syn-attr);
+}
+
+.sh-file-code .hljs-meta {
+	color: var(--syn-meta);
+}
+
+.sh-file-code .hljs-deletion {
+	color: var(--err);
+}
+
+.sh-file-code .hljs-emphasis {
+	font-style: italic;
+}
+
 /* ---- tabs ---- */
 .sh-tabs {
 	display: flex;

@@ -82,6 +82,27 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 		this.#openSocket();
 	}
 
+	/**
+	 * Drop a connection the browser still reports open but the other end stopped
+	 * answering on, and retry with backoff. Reported to `onClose` as a retry.
+	 * No-op once terminally closed.
+	 */
+	reconnect(reason: string): void {
+		if (this.#closed) return;
+		const ws = this.#ws;
+		this.#ws = null;
+		if (ws) {
+			try {
+				ws.close(1000);
+			} catch {
+				// already closing/closed
+			}
+		}
+		this.#clearRetry();
+		this.onClose?.(reason, true);
+		this.#scheduleRetry();
+	}
+
 	send(frame: Out, targetPeer = 0): void {
 		this.#sendChain = this.#sendChain
 			.then(async () => {

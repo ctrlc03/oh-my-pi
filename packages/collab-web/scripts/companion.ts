@@ -40,6 +40,12 @@
  * start of the reply), sending straight to the browser's push service with its
  * own VAPID key (no server in between). A device that is showing the app is
  * skipped: it alerts in-app instead.
+ *
+ * Staying reachable (macOS): the companion holds a sleep assertion while it
+ * runs (`caffeinate -i -s`), so the Mac does not idle-sleep and sessions stay
+ * online; closing the lid still sleeps it. The hosts frame carries the power
+ * state, and subscribed devices are pushed when the Mac goes on battery, runs
+ * low, and is plugged in again.
  */
 
 import * as fs from "node:fs/promises";
@@ -50,8 +56,10 @@ import { generateRoomKey, importRoomKey } from "../src/lib/codec";
 import {
 	type CompanionHost,
 	type CompanionIdleSession,
+	type CompanionPower,
 	type CompanionReply,
 	type CompanionRequest,
+	LOW_BATTERY_PCT,
 	PAIR_PREFIX,
 	type PushSubscriptionJson,
 } from "../src/lib/companion";
@@ -87,6 +95,7 @@ import {
 	SAFE_ID_RE,
 } from "./companion-sessions";
 import { sandboxedPids } from "./companion-sandbox";
+import { holdAwake, powerNotice, readPower } from "./companion-power";
 import { canSandbox, findTmux, killTmuxSession, launchInTmux } from "./companion-start";
 import { isUsageRange, sessionOverview, usageReport } from "./companion-stats";
 import { generateVapidKeys, isPushSubscription, sendPush, type VapidKeys } from "./web-push";
@@ -320,6 +329,12 @@ let seen: Map<string, { busy: boolean | null; inputRequired: boolean }> | null =
 /** Sessions from the latest `omp collab list`; requests naming an instance resolve against these. */
 let knownHosts: CompanionHost[] = [];
 let knownIdle: CompanionIdleSession[] = [];
+/** Power at the previous poll; null until a poll after (re)starting to watch. */
+let lastPower: CompanionPower | null = null;
+/** The low-battery push went out during this discharge. */
+let lowWarned = false;
+const awake = holdAwake();
+if (process.platform === "darwin" && !awake.held) console.error("companion: could not hold the Mac awake (caffeinate)");
 
 function errorText(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
@@ -348,7 +363,7 @@ function push(subscription: PushSubscriptionJson, payload: { title: string; body
 	);
 }
 
-/** Notify every subscribed device not showing the app right now. */
+/** Push to every subscribed device except those showing the app right now. */
 function notify(host: CompanionHost, body: string): void {
 	const showing = new Set<string>();
 	for (const p of presence.values()) if (p.visible && p.endpoint) showing.add(p.endpoint);
@@ -356,6 +371,18 @@ function notify(host: CompanionHost, body: string): void {
 		if (showing.has(subscription.endpoint)) continue;
 		push(subscription, { title: hostTitle(host), body, instanceId: host.instanceId });
 	}
+}
+
+/** Push power changes (unplugged, low, plugged in again) to every subscribed device: the app has no in-app alert for them. */
+function detectPowerEdges(next: CompanionPower | null): void {
+	const prev = lastPower;
+	lastPower = next;
+	if (next?.source !== "battery") lowWarned = false;
+	if (prev === null || next === null || state.subscriptions.length === 0) return;
+	const notice = powerNotice(machine, prev, next, lowWarned);
+	if (notice === null) return;
+	if (next.source === "battery" && next.battery !== null && next.battery <= LOW_BATTERY_PCT) lowWarned = true;
+	for (const subscription of state.subscriptions) push(subscription, notice);
 }
 
 /**
@@ -408,6 +435,8 @@ async function refresh(targetPeer?: number): Promise<void> {
 		return;
 	}
 	detectEdges(listed.hosts);
+	const power = await readPower(awake.held);
+	detectPowerEdges(power);
 	// Push-only polling: nobody to tell; a device's `list` on joining gets a fresh answer.
 	if (peers.size === 0) return;
 	const [canStart, canPr] = await Promise.all([findTmux().then(found => found !== null), canCreatePr()]);
@@ -421,6 +450,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canSandbox: canStart && sandboxAvailable,
 		canPr,
 		canCodemap: codemapReady,
+		power: power ?? undefined,
 	};
 	const json = JSON.stringify(frame);
 	if (json !== lastHostsJson) socket.send(frame);
@@ -531,6 +561,7 @@ function schedulePoll(): void {
 	if (peers.size === 0 && state.subscriptions.length === 0) {
 		// Unwatched gaps must not read as edges once watching resumes.
 		seen = null;
+		lastPower = null;
 		return;
 	}
 	pollTimer = setTimeout(
@@ -757,6 +788,7 @@ void loadCodemap().then(ready => {
 
 function shutdown(): void {
 	clearTimeout(pollTimer);
+	awake.release();
 	socket.close();
 	process.exit(0);
 }

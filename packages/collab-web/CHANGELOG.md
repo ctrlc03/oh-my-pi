@@ -31,6 +31,7 @@
 - Added a *Usage* screen through the companion: cost, tokens (with cache), requests, and cache hit rate across every omp session on the computer for 24h / 7d / 30d / 90d / all time, a cost-or-tokens bar chart, and the top models and projects by spend. Read from omp's stats database (`@oh-my-pi/omp-stats`), synced at most once a minute
 - Added a *Code map* through the companion: navigate the session's repository by folder, file, and symbol, with what uses each and what it uses, cross-language links (Solidity events, Rust decoders, Noir circuits), multi-step flows, search, a force-directed folder map on wider screens, and *View source* at the symbol's line
 - Added syntax highlighting to the file viewer (highlight.js, loaded on first open; Solidity, Rust, TypeScript, Go, Python, Noir via the Rust grammar, and common config formats). Files over 256 KB stay plain
+- The companion keeps the Mac awake while it runs (`caffeinate -i -s`), so sessions stay reachable when you are away. The app warns on the computer card and in the sessions sidebar while the Mac is on battery, and notifications go out when it is unplugged, runs low (20%), and is plugged in again
 - Added *All sessions* through the companion: past and live sessions across projects, grouped by folder with spend, searchable, with *Open*, *Share*, or *Resume* on each row
 
 ### Changed

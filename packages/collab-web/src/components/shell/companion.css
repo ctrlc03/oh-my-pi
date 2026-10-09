@@ -159,11 +159,26 @@
 }
 
 .sh-file-text {
-	flex: none;
+	--pad: 8px;
+	position: relative;
+	/* Grow to the viewer's width so the highlight band spans it. */
+	flex: 1 0 auto;
 	margin: 0;
-	padding: 8px 12px;
+	padding: var(--pad) 12px;
 	tab-size: 4;
 	color: var(--fg);
+}
+
+/* Line highlight: `--hit-line` is 1-based and the row height is the 1.5 line-height. */
+.sh-file-hit {
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: calc(var(--pad) + (var(--hit-line) - 1) * 1.5em);
+	height: 1.5em;
+	background: var(--accent-muted);
+	border-left: 2px solid var(--accent);
+	pointer-events: none;
 }
 
 /* ---- tabs ---- */

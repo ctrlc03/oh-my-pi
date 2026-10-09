@@ -5,8 +5,8 @@ import { createPortal } from "react-dom";
 export interface SheetProps {
 	/** Accessible dialog name. */
 	label: string;
-	/** Wider dropdown on desktop, for content such as diffs. */
-	wide?: boolean;
+	/** `wide`: wider dropdown on desktop, for content such as diffs. `full`: near-full-screen canvas with a definite height. */
+	size?: "wide" | "full";
 	onClose(): void;
 	children: ReactNode;
 }
@@ -16,7 +16,7 @@ export interface SheetProps {
  * elsewhere. Escape and the backdrop close it; with sheets stacked (a file opened
  * from the changes list), Escape closes only the top one.
  */
-export function Sheet({ label, wide, onClose, children }: SheetProps): ReactNode {
+export function Sheet({ label, size, onClose, children }: SheetProps): ReactNode {
 	const panel = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent): void => {
@@ -32,7 +32,7 @@ export function Sheet({ label, wide, onClose, children }: SheetProps): ReactNode
 	return createPortal(
 		<>
 			<div className="sh-sheet-backdrop" onClick={onClose} />
-			<div ref={panel} className={wide ? "sh-sheet sh-sheet-wide" : "sh-sheet"} role="dialog" aria-label={label}>
+			<div ref={panel} className={size ? `sh-sheet sh-sheet-${size}` : "sh-sheet"} role="dialog" aria-label={label}>
 				<div className="sh-sheet-grip" aria-hidden />
 				{children}
 			</div>

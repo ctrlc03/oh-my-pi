@@ -50,6 +50,16 @@
 	--ring: #5ad8e6;
 	--ring-soft: rgba(90, 216, 230, 0.18);
 
+	/* code map: one hue per source language */
+	--lang-rust: #f0883e;
+	--lang-sol: #8a9bd6;
+	--lang-noir: #b48ef0;
+	--lang-ts: #4ea1ff;
+	--lang-js: #e5c64a;
+	--lang-py: #5fcf80;
+	--lang-go: #3fc7d3;
+	--lang-other: #7c7c86;
+
 	/* type — system stacks only */
 	--font-ui: "Inter var", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 	--font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
@@ -106,6 +116,16 @@
 	--ring: #1fa9bb;
 	--ring-soft: rgba(31, 169, 187, 0.16);
 
+	/* code map: one hue per source language */
+	--lang-rust: #c25a0c;
+	--lang-sol: #5368b8;
+	--lang-noir: #7c4fd0;
+	--lang-ts: #1b6fd1;
+	--lang-js: #9a7d00;
+	--lang-py: #1e8f4a;
+	--lang-go: #0f8e9b;
+	--lang-other: #7a7a84;
+
 	--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
 	--shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.16);
 	--rail-mobile-shadow: -12px 0 32px rgba(0, 0, 0, 0.12);
@@ -149,6 +169,16 @@
 		--edge-bottom: rgba(0, 0, 0, 0.06);
 		--ring: #1fa9bb;
 		--ring-soft: rgba(31, 169, 187, 0.16);
+
+		/* code map: one hue per source language */
+		--lang-rust: #c25a0c;
+		--lang-sol: #5368b8;
+		--lang-noir: #7c4fd0;
+		--lang-ts: #1b6fd1;
+		--lang-js: #9a7d00;
+		--lang-py: #1e8f4a;
+		--lang-go: #0f8e9b;
+		--lang-other: #7a7a84;
 
 		--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
 		--shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.16);

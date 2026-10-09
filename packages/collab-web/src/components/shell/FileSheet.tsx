@@ -1,6 +1,6 @@
 import { LoaderCircle, RefreshCw, X } from "lucide-react";
-import type { ReactNode } from "react";
-import { useCallback, useMemo } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { CompanionClient, FileContent } from "../../lib/companion";
 import { fmtBytes } from "../../lib/format";
 import { useRequest } from "../../lib/use-request";
@@ -12,16 +12,18 @@ export interface FileSheetProps {
 	instanceId: string;
 	/** Absolute, or relative to the session's working directory. */
 	path: string;
+	/** 1-based line to bring into view and highlight once the file is shown. */
+	line?: number;
 	onClose(): void;
 }
 
 /** Read-only view of one file on the paired computer. */
-export function FileSheet({ client, instanceId, path, onClose }: FileSheetProps): ReactNode {
+export function FileSheet({ client, instanceId, path, line, onClose }: FileSheetProps): ReactNode {
 	const load = useCallback(() => client.requestFile(instanceId, path), [client, instanceId, path]);
 	const { state, reload } = useRequest(load);
 	const shown = state.status === "ready" ? state.value.path : path;
 	return (
-		<Sheet label="file" wide onClose={onClose}>
+		<Sheet label="file" size="wide" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title sh-file-path" title={shown}>
 					{shown}
@@ -48,16 +50,26 @@ export function FileSheet({ client, instanceId, path, onClose }: FileSheetProps)
 				</div>
 			)}
 			{state.status === "error" && <div className="sh-connect-error">{state.message}</div>}
-			{state.status === "ready" && <FileBody file={state.value} />}
+			{state.status === "ready" && <FileBody file={state.value} line={line} />}
 		</Sheet>
 	);
 }
 
-function FileBody({ file }: { file: FileContent }): ReactNode {
+function FileBody({ file, line }: { file: FileContent; line?: number }): ReactNode {
 	const lines = useMemo(() => (file.text === null ? [] : file.text.replace(/\n$/, "").split("\n")), [file.text]);
 	// One gutter column of numbers beside one text block: both are `pre` with the
 	// same line height, so rows line up without a DOM node per line.
 	const gutter = useMemo(() => lines.map((_, i) => i + 1).join("\n"), [lines]);
+	const view = useRef<HTMLDivElement>(null);
+	const text = useRef<HTMLPreElement>(null);
+	// Put the target line about a third of the way down the viewer.
+	useLayoutEffect(() => {
+		if (line === undefined || !view.current || !text.current) return;
+		const style = getComputedStyle(text.current);
+		const lineHeight = Number.parseFloat(style.lineHeight);
+		const top = Number.parseFloat(style.paddingTop) + (line - 1) * lineHeight;
+		view.current.scrollTop = top - view.current.clientHeight / 3;
+	}, [file, line]);
 	return (
 		<>
 			<div className="sh-file-meta">
@@ -76,11 +88,16 @@ function FileBody({ file }: { file: FileContent }): ReactNode {
 			) : file.text.length === 0 ? (
 				<div className="sh-file-note">Empty file.</div>
 			) : (
-				<div className="sh-file-view">
+				<div ref={view} className="sh-file-view">
 					<pre className="sh-file-gutter" aria-hidden>
 						{gutter}
 					</pre>
-					<pre className="sh-file-text">{file.text}</pre>
+					<pre ref={text} className="sh-file-text">
+						{line !== undefined && (
+							<span className="sh-file-hit" style={{ "--hit-line": line } as CSSProperties} aria-hidden />
+						)}
+						{file.text}
+					</pre>
 				</div>
 			)}
 		</>

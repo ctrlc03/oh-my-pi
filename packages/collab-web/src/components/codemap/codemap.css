@@ -1,0 +1,594 @@
+/* Code map sheet. Builds on the shell.css sheet, segmented and input primitives;
+ * token colours only (language hues are --lang-* in tokens.css). */
+
+/* ---- header ---- */
+.sh-cm-head {
+	flex: none;
+	flex-wrap: wrap;
+	align-items: center;
+}
+
+.sh-cm-title {
+	flex: none;
+	padding-top: 0;
+}
+
+.sh-cm-search {
+	display: flex;
+	flex: 1 1 220px;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	color: var(--fg-faint);
+}
+
+.sh-cm-search .sh-input {
+	flex: 1;
+	min-width: 0;
+	height: 32px;
+}
+
+.sh-cm-actions {
+	flex: none;
+	margin-left: auto;
+}
+
+.sh-cm-crumbs {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 2px;
+	overflow-x: auto;
+	white-space: nowrap;
+	font-size: 12.5px;
+	scrollbar-width: none;
+}
+
+.sh-cm-crumb {
+	display: inline-flex;
+	align-items: center;
+	color: var(--fg-faint);
+}
+
+.sh-cm-crumb-btn {
+	padding: 4px 6px;
+	color: var(--fg-muted);
+	background: none;
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.sh-cm-crumb-btn:hover {
+	color: var(--fg);
+	background: var(--hover);
+}
+
+.sh-cm-crumb-here {
+	padding: 4px 6px;
+	font-weight: 600;
+	color: var(--fg);
+}
+
+.sh-cm-tabs {
+	flex: none;
+	align-self: flex-start;
+}
+
+.sh-sheet-full > .sh-tree-error,
+.sh-sheet-full > .sh-companion-empty {
+	flex: none;
+}
+
+.sh-cm-foot {
+	flex: none;
+	font: 400 11.5px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+/* ---- body ---- */
+.sh-cm-body {
+	flex: 1 1 0;
+	min-height: 0;
+	overflow: auto;
+	transition: opacity 120ms ease-out;
+}
+
+/* The force map fills the body instead of scrolling inside it. */
+.sh-cm-body-fill {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.sh-cm-stale {
+	opacity: 0.5;
+}
+
+.sh-cm-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-cm-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-height: 40px;
+	padding: 6px 10px;
+	text-align: left;
+	color: var(--fg);
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	transition:
+		background 120ms ease-out,
+		border-color 120ms ease-out;
+}
+
+.sh-cm-row:hover {
+	background: color-mix(in srgb, var(--bg-raised) 88%, var(--fg));
+	border-color: var(--border-strong);
+}
+
+.sh-cm-icon {
+	flex: none;
+}
+
+.sh-cm-row-text {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.sh-cm-row-label {
+	overflow: hidden;
+	font-size: 13px;
+	font-weight: 500;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-cm-row-sub {
+	overflow: hidden;
+	font: 400 11.5px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-cm-chip {
+	flex: none;
+	padding: 2px 7px;
+	font: 400 11px / 1.3 var(--font-mono);
+	color: var(--fg-muted);
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: 999px;
+}
+
+.sh-cm-chip-bridge {
+	color: var(--accent);
+	background: var(--accent-muted);
+	border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.sh-cm-kind,
+.sh-cm-counts {
+	flex: none;
+	font: 400 11.5px / 1.3 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+.sh-cm-weight {
+	flex: none;
+	min-width: 22px;
+	text-align: right;
+	font: 600 11.5px / 1 var(--font-mono);
+	color: var(--fg-muted);
+}
+
+/* ---- folder / file / symbol neighbourhood ---- */
+.sh-cm-focus {
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+}
+
+.sh-cm-graph {
+	position: relative;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(220px, 300px) minmax(0, 1fr);
+	column-gap: 72px;
+	align-items: center;
+}
+
+.sh-cm-col,
+.sh-cm-card {
+	position: relative;
+	z-index: 1;
+}
+
+.sh-cm-col {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+}
+
+.sh-cm-col-title {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	margin: 0 0 2px;
+	font-size: 11.5px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--fg-muted);
+}
+
+.sh-cm-count {
+	font: 400 11.5px / 1 var(--font-mono);
+	letter-spacing: 0;
+	color: var(--fg-faint);
+}
+
+.sh-cm-none,
+.sh-cm-more {
+	padding: 4px 2px;
+	font-size: 12.5px;
+	color: var(--fg-faint);
+}
+
+.sh-cm-curves {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+	width: 100%;
+	height: 100%;
+	overflow: visible;
+	pointer-events: none;
+}
+
+.sh-cm-curve {
+	fill: none;
+	stroke: var(--fg-faint);
+	opacity: 0.55;
+}
+
+.sh-cm-curve-bridge {
+	stroke: var(--accent);
+	stroke-dasharray: 6 4;
+	opacity: 0.9;
+}
+
+.sh-cm-card {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 14px;
+	background: var(--bg-overlay);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-card);
+}
+
+.sh-cm-card-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.sh-cm-card-title {
+	min-width: 0;
+	font-size: 15px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.sh-cm-card-path {
+	font: 400 11.5px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+	overflow-wrap: anywhere;
+}
+
+.sh-cm-card-sig {
+	margin: 0;
+	padding: 8px 10px;
+	font: 400 12px / 1.5 var(--font-mono);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	background: var(--bg-inset);
+	border-radius: var(--radius);
+}
+
+.sh-cm-card-doc {
+	margin: 0;
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--fg-muted);
+}
+
+.sh-cm-card-counts {
+	font-size: 12px;
+	color: var(--fg-muted);
+}
+
+.sh-cm-card-action {
+	align-self: flex-start;
+}
+
+.sh-cm-children {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.sh-cm-children .sh-cm-list {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+/* ---- flow ---- */
+.sh-cm-flow {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.sh-cm-flow-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.sh-cm-flow-scroll {
+	overflow-x: auto;
+	padding-bottom: 8px;
+}
+
+.sh-cm-flow-cols {
+	position: relative;
+	display: flex;
+	align-items: flex-start;
+	gap: 72px;
+	width: max-content;
+	min-width: 100%;
+}
+
+.sh-cm-flow-col {
+	position: relative;
+	z-index: 1;
+	display: flex;
+	flex: none;
+	flex-direction: column;
+	gap: 10px;
+	width: 240px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-cm-step {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
+	width: 100%;
+	padding: 8px 10px;
+	text-align: left;
+	color: var(--fg);
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	transition:
+		background 120ms ease-out,
+		border-color 120ms ease-out;
+}
+
+.sh-cm-step:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--bg-raised) 88%, var(--fg));
+	border-color: var(--border-strong);
+}
+
+.sh-cm-step:disabled {
+	cursor: default;
+}
+
+.sh-cm-step-focus {
+	background: var(--accent-muted);
+	border-color: var(--accent);
+}
+
+.sh-cm-step-main {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 100%;
+	min-width: 0;
+}
+
+.sh-cm-step .sh-cm-row-sub {
+	max-width: 100%;
+}
+
+.sh-cm-tree {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-cm-tree li {
+	margin-left: calc(var(--depth, 0) * 14px);
+}
+
+/* ---- force map ---- */
+.sh-cm-map {
+	position: relative;
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+	overflow: hidden;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+}
+
+.sh-cm-map-surface {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	cursor: grab;
+	touch-action: none;
+}
+
+.sh-cm-map-surface:active {
+	cursor: grabbing;
+}
+
+.sh-cm-map-svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+	user-select: none;
+}
+
+.sh-cm-empty {
+	margin: auto;
+	padding: 24px;
+	text-align: center;
+}
+
+.sh-cm-map-tools {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 2px;
+	background: var(--glass);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-cm-map-info {
+	position: absolute;
+	right: 10px;
+	bottom: 8px;
+	left: 10px;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 10px;
+	font: 400 11.5px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+	pointer-events: none;
+}
+
+.sh-cm-map-info strong {
+	color: var(--fg);
+}
+
+.sh-cm-edge {
+	stroke: var(--fg-faint);
+	opacity: 0.45;
+}
+
+.sh-cm-edge-bridge {
+	stroke: var(--accent);
+	stroke-dasharray: 6 4;
+	opacity: 0.85;
+}
+
+.sh-cm-map-hovering .sh-cm-edge {
+	opacity: 0.08;
+}
+
+.sh-cm-map-hovering .sh-cm-edge-lit {
+	opacity: 1;
+}
+
+.sh-cm-node {
+	cursor: pointer;
+	transition: opacity 120ms ease-out;
+}
+
+.sh-cm-node-dim {
+	opacity: 0.22;
+}
+
+.sh-cm-node-file circle {
+	fill: var(--lang);
+}
+
+.sh-cm-node-dir rect {
+	fill: color-mix(in srgb, var(--lang) 22%, var(--bg-raised));
+	stroke: var(--lang);
+	stroke-width: 2px;
+	vector-effect: non-scaling-stroke;
+}
+
+/* Halo in the canvas colour keeps labels readable over edges. */
+.sh-cm-label {
+	fill: var(--fg-muted);
+	stroke: var(--bg-inset);
+	stroke-width: 3px;
+	stroke-linejoin: round;
+	paint-order: stroke;
+	pointer-events: none;
+	transition: opacity 120ms ease-out;
+}
+
+.sh-cm-label-on {
+	fill: var(--fg);
+}
+
+/* ---- phones ---- */
+@media (max-width: 900px) {
+	.sh-cm-graph {
+		grid-template-columns: minmax(0, 1fr) minmax(200px, 260px) minmax(0, 1fr);
+		column-gap: 44px;
+	}
+}
+
+@media (max-width: 640px) {
+	.sh-cm-title {
+		flex: 1;
+	}
+
+	.sh-cm-search {
+		order: 3;
+		flex: 1 0 100%;
+	}
+
+	.sh-cm-actions {
+		margin-left: 0;
+	}
+
+	.sh-cm-graph {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 14px;
+	}
+
+	.sh-cm-children .sh-cm-list {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.sh-cm-row {
+		min-height: 44px;
+	}
+}

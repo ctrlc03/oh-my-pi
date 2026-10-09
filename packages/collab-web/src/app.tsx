@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentDrawer } from "./components/agents/AgentDrawer";
 import { AgentsPanel } from "./components/agents/AgentsPanel";
+import { CodemapSheet } from "./components/codemap/CodemapSheet";
 import { Banners } from "./components/shell/Banners";
 import { ChangesSheet } from "./components/shell/ChangesSheet";
 import { Composer } from "./components/shell/Composer";
@@ -39,6 +40,7 @@ import { useGuestSnapshot } from "./lib/use-guest";
 import type { ToolRenderHost } from "./tool-render";
 import "./components/shell/shell.css";
 import "./components/shell/companion.css";
+import "./components/codemap/codemap.css";
 
 const NAME_KEY = "omp.collab.name";
 /** Chat view preference (boolean); absent: phones get chat, larger screens the full transcript. */
@@ -365,7 +367,10 @@ function Session({
 		[hosts, sessionId],
 	);
 	const hostRow = hosts?.find(host => host.instanceId === hostId);
-	const [filePath, setFilePath] = useState<string | null>(null);
+	const [file, setFile] = useState<{ path: string; line?: number } | null>(null);
+	const [codemapOpen, setCodemapOpen] = useState(false);
+	const canCodemap = companionClient !== null && hostId !== null && companion?.snap.canCodemap === true;
+	const openCodemap = useCallback(() => setCodemapOpen(true), []);
 
 	// Task-card agent chips drill into the same drawer the rail uses.
 	const agentIds = useMemo(() => new Set(snap.agents.map(a => a.id)), [snap.agents]);
@@ -375,7 +380,7 @@ function Session({
 			openAgent: id => {
 				if (agentIds.has(id)) setSelectedId(id);
 			},
-			openFile: hostId !== null ? setFilePath : undefined,
+			openFile: hostId !== null ? path => setFile({ path }) : undefined,
 		}),
 		[agentIds, hostId],
 	);
@@ -518,6 +523,7 @@ function Session({
 				onOpenChanges={openChanges}
 				onOpenUsage={companion ? openUsage : null}
 				onOpenSessions={companion ? openSessions : null}
+				onOpenCodemap={canCodemap ? openCodemap : null}
 				push={push}
 			/>
 			<main className="sh-main">
@@ -640,8 +646,22 @@ function Session({
 					onClose={() => setChangesOpen(false)}
 				/>
 			)}
-			{filePath !== null && companionClient !== null && hostId !== null && (
-				<FileSheet client={companionClient} instanceId={hostId} path={filePath} onClose={() => setFilePath(null)} />
+			{codemapOpen && canCodemap && (
+				<CodemapSheet
+					client={companionClient}
+					instanceId={hostId}
+					onOpenFile={(path, line) => setFile({ path, line })}
+					onClose={() => setCodemapOpen(false)}
+				/>
+			)}
+			{file !== null && companionClient !== null && hostId !== null && (
+				<FileSheet
+					client={companionClient}
+					instanceId={hostId}
+					path={file.path}
+					line={file.line}
+					onClose={() => setFile(null)}
+				/>
 			)}
 		</div>
 	);

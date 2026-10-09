@@ -52,7 +52,7 @@ export function UsageSheet({ client, onClose }: UsageSheetProps): ReactNode {
 	};
 
 	return (
-		<Sheet label="usage" wide onClose={onClose}>
+		<Sheet label="usage" size="wide" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Usage</div>
 				<span className="sh-stats-head-actions">

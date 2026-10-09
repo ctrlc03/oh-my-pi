@@ -65,6 +65,7 @@ import {
 	parseCollabLink,
 } from "../src/lib/link";
 import { CollabSocket } from "../src/lib/socket";
+import { checkFlow, checkFocus, checkSearch, codemapSearch, codemapView, loadCodemap } from "./companion-codemap";
 import { gitDiff, gitSnapshot, isInside, readRepoFile } from "./companion-git";
 import {
 	canCreatePr,
@@ -311,6 +312,8 @@ const peers = new Set<number>();
 /** What each connected device last said about itself; see `presence` requests. */
 const presence = new Map<number, { endpoint: string | null; visible: boolean }>();
 let lastHostsJson = "";
+/** The codemap module loaded; the hosts frame advertises code maps from then on. */
+let codemapReady = false;
 let pollTimer: Timer | undefined;
 /** Per-host state at the previous poll; null until a poll after (re)starting to watch. */
 let seen: Map<string, { busy: boolean | null; inputRequired: boolean }> | null = null;
@@ -417,6 +420,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canStart,
 		canSandbox: canStart && sandboxAvailable,
 		canPr,
+		canCodemap: codemapReady,
 	};
 	const json = JSON.stringify(frame);
 	if (json !== lastHostsJson) socket.send(frame);
@@ -705,6 +709,20 @@ socket.onFrame = (frame, fromPeer) => {
 				return { t: "link", reqId: frame.reqId, url };
 			});
 			return;
+		case "codemap":
+			respond(frame.reqId, async () => ({
+				t: "codemap",
+				reqId: frame.reqId,
+				view: await codemapView(await sessionCwd(frame.instanceId), checkFocus(frame.focus), checkFlow(frame.flow)),
+			}));
+			return;
+		case "codemap-search":
+			respond(frame.reqId, async () => ({
+				t: "codemap-search",
+				reqId: frame.reqId,
+				hits: await codemapSearch(await sessionCwd(frame.instanceId), checkSearch(frame.q)),
+			}));
+			return;
 		case "worktree-remove":
 			respond(frame.reqId, async () => {
 				if (typeof frame.path !== "string") throw new Error("invalid worktree path");
@@ -730,6 +748,12 @@ socket.onClose = (reason, willReconnect) => {
 
 socket.connect();
 schedulePoll();
+// Loading the codemap module is slow and may fail on a checkout without the native extractor: never block startup on it.
+void loadCodemap().then(ready => {
+	codemapReady = ready;
+	// The hosts frame only goes out when its JSON changes; this is such a change.
+	if (ready) void refresh();
+});
 
 function shutdown(): void {
 	clearTimeout(pollTimer);

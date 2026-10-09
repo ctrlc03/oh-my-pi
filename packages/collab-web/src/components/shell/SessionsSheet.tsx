@@ -100,7 +100,7 @@ export function SessionsSheet({
 	}
 
 	return (
-		<Sheet label="all sessions" wide onClose={onClose}>
+		<Sheet label="all sessions" size="wide" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">All sessions</div>
 				<span className="sh-stats-head-actions">

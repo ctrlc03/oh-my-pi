@@ -75,6 +75,8 @@ export interface SessionSheetProps {
 	/** Usage and all-sessions screens; null when no computer is paired. */
 	onOpenUsage: (() => void) | null;
 	onOpenSessions: (() => void) | null;
+	/** Code map of the session's repository; null unless the paired computer can build one. */
+	onOpenCodemap: (() => void) | null;
 	push: PushControl;
 	onLeave(): void;
 	onClose(): void;
@@ -106,6 +108,7 @@ export function SessionSheet({
 	onOpenChanges,
 	onOpenUsage,
 	onOpenSessions,
+	onOpenCodemap,
 	workingTree,
 	usage,
 	models,
@@ -341,6 +344,17 @@ export function SessionSheet({
 						</button>
 					</dd>
 				</div>
+				{onOpenCodemap && (
+					<div className="sh-sheet-row">
+						<dt>Code map</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onOpenCodemap}>
+								Browse the repository
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
 				{onOpenUsage && (
 					<div className="sh-sheet-row">
 						<dt>Usage</dt>

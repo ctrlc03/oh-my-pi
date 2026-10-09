@@ -14,6 +14,7 @@ const UNPAIRED: CompanionSnapshot = {
 	hosts: [],
 	idle: [],
 	canStart: false,
+	canSandbox: false,
 	vapidKey: null,
 	error: null,
 };

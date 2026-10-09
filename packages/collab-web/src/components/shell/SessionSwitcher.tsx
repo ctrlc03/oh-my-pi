@@ -137,7 +137,12 @@ export function SessionSwitcher({
 			)}
 			{error && <div className="sh-connect-error">{error}</div>}
 			{starting && companion?.client && (
-				<StartSessionSheet client={companion.client} onOpen={onOpenHost} onClose={() => setStarting(false)} />
+				<StartSessionSheet
+					client={companion.client}
+					canSandbox={companion.snap.canSandbox}
+					onOpen={onOpenHost}
+					onClose={() => setStarting(false)}
+				/>
 			)}
 		</Sheet>
 	);

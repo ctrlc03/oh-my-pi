@@ -53,6 +53,53 @@
 	overflow-wrap: anywhere;
 }
 
+.sh-start-sandbox {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 10px 12px;
+	margin-bottom: 10px;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	background: var(--bg-raised);
+	cursor: pointer;
+}
+
+.sh-start-sandbox input {
+	flex: none;
+	width: 18px;
+	height: 18px;
+	margin: 1px 0 0;
+	accent-color: var(--accent);
+}
+
+.sh-start-sandbox-text {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.sh-start-sandbox-title {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 14px;
+	font-weight: 500;
+	color: var(--fg);
+}
+
+/* ---- sandboxed sessions ---- */
+.sh-chip.sh-chip-sandboxed {
+	gap: 4px;
+	color: var(--ok);
+}
+
+.sh-sandboxed-mark {
+	display: inline-flex;
+	flex: none;
+	color: var(--ok);
+}
+
 /* ---- file viewer ---- */
 .sh-sheet-head .sh-file-path {
 	flex: 1;

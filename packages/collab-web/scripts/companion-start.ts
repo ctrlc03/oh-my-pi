@@ -2,12 +2,14 @@
  * Starting omp sessions on this computer for the `start` request: a detached
  * tmux session runs `omp` with a companion-owned config overlay that makes it
  * host collab with control access, so the app can attach to it like any other
- * hosted session. The tmux session ends when omp exits.
+ * hosted session. The tmux session ends when omp exits. A sandboxed start
+ * wraps omp in `sandbox-exec` (see ./companion-sandbox).
  */
 
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { prepareSandbox, SANDBOX_EXEC, type SandboxLaunch } from "./companion-sandbox";
 import { SAFE_ID_RE } from "./companion-sessions";
 
 const TMUX_FALLBACKS = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"];
@@ -21,6 +23,11 @@ export async function findTmux(): Promise<string | null> {
 	if (found) return found;
 	for (const candidate of TMUX_FALLBACKS) if (await Bun.file(candidate).exists()) return candidate;
 	return null;
+}
+
+/** True when this computer can run sandboxed sessions (macOS `sandbox-exec`). */
+export async function canSandbox(): Promise<boolean> {
+	return process.platform === "darwin" && (await Bun.file(SANDBOX_EXEC).exists());
 }
 
 async function writeOverlay(overlayPath: string): Promise<void> {
@@ -37,6 +44,8 @@ export interface TmuxLaunch {
 	cwd: string;
 	/** Session id to resume; must match {@link SAFE_ID_RE}. */
 	resume?: string;
+	/** Run omp sandboxed to `cwd` with file tools only; `folder` is filled in with the resolved cwd. */
+	sandbox?: Omit<SandboxLaunch, "folder">;
 }
 
 /**
@@ -54,6 +63,7 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 		throw new Error("folder does not exist on this computer");
 	}
 	await writeOverlay(launch.overlayPath);
+	const sandbox = launch.sandbox ? await prepareSandbox({ ...launch.sandbox, folder: cwd }) : null;
 
 	const name = `omp-${crypto.randomUUID().slice(0, 8)}`;
 	// A tmux server that is already running does not pass our environment on to new sessions.
@@ -67,9 +77,11 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 		"-c",
 		cwd,
 		...env.flatMap(entry => ["-e", entry]),
+		...(sandbox?.prefix ?? []),
 		launch.ompBin,
 		"--config",
 		launch.overlayPath,
+		...(sandbox?.ompArgs ?? []),
 		...(launch.resume ? ["-r", launch.resume] : []),
 	];
 	const proc = Bun.spawn([launch.tmux, ...args], { stdout: "pipe", stderr: "pipe", stdin: "ignore" });

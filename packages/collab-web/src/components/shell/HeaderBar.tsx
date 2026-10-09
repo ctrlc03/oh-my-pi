@@ -1,5 +1,5 @@
 import type { SessionCommand, SessionHeader, SessionState, WireModel } from "@oh-my-pi/pi-wire";
-import { Ellipsis, Layers, LogOut, PanelRight, Search } from "lucide-react";
+import { Ellipsis, Layers, LogOut, PanelRight, Search, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback, useState } from "react";
 import type { ConnectionPhase } from "../../lib/client";
@@ -23,6 +23,8 @@ export interface HeaderBarProps {
 	state: SessionState | null;
 	phase: ConnectionPhase;
 	readOnly: boolean;
+	/** The paired computer reports this session as sandboxed (file tools only, edits confined to its folder). */
+	sandboxed: boolean;
 	subCount: number;
 	railOpen: boolean;
 	onToggleRail(): void;
@@ -53,6 +55,7 @@ export const HeaderBar = memo(function HeaderBar({
 	state,
 	phase,
 	readOnly,
+	sandboxed,
 	subCount,
 	railOpen,
 	onToggleRail,
@@ -100,6 +103,16 @@ export const HeaderBar = memo(function HeaderBar({
 					<span className="sh-title">{title}</span>
 					<span className="sh-title-sub">
 						<span className={`sh-dot sh-dot-${phase} sh-mobile-only`} />
+						{sandboxed && (
+							<span
+								className="sh-sandboxed-mark"
+								role="img"
+								aria-label="sandboxed"
+								title="sandboxed: file tools only, edits stay in its folder"
+							>
+								<ShieldCheck size={12} />
+							</span>
+						)}
 						{state?.cwd && <span className="sh-cwd">{shortenPath(state.cwd)}</span>}
 					</span>
 				</button>
@@ -198,6 +211,7 @@ export const HeaderBar = memo(function HeaderBar({
 					phase={phase}
 					phaseLabel={PHASE_LABEL[phase]}
 					readOnly={readOnly}
+					sandboxed={sandboxed}
 					contextPct={pct}
 					chat={chat}
 					onChatChange={onChatChange}

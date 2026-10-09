@@ -26,6 +26,7 @@
 - Added a *New since you left* divider and jump pill when rejoining a room
 - Added an offline prompt queue: prompts sent while disconnected are kept per room and sent once the session is live again
 - Added desktop keyboard shortcuts: ⌘K / Ctrl+K switch session, `/` find, Esc close or stop the running turn
+- Added sandboxed sessions to *Start session* (macOS): omp runs under `sandbox-exec` with only file read, search, and edit tools. Writes are confined to the chosen folder (except `.git`, `.omp`, `.claude`, `.vscode`, `.envrc`, `.mcp.json`), credential stores are unreadable, and nothing can run commands. Sandboxed sessions carry a badge in the session lists, header, and session sheet
 
 ### Changed
 

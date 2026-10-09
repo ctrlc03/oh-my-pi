@@ -74,7 +74,8 @@ import {
 	recentFolders,
 	SAFE_ID_RE,
 } from "./companion-sessions";
-import { findTmux, killTmuxSession, launchInTmux } from "./companion-start";
+import { sandboxedPids } from "./companion-sandbox";
+import { canSandbox, findTmux, killTmuxSession, launchInTmux } from "./companion-start";
 import { generateVapidKeys, isPushSubscription, sendPush, type VapidKeys } from "./web-push";
 
 /** Host list refresh while at least one device is connected. */
@@ -89,6 +90,7 @@ const configDir = path.join(os.homedir(), process.env.PI_CONFIG_DIR || ".omp");
 const statePath = path.join(configDir, "agent", "collab-companion.json");
 const sessionsDir = path.join(configDir, "agent", "sessions");
 const overlayPath = path.join(configDir, "agent", "collab-companion-overlay.yml");
+const sandboxOverlayPath = path.join(configDir, "agent", "collab-companion-sandbox.yml");
 const ompBin = process.env.OMP_BIN || Bun.which("omp") || path.join(os.homedir(), ".bun", "bin", "omp");
 /** How long `start` waits for the new omp to appear in `omp collab list`. */
 const START_WAIT_MS = 45_000;
@@ -106,6 +108,7 @@ interface CompanionState {
 /** The subset of `omp collab list --json` host rows the companion reads. */
 interface ListedHost {
 	instanceId: string;
+	pid: number;
 	sessionId: string;
 	sessionName: string | null;
 	cwd: string;
@@ -121,6 +124,7 @@ interface ListedHost {
 /** An `idle` row of `omp collab list --json`; absent from omp CLIs that predate sharing idle sessions. */
 interface ListedIdle {
 	instanceId: string;
+	pid: number;
 	sessionId: string;
 	sessionName: string | null;
 	cwd: string;
@@ -192,8 +196,15 @@ async function loadState(relayUrl: string, rotate: boolean): Promise<CompanionSt
 /** Control-capable hosts (the app joins with full control or not at all) and idle sessions that could be shared. */
 async function listSessions(): Promise<{ hosts: CompanionHost[]; idle: CompanionIdleSession[] }> {
 	const parsed = JSON.parse(await omp(["collab", "list", "--json"])) as { hosts?: ListedHost[]; idle?: ListedIdle[] };
-	const hosts = (parsed.hosts ?? [])
-		.filter(host => host.access === "control")
+	const listedIdle = (Array.isArray(parsed.idle) ? parsed.idle : []).filter(
+		row => typeof row?.instanceId === "string" && typeof row.cwd === "string",
+	);
+	const listedHosts = (parsed.hosts ?? []).filter(host => host.access === "control");
+	const sandboxed = await sandboxedPids(
+		[...listedHosts, ...listedIdle].map(row => row.pid).filter(pid => Number.isInteger(pid) && pid > 0),
+		sandboxOverlayPath,
+	);
+	const hosts = listedHosts
 		.map(host => ({
 			instanceId: host.instanceId,
 			sessionId: host.sessionId,
@@ -205,10 +216,10 @@ async function listSessions(): Promise<{ hosts: CompanionHost[]; idle: Companion
 			busy: host.busy ?? null,
 			inputRequired: host.inputRequired,
 			relayConnected: host.relayConnected,
+			sandboxed: sandboxed.has(host.pid),
 		}))
 		.sort((a, b) => b.startedAt - a.startedAt);
-	const idle = (Array.isArray(parsed.idle) ? parsed.idle : [])
-		.filter(row => typeof row?.instanceId === "string" && typeof row.cwd === "string")
+	const idle = listedIdle
 		.map(row => ({
 			instanceId: row.instanceId,
 			sessionId: row.sessionId,
@@ -217,6 +228,7 @@ async function listSessions(): Promise<{ hosts: CompanionHost[]; idle: Companion
 			model: row.model ? `${row.model.provider}/${row.model.id}` : null,
 			startedAt: row.startedAt,
 			busy: row.busy ?? null,
+			sandboxed: sandboxed.has(row.pid),
 		}))
 		.sort((a, b) => b.startedAt - a.startedAt);
 	return { hosts, idle };
@@ -251,6 +263,7 @@ const rawKey = decodeBase64Url(state.key) as Uint8Array;
 const roomLink = formatCollabLink(state.relayUrl, state.roomId, rawKey);
 const pairUrl = `${webUrl.replace(/#.*$/, "")}#${PAIR_PREFIX}${roomLink}`;
 const machine = os.hostname().replace(/\.local$/, "");
+const sandboxAvailable = await canSandbox();
 /** VAPID `sub` claim: push services want a contact URL; Apple rejects non-https ones. */
 const pushSubject = webUrl.startsWith("https://") ? new URL(webUrl).origin : "https://my.omp.sh";
 
@@ -389,6 +402,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		vapidKey: state.vapid.publicKey,
 		idle: listed.idle,
 		canStart,
+		canSandbox: canStart && sandboxAvailable,
 	};
 	const json = JSON.stringify(frame);
 	if (json !== lastHostsJson) socket.send(frame);
@@ -414,16 +428,33 @@ async function sessionCwd(instanceId: unknown): Promise<string> {
 	return session.cwd;
 }
 
-/** Start omp in a detached tmux session and wait until it hosts collab; resolves with its instance id. */
-async function startSession(cwd: unknown, resume: unknown): Promise<string> {
-	if (typeof cwd !== "string" || (resume !== undefined && typeof resume !== "string")) {
+/**
+ * Start omp in a detached tmux session — sandboxed to `cwd` with file tools
+ * only when `sandboxed` — and wait until it hosts collab; resolves with its instance id.
+ */
+async function startSession(cwd: unknown, resume: unknown, sandboxed: unknown): Promise<string> {
+	if (
+		typeof cwd !== "string" ||
+		(resume !== undefined && typeof resume !== "string") ||
+		(sandboxed !== undefined && typeof sandboxed !== "boolean")
+	) {
 		throw new Error("invalid request");
 	}
 	const tmux = await findTmux();
 	if (!tmux) throw new Error("tmux is not installed on this computer");
+	if (sandboxed && !sandboxAvailable) throw new Error("sandboxed sessions need macOS sandbox-exec");
 	const before = new Set((await loadSessions()).hosts.map(h => h.instanceId));
 	const spawnedAt = Date.now();
-	const launched = await launchInTmux({ tmux, ompBin, overlayPath, cwd, resume });
+	const sandbox = sandboxed
+		? {
+				home: os.homedir(),
+				configDir,
+				tmpDir: os.tmpdir(),
+				companionState: statePath,
+				overlayPath: sandboxOverlayPath,
+			}
+		: undefined;
+	const launched = await launchInTmux({ tmux, ompBin, overlayPath, cwd, resume, sandbox });
 	while (Date.now() < spawnedAt + START_WAIT_MS) {
 		await Bun.sleep(START_POLL_MS);
 		let hosts: CompanionHost[];
@@ -553,7 +584,7 @@ socket.onFrame = (frame, fromPeer) => {
 			respond(frame.reqId, async () => ({
 				t: "started",
 				reqId: frame.reqId,
-				instanceId: await startSession(frame.cwd, frame.resume),
+				instanceId: await startSession(frame.cwd, frame.resume, frame.sandboxed),
 			}));
 			return;
 		case "share":

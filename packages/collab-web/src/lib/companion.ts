@@ -40,6 +40,8 @@ export interface CompanionHost {
 	busy: boolean | null;
 	inputRequired: boolean;
 	relayConnected: boolean;
+	/** Started sandboxed: file tools only, writes confined to `cwd`. Absent from companions that predate it. */
+	sandboxed?: boolean;
 }
 
 /** An interactive omp process on the computer that is not hosting collab; `share` starts it hosting. */
@@ -52,6 +54,8 @@ export interface CompanionIdleSession {
 	model: string | null;
 	startedAt: number;
 	busy: boolean | null;
+	/** See {@link CompanionHost.sandboxed}. */
+	sandboxed?: boolean;
 }
 
 /** One changed path in a session's working tree. */
@@ -125,8 +129,11 @@ export type CompanionRequest =
 	/** `path` is absolute or relative to the session cwd; it must resolve inside the repository (or cwd). */
 	| { t: "file"; reqId: number; instanceId: string; path: string }
 	| { t: "folders"; reqId: number }
-	/** Start omp in `cwd` (resuming session `resume` when given), hosting with control access. */
-	| { t: "start"; reqId: number; cwd: string; resume?: string }
+	/**
+	 * Start omp in `cwd` (resuming session `resume` when given), hosting with control access;
+	 * `sandboxed`: file read/search/edit tools only, with writes confined to `cwd` (needs `canSandbox`).
+	 */
+	| { t: "start"; reqId: number; cwd: string; resume?: string; sandboxed?: boolean }
 	/** Make an idle session host collab; answered with a `link`. */
 	| { t: "share"; reqId: number; instanceId: string };
 
@@ -134,7 +141,7 @@ export type CompanionReply =
 	/**
 	 * `vapidKey`: the companion's Web Push application server key (base64url).
 	 * `idle`: sessions that could `share` (empty when the omp CLI cannot list them).
-	 * `canStart`: the companion can `start` sessions (tmux available).
+	 * `canStart`: the companion can `start` sessions (tmux available); `canSandbox`: sandboxed ones too.
 	 */
 	| {
 			t: "hosts";
@@ -144,6 +151,7 @@ export type CompanionReply =
 			/** Absent from companions that predate it. */
 			idle?: CompanionIdleSession[];
 			canStart?: boolean;
+			canSandbox?: boolean;
 	  }
 	| { t: "link"; reqId: number; url: string }
 	| { t: "ok"; reqId: number }
@@ -189,6 +197,8 @@ export interface CompanionSnapshot {
 	idle: readonly CompanionIdleSession[];
 	/** The companion can start new sessions. */
 	canStart: boolean;
+	/** The companion can start sandboxed sessions. */
+	canSandbox: boolean;
 	/** Web Push application server key, once the companion has listed hosts. */
 	vapidKey: string | null;
 	/** Why the room is unreachable while `offline`. */
@@ -223,6 +233,7 @@ export class CompanionClient {
 		hosts: [],
 		idle: [],
 		canStart: false,
+		canSandbox: false,
 		vapidKey: null,
 		error: null,
 	};
@@ -305,8 +316,8 @@ export class CompanionClient {
 	}
 
 	/** Start omp in `cwd` (resuming session `resume`); resolves with its host `instanceId` once it is listed. */
-	async startSession(cwd: string, resume?: string): Promise<string> {
-		return (await this.#call({ t: "start", cwd, resume }, "started", START_TIMEOUT_MS)).instanceId;
+	async startSession(cwd: string, resume?: string, sandboxed?: boolean): Promise<string> {
+		return (await this.#call({ t: "start", cwd, resume, sandboxed }, "started", START_TIMEOUT_MS)).instanceId;
 	}
 
 	/** Make an idle session host collab; resolves with its control link. */
@@ -350,6 +361,7 @@ export class CompanionClient {
 				// Absent from companions that predate them.
 				idle: frame.idle ?? [],
 				canStart: frame.canStart ?? false,
+				canSandbox: frame.canSandbox ?? false,
 				vapidKey: frame.vapidKey,
 				error: null,
 			});

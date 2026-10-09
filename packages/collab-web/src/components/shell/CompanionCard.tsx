@@ -1,4 +1,4 @@
-import { Bell, BellOff, Laptop, LoaderCircle, Plus, RefreshCw, Share2, Unlink, Users } from "lucide-react";
+import { Bell, BellOff, Laptop, LoaderCircle, Plus, RefreshCw, Share2, ShieldCheck, Unlink, Users } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import type { CompanionHost, CompanionIdleSession } from "../../lib/companion";
@@ -113,7 +113,14 @@ export function CompanionCard({ companion, push, onJoin, onUnpair }: CompanionCa
 					</>
 				))}
 			{shown && <div className="sh-connect-error">{shown}</div>}
-			{starting && client && <StartSessionSheet client={client} onOpen={open} onClose={() => setStarting(false)} />}
+			{starting && client && (
+				<StartSessionSheet
+					client={client}
+					canSandbox={snap.canSandbox}
+					onOpen={open}
+					onClose={() => setStarting(false)}
+				/>
+			)}
 		</section>
 	);
 }
@@ -177,6 +184,7 @@ export function HostList({ hosts, joining, disabled, currentSessionId, onJoin }:
 							<span className="sh-recent-title">
 								{hostTitle(host)}
 								{current && <span className="sh-chip">here</span>}
+								{host.sandboxed && <SandboxedChip />}
 								{joining === host.instanceId && <LoaderCircle size={13} className="sh-spin" />}
 							</span>
 							<span className="sh-recent-meta">
@@ -215,7 +223,10 @@ export function IdleList({ idle, joining, disabled, onShare }: IdleListProps): R
 				{idle.map(session => (
 					<li key={session.instanceId} className="sh-recent">
 						<div className="sh-recent-join sh-idle-info" title={session.cwd}>
-							<span className="sh-recent-title">{hostTitle(session)}</span>
+							<span className="sh-recent-title">
+								{hostTitle(session)}
+								{session.sandboxed && <SandboxedChip />}
+							</span>
 							<span className="sh-recent-meta">
 								{session.busy && <span className="sh-host-state sh-host-state-busy">working</span>}
 								<span className="sh-recent-cwd">{shortenPath(session.cwd)}</span>
@@ -249,4 +260,12 @@ function HostState({ host }: { host: CompanionHost }): ReactNode {
 	if (host.busy) return <span className="sh-host-state sh-host-state-busy">working</span>;
 	if (host.busy === false) return <span className="sh-host-state">idle</span>;
 	return null;
+}
+
+export function SandboxedChip(): ReactNode {
+	return (
+		<span className="sh-chip sh-chip-sandboxed" title="sandboxed: file tools only, edits stay in its folder">
+			<ShieldCheck size={11} /> sandboxed
+		</span>
+	);
 }

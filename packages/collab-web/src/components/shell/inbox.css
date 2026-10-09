@@ -1,0 +1,87 @@
+/* ---- inbox sheet (sessions waiting on an answer, finished turns) ---- */
+.sh-inbox-list {
+	display: grid;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-inbox-item {
+	display: grid;
+	gap: 8px;
+	padding: 8px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-inbox-head {
+	display: flex;
+	align-items: flex-start;
+	gap: 4px;
+}
+
+.sh-inbox-open {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	padding: 0;
+	text-align: left;
+	background: transparent;
+	border: 0;
+}
+
+.sh-inbox-open:disabled {
+	opacity: 0.6;
+}
+
+.sh-inbox-text {
+	font-size: 13px;
+	line-height: 1.4;
+	color: var(--fg-muted);
+	overflow-wrap: anywhere;
+}
+
+.sh-inbox-waiting {
+	color: var(--warn);
+}
+
+.sh-inbox-options {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.sh-inbox-reply {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.sh-inbox-reply .sh-input {
+	flex: 1;
+	min-width: 0;
+}
+
+/* ---- inbox entry (badge on the button that opens the sheet) ---- */
+.sh-inbox-badge {
+	min-width: 16px;
+	height: 16px;
+	padding: 0 4px;
+	font-size: 10.5px;
+	font-weight: 600;
+	line-height: 16px;
+	text-align: center;
+	color: var(--fg-inverse);
+	background: var(--warn);
+	border-radius: 8px;
+}
+
+.sh-btn-icon > .sh-inbox-badge {
+	position: absolute;
+	top: -3px;
+	right: -3px;
+}

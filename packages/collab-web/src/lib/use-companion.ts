@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { CompanionClient, type CompanionSnapshot } from "./companion";
+import { CompanionClient, type CompanionSnapshot, type Pairing } from "./companion";
 
 export interface CompanionHandle {
-	/** null while unpaired or when the pairing link does not parse (`error`). */
+	/** null while no computer is paired or when the pairing link does not parse (`error`). */
 	client: CompanionClient | null;
 	snap: CompanionSnapshot;
 	error: string | null;
@@ -11,6 +11,7 @@ export interface CompanionHandle {
 const UNPAIRED: CompanionSnapshot = {
 	phase: "offline",
 	machine: null,
+	deviceId: null,
 	hosts: [],
 	idle: [],
 	canStart: false,
@@ -26,7 +27,7 @@ const UNPAIRED: CompanionSnapshot = {
  * One companion connection for the whole app: the connect screen, the session
  * switcher, and cross-session alerts all read the same host list.
  */
-export function useCompanion(pairing: string | null): CompanionHandle {
+export function useCompanion(pairing: Pairing | null): CompanionHandle {
 	const [client, setClient] = useState<CompanionClient | null>(null);
 	const [error, setError] = useState<string | null>(null);
 

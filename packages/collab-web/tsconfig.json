@@ -10,7 +10,8 @@
 			"@oh-my-pi/omp-stats/aggregator": ["./scripts/omp-stats.d.ts"],
 			"@oh-my-pi/omp-stats/rollup": ["./scripts/omp-stats.d.ts"],
 			"@oh-my-pi/omp-stats/trace": ["./scripts/omp-stats.d.ts"],
-			"@oh-my-pi/pi-coding-agent/codemap/index": ["./scripts/omp-codemap.d.ts"]
+			"@oh-my-pi/pi-coding-agent/codemap/index": ["./scripts/omp-codemap.d.ts"],
+			"@oh-my-pi/pi-coding-agent/collab/registry": ["./scripts/omp-registry.d.ts"]
 		}
 	}
 }

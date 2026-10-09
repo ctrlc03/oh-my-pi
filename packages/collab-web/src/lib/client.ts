@@ -28,7 +28,8 @@ import type {
 	SubagentProgressPayload,
 	WireModel,
 } from "@oh-my-pi/pi-wire";
-import { importRoomKey } from "./codec";
+import { CAN_INFLATE, importRoomKey } from "./codec";
+import { recordEvent } from "./diag-log";
 import { COLLAB_PROTO, encodeBase64Url, parseCollabLink } from "./link";
 import { loadPromptQueue, type QueuedPrompt, savePromptQueue } from "./rooms";
 import { CollabSocket } from "./socket";
@@ -140,11 +141,30 @@ export class GuestClient {
 	#endedReason: string | null = null;
 	#header: SessionHeader | null = null;
 	#entries: SessionEntry[] = [];
+	/** Session id of the replica in `#entries`; null while it is empty. A `resume` offer names it, not the latest welcome's header. */
+	#replicaSessionId: string | null = null;
+	/** `resume.entryId` the current connection's hello offered; null when it offered none. */
+	#resumeEntryId: string | null = null;
+	/**
+	 * The current connection has received its welcome. Live `entry` frames the
+	 * relay fans out before it are already inside the snapshot (the host
+	 * serializes it when it handles our hello), so they are ignored rather
+	 * than duplicated.
+	 */
+	#connWelcomed = false;
 	/**
 	 * Snapshot in flight since `welcome`: chunk entries, plus live `entry`
 	 * frames that arrived meanwhile (published after the snapshot, at the tail).
+	 * A `resumed` snapshot holds only the entries after the replica's tail, which
+	 * stays in `#entries` until completion appends them.
 	 */
-	#pendingSnapshot: { entries: SessionEntry[]; live: SessionEntry[]; total: number } | null = null;
+	#pendingSnapshot: {
+		entries: SessionEntry[];
+		live: SessionEntry[];
+		total: number;
+		resumed: boolean;
+		sessionId: string;
+	} | null = null;
 	#state: SessionState | null = null;
 	#agents: readonly AgentSnapshot[] = [];
 	#progress: ReadonlyMap<string, SubagentProgressPayload> = new Map();
@@ -304,7 +324,24 @@ export class GuestClient {
 	}
 
 	#handleOpen(): void {
-		this.#socket.send({ t: "hello", proto: COLLAB_PROTO, name: this.#name, writeToken: this.#writeToken });
+		recordEvent("session", this.#everConnected ? "reconnected" : "connected");
+		// Offer a delta resume when the replica is non-empty: the host answers with only the
+		// entries after `entryId` if it still has that entry in the same session.
+		const last = this.#entries.at(-1);
+		const resume =
+			last !== undefined && this.#replicaSessionId !== null
+				? { sessionId: this.#replicaSessionId, entryId: last.id }
+				: undefined;
+		this.#resumeEntryId = resume?.entryId ?? null;
+		this.#connWelcomed = false;
+		this.#socket.send({
+			t: "hello",
+			proto: COLLAB_PROTO,
+			name: this.#name,
+			writeToken: this.#writeToken,
+			resume,
+			zip: CAN_INFLATE ? true : undefined,
+		});
 		this.#phase = this.#everConnected ? "reconnecting" : "waiting";
 		this.#everConnected = true;
 		// Every connection must be welcomed. A host that stays silent (a relay still
@@ -322,6 +359,7 @@ export class GuestClient {
 		this.#clearWelcomeTimer();
 		this.#clearSnapshotProgressTimer();
 		if (this.#phase === "ended") return;
+		recordEvent("session", "closed", willReconnect ? `${reason}, retrying` : reason);
 		if (willReconnect) {
 			this.#phase = "reconnecting";
 			// The next welcome restarts the snapshot; drop the partial one.
@@ -390,16 +428,48 @@ export class GuestClient {
 	#applyFrame(frame: HostFrame): void {
 		switch (frame.t) {
 			case "welcome":
+				recordEvent("session", "welcome", frame.resumed ? "resumed" : `full snapshot, ${frame.entryCount} entries`);
 				// A fresh welcome (first join or reconnect) restarts the snapshot.
 				// Entries already on screen stay until the new snapshot replaces
 				// them once complete, so a resync never blanks the transcript.
 				this.#header = frame.header;
-				if (frame.entryCount === 0) {
-					this.#entries = [];
-					this.#publishedEntries = [];
-					this.#pendingSnapshot = null;
-				} else {
-					this.#pendingSnapshot = { entries: [], live: [], total: frame.entryCount };
+				this.#connWelcomed = true;
+				{
+					const offered = this.#resumeEntryId;
+					this.#resumeEntryId = null;
+					const resumed = frame.resumed === true && offered !== null;
+					if (resumed) {
+						// Keep the replica up to and including the offered entry; the chunks that
+						// follow carry everything after it. `#publishedEntries` is a separate copy,
+						// so truncating in place leaves what is on screen untouched.
+						const at = this.#entries.findLastIndex(entry => entry.id === offered);
+						if (at < 0) {
+							// Unreachable while the replica only grows; a tail-only snapshot cannot repair it.
+							this.#entries = [];
+							this.#publishedEntries = [];
+							this.#replicaSessionId = null;
+							this.#pendingSnapshot = null;
+							this.#socket.reconnect("lost the session replica; rejoining for a full snapshot");
+							return;
+						}
+						this.#entries.length = at + 1;
+					}
+					if (frame.entryCount === 0) {
+						if (!resumed) {
+							this.#entries = [];
+							this.#publishedEntries = [];
+						}
+						this.#replicaSessionId = frame.header.id;
+						this.#pendingSnapshot = null;
+					} else {
+						this.#pendingSnapshot = {
+							entries: [],
+							live: [],
+							total: frame.entryCount,
+							resumed,
+							sessionId: frame.header.id,
+						};
+					}
 				}
 				this.#state = frame.state;
 				this.#agents = [...frame.agents];
@@ -437,8 +507,11 @@ export class GuestClient {
 					this.#armSnapshotProgressTimer();
 					break;
 				}
-				this.#entries = pending.entries;
-				this.#entries.push(...pending.live);
+				// A resumed snapshot appends to the kept prefix; a full one replaces the replica.
+				this.#entries = pending.resumed
+					? this.#entries.concat(pending.entries, pending.live)
+					: pending.entries.concat(pending.live);
+				this.#replicaSessionId = pending.sessionId;
 				this.#publishedEntries = [...this.#entries];
 				this.#pendingSnapshot = null;
 				this.#clearSnapshotProgressTimer();
@@ -446,6 +519,8 @@ export class GuestClient {
 				break;
 			}
 			case "entry":
+				// Frames the relay delivered before this connection's welcome are in the snapshot.
+				if (!this.#connWelcomed) break;
 				// The committed row supersedes the finished stream ghost, even when
 				// the row is buffered behind an in-flight snapshot.
 				if (this.#streamDone && frame.entry.type === "message" && frame.entry.message.role === "assistant") {

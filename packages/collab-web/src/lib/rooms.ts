@@ -132,6 +132,14 @@ export function savePromptQueue(roomId: string, queue: readonly QueuedPrompt[]):
 	writeJson(QUEUE_PREFIX + roomId, queue.length > 0 ? queue : null);
 }
 
+/**
+ * Queue a prompt for a room the app has not joined yet; the client created for that room
+ * loads the queue and sends it, in order, once the session is live.
+ */
+export function enqueuePrompt(roomId: string, text: string): void {
+	savePromptQueue(roomId, [...loadPromptQueue(roomId), { id: crypto.randomUUID(), text }]);
+}
+
 interface SeenEntry {
 	roomId: string;
 	entryId: string;

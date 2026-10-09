@@ -45,6 +45,8 @@ export interface HeaderBarProps {
 	onOpenSessions: (() => void) | null;
 	/** Code map of the session's repository; null unless the paired computer can build one. */
 	onOpenCodemap: (() => void) | null;
+	/** The session's terminal (tmux pane); null unless the paired computer hosts this session. */
+	onOpenPane: (() => void) | null;
 	/** The paired computer can show this session's git working tree. */
 	workingTree: boolean;
 	/** Cost and token totals for the session sheet; null when no message reported usage. */
@@ -78,6 +80,7 @@ export const HeaderBar = memo(function HeaderBar({
 	onOpenUsage,
 	onOpenSessions,
 	onOpenCodemap,
+	onOpenPane,
 	workingTree,
 	sessionUsage,
 	models,
@@ -271,6 +274,13 @@ export const HeaderBar = memo(function HeaderBar({
 						(() => {
 							setSheetOpen(false);
 							onOpenCodemap();
+						})
+					}
+					onOpenPane={
+						onOpenPane &&
+						(() => {
+							setSheetOpen(false);
+							onOpenPane();
 						})
 					}
 					workingTree={workingTree}

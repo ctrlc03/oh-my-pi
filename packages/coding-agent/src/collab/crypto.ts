@@ -2,15 +2,23 @@
  * AES-256-GCM sealing for collab frames.
  *
  * The room key lives only in the link fragment; the relay sees opaque bytes.
- * Sealed layout: `[12B IV][ciphertext+tag]`.
+ * Sealed layout: `[12B IV][ciphertext+tag]`. The plaintext is UTF-8 JSON, or
+ * (when the sender compresses) {@link ZIP_MARKER} followed by deflate-raw JSON;
+ * {@link open} auto-detects.
  */
-import { ROOM_KEY_BYTES, WRITE_TOKEN_BYTES } from "@oh-my-pi/pi-wire";
+import { promisify } from "node:util";
+import { deflateRaw, inflateRaw } from "node:zlib";
+import { ROOM_KEY_BYTES, WRITE_TOKEN_BYTES, ZIP_MARKER, ZIP_MIN_BYTES } from "@oh-my-pi/pi-wire";
 import type { CollabFrame } from "./protocol";
 
 const AES_ALGORITHM = "AES-GCM";
 const IV_LENGTH = 12;
+/** Bound on an inflated frame, so a tiny sealed frame cannot expand without limit. */
+const MAX_INFLATED_BYTES = 64 * 1024 * 1024;
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
+const deflateRawAsync = promisify(deflateRaw);
+const inflateRawAsync = promisify(inflateRaw);
 
 export function generateRoomKey(): Uint8Array {
 	const key = new Uint8Array(ROOM_KEY_BYTES);
@@ -31,14 +39,22 @@ export function importRoomKey(raw: Uint8Array): Promise<CryptoKey> {
 	return crypto.subtle.importKey("raw", asStrict(raw), AES_ALGORITHM, false, ["encrypt", "decrypt"]);
 }
 
-export async function seal(key: CryptoKey, frame: CollabFrame): Promise<Uint8Array> {
-	return sealSerialized(key, JSON.stringify(frame));
+export async function seal(key: CryptoKey, frame: CollabFrame, compress = false): Promise<Uint8Array> {
+	return sealSerialized(key, JSON.stringify(frame), compress);
 }
 
-export async function sealSerialized(key: CryptoKey, frame: string): Promise<Uint8Array> {
+/** `compress` deflates the frame when its JSON exceeds {@link ZIP_MIN_BYTES}; only set it for a peer that can open compressed frames. */
+export async function sealSerialized(key: CryptoKey, frame: string, compress = false): Promise<Uint8Array> {
 	const iv = new Uint8Array(IV_LENGTH);
 	crypto.getRandomValues(iv);
-	const plaintext = TEXT_ENCODER.encode(frame);
+	let plaintext: Uint8Array<ArrayBuffer> = TEXT_ENCODER.encode(frame);
+	if (compress && plaintext.byteLength > ZIP_MIN_BYTES) {
+		const deflated = await deflateRawAsync(plaintext);
+		const marked = new Uint8Array(1 + deflated.byteLength);
+		marked[0] = ZIP_MARKER;
+		marked.set(deflated, 1);
+		plaintext = marked;
+	}
 	const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: AES_ALGORITHM, iv }, key, plaintext));
 	const out = new Uint8Array(IV_LENGTH + ciphertext.byteLength);
 	out.set(iv, 0);
@@ -53,7 +69,10 @@ export async function open(key: CryptoKey, data: Uint8Array): Promise<CollabFram
 	}
 	const iv = asStrict(data.subarray(0, IV_LENGTH));
 	const ciphertext = asStrict(data.subarray(IV_LENGTH));
-	const plaintext = new Uint8Array(await crypto.subtle.decrypt({ name: AES_ALGORITHM, iv }, key, ciphertext));
+	let plaintext = new Uint8Array(await crypto.subtle.decrypt({ name: AES_ALGORITHM, iv }, key, ciphertext));
+	if (plaintext[0] === ZIP_MARKER) {
+		plaintext = await inflateRawAsync(plaintext.subarray(1), { maxOutputLength: MAX_INFLATED_BYTES });
+	}
 	return JSON.parse(TEXT_DECODER.decode(plaintext)) as CollabFrame;
 }
 

@@ -225,7 +225,7 @@ export function SessionsSheet({
 	);
 }
 
-interface SessionRowProps {
+export interface SessionRowProps {
 	session: SessionOverview;
 	current: boolean;
 	/** sessionId whose action is running; any value disables every action. */
@@ -236,7 +236,15 @@ interface SessionRowProps {
 	onResume(): void;
 }
 
-function SessionRow({ session, current, busy, canStart, onOpen, onShare, onResume }: SessionRowProps): ReactNode {
+export function SessionRow({
+	session,
+	current,
+	busy,
+	canStart,
+	onOpen,
+	onShare,
+	onResume,
+}: SessionRowProps): ReactNode {
 	const { instanceId } = session;
 	const working = busy === session.sessionId;
 	const spinner = working ? <LoaderCircle size={14} className="sh-spin" /> : null;

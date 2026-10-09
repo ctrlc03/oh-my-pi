@@ -13,6 +13,9 @@
 ### Added
 
 - Added `TspToolProps.command` (the command line Copy command copies), `TspToolProps.preview: "children"` (the collapsed body stays whole while its children clamp) and `TspCodeProps.preview`
+### Added
+
+- `hello.resume` and `hello.zip` guest fields, `welcome.resumed`, and the `ZIP_MARKER` / `ZIP_MIN_BYTES` constants for resuming from a known entry and compressed frames (protocol version unchanged).
 
 ## [18.8.0] - 2026-10-07
 

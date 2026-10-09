@@ -64,10 +64,25 @@ export function PathText({
 	if (host?.openFile === undefined || path.length === 0 || URI_RE.test(path)) {
 		return <span className="tv-path">{label}</span>;
 	}
-	return (
+	const open = (
 		<button type="button" className="tv-path tv-path-link" title={path} onClick={() => host.openFile?.(path)}>
 			{label}
 		</button>
+	);
+	if (host.showInCodemap === undefined) return open;
+	return (
+		<>
+			{open}
+			<button
+				type="button"
+				className="tv-path-map"
+				title="Show in code map"
+				aria-label={`show ${shortenPath(path)} in code map`}
+				onClick={() => host.showInCodemap?.(path)}
+			>
+				map
+			</button>
+		</>
 	);
 }
 

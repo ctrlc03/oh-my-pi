@@ -3,13 +3,14 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentDrawer } from "./components/agents/AgentDrawer";
 import { AgentsPanel } from "./components/agents/AgentsPanel";
-import { CodemapSheet } from "./components/codemap/CodemapSheet";
+import { LazyCodemapSheet } from "./components/codemap/LazyCodemapSheet";
 import { Banners } from "./components/shell/Banners";
 import { ChangesSheet } from "./components/shell/ChangesSheet";
 import { Composer } from "./components/shell/Composer";
 import { ConnectScreen } from "./components/shell/ConnectScreen";
 import { FileSheet } from "./components/shell/FileSheet";
 import { HeaderBar } from "./components/shell/HeaderBar";
+import { PaneSheet } from "./components/shell/PaneSheet";
 import { SearchBar } from "./components/shell/SearchBar";
 import { SessionAlert } from "./components/shell/SessionAlert";
 import { SessionsSheet } from "./components/shell/SessionsSheet";
@@ -19,7 +20,8 @@ import { UsageSheet } from "./components/shell/UsageSheet";
 import { Transcript } from "./components/transcript/Transcript";
 import { collectChanges } from "./lib/changes";
 import { GuestClient } from "./lib/client";
-import { extractPairing, loadPairing, savePairing } from "./lib/companion";
+import { extractPairing, loadPairing, type Pairing, savePairing } from "./lib/companion";
+import { applyOpenIntent, claimPendingAnswer } from "./lib/inbox";
 import { useNewSince } from "./lib/new-since";
 import { type PushControl, usePush } from "./lib/push";
 import { registerServiceWorker, takeSharedLink } from "./lib/pwa";
@@ -85,7 +87,7 @@ export function App(): ReactNode {
 	const [link, setLink] = useState<string | null>(null);
 	const [connectError, setConnectError] = useState<string | null>(null);
 	const [rooms, setRooms] = useState<RecentRoom[]>(loadRooms);
-	const [pairing, setPairing] = useState<string | null>(loadPairing);
+	const [pairing, setPairing] = useState<Pairing | null>(loadPairing);
 	/** Companion host to open once the companion is live (notification tap). */
 	const [pendingOpen, setPendingOpen] = useState<string | null>(null);
 	/** The companion process the current link was fetched from, until the session's welcome identifies it. */
@@ -153,9 +155,9 @@ export function App(): ReactNode {
 		[connect],
 	);
 
-	const pair = useCallback((link: string | null): void => {
-		savePairing(link);
-		setPairing(link);
+	const pair = useCallback((next: Pairing | null): void => {
+		savePairing(next);
+		setPairing(next);
 	}, []);
 
 	const companionClient = companion.client;
@@ -165,6 +167,7 @@ export function App(): ReactNode {
 			const url = await companionClient.requestLink(instanceId);
 			const next = extractLink(url);
 			if (!next) throw new Error("the computer returned an unreadable link");
+			applyOpenIntent(instanceId, next);
 			resumedRef.current = false;
 			connect(next, credsRef.current?.name ?? storedName());
 			setOpened({ link: next, instanceId });
@@ -391,9 +394,12 @@ function Session({
 	);
 	const hostRow = hosts?.find(host => host.instanceId === hostId);
 	const [file, setFile] = useState<{ path: string; line?: number } | null>(null);
-	const [codemapOpen, setCodemapOpen] = useState(false);
+	const [codemap, setCodemap] = useState<{ file?: string } | null>(null);
 	const canCodemap = companionClient !== null && hostId !== null && companion?.snap.canCodemap === true;
-	const openCodemap = useCallback(() => setCodemapOpen(true), []);
+	const openCodemap = useCallback(() => setCodemap({}), []);
+	const [paneOpen, setPaneOpen] = useState(false);
+	const openPane = useCallback(() => setPaneOpen(true), []);
+	const cwd = snap.state?.cwd ?? snap.header?.cwd ?? null;
 
 	// Task-card agent chips drill into the same drawer the rail uses.
 	const agentIds = useMemo(() => new Set(snap.agents.map(a => a.id)), [snap.agents]);
@@ -404,8 +410,15 @@ function Session({
 				if (agentIds.has(id)) setSelectedId(id);
 			},
 			openFile: hostId !== null ? path => setFile({ path }) : undefined,
+			// Tool cards name paths as the agent wrote them: relative ones are relative to the session's folder.
+			showInCodemap: canCodemap
+				? path =>
+						setCodemap({
+							file: path.startsWith("/") || cwd === null ? path : `${cwd}/${path.replace(/^\.\//, "")}`,
+						})
+				: undefined,
 		}),
-		[agentIds, hostId],
+		[agentIds, hostId, canCodemap, cwd],
 	);
 
 	// Auto-open the rail the first time a subagent appears, only where it docks
@@ -426,7 +439,13 @@ function Session({
 	// Remember every room that welcomed us, so a later launch can offer it again.
 	const roomId = useMemo(() => roomIdOf(link), [link]);
 	const live = snap.phase === "live";
-	const cwd = snap.state?.cwd ?? snap.header?.cwd ?? null;
+	// An answer picked in the inbox goes to the ask it was meant for, once this session is live.
+	const uiRequest = snap.uiRequest;
+	useEffect(() => {
+		if (!live || roomId === null || uiRequest === null) return;
+		const answer = claimPendingAnswer(roomId, uiRequest);
+		if (answer !== null) client.sendUiResponse(uiRequest.reqId, answer);
+	}, [client, live, roomId, uiRequest]);
 	// The computer's process for this room. Matched by session id once welcomed; until
 	// then (and after the host switched sessions) the one it was opened from or last seen as.
 	const storedInstance = rooms.find(room => room.roomId === roomId)?.instanceId;
@@ -563,6 +582,7 @@ function Session({
 				onOpenUsage={companion ? openUsage : null}
 				onOpenSessions={companion ? openSessions : null}
 				onOpenCodemap={canCodemap ? openCodemap : null}
+				onOpenPane={companionClient !== null && hostId !== null ? openPane : null}
 				push={push}
 			/>
 			<main className="sh-main">
@@ -685,13 +705,22 @@ function Session({
 					onClose={() => setChangesOpen(false)}
 				/>
 			)}
-			{codemapOpen && canCodemap && (
-				<CodemapSheet
+			{codemap !== null && canCodemap && companion !== null && (
+				<LazyCodemapSheet
+					key={codemap.file ?? ""}
 					client={companionClient}
 					instanceId={hostId}
+					initialFile={codemap.file}
+					canStart={companion.snap.canStart}
+					currentSessionId={sessionId}
+					onOpenHost={onOpenHost}
+					onOpenLink={onOpenLink}
 					onOpenFile={(path, line) => setFile({ path, line })}
-					onClose={() => setCodemapOpen(false)}
+					onClose={() => setCodemap(null)}
 				/>
+			)}
+			{paneOpen && companionClient !== null && hostId !== null && (
+				<PaneSheet client={companionClient} instanceId={hostId} onClose={() => setPaneOpen(false)} />
 			)}
 			{file !== null && companionClient !== null && hostId !== null && (
 				<FileSheet

@@ -507,3 +507,144 @@ describe("GuestClient frame apply", () => {
 		expect(after.entries).toHaveLength(before.entries.length + 1);
 	});
 });
+
+describe("GuestClient delta resume", () => {
+	const e1 = messageEntry("e1", { role: "user", content: "one", timestamp: 1 });
+	const e2 = messageEntry("e2", { role: "user", content: "two", timestamp: 2 });
+	const e3 = messageEntry("e3", { role: "user", content: "three", timestamp: 3 });
+	const e4 = messageEntry("e4", { role: "user", content: "four", timestamp: 4 });
+
+	function resumedWelcome(entryCount: number): HostFrame {
+		return { ...(welcomeFrame(entryCount) as Extract<HostFrame, { t: "welcome" }>), resumed: true };
+	}
+
+	/** Runs `body` with socket connects reported open at once and sent frames captured. */
+	function withSocket(body: (sent: GuestFrame[], connect: (client: GuestClient) => void) => void): void {
+		const sent: GuestFrame[] = [];
+		const sendSpy = vi.spyOn(CollabSocket.prototype, "send").mockImplementation((frame: GuestFrame) => {
+			sent.push(frame);
+		});
+		const connectSpy = vi.spyOn(CollabSocket.prototype, "connect").mockImplementation(function (this: CollabSocket) {
+			this.onOpen?.();
+		});
+		try {
+			body(sent, client => client.connect());
+		} finally {
+			sendSpy.mockRestore();
+			connectSpy.mockRestore();
+		}
+	}
+
+	function lastHello(sent: GuestFrame[]): Extract<GuestFrame, { t: "hello" }> {
+		const hello = sent.findLast(frame => frame.t === "hello");
+		if (hello?.t !== "hello") throw new Error("no hello sent");
+		return hello;
+	}
+
+	it("offers a resume from the replica's last entry and advertises zip", () => {
+		withSocket((sent, connect) => {
+			const client = liveClient([e1, e2]);
+			connect(client);
+			client.close();
+			expect(lastHello(sent)).toMatchObject({
+				resume: { sessionId: HEADER.id, entryId: "e2" },
+				zip: true,
+			});
+		});
+	});
+
+	it("offers no resume while the replica is empty", () => {
+		withSocket((sent, connect) => {
+			const client = new GuestClient(LINK, "tester");
+			connect(client);
+			client.close();
+			expect(lastHello(sent).resume).toBeUndefined();
+			expect(lastHello(sent).zip).toBe(true);
+		});
+	});
+
+	it("keeps the prefix and appends the chunks of a resumed welcome", () => {
+		withSocket((_sent, connect) => {
+			const client = liveClient([e1, e2]);
+			connect(client);
+			client.applyFrameForTest(resumedWelcome(2));
+			expect(client.getSnapshot().entries).toEqual([e1, e2]);
+			expect(client.getSnapshot().loading).toEqual({ received: 0, total: 2 });
+			client.applyFrameForTest(snapshotChunk([e3], false));
+			expect(client.getSnapshot().loading).toEqual({ received: 1, total: 2 });
+			client.applyFrameForTest(snapshotChunk([e4]));
+			expect(client.getSnapshot().entries).toEqual([e1, e2, e3, e4]);
+			expect(client.getSnapshot().phase).toBe("live");
+			client.close();
+		});
+	});
+
+	it("does not duplicate entries the relay delivered before the welcome", () => {
+		withSocket((_sent, connect) => {
+			const client = liveClient([e1, e2]);
+			connect(client);
+			// Fanned out before the host handled our hello, so the resumed tail carries it.
+			client.applyFrameForTest({ t: "entry", entry: e3 });
+			client.applyFrameForTest(resumedWelcome(1));
+			client.applyFrameForTest(snapshotChunk([e3]));
+			expect(client.getSnapshot().entries).toEqual([e1, e2, e3]);
+			client.close();
+		});
+	});
+
+	it("goes live on a resumed welcome with nothing new, keeping the replica", () => {
+		withSocket((_sent, connect) => {
+			const client = liveClient([e1, e2]);
+			connect(client);
+			client.applyFrameForTest(resumedWelcome(0));
+			expect(client.getSnapshot().entries).toEqual([e1, e2]);
+			expect(client.getSnapshot().phase).toBe("live");
+			client.applyFrameForTest({ t: "entry", entry: e3 });
+			expect(client.getSnapshot().entries).toEqual([e1, e2, e3]);
+			client.close();
+		});
+	});
+
+	it("replaces the replica when the host answers with a full snapshot", () => {
+		withSocket((_sent, connect) => {
+			const client = liveClient([e1, e2]);
+			connect(client);
+			client.applyFrameForTest(welcomeFrame(2));
+			client.applyFrameForTest(snapshotChunk([e3, e4]));
+			expect(client.getSnapshot().entries).toEqual([e3, e4]);
+			client.close();
+		});
+	});
+
+	it("keeps live entries received after a resumed welcome behind the appended tail", () => {
+		withSocket((_sent, connect) => {
+			const client = liveClient([e1]);
+			connect(client);
+			client.applyFrameForTest(resumedWelcome(1));
+			client.applyFrameForTest({ t: "entry", entry: e4 });
+			expect(client.getSnapshot().entries).toEqual([e1]);
+			client.applyFrameForTest(snapshotChunk([e2]));
+			expect(client.getSnapshot().entries).toEqual([e1, e2, e4]);
+			client.close();
+		});
+	});
+
+	it("resumes from the replica's session, not from an interrupted snapshot of another one", () => {
+		withSocket((sent, connect) => {
+			const client = liveClient([e1, e2]);
+			// A different session starts replacing the replica but never completes.
+			client.applyFrameForTest({
+				t: "welcome",
+				proto: COLLAB_PROTO,
+				header: { ...HEADER, id: "s2" },
+				state: STATE,
+				agents: AGENTS,
+				entryCount: 2,
+			});
+			client.applyFrameForTest(snapshotChunk([e3], false));
+			connect(client);
+			client.close();
+			expect(lastHello(sent).resume).toEqual({ sessionId: HEADER.id, entryId: "e2" });
+		});
+	});
+});

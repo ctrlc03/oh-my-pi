@@ -659,6 +659,20 @@
 	background: var(--hover);
 }
 
+/* Edit mode: the chip text is a button that loads the prompt into the field below. */
+.sh-quick-change {
+	padding: 0;
+	font: inherit;
+	color: inherit;
+	text-align: left;
+	background: transparent;
+	border: 0;
+}
+
+.sh-quick-chip-changing {
+	border-color: var(--ring);
+}
+
 .sh-quick-add {
 	display: flex;
 	align-items: center;

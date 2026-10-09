@@ -231,6 +231,32 @@
 	}
 }
 
+/* "map": opens the code map on the path beside it; quiet until hovered. */
+.tv-path-map {
+	margin-left: 6px;
+	padding: 0 5px;
+	border: 1px solid var(--tv-border);
+	border-radius: 4px;
+	background: none;
+	font: inherit;
+	font-size: 0.85em;
+	color: var(--tv-faint);
+	opacity: 0.8;
+	cursor: pointer;
+	touch-action: manipulation;
+	-webkit-tap-highlight-color: transparent;
+}
+
+.tv-path-map:hover {
+	color: var(--tv-accent);
+	opacity: 1;
+}
+
+.tv-path-map:focus-visible {
+	outline: 2px solid var(--tv-ring);
+	outline-offset: 1px;
+}
+
 .tv-lines {
 	color: var(--tv-faint);
 }

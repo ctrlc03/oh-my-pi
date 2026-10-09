@@ -256,3 +256,18 @@
 	flex: 1 1 auto;
 	padding: 0 10px;
 }
+
+/* ---- spend alert limits ---- */
+.sh-spend {
+	display: grid;
+	gap: 8px;
+}
+
+.sh-spend-field {
+	display: grid;
+	gap: 4px;
+}
+
+.sh-spend .sh-btn {
+	justify-self: start;
+}

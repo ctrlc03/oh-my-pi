@@ -338,6 +338,22 @@ export type GuestFrame =
 			 * read-only and rejects their mutating frames.
 			 */
 			writeToken?: string;
+			/**
+			 * Delta resume: the guest still holds a replica of this session and
+			 * asks for only the entries after `entryId` (the last entry it has).
+			 * The host honours it when `sessionId` is the session it currently
+			 * mirrors and `entryId` is in its snapshot, and answers with
+			 * `welcome.resumed: true`; otherwise it sends the full snapshot as
+			 * usual. Hosts that predate the field ignore it (full snapshot).
+			 */
+			resume?: { sessionId: string; entryId: string };
+			/**
+			 * The guest can open compressed frames (sealed plaintext starting with
+			 * a 0x00 byte followed by deflate-raw JSON). Hosts compress targeted
+			 * frames only toward peers that sent this; hosts that predate the field
+			 * never compress.
+			 */
+			zip?: boolean;
 	  }
 	| { t: "prompt"; text: string; images?: ImageContent[] }
 	| { t: "ui-response"; reqId: number; value?: CollabUiResponseValue }
@@ -381,6 +397,15 @@ export type HostFrame =
 			 * capability signal.
 			 */
 			models?: WireModel[];
+			/**
+			 * True when the host honoured `hello.resume`: `entryCount` and the
+			 * `snapshot-chunk` frames carry only the entries AFTER the guest's
+			 * `resume.entryId` (possibly none — the train still ends with a
+			 * `final` chunk). The guest keeps its replica up to and including that
+			 * entry and appends the chunks. Absent/false: the chunks are the full
+			 * snapshot and replace the replica.
+			 */
+			resumed?: boolean;
 	  }
 	/**
 	 * Targeted snapshot fragment delivered after `welcome`. Hosts split the
@@ -433,6 +458,16 @@ export const ROOM_ID_BYTES = 16;
 
 /** AES-256-GCM room key; the seal key for every collab frame. */
 export const ROOM_KEY_BYTES = 32;
+
+/**
+ * Compressed seal: sealed plaintext is either UTF-8 JSON (first byte `{`) or
+ * this marker byte followed by the deflate-raw bytes of the UTF-8 JSON. `open`
+ * auto-detects, so a plain frame always stays valid.
+ */
+export const ZIP_MARKER = 0x00;
+
+/** A frame is compressed only when its JSON exceeds this many UTF-8 bytes. */
+export const ZIP_MIN_BYTES = 1024;
 
 /**
  * Random write token appended to the room key in full links

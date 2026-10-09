@@ -1,4 +1,4 @@
-import { ChartColumn, LayoutList, Laptop, Plus, X } from "lucide-react";
+import { Activity, ChartColumn, LayoutList, Laptop, Plus, Smartphone, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import type { CompanionHost, CompanionIdleSession } from "../../lib/companion";
@@ -6,6 +6,9 @@ import { relTime, shortenPath } from "../../lib/format";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
 import type { CompanionHandle } from "../../lib/use-companion";
 import { HostList, IdleList, PowerNote } from "./CompanionCard";
+import { DevicesSheet } from "./DevicesSheet";
+import { DiagnosticsSheet } from "./DiagnosticsSheet";
+import { InboxEntry } from "./InboxSheet";
 import { StartSessionSheet } from "./StartSessionSheet";
 
 export interface SessionsSidebarProps {
@@ -40,6 +43,8 @@ export function SessionsSidebar({
 }: SessionsSidebarProps): ReactNode {
 	const [joining, setJoining] = useState<string | null>(null);
 	const [starting, setStarting] = useState(false);
+	const [diagnosing, setDiagnosing] = useState(false);
+	const [devicesOpen, setDevicesOpen] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const recents = rooms.filter(room => room.roomId !== currentRoomId);
 	const snap = companion?.snap;
@@ -88,11 +93,13 @@ export function SessionsSidebar({
 						{live && <PowerNote power={snap.power} />}
 						{snap.hosts.length === 0 ? (
 							<div className="sh-companion-empty">
-								{snap.phase === "offline"
-									? (snap.error ?? "Your computer is unreachable.")
-									: snap.phase === "connecting"
-										? "Connecting…"
-										: "No session is sharing."}
+								{snap.phase === "unpaired"
+									? snap.error
+									: snap.phase === "offline"
+										? (snap.error ?? "Your computer is unreachable.")
+										: snap.phase === "connecting"
+											? "Connecting…"
+											: "No session is sharing."}
 							</div>
 						) : (
 							<HostList
@@ -168,7 +175,39 @@ export function SessionsSidebar({
 							<LayoutList size={15} />
 						</button>
 					)}
+					{companion?.client && (
+						<InboxEntry
+							client={companion.client}
+							count={snap.hosts.filter(host => host.inputRequired).length}
+							onOpenHost={onOpenHost}
+							variant="icon"
+						/>
+					)}
+					<button
+						type="button"
+						className="sh-btn sh-btn-icon"
+						onClick={() => setDiagnosing(true)}
+						aria-label="diagnostics"
+						title="diagnostics"
+					>
+						<Activity size={15} />
+					</button>
+					<button
+						type="button"
+						className="sh-btn sh-btn-icon"
+						onClick={() => setDevicesOpen(true)}
+						aria-label="devices"
+						title="devices"
+					>
+						<Smartphone size={15} />
+					</button>
 				</div>
+			)}
+			{diagnosing && companion?.client && (
+				<DiagnosticsSheet client={companion.client} onClose={() => setDiagnosing(false)} />
+			)}
+			{devicesOpen && companion?.client && live && (
+				<DevicesSheet client={companion.client} onClose={() => setDevicesOpen(false)} />
 			)}
 			{starting && companion?.client && (
 				<StartSessionSheet

@@ -1,12 +1,12 @@
 /**
- * One-tap prompts shown above the composer. Stored per device (not per room):
- * they are the user's habits, not a session's.
+ * Saved prompts: one-tap text shown above the composer and in the start-session sheet. Stored
+ * per device (not per room): they are the user's habits, not a session's.
  */
 
 import { readJson, writeJson } from "./storage";
 
 const QUICK_KEY = "omp.collab.quick";
-export const MAX_QUICK_REPLY_CHARS = 200;
+export const MAX_QUICK_REPLY_CHARS = 1000;
 
 export const DEFAULT_QUICK_REPLIES: readonly string[] = [
 	"Continue",

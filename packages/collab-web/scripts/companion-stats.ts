@@ -18,9 +18,12 @@ import type {
 	CompanionHost,
 	CompanionIdleSession,
 	SessionOverview,
+	SpendLimits,
 	UsageRange,
 	UsageReport,
 } from "../src/lib/companion";
+import { type FoundSession, unmeasuredSummary } from "./companion-file-sessions";
+import { dayStart, type SpendReading } from "./companion-spend";
 
 /** Sessions files are re-read at most this often; between syncs the database is served as is. */
 const SYNC_INTERVAL_MS = 60_000;
@@ -261,6 +264,45 @@ export async function usageReport(range: UsageRange): Promise<UsageReport> {
 	return reshapeUsage(stats, range, syncGate.syncedAt(), Date.now(), projectNames(summaries));
 }
 
+/**
+ * Spend today (local midnight on, summed from the hourly series, so a bucket straddling
+ * midnight in a half-hour time zone is counted whole or not at all) and, when a session limit
+ * is set, the total spend of each hosted session. Reads only what the set limits need.
+ */
+export async function readSpend(
+	limits: SpendLimits,
+	now: number,
+	hosts: readonly CompanionHost[],
+): Promise<SpendReading> {
+	await syncGate.run();
+	const midnight = dayStart(now);
+	const dailyUsd =
+		limits.dailyUsd === null
+			? 0
+			: (await getDashboardStats("24h")).timeSeries
+					.filter(point => point.timestamp >= midnight)
+					.reduce((sum, point) => sum + point.cost, 0);
+	const sessions: SpendReading["sessions"] = [];
+	if (limits.sessionUsd !== null) {
+		const costs = new Map<string, number>();
+		for (const summary of await listSessionSummaries(MAX_SESSION_LIMIT)) {
+			const sessionId = sessionIdOfFile(summary.file);
+			if (sessionId) costs.set(sessionId, summary.costTotal);
+		}
+		for (const host of hosts) {
+			const usd = costs.get(host.sessionId);
+			if (usd !== undefined)
+				sessions.push({
+					sessionId: host.sessionId,
+					instanceId: host.instanceId,
+					title: host.sessionName || path.basename(host.cwd) || "session",
+					usd,
+				});
+		}
+	}
+	return { dailyUsd, sessions };
+}
+
 export async function sessionOverview(
 	request: { limit?: unknown; q?: unknown },
 	live: { hosts: readonly CompanionHost[]; idle: readonly CompanionIdleSession[] },
@@ -268,6 +310,35 @@ export async function sessionOverview(
 	await syncGate.run();
 	const q = typeof request.q === "string" ? request.q.trim().slice(0, MAX_QUERY_LENGTH) : "";
 	return mergeLive(await listSessionSummaries(clampSessionLimit(request.limit), q || undefined), live);
+}
+
+/**
+ * Overviews for sessions found by scanning session files: the database's totals when it holds them (served as
+ * is, without a sync: the scan already took its time), otherwise a row with no totals.
+ */
+export async function fileSessionOverviews(
+	found: readonly FoundSession[],
+	live: { hosts: readonly CompanionHost[]; idle: readonly CompanionIdleSession[] },
+): Promise<SessionOverview[]> {
+	if (found.length === 0) return [];
+	const wanted = new Set(found.map(session => session.sessionId));
+	let measured: SessionSummary[] = [];
+	try {
+		measured = (await listSessionSummaries(MAX_SESSION_LIMIT)).filter(summary => {
+			const id = sessionIdOfFile(summary.file);
+			return id !== null && wanted.has(id);
+		});
+	} catch {
+		// No readable stats database: every row below is unmeasured.
+	}
+	const known = new Set(measured.map(summary => sessionIdOfFile(summary.file)));
+	const overviews = mergeLive(
+		[...measured, ...found.filter(session => !known.has(session.sessionId)).map(unmeasuredSummary)],
+		live,
+	);
+	// The scan's order (newest activity first), not the database's.
+	const order = new Map(found.map((session, i) => [session.sessionId, i]));
+	return overviews.sort((a, b) => (order.get(a.sessionId) ?? 0) - (order.get(b.sessionId) ?? 0));
 }
 
 export function isUsageRange(value: unknown): value is UsageRange {

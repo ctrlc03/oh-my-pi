@@ -32,6 +32,16 @@
 - Added a *Code map* through the companion: navigate the session's repository by folder, file, and symbol, with what uses each and what it uses, cross-language links (Solidity events, Rust decoders, Noir circuits), multi-step flows, search, a force-directed folder map on wider screens, and *View source* at the symbol's line
 - Added syntax highlighting to the file viewer (highlight.js, loaded on first open; Solidity, Rust, TypeScript, Go, Python, Noir via the Rust grammar, and common config formats). Files over 256 KB stay plain
 - The companion keeps the Mac awake while it runs (`caffeinate -i -s`), so sessions stay reachable when you are away. The app warns on the computer card and in the sessions sidebar while the Mac is on battery, and notifications go out when it is unplugged, runs low (20%), and is plugged in again
+- Reconnecting to a session resumes from the last entry the app holds instead of downloading the whole transcript again, and larger frames are compressed toward devices that support it (needs the omp hosting the session to include this change)
+- The companion lists sessions in-process from omp's collab registry (about 1 ms of CPU per poll instead of spawning `omp collab list`, about 320 ms), falling back to the CLI
+- Per-device pairing: one-time pairing codes (10 minutes), a Devices screen to rename or remove devices and add new ones by QR; a removed device is signed out and its notifications stop. Devices paired earlier must pair again
+- Diagnostics screen: versions, uptime, keep-awake and power, session listing method and time, round trip, and recent connection events; restart the companion (LaunchAgent) and update omp from the phone
+- Inbox across sessions with the pending question or the last reply, answerable from the list
+- Start a session with a first prompt; saved prompts are offered in the start sheet and editable in place
+- Spend alerts: daily and per-session limits, pushed once when crossed
+- Read-only live terminal view of the tmux pane a session runs in
+- Path links in tool cards open the code map on that file, and the code map's file view lists the sessions that changed it
+- The code map's code loads on first open instead of with the app
 - Added *All sessions* through the companion: past and live sessions across projects, grouped by folder with spend, searchable, with *Open*, *Share*, or *Resume* on each row
 
 ### Changed

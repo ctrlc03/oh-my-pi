@@ -6,9 +6,9 @@
  */
 
 import type { SessionEntry, ToolResultMessage } from "@oh-my-pi/pi-wire";
-import { diffStats, inputPaths } from "../tool-render/tools/edit";
+import { diffStats } from "../tool-render/tools/edit";
 import { executeXdevDispatch } from "../tool-render/ToolView";
-import { isRecord, str } from "../tool-render/util";
+import { inputPaths, isRecord, str } from "../tool-render/util";
 
 /** One tool call as the transcript holds it; `ToolView` renders it as-is. */
 export interface ChangeCall {

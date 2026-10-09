@@ -90,6 +90,17 @@ function domain(): string {
 	return `gui/${process.getuid?.() ?? os.userInfo().uid}`;
 }
 
+/** launchd started this process: it names the job it runs in `XPC_SERVICE_NAME`. */
+export function isLaunchManaged(): boolean {
+	return process.platform === "darwin" && process.env.XPC_SERVICE_NAME === LAUNCH_LABEL;
+}
+
+/** Kill the running agent so launchd starts it again (`launchctl kickstart -k`); the caller is that process. */
+export async function restartLaunchAgent(): Promise<void> {
+	const result = await launchctl(["kickstart", "-k", `${domain()}/${LAUNCH_LABEL}`]);
+	if (result.code !== 0) throw new Error(`launchctl kickstart failed: ${result.err || `exit ${result.code}`}`);
+}
+
 export interface InstallOptions {
 	/** Absolute omp executable the agent should run sessions with. */
 	ompBin: string;

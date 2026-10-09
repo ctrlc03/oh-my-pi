@@ -1,7 +1,7 @@
 import { ArrowRight, ClipboardPaste, Eye, Lock, ScanLine, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
-import { extractPairing } from "../../lib/companion";
+import { extractPairing, type PairingLink } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
@@ -21,7 +21,7 @@ export interface ConnectScreenProps {
 	push: PushControl;
 	onConnect(link: string, name: string): void;
 	onForget(roomId: string): void;
-	onPair(link: string): void;
+	onPair(pairing: PairingLink): void;
 	onUnpair(): void;
 }
 
@@ -100,6 +100,7 @@ export function ConnectScreen({
 					<CompanionCard
 						companion={companion}
 						push={push}
+						onPair={onPair}
 						onJoin={next => {
 							setLocalError(null);
 							onConnect(next, name.trim() || "guest");

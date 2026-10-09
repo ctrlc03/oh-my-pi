@@ -6,12 +6,19 @@ import type { CompanionClient } from "../../lib/companion";
 import { splitPath } from "../../lib/format";
 import { type ToolRenderHost, ToolView } from "../../tool-render";
 import { Sheet } from "./Sheet";
+import { ReviewPanel } from "./ReviewPanel";
 import { WorkingTree } from "./WorkingTree";
 
 /** The paired computer's companion host for this session: enables the working tree. */
 export interface ChangesTree {
 	client: CompanionClient;
 	instanceId: string;
+	/** The companion can open pull requests. */
+	canPr: boolean;
+	/** The session's agent is mid-turn. */
+	busy: boolean | null;
+	/** Session title, offered as the commit message and pull request title. */
+	title: string | null;
 }
 
 export interface ChangesSheetProps {
@@ -22,7 +29,7 @@ export interface ChangesSheetProps {
 	onClose(): void;
 }
 
-type Tab = "agent" | "tree";
+type Tab = "agent" | "tree" | "branch";
 
 /**
  * What changed: the agent's edit-tool calls from the transcript, and, when the
@@ -38,7 +45,9 @@ export function ChangesSheet({ changes, host, tree, onClose }: ChangesSheetProps
 						? `${changes.length} file${changes.length === 1 ? "" : "s"} changed`
 						: tab === "agent"
 							? "Agent edits"
-							: "Working tree"}
+							: tab === "tree"
+								? "Working tree"
+								: "Branch review"}
 				</div>
 				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
 					<X size={16} />
@@ -64,10 +73,28 @@ export function ChangesSheet({ changes, host, tree, onClose }: ChangesSheetProps
 					>
 						Working tree
 					</button>
+					<button
+						type="button"
+						role="tab"
+						aria-selected={tab === "branch"}
+						className="sh-tab"
+						onClick={() => setTab("branch")}
+					>
+						Branch
+					</button>
 				</div>
 			)}
 			{tab === "tree" && tree !== null ? (
 				<WorkingTree client={tree.client} instanceId={tree.instanceId} host={host} />
+			) : tab === "branch" && tree !== null ? (
+				<ReviewPanel
+					client={tree.client}
+					instanceId={tree.instanceId}
+					host={host}
+					canPr={tree.canPr}
+					busy={tree.busy}
+					title={tree.title}
+				/>
 			) : (
 				<AgentEdits changes={changes} host={host} />
 			)}

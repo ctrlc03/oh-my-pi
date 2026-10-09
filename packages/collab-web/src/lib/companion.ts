@@ -23,6 +23,14 @@ const PAIRING_KEY = "omp.collab.companion";
 const REQUEST_TIMEOUT_MS = 15_000;
 /** Starting a session waits for omp to boot and publish its room. */
 const START_TIMEOUT_MS = 60_000;
+/** A worktree start also waits for the checkout (up to 60s) before omp boots. */
+const WORKTREE_START_TIMEOUT_MS = 120_000;
+/** Usage and session listings may wait on a stats sync of every session file. */
+const USAGE_TIMEOUT_MS = 60_000;
+/** Commits wait on hooks and checkout. */
+const GIT_WRITE_TIMEOUT_MS = 60_000;
+/** Pushes and pull requests talk to the remote. */
+const GIT_REMOTE_TIMEOUT_MS = 120_000;
 
 /** One collab-hosting omp process, as `omp collab list --json` reports it. */
 export interface CompanionHost {
@@ -91,6 +99,32 @@ export interface GitSnapshot {
 	commits: GitCommit[];
 }
 
+/** The session's branch against its base branch, for reviewing before a pull request. */
+export interface GitReview {
+	/** Absolute root of the checkout. */
+	root: string;
+	/** null on a detached HEAD. */
+	branch: string | null;
+	/** Branch a pull request targets (`origin/main`), or null when none was found. */
+	base: string | null;
+	mergeBase: string | null;
+	/** On the base branch itself: committing, pushing and pull requests are refused. */
+	isDefaultBranch: boolean;
+	/** Uncommitted changes (including untracked files). */
+	dirty: boolean;
+	/** Changed paths from the merge-base to the working tree, untracked ones included. */
+	files: GitFileChange[];
+	/** Commits from the merge-base to HEAD, newest first. */
+	commits: GitCommit[];
+	/** Origin's URL without credentials. */
+	remote: string | null;
+	/** The branch has an upstream and HEAD equals it. */
+	pushed: boolean;
+	pr: { number: number; url: string; state: string; title: string } | null;
+	/** The checkout is a linked git worktree. */
+	worktree: boolean;
+}
+
 /** A read-only file read inside a session's repository (or cwd outside a repository). */
 export interface FileContent {
 	/** Path relative to the repository root (or cwd). */
@@ -108,6 +142,55 @@ export interface RecentFolder {
 	lastActive: number;
 	/** Most recent sessions there, newest first. */
 	sessions: { id: string; title: string | null; lastActive: number }[];
+}
+
+export type UsageRange = "24h" | "7d" | "30d" | "90d" | "all";
+
+/** Token and spend totals from the omp stats database, for every session on the computer. */
+export interface UsageReport {
+	range: UsageRange;
+	/** When the stats database was last synced from the session files (Unix ms). */
+	syncedAt: number;
+	overall: {
+		requests: number;
+		cost: number;
+		inputTokens: number;
+		outputTokens: number;
+		cacheReadTokens: number;
+		cacheWriteTokens: number;
+		/** input + output + cacheRead + cacheWrite. */
+		totalTokens: number;
+		/** Share of prompt input tokens served from cache (0-1). */
+		cacheRate: number;
+		/** Requests with token usage but no known price. */
+		unpricedRequests: number;
+	};
+	/** Oldest first; hourly buckets for `24h`, daily otherwise. `t` is the bucket start (Unix ms). */
+	series: { t: number; cost: number; tokens: number; requests: number }[];
+	/** Highest spend first. */
+	byModel: { model: string; provider: string; cost: number; requests: number; tokens: number }[];
+	/** Highest spend first. */
+	byProject: { folder: string; cost: number; requests: number; tokens: number }[];
+}
+
+/** One omp session from the session store, with its totals (subagents folded in). */
+export interface SessionOverview {
+	sessionId: string;
+	title: string | null;
+	folder: string;
+	startedAt: number;
+	endedAt: number | null;
+	requests: number;
+	toolCalls: number;
+	subagents: number;
+	tokens: number;
+	cost: number;
+	models: string[];
+	/** Present when the session is hosting collab or listed as idle right now. */
+	instanceId?: string;
+	live?: "host" | "idle";
+	/** The folder is a git worktree the companion created and it still exists: it can be removed once no omp runs in it. */
+	worktree?: boolean;
 }
 
 /** `PushSubscription.toJSON()` as the browser hands it out. */
@@ -131,11 +214,28 @@ export type CompanionRequest =
 	| { t: "folders"; reqId: number }
 	/**
 	 * Start omp in `cwd` (resuming session `resume` when given), hosting with control access;
-	 * `sandboxed`: file read/search/edit tools only, with writes confined to `cwd` (needs `canSandbox`).
+	 * `sandboxed`: file read/search/edit tools only, with writes confined to `cwd` (needs `canSandbox`);
+	 * `worktree` (new sessions inside a git repository only): run on a new branch in its own git worktree.
 	 */
-	| { t: "start"; reqId: number; cwd: string; resume?: string; sandboxed?: boolean }
+	| { t: "start"; reqId: number; cwd: string; resume?: string; sandboxed?: boolean; worktree?: { branch?: string } }
 	/** Make an idle session host collab; answered with a `link`. */
-	| { t: "share"; reqId: number; instanceId: string };
+	| { t: "share"; reqId: number; instanceId: string }
+	/** The branch against its base branch, with commit, push and pull request state. */
+	| { t: "git-review"; reqId: number; instanceId: string }
+	/** Diff of one path from the review's merge-base to the working tree. */
+	| { t: "git-review-diff"; reqId: number; instanceId: string; path: string }
+	/** `git add -A && git commit -m message`; refused while the agent works or on the base branch. */
+	| { t: "git-commit"; reqId: number; instanceId: string; message: string }
+	/** `git push -u origin HEAD`; same refusals as `git-commit`. */
+	| { t: "git-push"; reqId: number; instanceId: string }
+	/** `gh pr create` for the pushed branch; answered with a `link` to the pull request (needs `canPr`). */
+	| { t: "pr-create"; reqId: number; instanceId: string; title: string; body: string; draft?: boolean }
+	/** Remove the linked worktree at `path` when no omp runs in it and it is clean; the branch stays. */
+	| { t: "worktree-remove"; reqId: number; path: string }
+	/** Spend and token totals across every omp session on the computer. */
+	| { t: "usage"; reqId: number; range: UsageRange }
+	/** Past and live sessions across projects, newest activity first; `q` filters by title or folder. */
+	| { t: "sessions"; reqId: number; limit?: number; q?: string };
 
 export type CompanionReply =
 	/**
@@ -152,6 +252,7 @@ export type CompanionReply =
 			idle?: CompanionIdleSession[];
 			canStart?: boolean;
 			canSandbox?: boolean;
+			canPr?: boolean;
 	  }
 	| { t: "link"; reqId: number; url: string }
 	| { t: "ok"; reqId: number }
@@ -160,8 +261,11 @@ export type CompanionReply =
 	| { t: "diff"; reqId: number; diff: string; truncated: boolean }
 	| { t: "file"; reqId: number; file: FileContent }
 	| { t: "folders"; reqId: number; folders: RecentFolder[] }
+	| { t: "review"; reqId: number; review: GitReview }
 	/** The started session is hosting and listed under `instanceId`. */
-	| { t: "started"; reqId: number; instanceId: string };
+	| { t: "started"; reqId: number; instanceId: string }
+	| { t: "usage"; reqId: number; usage: UsageReport }
+	| { t: "sessions"; reqId: number; sessions: SessionOverview[] };
 
 /**
  * The companion room link inside a pasted message, scanned QR code, or URL
@@ -199,6 +303,8 @@ export interface CompanionSnapshot {
 	canStart: boolean;
 	/** The companion can start sandboxed sessions. */
 	canSandbox: boolean;
+	/** The companion can open pull requests (`gh` installed and signed in). */
+	canPr: boolean;
 	/** Web Push application server key, once the companion has listed hosts. */
 	vapidKey: string | null;
 	/** Why the room is unreachable while `offline`. */
@@ -234,6 +340,7 @@ export class CompanionClient {
 		idle: [],
 		canStart: false,
 		canSandbox: false,
+		canPr: false,
 		vapidKey: null,
 		error: null,
 	};
@@ -315,9 +422,57 @@ export class CompanionClient {
 		return (await this.#call({ t: "folders" }, "folders")).folders;
 	}
 
-	/** Start omp in `cwd` (resuming session `resume`); resolves with its host `instanceId` once it is listed. */
-	async startSession(cwd: string, resume?: string, sandboxed?: boolean): Promise<string> {
-		return (await this.#call({ t: "start", cwd, resume, sandboxed }, "started", START_TIMEOUT_MS)).instanceId;
+	/** Branch of the session's repository against its base branch: files, commits, push and pull request state. */
+	async requestReview(instanceId: string): Promise<GitReview> {
+		return (await this.#call({ t: "git-review", instanceId }, "review")).review;
+	}
+
+	/** Diff of one path from the review's merge-base to the working tree. */
+	async requestReviewDiff(instanceId: string, path: string): Promise<{ diff: string; truncated: boolean }> {
+		const { diff, truncated } = await this.#call({ t: "git-review-diff", instanceId, path }, "diff");
+		return { diff, truncated };
+	}
+
+	/** `git add -A && git commit -m message`. */
+	async commitChanges(instanceId: string, message: string): Promise<void> {
+		await this.#call({ t: "git-commit", instanceId, message }, "ok", GIT_WRITE_TIMEOUT_MS);
+	}
+
+	/** `git push -u origin HEAD`. */
+	async pushBranch(instanceId: string): Promise<void> {
+		await this.#call({ t: "git-push", instanceId }, "ok", GIT_REMOTE_TIMEOUT_MS);
+	}
+
+	/** `gh pr create`; resolves with the pull request URL. */
+	async createPullRequest(instanceId: string, title: string, body: string, draft?: boolean): Promise<string> {
+		return (await this.#call({ t: "pr-create", instanceId, title, body, draft }, "link", GIT_REMOTE_TIMEOUT_MS)).url;
+	}
+
+	/** Remove the linked worktree at `path` (under the companion's worktrees folder); its branch stays. */
+	async removeWorktree(path: string): Promise<void> {
+		await this.#call({ t: "worktree-remove", path }, "ok", GIT_WRITE_TIMEOUT_MS);
+	}
+
+	/** Spend and token totals; the companion may sync its stats database first, so allow it time. */
+	async requestUsage(range: UsageRange): Promise<UsageReport> {
+		return (await this.#call({ t: "usage", range }, "usage", USAGE_TIMEOUT_MS)).usage;
+	}
+
+	/** Sessions across every project, live and ended, newest activity first. */
+	async requestSessions(opts: { limit?: number; q?: string } = {}): Promise<SessionOverview[]> {
+		return (await this.#call({ t: "sessions", limit: opts.limit, q: opts.q }, "sessions", USAGE_TIMEOUT_MS)).sessions;
+	}
+
+	/**
+	 * Start omp in `cwd` (resuming session `resume`); resolves with its host `instanceId` once it is listed.
+	 * `worktree` (new sessions only): work on a new branch in its own git worktree instead of `cwd`.
+	 */
+	async startSession(
+		cwd: string,
+		options: { resume?: string; sandboxed?: boolean; worktree?: { branch?: string } } = {},
+	): Promise<string> {
+		const timeout = options.worktree ? WORKTREE_START_TIMEOUT_MS : START_TIMEOUT_MS;
+		return (await this.#call({ t: "start", cwd, ...options }, "started", timeout)).instanceId;
 	}
 
 	/** Make an idle session host collab; resolves with its control link. */
@@ -362,6 +517,7 @@ export class CompanionClient {
 				idle: frame.idle ?? [],
 				canStart: frame.canStart ?? false,
 				canSandbox: frame.canSandbox ?? false,
+				canPr: frame.canPr ?? false,
 				vapidKey: frame.vapidKey,
 				error: null,
 			});

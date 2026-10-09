@@ -1,4 +1,4 @@
-import { ChevronLeft, FolderOpen, LoaderCircle, Plus, RefreshCw, ShieldCheck, X } from "lucide-react";
+import { ChevronLeft, FolderOpen, GitBranch, LoaderCircle, Plus, RefreshCw, ShieldCheck, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CompanionClient, RecentFolder } from "../../lib/companion";
@@ -20,6 +20,8 @@ interface Starting {
 	/** Session id being resumed; undefined for a new session. */
 	resume?: string;
 	sandboxed: boolean;
+	/** Run on a new branch in its own git worktree (new sessions only). */
+	worktree?: { branch?: string };
 }
 
 function folderName(cwd: string): string {
@@ -33,6 +35,8 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 	const [folder, setFolder] = useState<RecentFolder | null>(null);
 	const [starting, setStarting] = useState<Starting | null>(null);
 	const [sandboxed, setSandboxed] = useState(false);
+	const [worktree, setWorktree] = useState(false);
+	const [branch, setBranch] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const closedRef = useRef(false);
 	useEffect(() => {
@@ -46,7 +50,11 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 		setStarting(target);
 		setError(null);
 		try {
-			const instanceId = await client.startSession(target.cwd, target.resume, target.sandboxed || undefined);
+			const instanceId = await client.startSession(target.cwd, {
+				resume: target.resume,
+				sandboxed: target.sandboxed || undefined,
+				worktree: target.worktree,
+			});
 			// Closed while omp booted: the session still appears in the computer's list.
 			if (!closedRef.current) await onOpen(instanceId);
 		} catch (err) {
@@ -76,7 +84,8 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 					<LoaderCircle size={22} className="sh-spin" />
 					<div className="sh-start-progress-title">
 						{starting.resume ? "Resuming" : "Starting"} {starting.sandboxed ? "sandboxed " : ""}omp in{" "}
-						{folderName(starting.cwd)}…
+						{folderName(starting.cwd)}
+						{starting.worktree ? " on a new worktree" : ""}…
 					</div>
 					<div className="sh-field-hint">
 						This can take up to a minute while omp boots. You can close this; the session appears in your
@@ -100,10 +109,39 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 							</span>
 						</label>
 					)}
+					<label className="sh-start-sandbox">
+						<input type="checkbox" checked={worktree} onChange={e => setWorktree(e.currentTarget.checked)} />
+						<span className="sh-start-sandbox-text">
+							<span className="sh-start-sandbox-title">
+								<GitBranch size={14} /> New git worktree
+							</span>
+							<span className="sh-field-hint">
+								New session only: work on a fresh branch in its own checkout, so this folder stays untouched.
+							</span>
+						</span>
+					</label>
+					{worktree && (
+						<input
+							className="sh-input sh-input-mono"
+							value={branch}
+							onChange={e => setBranch(e.currentTarget.value)}
+							placeholder="branch name (default omp/<date>-<id>)"
+							aria-label="worktree branch name"
+							autoCapitalize="off"
+							autoCorrect="off"
+							spellCheck={false}
+						/>
+					)}
 					<button
 						type="button"
 						className="sh-btn sh-btn-primary sh-start-new"
-						onClick={() => void start({ cwd: folder.cwd, sandboxed })}
+						onClick={() =>
+							void start({
+								cwd: folder.cwd,
+								sandboxed,
+								worktree: worktree ? { branch: branch.trim() || undefined } : undefined,
+							})
+						}
 					>
 						<Plus size={16} /> New session
 					</button>
@@ -118,7 +156,9 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 											className="sh-recent-join"
 											onClick={() => void start({ cwd: folder.cwd, resume: session.id, sandboxed })}
 										>
-											<span className="sh-recent-title">{session.title ?? "Untitled session"}</span>
+											<span className="sh-recent-title">
+												<span className="sh-recent-name">{session.title ?? "Untitled session"}</span>
+											</span>
 											<span className="sh-recent-meta">
 												<span>{relTime(session.lastActive)}</span>
 											</span>
@@ -173,7 +213,7 @@ function FolderList({
 						<button type="button" className="sh-recent-join" onClick={() => onPick(folder)} title={folder.cwd}>
 							<span className="sh-recent-title">
 								<FolderOpen size={14} />
-								{folderName(folder.cwd)}
+								<span className="sh-recent-name">{folderName(folder.cwd)}</span>
 							</span>
 							<span className="sh-recent-meta">
 								<span className="sh-recent-cwd">{shortenPath(folder.cwd)}</span>

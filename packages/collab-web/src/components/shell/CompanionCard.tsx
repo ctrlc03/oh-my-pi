@@ -1,4 +1,17 @@
-import { Bell, BellOff, Laptop, LoaderCircle, Plus, RefreshCw, Share2, ShieldCheck, Unlink, Users } from "lucide-react";
+import {
+	Bell,
+	BellOff,
+	ChartColumn,
+	Laptop,
+	LayoutList,
+	LoaderCircle,
+	Plus,
+	RefreshCw,
+	Share2,
+	ShieldCheck,
+	Unlink,
+	Users,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import type { CompanionHost, CompanionIdleSession } from "../../lib/companion";
@@ -6,7 +19,9 @@ import { relTime, shortenPath } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
 import { extractLink } from "../../lib/rooms";
 import type { CompanionHandle } from "../../lib/use-companion";
+import { SessionsSheet } from "./SessionsSheet";
 import { StartSessionSheet } from "./StartSessionSheet";
+import { UsageSheet } from "./UsageSheet";
 
 export interface CompanionCardProps {
 	companion: CompanionHandle;
@@ -27,6 +42,7 @@ export function CompanionCard({ companion, push, onJoin, onUnpair }: CompanionCa
 	const live = snap.phase === "live";
 
 	const [starting, setStarting] = useState(false);
+	const [statsSheet, setStatsSheet] = useState<"usage" | "sessions" | null>(null);
 
 	/** Open a hosted session's control link. */
 	const open = async (instanceId: string): Promise<void> => {
@@ -49,14 +65,19 @@ export function CompanionCard({ companion, push, onJoin, onUnpair }: CompanionCa
 	};
 
 	/** Make an idle session host collab, then join it. */
+	const shareIdle = async (instanceId: string): Promise<void> => {
+		if (!client) throw new Error("no paired computer");
+		const link = extractLink(await client.shareSession(instanceId));
+		if (!link) throw new Error("the computer returned an unreadable link");
+		onJoin(link);
+	};
+
 	const share = async (session: CompanionIdleSession): Promise<void> => {
-		if (!client || joining) return;
+		if (joining) return;
 		setJoining(session.instanceId);
 		setError(null);
 		try {
-			const link = extractLink(await client.shareSession(session.instanceId));
-			if (!link) throw new Error("the computer returned an unreadable link");
-			onJoin(link);
+			await shareIdle(session.instanceId);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 			setJoining(null);
@@ -105,11 +126,31 @@ export function CompanionCard({ companion, push, onJoin, onUnpair }: CompanionCa
 							<HostList hosts={snap.hosts} joining={joining} disabled={!live} onJoin={join} />
 						)}
 						<IdleList idle={snap.idle} joining={joining} disabled={!live} onShare={share} />
-						{snap.canStart && live && (
-							<button type="button" className="sh-btn sh-card-action" onClick={() => setStarting(true)}>
-								<Plus size={15} /> Start session
-							</button>
-						)}
+						<div className="sh-card-actions">
+							{snap.canStart && live && (
+								<button type="button" className="sh-btn sh-card-action" onClick={() => setStarting(true)}>
+									<Plus size={15} /> Start session
+								</button>
+							)}
+							{live && (
+								<>
+									<button
+										type="button"
+										className="sh-btn sh-card-action"
+										onClick={() => setStatsSheet("usage")}
+									>
+										<ChartColumn size={15} /> Usage
+									</button>
+									<button
+										type="button"
+										className="sh-btn sh-card-action"
+										onClick={() => setStatsSheet("sessions")}
+									>
+										<LayoutList size={15} /> All sessions
+									</button>
+								</>
+							)}
+						</div>
 					</>
 				))}
 			{shown && <div className="sh-connect-error">{shown}</div>}
@@ -119,6 +160,16 @@ export function CompanionCard({ companion, push, onJoin, onUnpair }: CompanionCa
 					canSandbox={snap.canSandbox}
 					onOpen={open}
 					onClose={() => setStarting(false)}
+				/>
+			)}
+			{statsSheet === "usage" && client && <UsageSheet client={client} onClose={() => setStatsSheet(null)} />}
+			{statsSheet === "sessions" && client && (
+				<SessionsSheet
+					client={client}
+					canStart={snap.canStart}
+					onOpenHost={open}
+					onOpenLink={onJoin}
+					onClose={() => setStatsSheet(null)}
 				/>
 			)}
 		</section>
@@ -182,7 +233,7 @@ export function HostList({ hosts, joining, disabled, currentSessionId, onJoin }:
 							title={host.cwd}
 						>
 							<span className="sh-recent-title">
-								{hostTitle(host)}
+								<span className="sh-recent-name">{hostTitle(host)}</span>
 								{current && <span className="sh-chip">here</span>}
 								{host.sandboxed && <SandboxedChip />}
 								{joining === host.instanceId && <LoaderCircle size={13} className="sh-spin" />}
@@ -224,7 +275,7 @@ export function IdleList({ idle, joining, disabled, onShare }: IdleListProps): R
 					<li key={session.instanceId} className="sh-recent">
 						<div className="sh-recent-join sh-idle-info" title={session.cwd}>
 							<span className="sh-recent-title">
-								{hostTitle(session)}
+								<span className="sh-recent-name">{hostTitle(session)}</span>
 								{session.sandboxed && <SandboxedChip />}
 							</span>
 							<span className="sh-recent-meta">

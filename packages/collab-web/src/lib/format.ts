@@ -10,7 +10,7 @@ export function escapeHtml(s: string): string {
 		.replaceAll("'", "&#39;");
 }
 
-/** "950", "12.3k", "1.2M" — tolerant of non-finite input. */
+/** "950", "12.3k", "1.2M", "5.2B" — tolerant of non-finite input. */
 export function fmtTokens(n: number): string {
 	if (!Number.isFinite(n) || n <= 0) return "0";
 	if (n < 1000) return String(Math.round(n));
@@ -18,8 +18,12 @@ export function fmtTokens(n: number): string {
 		const k = n / 1000;
 		return `${k >= 100 ? Math.round(k) : k.toFixed(1)}k`;
 	}
-	const m = n / 1_000_000;
-	return `${m >= 100 ? Math.round(m) : m.toFixed(1)}M`;
+	if (n < 1_000_000_000) {
+		const m = n / 1_000_000;
+		return `${m >= 100 ? Math.round(m) : m.toFixed(1)}M`;
+	}
+	const b = n / 1_000_000_000;
+	return `${b >= 100 ? Math.round(b) : b.toFixed(1)}B`;
 }
 
 /** "$0.004", "$0.42", "$4.20" — tolerant of non-finite input. */

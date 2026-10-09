@@ -65,7 +65,18 @@ import {
 	parseCollabLink,
 } from "../src/lib/link";
 import { CollabSocket } from "../src/lib/socket";
-import { gitDiff, gitSnapshot, readRepoFile } from "./companion-git";
+import { gitDiff, gitSnapshot, isInside, readRepoFile } from "./companion-git";
+import {
+	canCreatePr,
+	createPullRequest,
+	createWorktree,
+	discardWorktree,
+	gitCommit,
+	gitPush,
+	gitReview,
+	removeWorktree,
+	reviewDiff,
+} from "./companion-gitflow";
 import { installLaunchAgent, launchLogPath, uninstallLaunchAgent } from "./companion-launchd";
 import {
 	lastAssistantSummary,
@@ -76,6 +87,7 @@ import {
 } from "./companion-sessions";
 import { sandboxedPids } from "./companion-sandbox";
 import { canSandbox, findTmux, killTmuxSession, launchInTmux } from "./companion-start";
+import { isUsageRange, sessionOverview, usageReport } from "./companion-stats";
 import { generateVapidKeys, isPushSubscription, sendPush, type VapidKeys } from "./web-push";
 
 /** Host list refresh while at least one device is connected. */
@@ -264,6 +276,7 @@ const roomLink = formatCollabLink(state.relayUrl, state.roomId, rawKey);
 const pairUrl = `${webUrl.replace(/#.*$/, "")}#${PAIR_PREFIX}${roomLink}`;
 const machine = os.hostname().replace(/\.local$/, "");
 const sandboxAvailable = await canSandbox();
+const worktreesDir = path.join(configDir, "worktrees");
 /** VAPID `sub` claim: push services want a contact URL; Apple rejects non-https ones. */
 const pushSubject = webUrl.startsWith("https://") ? new URL(webUrl).origin : "https://my.omp.sh";
 
@@ -394,7 +407,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 	detectEdges(listed.hosts);
 	// Push-only polling: nobody to tell; a device's `list` on joining gets a fresh answer.
 	if (peers.size === 0) return;
-	const canStart = (await findTmux()) !== null;
+	const [canStart, canPr] = await Promise.all([findTmux().then(found => found !== null), canCreatePr()]);
 	const frame: CompanionReply = {
 		t: "hosts",
 		machine,
@@ -403,6 +416,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		idle: listed.idle,
 		canStart,
 		canSandbox: canStart && sandboxAvailable,
+		canPr,
 	};
 	const json = JSON.stringify(frame);
 	if (json !== lastHostsJson) socket.send(frame);
@@ -428,23 +442,43 @@ async function sessionCwd(instanceId: unknown): Promise<string> {
 	return session.cwd;
 }
 
+/** Working directory of a listed session whose repository the app may change: refused while its agent works. */
+async function idleSessionCwd(instanceId: unknown): Promise<string> {
+	const id = checkInstanceId(instanceId);
+	// A fresh list: the agent may have started a turn since the last poll.
+	await loadSessions();
+	const session = [...knownHosts, ...knownIdle].find(s => s.instanceId === id);
+	if (!session) throw new Error("unknown session");
+	// null: an omp that predates the field, so a turn may be running.
+	if (session.busy === null) throw new Error("Agent state unknown; update omp on the computer");
+	if (session.busy) throw new Error("Agent is working; wait until it is idle");
+	return session.cwd;
+}
+
 /**
  * Start omp in a detached tmux session — sandboxed to `cwd` with file tools
  * only when `sandboxed` — and wait until it hosts collab; resolves with its instance id.
  */
-async function startSession(cwd: unknown, resume: unknown, sandboxed: unknown): Promise<string> {
+async function startSession(
+	cwd: unknown,
+	resume: unknown,
+	sandboxed: unknown,
+	worktree: { branch?: unknown } | undefined,
+): Promise<string> {
 	if (
 		typeof cwd !== "string" ||
 		(resume !== undefined && typeof resume !== "string") ||
-		(sandboxed !== undefined && typeof sandboxed !== "boolean")
+		(sandboxed !== undefined && typeof sandboxed !== "boolean") ||
+		(worktree !== undefined && (typeof worktree !== "object" || worktree === null)) ||
+		(worktree?.branch !== undefined && typeof worktree.branch !== "string")
 	) {
 		throw new Error("invalid request");
 	}
+	if (worktree !== undefined && resume !== undefined)
+		throw new Error("a worktree needs a new session, not a resumed one");
 	const tmux = await findTmux();
 	if (!tmux) throw new Error("tmux is not installed on this computer");
 	if (sandboxed && !sandboxAvailable) throw new Error("sandboxed sessions need macOS sandbox-exec");
-	const before = new Set((await loadSessions()).hosts.map(h => h.instanceId));
-	const spawnedAt = Date.now();
 	const sandbox = sandboxed
 		? {
 				home: os.homedir(),
@@ -454,27 +488,37 @@ async function startSession(cwd: unknown, resume: unknown, sandboxed: unknown): 
 				overlayPath: sandboxOverlayPath,
 			}
 		: undefined;
-	const launched = await launchInTmux({ tmux, ompBin, overlayPath, cwd, resume, sandbox });
-	while (Date.now() < spawnedAt + START_WAIT_MS) {
-		await Bun.sleep(START_POLL_MS);
-		let hosts: CompanionHost[];
-		try {
-			hosts = (await loadSessions()).hosts;
-		} catch {
-			continue;
-		}
-		for (const host of hosts) {
-			if (before.has(host.instanceId)) continue;
-			const hostCwd = await fs.realpath(host.cwd).catch(() => host.cwd);
-			const resumed = resume !== undefined && host.sessionId.startsWith(resume);
-			if (resumed || (hostCwd === launched.cwd && host.startedAt >= spawnedAt - 1_000)) {
-				await refresh();
-				return host.instanceId;
+	// The worktree checkout can take a while: the boot wait starts after it.
+	const created = worktree ? await createWorktree(cwd, worktreesDir, worktree.branch) : null;
+	try {
+		const before = new Set((await loadSessions()).hosts.map(h => h.instanceId));
+		const spawnedAt = Date.now();
+		const launched = await launchInTmux({ tmux, ompBin, overlayPath, cwd: created?.path ?? cwd, resume, sandbox });
+		while (Date.now() < spawnedAt + START_WAIT_MS) {
+			await Bun.sleep(START_POLL_MS);
+			let hosts: CompanionHost[];
+			try {
+				hosts = (await loadSessions()).hosts;
+			} catch {
+				continue;
+			}
+			for (const host of hosts) {
+				if (before.has(host.instanceId)) continue;
+				const hostCwd = await fs.realpath(host.cwd).catch(() => host.cwd);
+				const resumed = resume !== undefined && host.sessionId.startsWith(resume);
+				if (resumed || (hostCwd === launched.cwd && host.startedAt >= spawnedAt - 1_000)) {
+					await refresh();
+					return host.instanceId;
+				}
 			}
 		}
+		await killTmuxSession(tmux, launched.name);
+		throw new Error("omp did not start hosting in time");
+	} catch (err) {
+		// The branch and worktree only exist for this session.
+		if (created) await discardWorktree(created);
+		throw err;
 	}
-	await killTmuxSession(tmux, launched.name);
-	throw new Error("omp did not start hosting in time");
 }
 
 /** Poll while a device is connected (fast) or one wants push notifications (slower). */
@@ -584,12 +628,94 @@ socket.onFrame = (frame, fromPeer) => {
 			respond(frame.reqId, async () => ({
 				t: "started",
 				reqId: frame.reqId,
-				instanceId: await startSession(frame.cwd, frame.resume, frame.sandboxed),
+				instanceId: await startSession(frame.cwd, frame.resume, frame.sandboxed, frame.worktree),
 			}));
 			return;
 		case "share":
 			respond(frame.reqId, async () => {
 				return { t: "link", reqId: frame.reqId, url: await shareSession(checkInstanceId(frame.instanceId)) };
+			});
+			return;
+		case "usage":
+			respond(frame.reqId, async () => {
+				if (!isUsageRange(frame.range)) throw new Error("unknown usage range");
+				return { t: "usage", reqId: frame.reqId, usage: await usageReport(frame.range) };
+			});
+			return;
+		case "sessions":
+			respond(frame.reqId, async () => {
+				const sessions = await sessionOverview(frame, { hosts: knownHosts, idle: knownIdle });
+				// Only worktrees that still exist can be removed.
+				return {
+					t: "sessions",
+					reqId: frame.reqId,
+					sessions: await Promise.all(
+						sessions.map(async session => {
+							const inside = session.folder !== worktreesDir && isInside(worktreesDir, session.folder);
+							const exists =
+								inside &&
+								(await fs.stat(session.folder).then(
+									s => s.isDirectory(),
+									() => false,
+								));
+							return exists ? { ...session, worktree: true } : session;
+						}),
+					),
+				};
+			});
+			return;
+		case "git-review":
+			respond(frame.reqId, async () => ({
+				t: "review",
+				reqId: frame.reqId,
+				review: await gitReview(await sessionCwd(frame.instanceId), await canCreatePr()),
+			}));
+			return;
+		case "git-review-diff":
+			respond(frame.reqId, async () => {
+				if (typeof frame.path !== "string") throw new Error("invalid path");
+				const { diff, truncated } = await reviewDiff(await sessionCwd(frame.instanceId), frame.path);
+				return { t: "diff", reqId: frame.reqId, diff, truncated };
+			});
+			return;
+		case "git-commit":
+			respond(frame.reqId, async () => {
+				if (typeof frame.message !== "string") throw new Error("invalid commit message");
+				await gitCommit(await idleSessionCwd(frame.instanceId), frame.message);
+				return { t: "ok", reqId: frame.reqId };
+			});
+			return;
+		case "git-push":
+			respond(frame.reqId, async () => {
+				await gitPush(await idleSessionCwd(frame.instanceId));
+				return { t: "ok", reqId: frame.reqId };
+			});
+			return;
+		case "pr-create":
+			respond(frame.reqId, async () => {
+				if (typeof frame.title !== "string" || typeof frame.body !== "string")
+					throw new Error("invalid pull request");
+				if (frame.draft !== undefined && typeof frame.draft !== "boolean") throw new Error("invalid pull request");
+				if (!(await canCreatePr())) throw new Error("gh is not installed or not signed in on this computer");
+				const url = await createPullRequest(await idleSessionCwd(frame.instanceId), {
+					title: frame.title,
+					body: frame.body,
+					draft: frame.draft === true,
+				});
+				return { t: "link", reqId: frame.reqId, url };
+			});
+			return;
+		case "worktree-remove":
+			respond(frame.reqId, async () => {
+				if (typeof frame.path !== "string") throw new Error("invalid worktree path");
+				// A fresh list: never remove a checkout a running omp (hosting or not) works in.
+				await loadSessions();
+				await removeWorktree(
+					frame.path,
+					worktreesDir,
+					[...knownHosts, ...knownIdle].map(session => session.cwd),
+				);
+				return { t: "ok", reqId: frame.reqId };
 			});
 			return;
 	}

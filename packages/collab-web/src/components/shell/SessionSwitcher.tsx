@@ -117,7 +117,7 @@ export function SessionSwitcher({
 									disabled={joining !== null}
 								>
 									<span className="sh-recent-title">
-										{room.title}
+										<span className="sh-recent-name">{room.title}</span>
 										{room.readOnly && <span className="sh-chip">read-only</span>}
 									</span>
 									<span className="sh-recent-meta">

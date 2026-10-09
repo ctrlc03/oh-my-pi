@@ -1,8 +1,9 @@
 /**
- * Read-only git and file access for the companion's `git`, `git-diff` and
- * `file` requests. Every command runs in the session's cwd with
+ * Git and file access for the companion's `git`, `git-diff`, `file` and
+ * review/commit/push requests. Reads run in the session's cwd with
  * `--no-optional-locks` (never touch the index of a repo omp is working in), a
- * timeout, and an output cap. Paths from the device are confined to the
+ * timeout, and an output cap; writes (see ./companion-gitflow) drop the lock
+ * flag and get a longer timeout. Paths from the device are confined to the
  * repository root (the cwd outside a repository) after symlink resolution.
  */
 
@@ -11,6 +12,8 @@ import * as path from "node:path";
 import type { FileContent, GitCommit, GitFileChange, GitSnapshot } from "../src/lib/companion";
 
 const GIT_TIMEOUT_MS = 15_000;
+/** Writes (commit hooks, worktree checkout) may run longer than reads. */
+const GIT_WRITE_TIMEOUT_MS = 60_000;
 /** Largest git output read for status, numstat and log. */
 const GIT_OUTPUT_BYTES = 4 * 1024 * 1024;
 const DIFF_BYTES = 256 * 1024;
@@ -23,7 +26,7 @@ const MAX_FILES = 500;
 const MAX_COMMITS = 15;
 const MAX_PATH_CHARS = 4096;
 
-interface GitResult {
+export interface GitResult {
 	out: Uint8Array;
 	code: number;
 	err: string;
@@ -33,15 +36,29 @@ interface GitResult {
 
 const decoder = new TextDecoder();
 
-/** Run git read-only in `cwd`; resolves on any exit code, rejects only when git cannot run. */
-async function git(cwd: string, args: string[], maxBytes = GIT_OUTPUT_BYTES): Promise<GitResult> {
-	const proc = Bun.spawn(["git", "--no-optional-locks", "--literal-pathspecs", "-c", "core.quotepath=off", ...args], {
+export interface GitOptions {
+	/** Output cap in bytes. */
+	maxBytes?: number;
+	/** A command that changes the repository: takes locks, longer default timeout. */
+	write?: boolean;
+	timeoutMs?: number;
+}
+
+/** Run git in `cwd`, read-only unless `write`; resolves on any exit code, rejects only when git cannot run. */
+export async function git(cwd: string, args: string[], options: GitOptions = {}): Promise<GitResult> {
+	const {
+		maxBytes = GIT_OUTPUT_BYTES,
+		write = false,
+		timeoutMs = write ? GIT_WRITE_TIMEOUT_MS : GIT_TIMEOUT_MS,
+	} = options;
+	const lockFlag = write ? [] : ["--no-optional-locks"];
+	const proc = Bun.spawn(["git", ...lockFlag, "--literal-pathspecs", "-c", "core.quotepath=off", ...args], {
 		cwd,
 		stdout: "pipe",
 		stderr: "pipe",
 		stdin: "ignore",
 		env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_PAGER: "cat", LC_ALL: "C" },
-		timeout: GIT_TIMEOUT_MS,
+		timeout: timeoutMs,
 		killSignal: "SIGKILL",
 	});
 	const errText = new Response(proc.stderr).text();
@@ -64,7 +81,7 @@ async function git(cwd: string, args: string[], maxBytes = GIT_OUTPUT_BYTES): Pr
 	return { out: Buffer.concat(chunks), code, err: (await errText).trim(), truncated };
 }
 
-function gitFailure(result: GitResult, what: string): Error {
+export function gitFailure(result: GitResult, what: string): Error {
 	if (result.err.includes("not a git repository")) return new Error("not a git repository");
 	return new Error(result.err.split("\n")[0] || `${what} failed`);
 }
@@ -80,7 +97,7 @@ async function requireDirectory(cwd: string): Promise<void> {
 }
 
 /** Repository root containing `cwd` (symlinks resolved), or null outside a repository. */
-async function repoRoot(cwd: string): Promise<string | null> {
+export async function repoRoot(cwd: string): Promise<string | null> {
 	await requireDirectory(cwd);
 	const result = await git(cwd, ["rev-parse", "--show-toplevel"]);
 	if (result.code === 0) return fs.realpath(decoder.decode(result.out).trim());
@@ -109,7 +126,7 @@ function decodeCut(bytes: Uint8Array, cut: boolean): string {
 }
 
 /** Lines in a text file; null for binary, non-regular or oversized files. */
-async function countLines(file: string): Promise<number | null> {
+export async function countLines(file: string): Promise<number | null> {
 	try {
 		const stat = await fs.lstat(file);
 		// git diffs a symlink as one added line holding its target.
@@ -145,7 +162,7 @@ function parseBranchLine(line: string): Pick<GitSnapshot, "branch" | "upstream" 
 }
 
 /** Tree to diff the working tree against: HEAD, or the empty tree in a repository without commits. */
-async function diffBase(root: string): Promise<string> {
+export async function diffBase(root: string): Promise<string> {
 	const head = await git(root, ["rev-parse", "--verify", "-q", "HEAD"]);
 	if (head.code === 0) return "HEAD";
 	const empty = await git(root, ["hash-object", "-t", "tree", "/dev/null"]);
@@ -153,7 +170,7 @@ async function diffBase(root: string): Promise<string> {
 }
 
 /** Line counts per path from `git diff --numstat -z`; null counts mark binary files. */
-function parseNumstat(out: Uint8Array): Record<string, { added: number | null; removed: number | null }> {
+export function parseNumstat(out: Uint8Array): Record<string, { added: number | null; removed: number | null }> {
 	const counts: Record<string, { added: number | null; removed: number | null }> = {};
 	const records = decoder.decode(out).split("\0");
 	for (let i = 0; i < records.length; i++) {
@@ -173,8 +190,16 @@ function parseNumstat(out: Uint8Array): Record<string, { added: number | null; r
 	return counts;
 }
 
-async function recentCommits(root: string): Promise<GitCommit[]> {
-	const log = await git(root, ["log", "-n", String(MAX_COMMITS), "-z", "--format=%H%x1f%an%x1f%ct%x1f%s"]);
+/** Commits of `range` (default: all reachable from HEAD), newest first. */
+export async function recentCommits(root: string, limit = MAX_COMMITS, range?: string): Promise<GitCommit[]> {
+	const log = await git(root, [
+		"log",
+		"-n",
+		String(limit),
+		"-z",
+		"--format=%H%x1f%an%x1f%ct%x1f%s",
+		...(range ? [range] : []),
+	]);
 	// A repository without commits fails here; that is an empty history, not an error.
 	if (log.code !== 0) return [];
 	const commits: GitCommit[] = [];
@@ -232,8 +257,15 @@ export async function gitSnapshot(cwd: string): Promise<GitSnapshot> {
 	return { root, ...branch, files, commits };
 }
 
-/** Unified diff of one repo-relative path against HEAD (an untracked file diffs as wholly added). */
-export async function gitDiff(cwd: string, file: string): Promise<{ diff: string; truncated: boolean }> {
+/**
+ * Unified diff of one repo-relative path against `against` (default HEAD; an
+ * untracked file diffs as wholly added).
+ */
+export async function gitDiff(
+	cwd: string,
+	file: string,
+	against?: string,
+): Promise<{ diff: string; truncated: boolean }> {
 	checkPathText(file);
 	const root = await repoRoot(cwd);
 	if (root === null) throw new Error("not a git repository");
@@ -244,8 +276,8 @@ export async function gitDiff(cwd: string, file: string): Promise<{ diff: string
 
 	const tracked = await git(
 		root,
-		["diff", "--no-ext-diff", "--no-textconv", "--no-color", await diffBase(root), "--", rel],
-		DIFF_BYTES,
+		["diff", "--no-ext-diff", "--no-textconv", "--no-color", against ?? (await diffBase(root)), "--", rel],
+		{ maxBytes: DIFF_BYTES },
 	);
 	let result = tracked;
 	if (tracked.code !== 0 && !tracked.truncated) throw gitFailure(tracked, "git diff");
@@ -258,7 +290,7 @@ export async function gitDiff(cwd: string, file: string): Promise<{ diff: string
 			result = await git(
 				root,
 				["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--no-color", "--", "/dev/null", rel],
-				DIFF_BYTES,
+				{ maxBytes: DIFF_BYTES },
 			);
 			// --no-index exits 1 when the files differ.
 			if (result.code > 1 && !result.truncated) throw gitFailure(result, "git diff");

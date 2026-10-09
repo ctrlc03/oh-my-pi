@@ -540,6 +540,19 @@ export const cfgFindEnabled = register({
 	},
 });
 
+export const cfgCodemapEnabled = register({
+	id: "codemap.enabled",
+	type: "boolean",
+	default: false,
+	ui: {
+		tab: "tools",
+		group: "Available Tools",
+		label: "Codemap (trace, flow)",
+		description:
+			"Enable the trace and flow tools: trace answers who defines, calls, handles, publishes, or emits a symbol from a persistent incremental code index with no model calls; flow walks that index across Solidity, Rust, and Noir to trace a multi-step question",
+	},
+});
+
 // Optional tools
 
 export const cfgDebugEnabled = register({
@@ -1020,6 +1033,7 @@ export const cfgBuiltinToolGates = combine({
 	autolearn: cfgAutolearnEnabled,
 	bash: cfgBashEnabled,
 	checkpoint: cfgCheckpointEnabled,
+	codemap: cfgCodemapEnabled,
 	contextManagement: cfgCompactionExperimentalContextManagement,
 	debug: cfgDebugEnabled,
 	evalJs: cfgEvalJs,

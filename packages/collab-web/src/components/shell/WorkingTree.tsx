@@ -47,6 +47,7 @@ interface GitViewProps {
 
 function GitView({ git, client, instanceId, host, onRefresh }: GitViewProps): ReactNode {
 	const [open, setOpen] = useState<string | null>(git.files.length === 1 ? (git.files[0]?.path ?? null) : null);
+	const loadDiff = useCallback((file: string) => client.requestDiff(instanceId, file), [client, instanceId]);
 	return (
 		<>
 			<div className="sh-tree-head">
@@ -87,8 +88,7 @@ function GitView({ git, client, instanceId, host, onRefresh }: GitViewProps): Re
 							key={file.path}
 							file={file}
 							root={git.root}
-							client={client}
-							instanceId={instanceId}
+							loadDiff={loadDiff}
 							host={host}
 							expanded={open === file.path}
 							onToggle={() => setOpen(open === file.path ? null : file.path)}
@@ -138,17 +138,18 @@ function statusBadge(status: string): { letter: string; tone: string; label: str
 	}
 }
 
-interface TreeFileProps {
+export interface TreeFileProps {
 	file: GitFileChange;
 	root: string;
-	client: CompanionClient;
-	instanceId: string;
+	/** Unified diff of one path; must be stable across renders. */
+	loadDiff(path: string): Promise<{ diff: string; truncated: boolean }>;
 	host: ToolRenderHost;
 	expanded: boolean;
 	onToggle(): void;
 }
 
-function TreeFile({ file, root, client, instanceId, host, expanded, onToggle }: TreeFileProps): ReactNode {
+/** One changed path: status, counts and, expanded, its lazily loaded diff. */
+export function TreeFile({ file, root, loadDiff, host, expanded, onToggle }: TreeFileProps): ReactNode {
 	const { dir, base } = splitPath(file.path);
 	const badge = statusBadge(file.status);
 	const deleted = badge.tone === "del" && badge.letter === "D";
@@ -180,7 +181,7 @@ function TreeFile({ file, root, client, instanceId, host, expanded, onToggle }: 
 			</button>
 			{expanded && (
 				<div className="sh-change-body">
-					<FileDiff client={client} instanceId={instanceId} path={file.path} />
+					<FileDiff loadDiff={loadDiff} path={file.path} />
 					{!deleted && host.openFile !== undefined && (
 						<button
 							type="button"
@@ -197,15 +198,13 @@ function TreeFile({ file, root, client, instanceId, host, expanded, onToggle }: 
 }
 
 function FileDiff({
-	client,
-	instanceId,
+	loadDiff,
 	path,
 }: {
-	client: CompanionClient;
-	instanceId: string;
+	loadDiff(path: string): Promise<{ diff: string; truncated: boolean }>;
 	path: string;
 }): ReactNode {
-	const load = useCallback(() => client.requestDiff(instanceId, path), [client, instanceId, path]);
+	const load = useCallback(() => loadDiff(path), [loadDiff, path]);
 	const { state } = useRequest(load);
 	if (state.status === "loading") {
 		return (

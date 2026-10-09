@@ -66,8 +66,8 @@ function Summary(props: ToolRenderProps): ReactNode {
 	return <PathText path={path || "…"} from={from} to={to} sel={sel} />;
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
-	const { path } = readArgs(args);
+function Body({ args, result, host }: ToolRenderProps): ReactNode {
+	const { path, from, to } = readArgs(args);
 	const d = readDetails(detailsRecord(result));
 	const conflictBadge = d.conflictCount !== null && d.conflictCount > 0 && (
 		<Badge tone="warn">
@@ -81,13 +81,19 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 	const truncatedBadge = d.truncated && <Badge tone="warn">truncated</Badge>;
 	const resolved = d.suffixTo ?? d.resolvedPath;
+	const openable = host?.openFile !== undefined && path.length > 0;
 	return (
 		<>
-			{(resolved !== null || d.suffixFrom !== null) && (
+			{(openable || resolved !== null || d.suffixFrom !== null) && (
 				<KvGrid>
-					{resolved !== null && (
+					{openable && (
+						<Kv k="file">
+							<PathText path={path} from={from} to={to} host={host} />
+						</Kv>
+					)}
+					{resolved !== null && (!openable || resolved !== path) && (
 						<Kv k="resolved">
-							<PathText path={resolved} />
+							<PathText path={resolved} host={host} />
 						</Kv>
 					)}
 					{d.suffixFrom !== null && <Kv k="corrected from">{shortenPath(d.suffixFrom)}</Kv>}

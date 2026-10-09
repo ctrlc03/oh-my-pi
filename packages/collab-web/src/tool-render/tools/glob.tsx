@@ -1,8 +1,11 @@
 /** `glob` (legacy `find`) — glob-based file finder; results are paths sorted by mtime. */
 import type { ReactNode } from "react";
-import { Badge, Badges, InvalidArg, Note, ResultText } from "../parts";
+import { Badge, Badges, InvalidArg, Note, PathText, ResultText, Row } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
-import { detailsRecord, isRecord, num, scopePaths, shortenPath, str, truncate } from "../util";
+import { detailsRecord, isRecord, num, resultTextOf, scopePaths, shortenPath, str, truncate } from "../util";
+
+/** Most matched paths listed as buttons; the rest are summarized as "… N more". */
+const MAX_OPEN_ROWS = 40;
 
 function Summary({ args }: ToolRenderProps): ReactNode {
 	const raw = args.path ?? args.paths;
@@ -11,7 +14,7 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 	return <span className="tv-pattern">{truncate(globs || "*", 120)}</span>;
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Body({ args, result, host }: ToolRenderProps): ReactNode {
 	const details = detailsRecord(result);
 	const limit = num(args.limit);
 	const timeout = num(args.timeout);
@@ -31,6 +34,11 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 		? details.missingPaths.filter((p): p is string => typeof p === "string")
 		: [];
 
+	// One matched path per line; directories (trailing `/`) are not files to open.
+	const files = resultTextOf(result)
+		.split("\n")
+		.map(line => line.trim())
+		.filter(line => line.length > 0 && !line.endsWith("/"));
 	return (
 		<>
 			<Badges
@@ -52,7 +60,25 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 			/>
 			{missing.length > 0 && <Note tone="warn">skipped missing: {missing.map(shortenPath).join(", ")}</Note>}
 			{error !== null && !result?.isError && <Note tone="err">{error}</Note>}
-			<ResultText result={result} maxLines={12} />
+			{host?.openFile !== undefined &&
+			result?.isError !== true &&
+			(fileCount === null || fileCount > 0) &&
+			files.length > 0 ? (
+				<div className="tv-list">
+					{files.slice(0, MAX_OPEN_ROWS).map(file => (
+						<Row key={file}>
+							<PathText path={file} host={host} />
+						</Row>
+					))}
+					{files.length > MAX_OPEN_ROWS && (
+						<Row>
+							<span className="tv-faint">… {files.length - MAX_OPEN_ROWS} more</span>
+						</Row>
+					)}
+				</div>
+			) : (
+				<ResultText result={result} maxLines={12} />
+			)}
 		</>
 	);
 }

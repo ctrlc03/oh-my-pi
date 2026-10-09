@@ -1,12 +1,13 @@
-import { Laptop, X } from "lucide-react";
+import { Laptop, Plus, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import type { CompanionHost } from "../../lib/companion";
+import type { CompanionHost, CompanionIdleSession } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
-import type { RecentRoom } from "../../lib/rooms";
+import { extractLink, type RecentRoom } from "../../lib/rooms";
 import type { CompanionHandle } from "../../lib/use-companion";
-import { HostList } from "./CompanionCard";
+import { HostList, IdleList } from "./CompanionCard";
 import { Sheet } from "./Sheet";
+import { StartSessionSheet } from "./StartSessionSheet";
 
 export interface SessionSwitcherProps {
 	companion: CompanionHandle | null;
@@ -31,6 +32,7 @@ export function SessionSwitcher({
 	onClose,
 }: SessionSwitcherProps): ReactNode {
 	const [joining, setJoining] = useState<string | null>(null);
+	const [starting, setStarting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const recents = rooms.filter(room => room.roomId !== currentRoomId);
 	const snap = companion?.snap;
@@ -42,6 +44,21 @@ export function SessionSwitcher({
 			setError(err instanceof Error ? err.message : String(err));
 			setJoining(null);
 		});
+	};
+
+	/** Make an idle session host collab, then open its control link. */
+	const share = async (session: CompanionIdleSession): Promise<void> => {
+		if (!companion?.client || joining) return;
+		setJoining(session.instanceId);
+		setError(null);
+		try {
+			const link = extractLink(await companion.client.shareSession(session.instanceId));
+			if (!link) throw new Error("the computer returned an unreadable link");
+			onOpenLink(link);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			setJoining(null);
+		}
 	};
 
 	return (
@@ -79,6 +96,12 @@ export function SessionSwitcher({
 							onJoin={join}
 						/>
 					)}
+					<IdleList idle={snap.idle} joining={joining} disabled={snap.phase !== "live"} onShare={share} />
+					{snap.canStart && snap.phase === "live" && (
+						<button type="button" className="sh-btn sh-card-action" onClick={() => setStarting(true)}>
+							<Plus size={15} /> Start session
+						</button>
+					)}
 				</section>
 			)}
 			{recents.length > 0 && (
@@ -113,6 +136,9 @@ export function SessionSwitcher({
 				</div>
 			)}
 			{error && <div className="sh-connect-error">{error}</div>}
+			{starting && companion?.client && (
+				<StartSessionSheet client={companion.client} onOpen={onOpenHost} onClose={() => setStarting(false)} />
+			)}
 		</Sheet>
 	);
 }

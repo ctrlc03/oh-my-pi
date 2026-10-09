@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Collab guests with a full link can switch the host's model for the session, set its thinking level, and run compaction (`session-cmd`). Hosts send the model list to writers in `welcome.models` and the current model's thinking levels in `state.thinkingLevels`.
+- Interactive sessions that are not hosting now appear in `omp collab list` (an `idle` array with `--json`), and `omp collab start <instanceId|pid> [--view]` makes one start hosting as if `/collab` had been run, printing its link. Older omp versions ignore the new registry entries.
+
 ### Changed
 
 - Web search now tells the agent about its X post operators (`site:x.com`, `from:<handle>`) when you are logged in to xAI, so questions about reactions on X reach X search.

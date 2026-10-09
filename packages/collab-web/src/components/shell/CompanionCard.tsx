@@ -1,11 +1,12 @@
-import { Bell, BellOff, Laptop, LoaderCircle, RefreshCw, Unlink, Users } from "lucide-react";
+import { Bell, BellOff, Laptop, LoaderCircle, Plus, RefreshCw, Share2, Unlink, Users } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import type { CompanionHost } from "../../lib/companion";
+import type { CompanionHost, CompanionIdleSession } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
 import { extractLink } from "../../lib/rooms";
 import type { CompanionHandle } from "../../lib/use-companion";
+import { StartSessionSheet } from "./StartSessionSheet";
 
 export interface CompanionCardProps {
 	companion: CompanionHandle;
@@ -14,7 +15,7 @@ export interface CompanionCardProps {
 	onUnpair(): void;
 }
 
-export function hostTitle(host: CompanionHost): string {
+export function hostTitle(host: { sessionName: string | null; cwd: string }): string {
 	return host.sessionName || host.cwd.split("/").filter(Boolean).pop() || "session";
 }
 
@@ -25,13 +26,35 @@ export function CompanionCard({ companion, push, onJoin, onUnpair }: CompanionCa
 	const [joining, setJoining] = useState<string | null>(null);
 	const live = snap.phase === "live";
 
+	const [starting, setStarting] = useState(false);
+
+	/** Open a hosted session's control link. */
+	const open = async (instanceId: string): Promise<void> => {
+		if (!client) throw new Error("no paired computer");
+		const link = extractLink(await client.requestLink(instanceId));
+		if (!link) throw new Error("the computer returned an unreadable link");
+		onJoin(link);
+	};
+
 	const join = async (host: CompanionHost): Promise<void> => {
-		if (!client || joining) return;
+		if (joining) return;
 		setJoining(host.instanceId);
 		setError(null);
 		try {
-			const url = await client.requestLink(host.instanceId);
-			const link = extractLink(url);
+			await open(host.instanceId);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+			setJoining(null);
+		}
+	};
+
+	/** Make an idle session host collab, then join it. */
+	const share = async (session: CompanionIdleSession): Promise<void> => {
+		if (!client || joining) return;
+		setJoining(session.instanceId);
+		setError(null);
+		try {
+			const link = extractLink(await client.shareSession(session.instanceId));
 			if (!link) throw new Error("the computer returned an unreadable link");
 			onJoin(link);
 		} catch (err) {
@@ -72,14 +95,25 @@ export function CompanionCard({ companion, push, onJoin, onUnpair }: CompanionCa
 					</div>
 				) : snap.phase === "connecting" && snap.hosts.length === 0 ? (
 					<div className="sh-companion-empty">Connecting…</div>
-				) : snap.hosts.length === 0 ? (
-					<div className="sh-companion-empty">
-						No session is sharing. Run <code>/collab</code> in omp.
-					</div>
 				) : (
-					<HostList hosts={snap.hosts} joining={joining} disabled={!live} onJoin={join} />
+					<>
+						{snap.hosts.length === 0 ? (
+							<div className="sh-companion-empty">
+								No session is sharing. Run <code>/collab</code> in omp.
+							</div>
+						) : (
+							<HostList hosts={snap.hosts} joining={joining} disabled={!live} onJoin={join} />
+						)}
+						<IdleList idle={snap.idle} joining={joining} disabled={!live} onShare={share} />
+						{snap.canStart && live && (
+							<button type="button" className="sh-btn sh-card-action" onClick={() => setStarting(true)}>
+								<Plus size={15} /> Start session
+							</button>
+						)}
+					</>
 				))}
 			{shown && <div className="sh-connect-error">{shown}</div>}
+			{starting && client && <StartSessionSheet client={client} onOpen={open} onClose={() => setStarting(false)} />}
 		</section>
 	);
 }
@@ -160,6 +194,52 @@ export function HostList({ hosts, joining, disabled, currentSessionId, onJoin }:
 				);
 			})}
 		</ul>
+	);
+}
+
+export interface IdleListProps {
+	idle: readonly CompanionIdleSession[];
+	/** instanceId being shared (or any open in flight): disables every action. */
+	joining: string | null;
+	disabled: boolean;
+	onShare(session: CompanionIdleSession): void;
+}
+
+/** Sessions on the computer that are not hosting collab yet, each with a Share button. */
+export function IdleList({ idle, joining, disabled, onShare }: IdleListProps): ReactNode {
+	if (idle.length === 0) return null;
+	return (
+		<section className="sh-idle" aria-label="sessions not sharing">
+			<h3 className="sh-recents-title">Not sharing</h3>
+			<ul className="sh-recents-list">
+				{idle.map(session => (
+					<li key={session.instanceId} className="sh-recent">
+						<div className="sh-recent-join sh-idle-info" title={session.cwd}>
+							<span className="sh-recent-title">{hostTitle(session)}</span>
+							<span className="sh-recent-meta">
+								{session.busy && <span className="sh-host-state sh-host-state-busy">working</span>}
+								<span className="sh-recent-cwd">{shortenPath(session.cwd)}</span>
+								<span>{relTime(session.startedAt)}</span>
+							</span>
+						</div>
+						<button
+							type="button"
+							className="sh-btn sh-idle-share"
+							onClick={() => onShare(session)}
+							disabled={joining !== null || disabled}
+							aria-label={`share ${hostTitle(session)}`}
+						>
+							{joining === session.instanceId ? (
+								<LoaderCircle size={14} className="sh-spin" />
+							) : (
+								<Share2 size={14} />
+							)}
+							Share
+						</button>
+					</li>
+				))}
+			</ul>
+		</section>
 	);
 }
 

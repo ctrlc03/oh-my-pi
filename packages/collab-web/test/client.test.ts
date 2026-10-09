@@ -15,6 +15,7 @@ import { COLLAB_PROTO, encodeBase64Url } from "../src/lib/link";
 import { CollabSocket } from "../src/lib/socket";
 
 const LINK = `roomroomroom1234#${encodeBase64Url(new Uint8Array(32))}`;
+const WRITE_LINK = `roomroomroom1234#${encodeBase64Url(new Uint8Array(48))}`;
 
 const HEADER: SessionHeader = { type: "session", id: "s1", timestamp: "2026-06-12T00:00:00Z", cwd: "/work" };
 
@@ -87,10 +88,14 @@ describe("GuestClient frame apply", () => {
 	});
 
 	it("welcome readOnly flag lands in the snapshot", () => {
-		const client = new GuestClient(LINK, "tester");
+		const client = new GuestClient(WRITE_LINK, "tester");
 		expect(client.getSnapshot().readOnly).toBe(false);
 		client.applyFrameForTest(welcomeFrame(0, true));
 		expect(client.getSnapshot().readOnly).toBe(true);
+	});
+
+	it("a link without a write token is read-only before the host answers", () => {
+		expect(new GuestClient(LINK, "tester").getSnapshot().readOnly).toBe(true);
 	});
 
 	it("times out stalled snapshot chunks and resets the clock on progress", () => {

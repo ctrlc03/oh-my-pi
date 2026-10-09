@@ -28,6 +28,25 @@ export const fixtureModel: WireModel = {
 	contextWindow: 200_000,
 };
 
+/** Models the mock host offers a writer through `welcome.models`. The first is the session's model. */
+export const fixtureModels: WireModel[] = [
+	fixtureModel,
+	{ id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic", contextWindow: 200_000 },
+	{ id: "claude-opus-4-1", name: "Claude Opus 4.1", provider: "anthropic", contextWindow: 200_000 },
+	{ id: "gpt-5", name: "GPT-5", provider: "openai", contextWindow: 400_000 },
+	{ id: "gpt-5-mini", name: "GPT-5 mini", provider: "openai", contextWindow: 400_000 },
+	{ id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "google", contextWindow: 1_000_000 },
+];
+
+/** Thinking levels each mock model accepts, keyed `provider/id`; a model absent here accepts only "off". */
+export const fixtureThinkingLevels: Record<string, string[]> = {
+	"anthropic/claude-haiku-4-5": ["off", "low", "medium", "high"],
+	"anthropic/claude-sonnet-4-5": ["off", "low", "medium", "high"],
+	"anthropic/claude-opus-4-1": ["off", "low", "medium", "high", "xhigh"],
+	"openai/gpt-5": ["minimal", "low", "medium", "high"],
+	"openai/gpt-5-mini": ["minimal", "low", "medium", "high"],
+};
+
 const NOW = Date.now();
 const MIN = 60_000;
 

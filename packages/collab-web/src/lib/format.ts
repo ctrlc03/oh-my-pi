@@ -54,6 +54,20 @@ export function relTime(tsMs: number): string {
 	return `${Math.floor(h / 24)}d ago`;
 }
 
+/** "812 B", "14.2 KB", "3.1 MB". */
+export function fmtBytes(n: number): string {
+	if (!Number.isFinite(n) || n < 0) return "0 B";
+	if (n < 1024) return `${Math.round(n)} B`;
+	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+	return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** `dir/` (with trailing slash, or empty) and file name of a path. */
+export function splitPath(path: string): { dir: string; base: string } {
+	const at = path.lastIndexOf("/");
+	return at < 0 ? { dir: "", base: path } : { dir: path.slice(0, at + 1), base: path.slice(at + 1) };
+}
+
 /** "73%" from a 0–100 percent; em dash for null/non-finite. */
 export function fmtPercent(p: number | null | undefined): string {
 	if (p === null || p === undefined || !Number.isFinite(p)) return "—";

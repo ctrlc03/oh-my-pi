@@ -739,6 +739,8 @@ async function runInteractiveMode(
 		// Keep guest mutations gated through setup dialogs and transcript replay,
 		// not just init. Only a successful outer startup opens the room for input.
 		mode.collabController.startupComplete();
+		// Discoverable (and startable) from `omp collab list/start` while not hosting.
+		void mode.collabController.publishIdle();
 	} catch (error) {
 		// Init publishes before startup dialogs, so any later startup failure
 		// must withdraw the room before restoring the terminal.

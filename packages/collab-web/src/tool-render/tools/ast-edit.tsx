@@ -112,7 +112,7 @@ function OpCell({ op, lang }: { op: AstEditOp; lang: string | null }): ReactNode
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Body({ args, result, host }: ToolRenderProps): ReactNode {
 	const paths = pathsOf(args);
 	const first = paths[0];
 	const ops = opsOf(args);
@@ -125,7 +125,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 				<div className="tv-list">
 					{paths.map((p, i) => (
 						<Row key={i}>
-							<PathText path={p} />
+							<PathText path={p} host={host} />
 						</Row>
 					))}
 				</div>
@@ -158,7 +158,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 				<div className="tv-list">
 					{details.fileReplacements.map((fr, i) => (
 						<Row key={i} k={fr.count != null ? `×${fr.count}` : undefined}>
-							<PathText path={fr.path} />
+							<PathText path={fr.path} host={host} />
 						</Row>
 					))}
 				</div>

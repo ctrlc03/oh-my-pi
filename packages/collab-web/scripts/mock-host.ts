@@ -4,19 +4,40 @@
  *
  *   bun scripts/mock-host.ts [--port 7466]
  *
- * Replays a scripted streaming turn on every guest prompt, ticks subagent
- * progress on the bus every 2s, and answers fetch-transcript with byte slices
- * of the fixture JSONL — exactly the frames a real `omp /collab` host emits.
+ * Prints a full join link (guests may prompt and run session controls) and a
+ * view link (read-only). Replays a scripted streaming turn on every guest
+ * prompt, ticks subagent progress on the bus every 2s, answers
+ * fetch-transcript with byte slices of the fixture JSONL, and handles
+ * `session-cmd` (model / thinking switches, compact) — exactly the frames a
+ * real `omp /collab` host emits.
  */
 
-import type { AgentSnapshot, HostFrame, ImageContent, SessionEntry, SessionState, WireFrame } from "@oh-my-pi/pi-wire";
+import type {
+	AgentSnapshot,
+	HostFrame,
+	ImageContent,
+	SessionCommand,
+	SessionEntry,
+	SessionState,
+	WireFrame,
+	WireModel,
+} from "@oh-my-pi/pi-wire";
 import { generateRoomKey, importRoomKey, open, seal } from "../src/lib/codec";
-import { COLLAB_PROTO, formatCollabLink, generateRoomId, packEnvelope, unpackEnvelope } from "../src/lib/link";
+import {
+	COLLAB_PROTO,
+	encodeBase64Url,
+	formatCollabLink,
+	generateRoomId,
+	packEnvelope,
+	unpackEnvelope,
+} from "../src/lib/link";
 import {
 	fixtureAgents,
 	fixtureEntries,
 	fixtureHeader,
 	fixtureModel,
+	fixtureModels,
+	fixtureThinkingLevels,
 	HOST_DISPLAY_NAME,
 	makeProbeProgress,
 	makeScriptedTurn,
@@ -51,16 +72,23 @@ const relay = startLocalRelay(port);
 const roomId = generateRoomId();
 const rawKey = generateRoomKey();
 const key = await importRoomKey(rawKey);
-const link = formatCollabLink(relay.url, roomId, rawKey);
+const writeToken = crypto.getRandomValues(new Uint8Array(16));
+const writeTokenText = encodeBase64Url(writeToken);
+const link = formatCollabLink(relay.url, roomId, rawKey, writeToken);
+const viewLink = formatCollabLink(relay.url, roomId, rawKey);
 
 // ── mutable session state ────────────────────────────────────────────────────
 
 const entries: SessionEntry[] = [...fixtureEntries];
 const agents: AgentSnapshot[] = fixtureAgents.map(agent => ({ ...agent }));
 const peers = new Map<number, string>();
+/** Peers that joined without the write token: their mutating frames are refused, like a real host. */
+const readOnlyPeers = new Set<number>();
 const transcriptBytes = new TextEncoder().encode(subagentTranscriptJsonl);
 const transcriptDecoder = new TextDecoder();
 
+let currentModel: WireModel = fixtureModel;
+let thinkingLevel = "medium";
 let lastEntryId: string | null = entries[entries.length - 1]?.id ?? null;
 let streaming = false;
 let queuedPrompts = 0;
@@ -101,14 +129,15 @@ function buildState(): SessionState {
 		queuedMessageCount: queuedPrompts,
 		sessionName: fixtureHeader.title,
 		cwd: fixtureHeader.cwd,
-		model: fixtureModel,
-		thinkingLevel: "medium",
+		model: currentModel,
+		thinkingLevel,
+		thinkingLevels: fixtureThinkingLevels[`${currentModel.provider}/${currentModel.id}`] ?? ["off"],
 		contextUsage: {
 			tokens,
-			contextWindow: fixtureModel.contextWindow,
+			contextWindow: currentModel.contextWindow,
 			percent:
-				fixtureModel.contextWindow !== null && fixtureModel.contextWindow > 0
-					? (tokens / fixtureModel.contextWindow) * 100
+				currentModel.contextWindow !== null && currentModel.contextWindow > 0
+					? (tokens / currentModel.contextWindow) * 100
 					: null,
 		},
 		participants,
@@ -182,7 +211,7 @@ function peerName(fromPeer: number): string {
 	return peers.get(fromPeer) ?? `guest-${fromPeer}`;
 }
 
-function handleHello(name: string, proto: number, fromPeer: number): void {
+function handleHello(name: string, proto: number, token: string | undefined, fromPeer: number): void {
 	if (proto !== COLLAB_PROTO) {
 		sendFrame(
 			{ t: "error", message: `protocol mismatch: host speaks v${COLLAB_PROTO}, guest sent v${proto}` },
@@ -192,6 +221,9 @@ function handleHello(name: string, proto: number, fromPeer: number): void {
 	}
 	const cleanName = name.trim().slice(0, 64) || `guest-${fromPeer}`;
 	peers.set(fromPeer, cleanName);
+	const writer = token === writeTokenText;
+	if (writer) readOnlyPeers.delete(fromPeer);
+	else readOnlyPeers.add(fromPeer);
 	sendFrame(
 		{
 			t: "welcome",
@@ -200,15 +232,78 @@ function handleHello(name: string, proto: number, fromPeer: number): void {
 			state: buildState(),
 			agents: agents.map(agent => ({ ...agent })),
 			entryCount: entries.length,
+			readOnly: writer ? undefined : true,
+			models: writer ? fixtureModels : undefined,
 		},
 		fromPeer,
 	);
 	sendFrame({ t: "snapshot-chunk", entries: [...entries], final: true }, fromPeer);
-	console.log(`mock-host: ${cleanName} joined (peer ${fromPeer})`);
+	console.log(`mock-host: ${cleanName} joined (peer ${fromPeer})${writer ? "" : " read-only"}`);
 	broadcastState();
 }
 
+/** Refuses a read-only peer's mutating frame with an `error` frame, as a real host does. */
+function refuseReadOnly(fromPeer: number): boolean {
+	if (!readOnlyPeers.has(fromPeer)) return false;
+	sendFrame({ t: "error", message: "read-only link: this guest cannot control the session" }, fromPeer);
+	return true;
+}
+
+function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer: number): void {
+	const who = peerName(fromPeer);
+	switch (cmd) {
+		case "model": {
+			const next = fixtureModels.find(model => `${model.provider}/${model.id}` === arg);
+			if (!next) {
+				sendFrame({ t: "error", message: `unknown model: ${arg ?? "(none)"}` }, fromPeer);
+				return;
+			}
+			currentModel = next;
+			const levels = fixtureThinkingLevels[`${next.provider}/${next.id}`] ?? ["off"];
+			if (!levels.includes(thinkingLevel))
+				thinkingLevel = levels.includes("medium") ? "medium" : (levels[0] ?? "off");
+			liveEntrySeq++;
+			appendEntry({
+				id: `live-${liveEntrySeq}`,
+				parentId: lastEntryId,
+				timestamp: new Date().toISOString(),
+				type: "model_change",
+				model: `${next.provider}/${next.id}`,
+			});
+			notice("info", `${who} switched model to ${next.name}`);
+			broadcastState();
+			break;
+		}
+		case "thinking": {
+			const levels = fixtureThinkingLevels[`${currentModel.provider}/${currentModel.id}`] ?? ["off"];
+			if (arg === undefined || !levels.includes(arg)) {
+				sendFrame(
+					{ t: "error", message: `${currentModel.name} does not accept thinking level ${arg ?? "(none)"}` },
+					fromPeer,
+				);
+				return;
+			}
+			thinkingLevel = arg;
+			liveEntrySeq++;
+			appendEntry({
+				id: `live-${liveEntrySeq}`,
+				parentId: lastEntryId,
+				timestamp: new Date().toISOString(),
+				type: "thinking_level_change",
+				thinkingLevel: arg,
+			});
+			notice("info", `${who} set thinking to ${arg}`);
+			broadcastState();
+			break;
+		}
+		case "compact":
+			notice("info", arg ? `${who} compacted the context (${arg})` : `${who} compacted the context`);
+			break;
+	}
+}
+
 function handlePrompt(text: string, images: ImageContent[] | undefined, fromPeer: number): void {
+	if (refuseReadOnly(fromPeer)) return;
 	liveEntrySeq++;
 	appendEntry({
 		id: `live-${liveEntrySeq}`,
@@ -229,6 +324,7 @@ function handlePrompt(text: string, images: ImageContent[] | undefined, fromPeer
 }
 
 function handleAbort(fromPeer: number): void {
+	if (refuseReadOnly(fromPeer)) return;
 	const wasReplaying = replayTimer !== null || replayQueue.length > 0;
 	cancelReplay();
 	queuedPrompts = 0;
@@ -253,13 +349,16 @@ function handleFetchTranscript(reqId: number, fromByte: number, fromPeer: number
 function handleFrame(frame: WireFrame, fromPeer: number): void {
 	switch (frame.t) {
 		case "hello":
-			handleHello(frame.name, frame.proto, fromPeer);
+			handleHello(frame.name, frame.proto, frame.writeToken, fromPeer);
 			break;
 		case "prompt":
 			handlePrompt(frame.text, frame.images, fromPeer);
 			break;
 		case "abort":
 			handleAbort(fromPeer);
+			break;
+		case "session-cmd":
+			if (!refuseReadOnly(fromPeer)) handleSessionCmd(frame.cmd, frame.arg, fromPeer);
 			break;
 		case "agent-cmd":
 			handleAgentCmd(frame.cmd, frame.agentId, fromPeer);
@@ -285,6 +384,7 @@ function handleControl(text: string): void {
 	if (control.t === "peer-left" && typeof control.peer === "number") {
 		const name = peers.get(control.peer);
 		peers.delete(control.peer);
+		readOnlyPeers.delete(control.peer);
 		if (name) console.log(`mock-host: ${name} left (peer ${control.peer})`);
 		broadcastState();
 	}
@@ -293,7 +393,8 @@ function handleControl(text: string): void {
 ws.onopen = () => {
 	console.log("mock collab host ready");
 	console.log(`join link: ${link}`);
-	console.log("paste the link into the collab-web connect screen (bun ./index.html), Ctrl+C stops the host");
+	console.log(`view link (read-only): ${viewLink}`);
+	console.log("paste a link into the collab-web connect screen (bun ./index.html), Ctrl+C stops the host");
 };
 
 ws.onmessage = event => {

@@ -1,10 +1,23 @@
-import type { SessionState } from "@oh-my-pi/pi-wire";
-import { ChevronRight, type LucideIcon, LogOut, MessageSquare, Monitor, Moon, Rows3, Sun, X } from "lucide-react";
+import type { SessionCommand, SessionState, WireModel } from "@oh-my-pi/pi-wire";
+import {
+	ChevronDown,
+	ChevronRight,
+	type LucideIcon,
+	LogOut,
+	MessageSquare,
+	Monitor,
+	Moon,
+	Rows3,
+	Sun,
+	X,
+} from "lucide-react";
 import type { ReactNode } from "react";
+import { useState } from "react";
 import type { ConnectionPhase } from "../../lib/client";
-import { fmtPercent } from "../../lib/format";
+import { fmtPercent, fmtTokens } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
 import { type ThemePreference, useThemePreference } from "../../lib/theme";
+import { formatUsage, type SessionUsage } from "../../lib/usage";
 import { PushButton } from "./CompanionCard";
 import { Sheet } from "./Sheet";
 
@@ -27,6 +40,24 @@ const PUSH_LABEL: Record<PushControl["status"], string> = {
 	denied: "Blocked in settings",
 };
 
+/** Desktop shortcuts, wired in app.tsx; shown only where a pointer can use them. */
+const SHORTCUTS: readonly { keys: string; action: string }[] = [
+	{ keys: "⌘K / Ctrl K", action: "switch session" },
+	{ keys: "/", action: "find in session" },
+	{ keys: "Esc", action: "close, or stop a running turn" },
+];
+
+/** Models grouped by provider, in the host's order. */
+function groupByProvider(models: readonly WireModel[]): [string, WireModel[]][] {
+	const groups = new Map<string, WireModel[]>();
+	for (const model of models) {
+		const group = groups.get(model.provider);
+		if (group) group.push(model);
+		else groups.set(model.provider, [model]);
+	}
+	return [...groups];
+}
+
 export interface SessionSheetProps {
 	title: string;
 	state: SessionState | null;
@@ -43,6 +74,13 @@ export interface SessionSheetProps {
 	push: PushControl;
 	onLeave(): void;
 	onClose(): void;
+	/** The paired computer can show this session's git working tree. */
+	workingTree: boolean;
+	/** Totals summed from assistant messages; null when none reported usage. */
+	usage: SessionUsage | null;
+	/** Models this writer may switch to; null when the host predates session controls. */
+	models: readonly WireModel[] | null;
+	onSessionCommand(cmd: SessionCommand, arg?: string): void;
 }
 
 /**
@@ -61,11 +99,20 @@ export function SessionSheet({
 	onChatChange,
 	changeCount,
 	onOpenChanges,
+	workingTree,
+	usage,
+	models,
+	onSessionCommand,
 	push,
 	onLeave,
 	onClose,
 }: SessionSheetProps): ReactNode {
 	const { preference, setPreference } = useThemePreference();
+	const [pickerOpen, setPickerOpen] = useState(false);
+	const [compacting, setCompacting] = useState(false);
+	const [instructions, setInstructions] = useState("");
+	const canControl = models !== null && !readOnly && phase === "live";
+	const levels = state?.thinkingLevels ?? [];
 
 	return (
 		<Sheet label="session details" onClose={onClose}>
@@ -90,8 +137,75 @@ export function SessionSheet({
 					<div className="sh-sheet-row">
 						<dt>Model</dt>
 						<dd className="sh-sheet-mono">
-							{state.model.name}
-							{state.thinkingLevel && <span className="sh-sheet-faint"> · {state.thinkingLevel}</span>}
+							{canControl ? (
+								<button
+									type="button"
+									className="sh-sheet-link sh-sheet-mono"
+									onClick={() => setPickerOpen(open => !open)}
+									aria-expanded={pickerOpen}
+								>
+									{state.model.name}
+									<ChevronDown size={14} />
+								</button>
+							) : (
+								state.model.name
+							)}
+							{!(canControl && levels.length > 0) && state.thinkingLevel && (
+								<span className="sh-sheet-faint"> · {state.thinkingLevel}</span>
+							)}
+						</dd>
+					</div>
+				)}
+				{canControl && pickerOpen && models && (
+					<div className="sh-model-list" role="listbox" aria-label="model">
+						{groupByProvider(models).map(([provider, group]) => (
+							<div key={provider} className="sh-model-group">
+								<div className="sh-model-provider">{provider}</div>
+								{group.map(model => {
+									const current = model.id === state?.model?.id && model.provider === state.model.provider;
+									return (
+										<button
+											key={model.id}
+											type="button"
+											role="option"
+											aria-selected={current}
+											className={current ? "sh-model sh-model-on" : "sh-model"}
+											onClick={() => {
+												setPickerOpen(false);
+												if (!current) onSessionCommand("model", `${model.provider}/${model.id}`);
+											}}
+										>
+											<span>{model.name}</span>
+											{model.contextWindow !== null && (
+												<span className="sh-sheet-faint">{fmtTokens(model.contextWindow)}</span>
+											)}
+										</button>
+									);
+								})}
+							</div>
+						))}
+					</div>
+				)}
+				{canControl && levels.length > 0 && (
+					<div className="sh-sheet-row">
+						<dt>Thinking</dt>
+						<dd>
+							<div className="sh-segmented sh-segmented-wrap" role="radiogroup" aria-label="thinking level">
+								{levels.map(level => (
+									<button
+										key={level}
+										type="button"
+										role="radio"
+										aria-checked={state?.thinkingLevel === level}
+										className={state?.thinkingLevel === level ? "sh-segment sh-segment-on" : "sh-segment"}
+										onClick={() => {
+											if (state?.thinkingLevel !== level) onSessionCommand("thinking", level);
+										}}
+									>
+										{level}
+									</button>
+								))}
+							</div>
 						</dd>
 					</div>
 				)}
@@ -108,6 +222,58 @@ export function SessionSheet({
 								</span>
 								<span className="sh-gauge-pct">{fmtPercent(contextPct)}</span>
 							</span>
+						</dd>
+					</div>
+				)}
+				{usage && (
+					<div className="sh-sheet-row sh-sheet-row-top">
+						<dt>Usage</dt>
+						<dd className="sh-sheet-usage">
+							<span className="sh-sheet-mono">{formatUsage(usage.total)}</span>
+							<span className="sh-sheet-faint">
+								cache {fmtTokens(usage.total.cacheRead)} read · {fmtTokens(usage.total.cacheWrite)} write
+							</span>
+							{usage.last && <span className="sh-sheet-faint">last turn {formatUsage(usage.last)}</span>}
+						</dd>
+					</div>
+				)}
+				{canControl && (
+					<div className="sh-sheet-row sh-sheet-row-top">
+						<dt>Compact</dt>
+						<dd className="sh-sheet-compact">
+							{compacting ? (
+								<>
+									<span className="sh-sheet-faint">Summarize the conversation to free context?</span>
+									<textarea
+										className="sh-sheet-input"
+										value={instructions}
+										onChange={e => setInstructions(e.target.value)}
+										placeholder="Instructions (optional)"
+										rows={2}
+										spellCheck={false}
+									/>
+									<span className="sh-sheet-actions">
+										<button type="button" className="sh-btn" onClick={() => setCompacting(false)}>
+											Cancel
+										</button>
+										<button
+											type="button"
+											className="sh-btn sh-btn-primary"
+											onClick={() => {
+												onSessionCommand("compact", instructions.trim() || undefined);
+												setCompacting(false);
+												setInstructions("");
+											}}
+										>
+											Compact
+										</button>
+									</span>
+								</>
+							) : (
+								<button type="button" className="sh-btn" onClick={() => setCompacting(true)}>
+									Compact…
+								</button>
+							)}
 						</dd>
 					</div>
 				)}
@@ -152,9 +318,18 @@ export function SessionSheet({
 				<div className="sh-sheet-row">
 					<dt>Changes</dt>
 					<dd>
-						<button type="button" className="sh-sheet-link" onClick={onOpenChanges} disabled={changeCount === 0}>
-							{changeCount === 0 ? "No files yet" : `${changeCount} file${changeCount === 1 ? "" : "s"}`}
-							{changeCount > 0 && <ChevronRight size={14} />}
+						<button
+							type="button"
+							className="sh-sheet-link"
+							onClick={onOpenChanges}
+							disabled={changeCount === 0 && !workingTree}
+						>
+							{changeCount > 0
+								? `${changeCount} file${changeCount === 1 ? "" : "s"}`
+								: workingTree
+									? "Working tree"
+									: "No files yet"}
+							{(changeCount > 0 || workingTree) && <ChevronRight size={14} />}
 						</button>
 					</dd>
 				</div>
@@ -187,6 +362,15 @@ export function SessionSheet({
 					</dd>
 				</div>
 			</dl>
+			<div className="sh-shortcuts">
+				<div className="sh-shortcuts-title">Shortcuts</div>
+				{SHORTCUTS.map(shortcut => (
+					<div key={shortcut.keys} className="sh-shortcut">
+						<kbd>{shortcut.keys}</kbd>
+						<span>{shortcut.action}</span>
+					</div>
+				))}
+			</div>
 			{push.error && <div className="sh-connect-error">{push.error}</div>}
 
 			<button type="button" className="sh-btn sh-sheet-leave" onClick={onLeave}>

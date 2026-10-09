@@ -28,29 +28,46 @@ export function Badges({ items }: { items: ReadonlyArray<ReactNode> }): ReactNod
 	);
 }
 
-/** File path with optional `:start-end` line range or raw selector suffix. */
+/** `https://…`, `xd://…`, `local://…`: not files `host.openFile` can read. */
+const URI_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+/**
+ * File path with optional `:start-end` line range or raw selector suffix.
+ * With `host`, a path the host can open becomes a button; leave `host` out where
+ * the path sits inside a clickable header (buttons cannot nest).
+ */
 export function PathText({
 	path,
 	from,
 	to,
 	sel,
+	host,
 }: {
 	path: string;
 	from?: number | null;
 	to?: number | null;
 	sel?: string | null;
+	host?: ToolRenderHost;
 }): ReactNode {
 	let range = "";
 	if (from != null || to != null) {
 		const start = from ?? 1;
 		range = to != null ? `:${start}-${to}` : `:${start}`;
 	}
-	return (
-		<span className="tv-path">
+	const label = (
+		<>
 			{shortenPath(path)}
 			{range && <span className="tv-lines">{range}</span>}
 			{sel && <span className="tv-lines">:{sel}</span>}
-		</span>
+		</>
+	);
+	if (host?.openFile === undefined || path.length === 0 || URI_RE.test(path)) {
+		return <span className="tv-path">{label}</span>;
+	}
+	return (
+		<button type="button" className="tv-path tv-path-link" title={path} onClick={() => host.openFile?.(path)}>
+			{label}
+		</button>
 	);
 }
 

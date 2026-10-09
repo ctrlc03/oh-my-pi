@@ -1,3 +1,4 @@
+import type { SessionCommand } from "@oh-my-pi/pi-wire";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentDrawer } from "./components/agents/AgentDrawer";
@@ -6,6 +7,7 @@ import { Banners } from "./components/shell/Banners";
 import { ChangesSheet } from "./components/shell/ChangesSheet";
 import { Composer } from "./components/shell/Composer";
 import { ConnectScreen } from "./components/shell/ConnectScreen";
+import { FileSheet } from "./components/shell/FileSheet";
 import { HeaderBar } from "./components/shell/HeaderBar";
 import { SearchBar } from "./components/shell/SearchBar";
 import { SessionAlert } from "./components/shell/SessionAlert";
@@ -15,6 +17,7 @@ import { Transcript } from "./components/transcript/Transcript";
 import { collectChanges } from "./lib/changes";
 import { GuestClient } from "./lib/client";
 import { extractPairing, loadPairing, savePairing } from "./lib/companion";
+import { useNewSince } from "./lib/new-since";
 import { type PushControl, usePush } from "./lib/push";
 import { registerServiceWorker, takeSharedLink } from "./lib/pwa";
 import {
@@ -28,10 +31,12 @@ import {
 	setActiveLink,
 } from "./lib/rooms";
 import { readJson, writeJson } from "./lib/storage";
+import { sumUsage } from "./lib/usage";
 import { type CompanionHandle, useCompanion } from "./lib/use-companion";
 import { useGuestSnapshot } from "./lib/use-guest";
 import type { ToolRenderHost } from "./tool-render";
 import "./components/shell/shell.css";
+import "./components/shell/companion.css";
 
 const NAME_KEY = "omp.collab.name";
 /** Chat view preference (boolean); absent: phones get chat, larger screens the full transcript. */
@@ -339,6 +344,17 @@ function Session({
 
 	const subCount = useMemo(() => snap.agents.filter(a => a.kind === "sub").length, [snap.agents]);
 
+	// The paired computer's host for this very session. Working tree and file
+	// viewing read through it, and are hidden when there is none.
+	const sessionId = snap.header?.id ?? null;
+	const companionClient = companion?.client ?? null;
+	const hosts = companion?.snap.hosts;
+	const hostId = useMemo(
+		() => hosts?.find(host => host.sessionId === sessionId)?.instanceId ?? null,
+		[hosts, sessionId],
+	);
+	const [filePath, setFilePath] = useState<string | null>(null);
+
 	// Task-card agent chips drill into the same drawer the rail uses.
 	const agentIds = useMemo(() => new Set(snap.agents.map(a => a.id)), [snap.agents]);
 	const toolHost = useMemo<ToolRenderHost>(
@@ -347,8 +363,9 @@ function Session({
 			openAgent: id => {
 				if (agentIds.has(id)) setSelectedId(id);
 			},
+			openFile: hostId !== null ? setFilePath : undefined,
 		}),
-		[agentIds],
+		[agentIds, hostId],
 	);
 
 	// Auto-open the rail the first time a subagent appears, only where it docks
@@ -400,10 +417,54 @@ function Session({
 	const openChanges = useCallback(() => setChangesOpen(true), []);
 
 	const [switcherOpen, setSwitcherOpen] = useState(false);
-	const sessionId = snap.header?.id ?? null;
 	const otherHosts = companion?.snap.hosts.filter(host => host.sessionId !== sessionId) ?? [];
 	const canSwitch = otherHosts.length > 0 || rooms.some(room => room.roomId !== roomId);
 	const openSwitcher = useCallback(() => setSwitcherOpen(true), []);
+
+	const { newSince, seen: newSeen, markSeen, markTail } = useNewSince(client, roomId, snap.entries, live);
+	const sessionUsage = useMemo(() => sumUsage(snap.entries), [snap.entries]);
+	const sendSessionCommand = useCallback(
+		(cmd: SessionCommand, arg?: string) => client.sendSessionCommand(cmd, arg),
+		[client],
+	);
+	const cancelQueued = useCallback((id: string) => client.cancelQueued(id), [client]);
+
+	// Desktop shortcuts. Typing in a field suppresses everything but Esc; an open sheet or
+	// drawer owns Esc itself, and the composer aborts a running turn on its own Esc.
+	const canOpenSwitcher = canSwitch || companion !== null;
+	const readOnly = snap.readOnly;
+	const working = snap.working;
+	const searchOpen = search !== null;
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent): void => {
+			if (e.isComposing || e.defaultPrevented) return;
+			const target = e.target;
+			const typing =
+				target instanceof HTMLElement &&
+				(target.isContentEditable ||
+					target.tagName === "INPUT" ||
+					target.tagName === "TEXTAREA" ||
+					target.tagName === "SELECT");
+			const dialogOpen = document.querySelector('[role="dialog"]') !== null;
+			if (e.key === "Escape") {
+				if (dialogOpen) return;
+				if (searchOpen) closeSearch();
+				else if (live && !readOnly && working) client.sendAbort();
+				return;
+			}
+			if (typing || dialogOpen || e.altKey) return;
+			if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k" && !e.shiftKey) {
+				if (!canOpenSwitcher) return;
+				e.preventDefault();
+				setSwitcherOpen(true);
+			} else if (e.key === "/" && !e.metaKey && !e.ctrlKey && !searchOpen) {
+				e.preventDefault();
+				setSearch({ query: "", target: null });
+			}
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [canOpenSwitcher, client, closeSearch, live, readOnly, searchOpen, working]);
 
 	return (
 		<div className="sh-app">
@@ -424,6 +485,10 @@ function Session({
 				chat={chat}
 				onChatChange={changeChat}
 				changeCount={changes.length}
+				workingTree={hostId !== null}
+				sessionUsage={sessionUsage}
+				models={snap.models}
+				onSessionCommand={sendSessionCommand}
 				onOpenChanges={openChanges}
 				push={push}
 			/>
@@ -441,6 +506,12 @@ function Session({
 							phase={snap.phase}
 							chat={chat}
 							search={search ?? undefined}
+							newSince={newSince ?? undefined}
+							newSeen={newSeen}
+							onNewSeen={markSeen}
+							onTail={markTail}
+							queued={snap.queued}
+							onCancelQueued={cancelQueued}
 						/>
 					</div>
 					<Composer
@@ -503,7 +574,19 @@ function Session({
 					onClose={() => setSwitcherOpen(false)}
 				/>
 			)}
-			{changesOpen && <ChangesSheet changes={changes} host={toolHost} onClose={() => setChangesOpen(false)} />}
+			{changesOpen && (
+				<ChangesSheet
+					changes={changes}
+					host={toolHost}
+					tree={
+						companionClient !== null && hostId !== null ? { client: companionClient, instanceId: hostId } : null
+					}
+					onClose={() => setChangesOpen(false)}
+				/>
+			)}
+			{filePath !== null && companionClient !== null && hostId !== null && (
+				<FileSheet client={companionClient} instanceId={hostId} path={filePath} onClose={() => setFilePath(null)} />
+			)}
 		</div>
 	);
 }

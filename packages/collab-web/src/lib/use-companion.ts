@@ -8,7 +8,15 @@ export interface CompanionHandle {
 	error: string | null;
 }
 
-const UNPAIRED: CompanionSnapshot = { phase: "offline", machine: null, hosts: [], vapidKey: null, error: null };
+const UNPAIRED: CompanionSnapshot = {
+	phase: "offline",
+	machine: null,
+	hosts: [],
+	idle: [],
+	canStart: false,
+	vapidKey: null,
+	error: null,
+};
 
 /**
  * One companion connection for the whole app: the connect screen, the session

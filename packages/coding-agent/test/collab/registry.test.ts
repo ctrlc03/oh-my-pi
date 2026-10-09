@@ -6,13 +6,20 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	COLLAB_IDLE_REGISTRY_VERSION,
 	COLLAB_REGISTRY_VERSION,
 	type CollabHostPublication,
 	type CollabHostRegistrySource,
 	type CollabHostSnapshot,
+	type CollabIdleRegistrySource,
+	type CollabIdleSnapshot,
+	CollabLinkError,
 	listCollabHosts,
+	listCollabSessions,
 	publishCollabHost,
+	publishCollabIdle,
 	resolveCollabHostLink,
+	startCollabSession,
 } from "@oh-my-pi/pi-coding-agent/collab/registry";
 
 const cleanupDirs: string[] = [];
@@ -727,4 +734,251 @@ describe("collab registry", () => {
 			expect(await listCollabHosts({ dir })).toEqual([]);
 		},
 	);
+
+	describe("idle entries", () => {
+		function makeIdle(over: Partial<CollabIdleSnapshot> = {}): CollabIdleSnapshot {
+			return {
+				instanceId: crypto.randomBytes(8).toString("hex"),
+				pid: process.pid,
+				sessionId: "idle-session",
+				sessionName: null,
+				cwd: "/tmp/idle-cwd",
+				model: null,
+				startedAt: 1_700_000_000_000,
+				busy: false,
+				...over,
+			};
+		}
+
+		async function publishIdle(
+			dir: string,
+			snapshot: CollabIdleSnapshot,
+			source: Partial<CollabIdleRegistrySource> = {},
+		): Promise<CollabHostPublication> {
+			const pub = await publishCollabIdle(
+				{
+					snapshot: () => snapshot,
+					start: async access => ({ generation: 1, access, url: `https://collab.example/${access}/started` }),
+					...source,
+				},
+				{ dir, instanceId: snapshot.instanceId },
+			);
+			openPublications.push(pub);
+			return pub;
+		}
+
+		it("lists an idle process under `idle`, never as a host, and tags its metadata with a version old listers skip", async () => {
+			const dir = await tempDir();
+			const host = makeFixture();
+			await publish(dir, host);
+			const idle = makeIdle({ sessionId: "not-shared", sessionName: "Quiet", model: { provider: "p", id: "m" } });
+			await publishIdle(dir, idle);
+
+			expect((await listCollabHosts({ dir })).map(h => h.instanceId)).toEqual([host.snapshot.instanceId]);
+			expect(await listCollabSessions({ dir })).toEqual({ hosts: [host.snapshot], idle: [idle] });
+
+			// An omp that only knows version 1 never connects to, lists, or prunes a
+			// live entry whose version it does not recognise.
+			const metas = await Promise.all(
+				(await fs.readdir(dir))
+					.filter(name => name.endsWith(".json"))
+					.map(name => Bun.file(path.join(dir, name)).json() as Promise<Record<string, unknown>>),
+			);
+			const idleMeta = metas.find(meta => meta.instanceId === idle.instanceId);
+			expect(idleMeta).toMatchObject({ version: COLLAB_IDLE_REGISTRY_VERSION, kind: "idle", pid: process.pid });
+			expect(COLLAB_IDLE_REGISTRY_VERSION).not.toBe(COLLAB_REGISTRY_VERSION);
+			expect(metas.find(meta => meta.instanceId === host.snapshot.instanceId)?.version).toBe(
+				COLLAB_REGISTRY_VERSION,
+			);
+		});
+
+		it("starts hosting through the idle endpoint for the requested access and returns that link", async () => {
+			const dir = await tempDir();
+			const idle = makeIdle();
+			const requested: string[] = [];
+			await publishIdle(dir, idle, {
+				start: async access => {
+					requested.push(access);
+					return { generation: 4, access, url: `https://collab.example/${access}/room` };
+				},
+			});
+
+			expect(await startCollabSession(String(process.pid), "control", { dir })).toEqual({
+				instanceId: idle.instanceId,
+				generation: 4,
+				access: "control",
+				url: "https://collab.example/control/room",
+			});
+			expect(await startCollabSession(idle.instanceId, "view", { dir })).toMatchObject({
+				access: "view",
+				url: "https://collab.example/view/room",
+			});
+			expect(requested).toEqual(["control", "view"]);
+		});
+
+		it("hands out the existing link of a process that is already hosting instead of starting it again", async () => {
+			const dir = await tempDir();
+			const f = makeFixture();
+			await publish(dir, f);
+			const start = spyOn(
+				{ start: async () => ({ generation: 1, access: "control" as const, url: "unused" }) },
+				"start",
+			);
+			await publishIdle(dir, makeIdle({ instanceId: f.snapshot.instanceId }), { start });
+
+			expect(await startCollabSession(f.snapshot.instanceId, "view", { dir })).toMatchObject({ url: f.viewUrl });
+			expect(start).not.toHaveBeenCalled();
+			// A view-only room refuses a control request exactly as `link` does.
+			const viewOnly = makeFixture({ access: "view" });
+			await publish(dir, viewOnly);
+			await expect(startCollabSession(viewOnly.snapshot.instanceId, "control", { dir })).rejects.toMatchObject({
+				code: "access_unavailable",
+			});
+		});
+
+		it("lists a process once it hosts only as a host, and again as idle when its idle source says it can start", async () => {
+			const dir = await tempDir();
+			const idle = makeIdle();
+			let startable = false;
+			await publishIdle(dir, idle, {
+				snapshot: () => {
+					if (!startable) throw new Error("already hosting");
+					return idle;
+				},
+			});
+			const host = makeFixture({ instanceId: idle.instanceId });
+			const hosting = await publish(dir, host);
+
+			expect(await listCollabSessions({ dir })).toEqual({ hosts: [host.snapshot], idle: [] });
+			await hosting.close();
+			startable = true;
+			expect(await listCollabSessions({ dir })).toEqual({ hosts: [], idle: [idle] });
+		});
+
+		it("reports the reason an idle process cannot start without leaking a link", async () => {
+			const dir = await tempDir();
+			const idle = makeIdle();
+			await publishIdle(dir, idle, {
+				start: () => Promise.reject(new CollabLinkError("not_startable", `joined as guest\n${"x".repeat(2000)}`)),
+			});
+
+			const error = await startCollabSession(idle.instanceId, "control", { dir }).catch((e: unknown) => e);
+			if (!(error instanceof CollabLinkError)) throw new Error("expected a start failure");
+			expect(error.code).toBe("not_startable");
+			// Single line, bounded on the wire.
+			expect(error.message).toStartWith(`session ${idle.instanceId} cannot start hosting: joined as guest xxx`);
+			expect(error.message.length).toBeLessThan(500);
+			expect(error.message).not.toContain("\n");
+		});
+
+		it("never runs a start request that lacks the bearer token or speaks another protocol version", async () => {
+			const dir = await tempDir();
+			const idle = makeIdle();
+			const start = spyOn(
+				{ start: async () => ({ generation: 1, access: "control" as const, url: "unused" }) },
+				"start",
+			);
+			const pub = await publishIdle(dir, idle, { start });
+			const token = await readSoleToken(dir);
+
+			const forged = await rawRequest(pub.endpoint, {
+				v: COLLAB_IDLE_REGISTRY_VERSION,
+				token: "not-the-real-token",
+				op: "start",
+				access: "control",
+			});
+			expect(JSON.parse(forged)).toEqual({
+				ok: false,
+				v: COLLAB_IDLE_REGISTRY_VERSION,
+				error: "authentication_failed",
+			});
+			const hostVersion = await rawRequest(pub.endpoint, {
+				v: COLLAB_REGISTRY_VERSION,
+				token,
+				op: "start",
+				access: "control",
+			});
+			expect(JSON.parse(hostVersion)).toEqual({
+				ok: false,
+				v: COLLAB_IDLE_REGISTRY_VERSION,
+				error: "unsupported_protocol",
+			});
+			// An idle endpoint never hands out host capabilities.
+			const link = await rawRequest(pub.endpoint, {
+				v: COLLAB_IDLE_REGISTRY_VERSION,
+				token,
+				op: "link",
+				access: "control",
+				generation: 1,
+			});
+			expect(JSON.parse(link)).toEqual({ ok: false, v: COLLAB_IDLE_REGISTRY_VERSION, error: "invalid_operation" });
+			const badAccess = await rawRequest(pub.endpoint, {
+				v: COLLAB_IDLE_REGISTRY_VERSION,
+				token,
+				op: "start",
+				access: "admin",
+			});
+			expect(JSON.parse(badAccess)).toEqual({ ok: false, v: COLLAB_IDLE_REGISTRY_VERSION, error: "invalid_access" });
+			expect(start).not.toHaveBeenCalled();
+		});
+
+		it("prunes a stale idle entry, keeps a live one that cannot be started right now, and never writes a link to disk", async () => {
+			const dir = await tempDir();
+			await writeMetadata(dir, "stale-idle.json", {
+				version: COLLAB_IDLE_REGISTRY_VERSION,
+				kind: "idle",
+				pid: freshDeadPid(),
+				endpoint: auxEndpoint(dir, "stale-idle"),
+				createdAt: Date.now(),
+				token: crypto.randomBytes(16).toString("hex"),
+			});
+			const busy = makeIdle({ sessionId: "guest-session" });
+			await publishIdle(dir, busy, {
+				snapshot: () => {
+					throw new Error("collab guest owns the session");
+				},
+			});
+			const idle = makeIdle({ sessionId: "startable" });
+			await publishIdle(dir, idle);
+			await startCollabSession(idle.instanceId, "control", { dir });
+
+			expect((await listCollabSessions({ dir })).idle).toEqual([idle]);
+			const names = await fs.readdir(dir);
+			expect(names).not.toContain("stale-idle.json");
+			expect(names.filter(name => name.endsWith(".json"))).toHaveLength(2);
+			for (const file of await collectRegularFiles(dir)) {
+				expect(await Bun.file(file).text()).not.toContain("https://collab.example");
+			}
+		});
+
+		it("prunes a dead idle entry from a host-only listing but leaves a live one untouched", async () => {
+			const dir = await tempDir();
+			await writeMetadata(dir, "dead-idle.json", {
+				version: COLLAB_IDLE_REGISTRY_VERSION,
+				kind: "idle",
+				pid: freshDeadPid(),
+				endpoint: auxEndpoint(dir, "dead-idle"),
+				createdAt: Date.now(),
+				token: crypto.randomBytes(16).toString("hex"),
+			});
+			const live = makeIdle();
+			await publishIdle(dir, live);
+
+			expect(await listCollabHosts({ dir })).toEqual([]);
+			const names = await fs.readdir(dir);
+			expect(names).not.toContain("dead-idle.json");
+			expect(names.filter(name => name.endsWith(".json"))).toHaveLength(1);
+			expect((await listCollabSessions({ dir })).idle).toEqual([live]);
+		});
+
+		it.skipIf(process.platform === "win32")("creates the idle metadata file and socket owner-only", async () => {
+			const dir = path.join(await tempDir(), "r");
+			const pub = await publishIdle(dir, makeIdle());
+
+			const [metaName] = (await fs.readdir(dir)).filter(n => n.endsWith(".json"));
+			expect((await fs.stat(path.join(dir, metaName ?? ""))).mode & 0o777).toBe(0o600);
+			expect((await fs.stat(pub.endpoint)).mode & 0o777).toBe(0o600);
+			expect((await fs.stat(dir)).mode & 0o777).toBe(0o700);
+		});
+	});
 });

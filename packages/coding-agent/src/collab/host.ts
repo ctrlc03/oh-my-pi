@@ -11,20 +11,23 @@
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import * as fs from "node:fs/promises";
-import type { ImageContent, TextContent } from "@oh-my-pi/pi-ai";
+import type { ImageContent, Model, TextContent } from "@oh-my-pi/pi-ai";
 import { logger } from "@oh-my-pi/pi-utils";
 import type {
 	BusChannel,
 	CollabUiRequest,
 	CollabUiRequestDraft,
 	CollabUiResponseValue,
+	SessionCommand,
 	AgentEvent as WireAgentEvent,
+	WireModel,
 	SessionEntry as WireSessionEntry,
 } from "@oh-my-pi/pi-wire";
 import type { InteractiveModeContext } from "../modes/types";
 import { AgentLifecycleManager } from "../registry/agent-lifecycle";
 import { type AgentRef, AgentRegistry } from "../registry/agent-registry";
 import type { AgentSessionEvent } from "../session/agent-session";
+import { parseCompactArgs } from "../session/compact-modes";
 import { stripImagesFromMessage, USER_INTERRUPT_LABEL } from "../session/messages";
 import type { SessionEntry as StoredSessionEntry } from "../session/session-entries";
 import { TASK_SUBAGENT_LIFECYCLE_CHANNEL, TASK_SUBAGENT_PROGRESS_CHANNEL } from "../task/types";
@@ -120,6 +123,9 @@ function isWireAgentEvent(event: AgentSessionEvent): event is AgentSessionEvent 
 function isWireSessionEntry(entry: StoredSessionEntry): entry is StoredSessionEntry & WireSessionEntry {
 	return entry.type in WIRE_SESSION_ENTRY_TYPES;
 }
+
+/** Models listed in a writer's welcome; the picker's order puts the likeliest choices first. */
+const MAX_WELCOME_MODELS = 200;
 const CONNECT_TIMEOUT_MS = 15_000;
 /** Max bytes served per fetch-transcript reply (guest re-requests from `newSize`). */
 export const TRANSCRIPT_READ_CAP = 4 * 1024 * 1024;
@@ -734,6 +740,10 @@ export class CollabHost {
 				if (this.#rejectWhileStarting("agent control", fromPeer)) break;
 				this.#handleAgentCmd(frame.cmd, frame.agentId, frame.text, fromPeer);
 				break;
+			case "session-cmd":
+				if (this.#rejectWhileStarting("session control", fromPeer)) break;
+				void this.#handleSessionCmd(frame.cmd, typeof frame.arg === "string" ? frame.arg : undefined, fromPeer);
+				break;
 			case "fetch-transcript":
 				void this.#handleFetchTranscript(frame.reqId, frame.agentId, frame.fromByte, fromPeer);
 				break;
@@ -809,6 +819,7 @@ export class CollabHost {
 				agents: this.#snapshotAgents(),
 				entryCount: snapshotEntries.json.length,
 				readOnly: canWrite ? undefined : true,
+				models: canWrite ? this.#welcomeModels() : undefined,
 			},
 			fromPeer,
 		);
@@ -1097,6 +1108,7 @@ export class CollabHost {
 			cwd: this.#ctx.sessionManager.getCwd(),
 			model: session.model,
 			thinkingLevel: session.thinkingLevel,
+			thinkingLevels: session.getAvailableEffortSelectors(),
 			contextUsage: {
 				tokens,
 				contextWindow: breakdown.contextWindow,
@@ -1195,6 +1207,144 @@ export class CollabHost {
 			case "revive":
 				AgentLifecycleManager.global().ensureLive(agentId).catch(fail);
 				break;
+		}
+	}
+
+	/**
+	 * The models the TUI session-model picker offers: the `--models` scope when set,
+	 * else every model with usable credentials. Ordered like the picker's default
+	 * view, most recently used first, then by provider and id. Role ranking and the
+	 * picker's version heuristics are deliberately not reproduced: they live in
+	 * the overlay stack, which the host does not load.
+	 */
+	#selectableModels(): Model[] {
+		const session = this.#ctx.session;
+		const scoped = session.scopedModels.map(entry => entry.model);
+		const models = scoped.length > 0 ? scoped : session.modelRegistry.getAvailable();
+		const recent: Record<string, number> = {};
+		for (const [index, selector] of (this.#ctx.settings.getStorage()?.getModelUsageOrder() ?? []).entries()) {
+			recent[selector] = index;
+		}
+		const rank = (model: Model) => recent[`${model.provider}/${model.id}`] ?? Number.MAX_SAFE_INTEGER;
+		return [...models].sort(
+			(a, b) => rank(a) - rank(b) || a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id),
+		);
+	}
+
+	/** The model list a writer's welcome carries; its presence tells the guest `session-cmd` is supported. */
+	#welcomeModels(): WireModel[] | undefined {
+		try {
+			return this.#selectableModels()
+				.slice(0, MAX_WELCOME_MODELS)
+				.map(model => ({
+					id: model.id,
+					name: model.name,
+					provider: model.provider,
+					contextWindow: model.contextWindow ?? null,
+				}));
+		} catch (err) {
+			// A catalog failure must not block the join; the guest just gets no session controls.
+			logger.warn("collab welcome could not list models", { error: String(err) });
+			return undefined;
+		}
+	}
+
+	/**
+	 * Guest session controls. Each command runs the same session API the host's
+	 * own TUI uses (`/model` session pick, thinking selector, `/compact`) but
+	 * never opens a selector or dialog on the host terminal. Failures return a
+	 * targeted `error`; success is announced to the room as a collab notice.
+	 */
+	async #handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer: number): Promise<void> {
+		const peer = this.#peers.get(fromPeer);
+		if (!peer?.canWrite) {
+			this.#rejectReadOnly("session control", fromPeer);
+			return;
+		}
+		const session = this.#ctx.session;
+		const fail = (message: string) => this.#send({ t: "error", message: `${cmd}: ${message}` }, fromPeer);
+		const announce = (what: string) => {
+			if (this.#guestTrafficAllowed()) session.emitNotice("info", `${peer.name} ${what}`, "collab");
+		};
+		try {
+			switch (cmd) {
+				case "model": {
+					const model = this.#selectableModels().find(
+						candidate => `${candidate.provider}/${candidate.id}` === arg,
+					);
+					if (!model) {
+						fail(`unknown model ${arg === undefined ? "(none given)" : JSON.stringify(arg)}`);
+						return;
+					}
+					if (session.model?.provider === model.provider && session.model.id === model.id) return;
+					// A live switch resets the provider session, so the TUI defers it past a turn;
+					// a guest cannot queue one, so it waits for the host to go idle instead.
+					if (session.isStreaming || session.isCompacting) {
+						fail("wait for the current response or compaction to finish");
+						return;
+					}
+					// The TUI picker compacts first when the transcript outgrows the target; a guest
+					// asking for a model switch must not trigger an implicit summarization.
+					const contextTokens = session.getContextUsage()?.tokens ?? 0;
+					const contextWindow = model.contextWindow ?? 0;
+					if (contextWindow > 0 && contextTokens > contextWindow) {
+						fail(
+							`the conversation (${contextTokens} tokens) exceeds ${model.id}'s context window; compact first`,
+						);
+						return;
+					}
+					// Session-only, like the TUI picker: not persisted as the default model.
+					await session.setModelTemporary(model, session.resolveTemporaryModelThinkingLevel(model));
+					this.#ctx.statusLine.invalidate();
+					this.#ctx.updateEditorBorderColor();
+					announce(`switched model to ${model.provider}/${model.id}`);
+					return;
+				}
+				case "thinking": {
+					const level = session.getAvailableEffortSelectors().find(selector => selector === arg);
+					if (!level) {
+						fail(
+							arg === undefined
+								? "no thinking level given"
+								: `the current model does not accept thinking level ${JSON.stringify(arg)}`,
+						);
+						return;
+					}
+					// Session-only, like the TUI thinking selector: `persist` stays off.
+					session.setThinkingLevel(level);
+					announce(`set thinking to ${level}`);
+					return;
+				}
+				case "compact": {
+					const parsed = parseCompactArgs(arg ?? "");
+					if ("error" in parsed) {
+						fail(parsed.error);
+						return;
+					}
+					if (session.isCompacting) {
+						fail("compaction is already in progress");
+						return;
+					}
+					if (this.#ctx.sessionManager.getEntries().filter(entry => entry.type === "message").length < 2) {
+						fail("nothing to compact (no messages yet)");
+						return;
+					}
+					announce("started compaction");
+					// The host's `/compact` path: its TUI shows the same progress loader and result.
+					const outcome = await this.#ctx.handleCompactCommand(parsed.instructions, parsed.mode);
+					if (outcome !== "ok" && this.#guestTrafficAllowed()) {
+						fail(
+							outcome === "cancelled" ? "compaction was cancelled" : "compaction failed; see the host terminal",
+						);
+					}
+					return;
+				}
+				default:
+					fail("unknown session command");
+			}
+		} catch (err) {
+			logger.warn("collab session-cmd failed", { cmd, error: String(err) });
+			fail(err instanceof Error ? err.message : String(err));
 		}
 	}
 

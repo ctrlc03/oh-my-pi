@@ -6,10 +6,17 @@
  * argv[2]  metadata dir override; empty/absent → default `~/.omp/run/collab-hosts`.
  * argv[3]  URL marker; falls back to OMP_SMOKE_MARKER, then "smoke".
  * argv[4]  instance ID; falls back to OMP_SMOKE_INSTANCE_ID, then "smoke-host".
+ * OMP_SMOKE_MODE=idle  publish an idle (not hosting) entry instead; a `start`
+ *          request makes it host the same fixture room, like a real omp would.
  *
  * Emits `READY\n` once published. SIGTERM closes the publication and exits 0.
  */
-import { type CollabHostRegistrySource, publishCollabHost } from "../../../src/collab/registry";
+import {
+	type CollabHostPublication,
+	type CollabHostRegistrySource,
+	publishCollabHost,
+	publishCollabIdle,
+} from "../../../src/collab/registry";
 
 const dirArg = process.argv[2];
 const marker = process.argv[3] ?? process.env.OMP_SMOKE_MARKER ?? "smoke";
@@ -35,10 +42,41 @@ const source: CollabHostRegistrySource = {
 	}),
 	link: access => `https://collab.example/${access}/${marker}`,
 };
-const publication = await publishCollabHost(source, { dir, instanceId });
+const publications: CollabHostPublication[] = [];
+const idle = process.env.OMP_SMOKE_MODE === "idle";
+let hosting = !idle;
+if (idle) {
+	publications.push(
+		await publishCollabIdle(
+			{
+				snapshot: () => {
+					if (hosting) throw new Error("already hosting");
+					return {
+						instanceId,
+						pid: process.pid,
+						sessionId: `session-${marker}`,
+						sessionName: `Smoke ${marker}`,
+						cwd: process.cwd(),
+						model: null,
+						startedAt,
+						busy: false,
+					};
+				},
+				start: async access => {
+					hosting = true;
+					publications.push(await publishCollabHost(source, { dir, instanceId }));
+					return { generation: 1, access, url: source.link(access) ?? "" };
+				},
+			},
+			{ dir, instanceId },
+		),
+	);
+} else {
+	publications.push(await publishCollabHost(source, { dir, instanceId }));
+}
 
 const shutdown = (): void => {
-	publication.close().then(
+	Promise.all(publications.map(publication => publication.close())).then(
 		() => process.exit(0),
 		() => process.exit(0),
 	);

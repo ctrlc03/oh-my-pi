@@ -1,10 +1,11 @@
-import type { SessionHeader, SessionState } from "@oh-my-pi/pi-wire";
+import type { SessionCommand, SessionHeader, SessionState, WireModel } from "@oh-my-pi/pi-wire";
 import { Ellipsis, Layers, LogOut, PanelRight, Search } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback, useState } from "react";
 import type { ConnectionPhase } from "../../lib/client";
 import { fmtPercent, shortenPath } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
+import type { SessionUsage } from "../../lib/usage";
 import { OmpMark } from "./OmpMark";
 import { SessionSheet } from "./SessionSheet";
 import { ThemeToggle } from "./ThemeToggle";
@@ -36,6 +37,13 @@ export interface HeaderBarProps {
 	onChatChange(chat: boolean): void;
 	changeCount: number;
 	onOpenChanges(): void;
+	/** The paired computer can show this session's git working tree. */
+	workingTree: boolean;
+	/** Cost and token totals for the session sheet; null when no message reported usage. */
+	sessionUsage: SessionUsage | null;
+	/** Models this writer may switch to; null when the host predates session controls. */
+	models: readonly WireModel[] | null;
+	onSessionCommand(cmd: SessionCommand, arg?: string): void;
 	push: PushControl;
 }
 
@@ -57,6 +65,10 @@ export const HeaderBar = memo(function HeaderBar({
 	onChatChange,
 	changeCount,
 	onOpenChanges,
+	workingTree,
+	sessionUsage,
+	models,
+	onSessionCommand,
 	push,
 }: HeaderBarProps): ReactNode {
 	const title = header?.title ?? state?.sessionName ?? "session";
@@ -194,6 +206,10 @@ export const HeaderBar = memo(function HeaderBar({
 						setSheetOpen(false);
 						onOpenChanges();
 					}}
+					workingTree={workingTree}
+					usage={sessionUsage}
+					models={models}
+					onSessionCommand={onSessionCommand}
 					push={push}
 					onLeave={onLeave}
 					onClose={closeSheet}

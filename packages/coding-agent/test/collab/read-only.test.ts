@@ -56,6 +56,7 @@ function makeHostContext(): HostHarness {
 			sessionName: "test",
 			model: undefined,
 			thinkingLevel: undefined,
+			getAvailableEffortSelectors: () => [],
 			subscribe: () => () => {},
 			emitNotice: () => {},
 			promptCustomMessage: (message: { details?: { from?: string } }) => {

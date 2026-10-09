@@ -474,6 +474,7 @@ function Session({
 				state={snap.state}
 				phase={snap.phase}
 				readOnly={snap.readOnly}
+				sandboxed={companion?.snap.hosts.some(host => host.sessionId === sessionId && host.sandboxed) ?? false}
 				subCount={subCount}
 				railOpen={railOpen}
 				onToggleRail={toggleRail}

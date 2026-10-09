@@ -18,7 +18,7 @@ import { fmtPercent, fmtTokens } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
 import { type ThemePreference, useThemePreference } from "../../lib/theme";
 import { formatUsage, type SessionUsage } from "../../lib/usage";
-import { PushButton } from "./CompanionCard";
+import { PushButton, SandboxedChip } from "./CompanionCard";
 import { Sheet } from "./Sheet";
 
 const THEMES: readonly { value: ThemePreference; label: string; Icon: LucideIcon }[] = [
@@ -64,6 +64,7 @@ export interface SessionSheetProps {
 	phase: ConnectionPhase;
 	phaseLabel: string;
 	readOnly: boolean;
+	sandboxed: boolean;
 	contextPct: number | null;
 	/** Chat view: prompts and replies only, tool runs folded. */
 	chat: boolean;
@@ -94,6 +95,7 @@ export function SessionSheet({
 	phase,
 	phaseLabel,
 	readOnly,
+	sandboxed,
 	contextPct,
 	chat,
 	onChatChange,
@@ -131,6 +133,7 @@ export function SessionSheet({
 						<span className={`sh-dot sh-dot-${phase}`} />
 						{phaseLabel}
 						{readOnly && <span className="sh-chip">read-only</span>}
+						{sandboxed && <SandboxedChip />}
 					</dd>
 				</div>
 				{state?.model && (

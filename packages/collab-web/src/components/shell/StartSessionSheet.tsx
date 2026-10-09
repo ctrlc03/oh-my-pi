@@ -1,4 +1,4 @@
-import { ChevronLeft, FolderOpen, LoaderCircle, Plus, RefreshCw, X } from "lucide-react";
+import { ChevronLeft, FolderOpen, LoaderCircle, Plus, RefreshCw, ShieldCheck, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CompanionClient, RecentFolder } from "../../lib/companion";
@@ -8,6 +8,8 @@ import { Sheet } from "./Sheet";
 
 export interface StartSessionSheetProps {
 	client: CompanionClient;
+	/** The companion can start sandboxed sessions: offer the toggle. */
+	canSandbox: boolean;
 	/** Join the started host; rejects with a readable message. */
 	onOpen(instanceId: string): Promise<void>;
 	onClose(): void;
@@ -17,6 +19,7 @@ interface Starting {
 	cwd: string;
 	/** Session id being resumed; undefined for a new session. */
 	resume?: string;
+	sandboxed: boolean;
 }
 
 function folderName(cwd: string): string {
@@ -24,11 +27,12 @@ function folderName(cwd: string): string {
 }
 
 /** Pick a folder omp has run in, then start a new session there or resume one. */
-export function StartSessionSheet({ client, onOpen, onClose }: StartSessionSheetProps): ReactNode {
+export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: StartSessionSheetProps): ReactNode {
 	const load = useCallback(() => client.requestFolders(), [client]);
 	const { state, reload } = useRequest(load);
 	const [folder, setFolder] = useState<RecentFolder | null>(null);
 	const [starting, setStarting] = useState<Starting | null>(null);
+	const [sandboxed, setSandboxed] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const closedRef = useRef(false);
 	useEffect(() => {
@@ -42,7 +46,7 @@ export function StartSessionSheet({ client, onOpen, onClose }: StartSessionSheet
 		setStarting(target);
 		setError(null);
 		try {
-			const instanceId = await client.startSession(target.cwd, target.resume);
+			const instanceId = await client.startSession(target.cwd, target.resume, target.sandboxed || undefined);
 			// Closed while omp booted: the session still appears in the computer's list.
 			if (!closedRef.current) await onOpen(instanceId);
 		} catch (err) {
@@ -71,7 +75,8 @@ export function StartSessionSheet({ client, onOpen, onClose }: StartSessionSheet
 				<div className="sh-start-progress" role="status">
 					<LoaderCircle size={22} className="sh-spin" />
 					<div className="sh-start-progress-title">
-						{starting.resume ? "Resuming" : "Starting"} omp in {folderName(starting.cwd)}…
+						{starting.resume ? "Resuming" : "Starting"} {starting.sandboxed ? "sandboxed " : ""}omp in{" "}
+						{folderName(starting.cwd)}…
 					</div>
 					<div className="sh-field-hint">
 						This can take up to a minute while omp boots. You can close this; the session appears in your
@@ -82,10 +87,23 @@ export function StartSessionSheet({ client, onOpen, onClose }: StartSessionSheet
 				<FolderList state={state} onPick={setFolder} onRetry={reload} />
 			) : (
 				<>
+					{canSandbox && (
+						<label className="sh-start-sandbox">
+							<input type="checkbox" checked={sandboxed} onChange={e => setSandboxed(e.currentTarget.checked)} />
+							<span className="sh-start-sandbox-text">
+								<span className="sh-start-sandbox-title">
+									<ShieldCheck size={14} /> Sandboxed
+								</span>
+								<span className="sh-field-hint">
+									Reads and edits files only; changes stay in this folder. No commands run.
+								</span>
+							</span>
+						</label>
+					)}
 					<button
 						type="button"
 						className="sh-btn sh-btn-primary sh-start-new"
-						onClick={() => void start({ cwd: folder.cwd })}
+						onClick={() => void start({ cwd: folder.cwd, sandboxed })}
 					>
 						<Plus size={16} /> New session
 					</button>
@@ -98,7 +116,7 @@ export function StartSessionSheet({ client, onOpen, onClose }: StartSessionSheet
 										<button
 											type="button"
 											className="sh-recent-join"
-											onClick={() => void start({ cwd: folder.cwd, resume: session.id })}
+											onClick={() => void start({ cwd: folder.cwd, resume: session.id, sandboxed })}
 										>
 											<span className="sh-recent-title">{session.title ?? "Untitled session"}</span>
 											<span className="sh-recent-meta">

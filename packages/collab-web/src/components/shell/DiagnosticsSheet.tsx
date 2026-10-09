@@ -4,6 +4,7 @@ import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import type { CompanionClient, CompanionDiag, CompanionPower, MaintainAction } from "../../lib/companion";
 import { type DiagEvent, getEvents, mergeEvents, subscribeEvents } from "../../lib/diag-log";
 import { fmtDuration } from "../../lib/format";
+import { APP_BUILD } from "../../lib/pwa";
 import { useRequest } from "../../lib/use-request";
 import { Sheet } from "./Sheet";
 import "./stats.css";
@@ -151,6 +152,7 @@ export function DiagnosticsSheet({ client, onClose }: DiagnosticsSheetProps): Re
 					<section className="sh-stats-section" aria-label="connection">
 						<h2 className="sh-recents-title">Connection</h2>
 						<dl className="sh-diag-list">
+							<Row label="App build">{APP_BUILD}</Row>
 							<Row label="Round trip">{fmtDuration(reading.rttMs)}</Row>
 						</dl>
 					</section>

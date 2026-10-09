@@ -1,14 +1,20 @@
 #!/usr/bin/env bun
 /**
  * Emit `dist/sw.js`: an app-shell service worker that precaches the built client so
- * the installed app opens instantly and offline. Runs after `bun build` (see the
- * `build` script).
+ * the installed app opens offline. Runs after `bun build` (see the `build` script).
  *
  * The cache name is derived from the precached file names and sizes. Bundles are
  * content-hashed, so any deploy that changes the client changes `sw.js`, which is
  * how browsers notice an update. The new worker installs the new shell and drops the
  * old cache. All URLs are relative, so the build works under a path prefix (GitHub
  * Pages project sites).
+ *
+ * Navigations go to the network first (falling back to the cached shell after
+ * {@link NAVIGATE_TIMEOUT_MS} or offline), so a launch while online always runs the
+ * current deploy even when the worker's own update is late. Precaching and
+ * navigations bypass the HTTP cache: GitHub Pages serves `index.html` with
+ * `max-age=600`, and a stale copy would pin the previous bundle into the new shell.
+ * Requests made with `cache: "no-store"` (the app's own update check) pass through.
  *
  * It also shows the companion's Web Push notifications (see scripts/companion.ts)
  * and routes a tap to the session: an open window gets an `open-session` message,
@@ -20,6 +26,8 @@ const dist = path.join(import.meta.dir, "..", "dist");
 
 /** Site-root files the client never fetches; skipping them keeps the install small. */
 const SKIP: Record<string, true> = { "sw.js": true, "og-image.png": true, "robots.txt": true, "sitemap.xml": true };
+/** How long a launch waits for the network before opening the cached shell. */
+const NAVIGATE_TIMEOUT_MS = 3_000;
 
 const files: string[] = [];
 const fingerprint = new Bun.CryptoHasher("sha256");
@@ -42,7 +50,7 @@ self.addEventListener("install", event => {
 	event.waitUntil(
 		caches
 			.open(CACHE)
-			.then(cache => cache.addAll(SHELL))
+			.then(cache => cache.addAll(SHELL.map(url => new Request(url, { cache: "reload" }))))
 			.then(() => self.skipWaiting()),
 	);
 });
@@ -56,15 +64,38 @@ self.addEventListener("activate", event => {
 	);
 });
 
+function cachedShell() {
+	return caches.open(CACHE).then(cache => cache.match("./"));
+}
+
+/** The current shell from the network, refreshing the cached copy; the cached shell when slow or offline. */
+function navigate() {
+	const network = fetch(new Request("./", { cache: "no-cache" })).then(res => {
+		if (!res.ok) throw new Error("shell " + res.status);
+		const copy = res.clone();
+		caches.open(CACHE).then(cache => cache.put("./", copy));
+		return res;
+	});
+	// Offline answers at once from the cache.
+	const settled = network.catch(() => cachedShell().then(hit => hit || Response.error()));
+	// A slow network gives way to the cached shell; with nothing cached it is waited out.
+	// Executor form: Promise.withResolvers is missing from the older iOS WebKit this must run on.
+	const slow = new Promise(resolve => setTimeout(resolve, ${NAVIGATE_TIMEOUT_MS}))
+		.then(cachedShell)
+		.then(hit => hit || settled);
+	return Promise.race([settled, slow]);
+}
+
 self.addEventListener("fetch", event => {
 	const req = event.request;
-	if (req.method !== "GET" || new URL(req.url).origin !== self.location.origin) return;
+	if (req.method !== "GET" || new URL(req.url).origin !== self.location.origin || req.cache === "no-store") return;
 	// Navigations (including share-target URLs with a query) all get the shell; the
 	// room link lives in the fragment, which never reaches the worker.
-	const key = req.mode === "navigate" ? "./" : req;
-	event.respondWith(
-		caches.open(CACHE).then(cache => cache.match(key, { ignoreSearch: true })).then(hit => hit || fetch(req)),
-	);
+	if (req.mode === "navigate") {
+		event.respondWith(navigate());
+		return;
+	}
+	event.respondWith(caches.open(CACHE).then(cache => cache.match(req, { ignoreSearch: true })).then(hit => hit || fetch(req)));
 });
 
 self.addEventListener("push", event => {

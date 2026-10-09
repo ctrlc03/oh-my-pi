@@ -1,10 +1,13 @@
 import {
+	BatteryMedium,
+	BatteryWarning,
 	Bell,
 	BellOff,
 	ChartColumn,
 	Laptop,
 	LayoutList,
 	LoaderCircle,
+	Moon,
 	Plus,
 	RefreshCw,
 	Share2,
@@ -14,7 +17,12 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import type { CompanionHost, CompanionIdleSession } from "../../lib/companion";
+import {
+	type CompanionHost,
+	type CompanionIdleSession,
+	type CompanionPower,
+	LOW_BATTERY_PCT,
+} from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
 import { extractLink } from "../../lib/rooms";
@@ -106,6 +114,7 @@ export function CompanionCard({ companion, push, onJoin, onUnpair }: CompanionCa
 					</button>
 				</span>
 			</div>
+			{live && <PowerNote power={snap.power} />}
 			{client &&
 				(snap.phase === "offline" ? (
 					<div className="sh-companion-offline">
@@ -319,4 +328,34 @@ export function SandboxedChip(): ReactNode {
 			<ShieldCheck size={11} /> sandboxed
 		</span>
 	);
+}
+
+/**
+ * Why the computer may drop offline: on battery, or not held awake. Nothing while
+ * it is plugged in and held awake, the state that keeps sessions reachable.
+ */
+export function PowerNote({ power }: { power: CompanionPower | null }): ReactNode {
+	if (power === null) return null;
+	if (power.source === "battery") {
+		const low = power.battery !== null && power.battery <= LOW_BATTERY_PCT;
+		const Icon = low ? BatteryWarning : BatteryMedium;
+		return (
+			<div className={low ? "sh-power sh-power-low" : "sh-power"} role="status">
+				<Icon size={14} />
+				<span>
+					On battery{power.battery !== null && ` · ${power.battery}%`}. Sessions go offline when it sleeps; plug it
+					in to keep them reachable.
+				</span>
+			</div>
+		);
+	}
+	if (!power.awake) {
+		return (
+			<div className="sh-power" role="status">
+				<Moon size={14} />
+				<span>May sleep when idle: the companion could not keep it awake.</span>
+			</div>
+		);
+	}
+	return null;
 }

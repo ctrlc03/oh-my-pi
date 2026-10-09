@@ -5,7 +5,7 @@ import type { CompanionHost, CompanionIdleSession } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
 import type { CompanionHandle } from "../../lib/use-companion";
-import { HostList, IdleList } from "./CompanionCard";
+import { HostList, IdleList, PowerNote } from "./CompanionCard";
 import { StartSessionSheet } from "./StartSessionSheet";
 
 export interface SessionsSidebarProps {
@@ -85,6 +85,7 @@ export function SessionsSidebar({
 							{snap.machine ?? "Your computer"}
 							<span className={`sh-dot${live ? " sh-dot-live" : ""}`} aria-label={live ? "online" : "offline"} />
 						</h2>
+						{live && <PowerNote power={snap.power} />}
 						{snap.hosts.length === 0 ? (
 							<div className="sh-companion-empty">
 								{snap.phase === "offline"

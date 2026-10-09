@@ -68,6 +68,19 @@ export interface CompanionIdleSession {
 	sandboxed?: boolean;
 }
 
+/** On battery at or below this charge the computer counts as low: the app warns, the companion pushes once per discharge. */
+export const LOW_BATTERY_PCT = 20;
+
+/** What keeps the computer, and so every session on it, reachable. */
+export interface CompanionPower {
+	/** Mains or stored energy (battery, UPS); null when `pmset` does not say. */
+	source: "ac" | "battery" | null;
+	/** Internal battery charge, 0–100; null on a Mac without one. */
+	battery: number | null;
+	/** The companion holds a sleep assertion: no idle sleep while it runs. Closing the lid still sleeps the Mac. */
+	awake: boolean;
+}
+
 /** One changed path in a session's working tree. */
 export interface GitFileChange {
 	/** Repo-relative path (the new path of a rename). */
@@ -356,6 +369,8 @@ export type CompanionReply =
 			canPr?: boolean;
 			/** The companion can build code maps (its omp checkout loads the codemap index). */
 			canCodemap?: boolean;
+			/** Power of the computer; absent off macOS and from companions that predate it. */
+			power?: CompanionPower;
 	  }
 	| { t: "link"; reqId: number; url: string }
 	| { t: "ok"; reqId: number }
@@ -412,6 +427,8 @@ export interface CompanionSnapshot {
 	canPr: boolean;
 	/** The companion can build code maps. */
 	canCodemap: boolean;
+	/** Power of the computer, while the companion reports it. */
+	power: CompanionPower | null;
 	/** Web Push application server key, once the companion has listed hosts. */
 	vapidKey: string | null;
 	/** Why the room is unreachable while `offline`. */
@@ -449,6 +466,7 @@ export class CompanionClient {
 		canSandbox: false,
 		canPr: false,
 		canCodemap: false,
+		power: null,
 		vapidKey: null,
 		error: null,
 	};
@@ -636,6 +654,7 @@ export class CompanionClient {
 				canSandbox: frame.canSandbox ?? false,
 				canPr: frame.canPr ?? false,
 				canCodemap: frame.canCodemap ?? false,
+				power: frame.power ?? null,
 				vapidKey: frame.vapidKey,
 				error: null,
 			});

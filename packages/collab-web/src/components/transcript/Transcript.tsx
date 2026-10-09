@@ -307,6 +307,16 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		if (el !== null) followTranscriptTail(el, lockRef);
 	}, [entries, stream, activeTools, working]);
 
+	// A shrinking viewport (mobile keyboard, rotation, composer growth) keeps a
+	// bottom-locked reader on the latest message instead of stranding them mid-scroll.
+	useEffect(() => {
+		const el = rootRef.current;
+		if (el === null || typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(() => followTranscriptTail(el, lockRef));
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, []);
+
 	// A `live` transition (initial connect or reconnect) jumps to the latest message
 	// regardless of the prior scroll position. Absent for the agent drawer's compact transcript.
 	useEffect(() => {

@@ -20,12 +20,24 @@ Host a session from any omp instance (`/collab`, or `/collab ws://localhost:7466
 bun run build   # static site in dist/
 ```
 
-`dist/` is a fully static SPA — host it anywhere. JS/CSS bundles are content-hashed; favicons, `manifest.webmanifest`, `robots.txt`, `sitemap.xml`, and `og-image.png` come from `public/` and are emitted at the site root under stable names (canonical URL: `https://my.omp.sh/`). Two runtime requirements:
+`dist/` is a fully static SPA — host it anywhere, at the site root or under a path prefix (every URL the build emits is relative). JS/CSS bundles and chunks are content-hashed; favicons, `manifest.webmanifest`, `robots.txt`, `sitemap.xml`, and `og-image.png` come from `public/` and are emitted under stable names (canonical URL: `https://my.omp.sh/`). `scripts/build-sw.ts` then writes `sw.js`, an app-shell service worker that precaches the build. Its cache name is derived from the emitted files, so every deploy that changes the client ships a new worker. Two runtime requirements:
 
-- **Secure context**: room keys are unwrapped with WebCrypto (`crypto.subtle`), which browsers expose only on `https://` or `localhost`.
+- **Secure context**: room keys are unwrapped with WebCrypto (`crypto.subtle`). WebCrypto and service workers are available only on `https://` or `localhost`.
 - **Relay reachability**: the client connects straight to the relay over WebSocket (`wss://` for anything that isn't localhost). The default relay is `wss://my.omp.sh`; bare `<roomId>.<key>` links resolve against it (legacy `<roomId>#<key>` and `%23`-mangled links still parse).
 
 The room key never leaves the URL fragment — it is not sent to the relay or any server.
+
+## Installed app (PWA)
+
+The client installs to a phone's home screen: Safari → Share → *Add to Home Screen*, or Chrome → *Install app*. A home-screen launch opens `start_url`, which has no fragment, so the client keeps its own state in `localStorage`:
+
+- **Recent sessions**: every room that welcomed the guest, with its title, cwd, and full join link. Tapping one rejoins it. A room the relay reports as gone (`no such room`) is dropped.
+- **Resume**: the room on screen when the OS last killed the app. It reconnects on launch, and an explicit *Leave* clears it.
+- **Join without typing**: *Paste link* reads the clipboard (works with macOS → iPhone Universal Clipboard and accepts `omp join "<link>"` verbatim). *Scan QR* reads the `/collab` QR code with the camera (native `BarcodeDetector` where available, otherwise a lazily loaded `jsqr` chunk). Android's share sheet can also send a link to the installed app through the manifest's `share_target`.
+
+Stored join links grant whatever their access says until the host closes the room; *forget* removes one. Foregrounding the app or regaining the network reconnects right away instead of waiting out the socket backoff.
+
+To make `/collab` links and QR codes open your own deployment, set `collab.webUrl` to its URL. The repository's `collab-web pages` workflow deploys this package to a fork's GitHub Pages site (`https://<owner>.github.io/<repo>/`). It runs on pushes to the `collab-pwa` branch or on demand.
 
 ## Architecture
 

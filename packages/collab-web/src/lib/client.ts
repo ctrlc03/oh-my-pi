@@ -201,6 +201,11 @@ export class GuestClient {
 		this.#socket.close();
 	}
 
+	/** Reconnect now instead of waiting out a pending backoff (foreground / online). */
+	resume(): void {
+		this.#socket.resume();
+	}
+
 	subscribe(listener: () => void): () => void {
 		this.#listeners.add(listener);
 		return () => {

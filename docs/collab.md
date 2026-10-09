@@ -151,6 +151,8 @@ When a guest joins during an assistant turn, that in-flight turn appears on the 
 
 `packages/collab-web` is a standalone browser client for the same links — no omp install needed on the guest side. The relay serves it at `/`, which is what makes the `/collab` deep link click-to-join: `https://<relay>/#<link>` loads the client and auto-connects from the fragment. It renders the live transcript (streaming text, thinking, tool cards), a subagent panel with on-demand transcripts, and a composer with the same guest powers (prompt, interrupt, hub actions). Run `bun run dev` in the package for a local instance, `bun run mock-host` for an offline scripted host to develop against, and `bun run build` to emit a static `dist/` deployable anywhere (HTTPS required for WebCrypto). The client never talks to anything but the relay, and the key stays in the URL fragment.
 
+The client is also an installable app (home-screen PWA). Because a home-screen launch carries no fragment, it remembers recent rooms and the last open room in browser storage, and offers *Paste link* and *Scan QR* (the `/collab` QR code) to join without typing. See the [collab-web README](../packages/collab-web/README.md#installed-app-pwa) for details.
+
 Set `collab.webUrl` when the browser UI is hosted separately from the websocket relay. When empty, `/collab` derives `http(s)://host[:port]` from `collab.relayUrl`; explicit web UI URLs must use `https://` except for localhost/loopback `http://` development origins, and cannot contain a query string or fragment. The generated browser URL still carries the relay-specific collab link in the fragment.
 
 ## Settings

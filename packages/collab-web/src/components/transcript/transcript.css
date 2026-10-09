@@ -462,7 +462,36 @@
 		padding: 8px 0;
 	}
 	.tr-root {
-		padding: 16px 14px 12px;
+		padding: 14px 14px 12px;
+		padding-left: max(14px, env(safe-area-inset-left, 0px));
+		padding-right: max(14px, env(safe-area-inset-right, 0px));
+		font-size: 15px;
+		/* Momentum scrolling stays inside the transcript; the page never rubber-bands. */
+		overscroll-behavior: contain;
+	}
+	/* Sideways scrolling inside a vertical scroller is fiddly with a thumb: wrap code. */
+	.tr-md pre {
+		padding: 10px 12px;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	.tr-md pre code {
+		white-space: inherit;
+		font-size: 12.5px;
+	}
+	/* Wide tables scroll as one block rather than crushing every column to a sliver. */
+	.tr-md table {
+		display: block;
+		max-width: 100%;
+		overflow-x: auto;
+		font-size: 13px;
+	}
+	.tr-md th,
+	.tr-md td {
+		min-width: 8ch;
+		max-width: 70vw;
+		overflow-wrap: break-word;
+		word-break: normal;
 	}
 	.tr-gutter,
 	.tr-row--user .tr-gutter {

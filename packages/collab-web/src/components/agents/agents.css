@@ -458,3 +458,69 @@
 		font-size: 16px;
 	}
 }
+
+/* Phones: the drawer takes the whole screen, and its header wraps so the
+ * agent name is never squeezed to "Relay…" by the chips and the kill button. */
+@media (max-width: 640px) {
+	.ag-drawer {
+		inset: 0;
+		width: auto;
+		height: var(--viewport-height, 100dvh);
+		border: 0;
+		border-radius: 0;
+		padding-top: env(safe-area-inset-top, 0px);
+		padding-bottom: env(safe-area-inset-bottom, 0px);
+		animation-name: ag-drawer-up;
+	}
+	:root[data-keyboard] .ag-drawer {
+		padding-bottom: 0;
+	}
+	.ag-drawer-head {
+		flex-wrap: wrap;
+		align-items: flex-start;
+		padding: 10px 6px 10px 16px;
+	}
+	.ag-drawer-title {
+		flex-wrap: wrap;
+		row-gap: 6px;
+		padding-top: 8px;
+	}
+	.ag-drawer-name {
+		flex-basis: 100%;
+		white-space: normal;
+		overflow-wrap: anywhere;
+		font-size: 16px;
+	}
+	.ag-btn {
+		height: 36px;
+		padding: 0 12px;
+	}
+	.ag-iconbtn {
+		width: 44px;
+		height: 44px;
+	}
+	.ag-stats {
+		gap: 6px 14px;
+		padding: 8px 16px;
+	}
+	.ag-drawer-body {
+		padding: 6px 2px;
+	}
+	.ag-chat {
+		padding: 8px;
+	}
+	.ag-chat-input {
+		height: 44px;
+	}
+}
+
+@keyframes ag-drawer-up {
+	from {
+		transform: translateY(24px);
+		opacity: 0;
+	}
+	to {
+		transform: none;
+		opacity: 1;
+	}
+}

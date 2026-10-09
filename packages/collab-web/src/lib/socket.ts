@@ -69,6 +69,18 @@ export class CollabSocket {
 		this.#openSocket();
 	}
 
+	/**
+	 * Skip the backoff wait when the page comes back to the foreground or the network
+	 * returns. Mobile browsers suspend sockets in the background, so a retry
+	 * scheduled while hidden may be up to {@link BACKOFF_MAX_MS} out. No-op while
+	 * connected, connecting, or terminally closed.
+	 */
+	resume(): void {
+		if (this.#closed || this.#retryTimer === undefined) return;
+		this.#clearRetry();
+		this.#openSocket();
+	}
+
 	send(frame: GuestFrame, targetPeer = 0): void {
 		this.#sendChain = this.#sendChain
 			.then(async () => {

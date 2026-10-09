@@ -92,4 +92,8 @@ describe("shouldSubmitOnEnter IME guard", () => {
 	it("ignores non-Enter keys", () => {
 		expect(shouldSubmitOnEnter(keydown("a"), false)).toBe(false);
 	});
+
+	it("inserts a newline instead of submitting on touch keyboards", () => {
+		expect(shouldSubmitOnEnter(keydown("Enter"), false, true)).toBe(false);
+	});
 });

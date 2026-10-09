@@ -1,0 +1,52 @@
+# Deploys packages/collab-web as an installable PWA to this fork's GitHub Pages site
+# (https://<owner>.github.io/<repo>/). Point omp at it with:
+#   collab.webUrl: https://<owner>.github.io/<repo>/
+# Guarded off for the upstream repository, which serves the client from its relay.
+name: collab-web pages
+
+on:
+  push:
+    branches: [collab-pwa]
+    paths:
+      - "packages/collab-web/**"
+      - "packages/wire/**"
+      - ".github/workflows/collab-web-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: collab-web-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.repository != 'can1357/oh-my-pi'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+      - run: bun install --filter @oh-my-pi/collab-web
+      # Upstream's analytics beacon is for my.omp.sh; a personal deployment drops it.
+      - run: sed -i -e '/<!-- Analytics\./d' -e '/um\.can\.ac/d' packages/collab-web/index.html
+      - run: bun run build
+        working-directory: packages/collab-web
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: packages/collab-web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

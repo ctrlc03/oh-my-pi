@@ -311,8 +311,51 @@ export const fixtureEntries: SessionEntry[] = [
 		thinkingLevel: "medium",
 	},
 	{
-		id: "e13",
+		id: "e12a",
 		parentId: "e12",
+		timestamp: iso(NOW - 12 * MIN),
+		type: "message",
+		message: {
+			role: "assistant",
+			content: [
+				{
+					type: "toolCall",
+					id: "call-edit-01",
+					name: "edit",
+					arguments: {
+						input: "[docs/collab.md#9C1E]\nPUT 41.=41:\n+Reconnects back off from 1s to 30s; the guest buffers up to 256 sealed frames meanwhile.",
+					},
+					intent: "Documenting the reconnect buffer",
+				},
+			],
+			model: fixtureModel.id,
+			usage: mkUsage(9_120, 140, 28_400, 0.0151),
+			stopReason: "toolUse",
+			timestamp: NOW - 12 * MIN,
+		},
+	},
+	{
+		id: "e12b",
+		parentId: "e12a",
+		timestamp: iso(NOW - 12 * MIN + 2_000),
+		type: "message",
+		message: {
+			role: "toolResult",
+			toolCallId: "call-edit-01",
+			toolName: "edit",
+			content: [{ type: "text", text: "Updated docs/collab.md" }],
+			details: {
+				path: "docs/collab.md",
+				firstChangedLine: 41,
+				diff: "-41 Reconnects back off exponentially.\n+41 Reconnects back off from 1s to 30s; the guest buffers up to 256 sealed frames meanwhile.",
+			},
+			isError: false,
+			timestamp: NOW - 12 * MIN + 2_000,
+		},
+	},
+	{
+		id: "e13",
+		parentId: "e12b",
 		timestamp: iso(NOW - 9 * MIN),
 		type: "message",
 		message: {

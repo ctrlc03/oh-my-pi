@@ -13,7 +13,18 @@ import { CodemapQuery, type IndexSummary } from "./query";
 export { renderFlow, runFlow } from "./flow";
 export type { FlowCandidate, FlowOptions, FlowResult, FlowStats, FlowStep } from "./flow";
 export { renderSearch, renderTrace } from "./query";
-export type { FlowEdge, FlowNode, IndexSummary, SearchResult, Section, Site, TraceNode, TraceResult } from "./query";
+export type {
+	FlowEdge,
+	FlowNode,
+	GraphEdge,
+	GraphFile,
+	IndexSummary,
+	SearchResult,
+	Section,
+	Site,
+	TraceNode,
+	TraceResult,
+} from "./query";
 export type { BuildStats } from "./store";
 
 export interface CodemapOpenOptions {

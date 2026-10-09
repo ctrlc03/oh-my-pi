@@ -1480,6 +1480,14 @@
 	width: min(720px, calc(100vw - 24px));
 }
 
+/* Near-full-screen canvas (code map): a definite height, so children can fill
+ * it with flex and scroll internally instead of the sheet scrolling. */
+.sh-sheet-full {
+	width: min(1200px, calc(100vw - 24px));
+	height: calc(var(--viewport-height, 100dvh) - var(--topbar-h) - 24px);
+	overflow: hidden;
+}
+
 .sh-segmented-wrap {
 	flex-wrap: wrap;
 }
@@ -1945,6 +1953,9 @@
 	.sh-queued-label {
 		display: none;
 	}
+	.sh-codemap-toggle {
+		display: none;
+	}
 	.sh-header .sh-mobile-only {
 		display: inline-flex;
 	}
@@ -2007,6 +2018,9 @@
 		border-width: 1px 0 0;
 		border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 		animation: sh-sheet-up 280ms var(--ease-out) backwards;
+	}
+	.sh-sheet-full {
+		height: calc(var(--viewport-height, 100dvh) - env(safe-area-inset-top, 0px) - 12px);
 	}
 	.sh-sheet-grip {
 		display: block;

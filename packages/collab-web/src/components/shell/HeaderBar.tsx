@@ -1,5 +1,5 @@
 import type { SessionCommand, SessionHeader, SessionState, WireModel } from "@oh-my-pi/pi-wire";
-import { Ellipsis, LogOut, PanelLeft, PanelRight, Search, ShieldCheck } from "lucide-react";
+import { Ellipsis, LogOut, PanelLeft, PanelRight, Search, ShieldCheck, Waypoints } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback, useState } from "react";
 import type { ConnectionPhase } from "../../lib/client";
@@ -43,6 +43,8 @@ export interface HeaderBarProps {
 	/** Usage and all-sessions screens; null when no computer is paired. */
 	onOpenUsage: (() => void) | null;
 	onOpenSessions: (() => void) | null;
+	/** Code map of the session's repository; null unless the paired computer can build one. */
+	onOpenCodemap: (() => void) | null;
 	/** The paired computer can show this session's git working tree. */
 	workingTree: boolean;
 	/** Cost and token totals for the session sheet; null when no message reported usage. */
@@ -75,6 +77,7 @@ export const HeaderBar = memo(function HeaderBar({
 	onOpenChanges,
 	onOpenUsage,
 	onOpenSessions,
+	onOpenCodemap,
 	workingTree,
 	sessionUsage,
 	models,
@@ -194,6 +197,17 @@ export const HeaderBar = memo(function HeaderBar({
 				>
 					<Search size={16} />
 				</button>
+				{onOpenCodemap && (
+					<button
+						type="button"
+						className="sh-btn sh-btn-icon sh-codemap-toggle"
+						onClick={onOpenCodemap}
+						title="code map"
+						aria-label="code map"
+					>
+						<Waypoints size={16} />
+					</button>
+				)}
 				<button
 					type="button"
 					className={railOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
@@ -250,6 +264,13 @@ export const HeaderBar = memo(function HeaderBar({
 						(() => {
 							setSheetOpen(false);
 							onOpenSessions();
+						})
+					}
+					onOpenCodemap={
+						onOpenCodemap &&
+						(() => {
+							setSheetOpen(false);
+							onOpenCodemap();
 						})
 					}
 					workingTree={workingTree}

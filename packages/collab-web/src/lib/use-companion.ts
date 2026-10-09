@@ -16,6 +16,7 @@ const UNPAIRED: CompanionSnapshot = {
 	canStart: false,
 	canSandbox: false,
 	canPr: false,
+	canCodemap: false,
 	vapidKey: null,
 	error: null,
 };

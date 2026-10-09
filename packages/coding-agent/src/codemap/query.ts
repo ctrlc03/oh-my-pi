@@ -233,6 +233,28 @@ export interface FlowEdge {
 	rank: number;
 }
 
+/** A source file of the dependency graph. */
+export interface GraphFile {
+	/** Root-relative path, as stored in the index. */
+	rel: string;
+	/** Short language label, as {@link FlowNode.lang}. */
+	lang: string;
+	/** Symbols defined in the file, impl blocks excluded. */
+	symbols: number;
+}
+
+/** `from` depends on `to`; `rel` paths as in {@link GraphFile}. */
+export interface GraphEdge {
+	from: string;
+	to: string;
+	/** References behind the edge (summed per label). */
+	weight: number;
+	/** `references` for same-language, name-resolved references; else the cross-language bridge: `decodes`, `calls contract` or `proves with`. */
+	label: string;
+	/** Whether the edge crosses languages, i.e. `label` is not `references`. */
+	bridge: boolean;
+}
+
 const LANG_BY_EXT: Record<string, string> = {
 	".rs": "rust",
 	".sol": "sol",
@@ -294,6 +316,23 @@ const COMMON_CALLS: Record<string, true> = {
 
 /** Type kinds a published or handled event name resolves to. */
 const EVENT_TYPE_KINDS = "('struct', 'enum', 'event', 'class')";
+/** Ref kinds that make a file depend on the file defining the referenced name. */
+const GRAPH_REF_KINDS = "('call', 'type', 'construct', 'path', 'emit', 'macro')";
+/** Definition kinds a name-resolved reference can land on (never variables, impls or modules). */
+const GRAPH_DEF_KINDS =
+	"('function', 'method', 'struct', 'enum', 'union', 'trait', 'class', 'interface', 'type', 'contract', 'library', 'event', 'modifier', 'error', 'macro', 'const', 'static')";
+/** Solidity declarations other files can name without an explicit import list (`import "./X.sol"` brings in all of them). */
+const SOLIDITY_TYPE_KINDS: Record<string, true> = {
+	contract: true,
+	interface: true,
+	library: true,
+	struct: true,
+	enum: true,
+	event: true,
+	error: true,
+};
+/** Ref kinds through which Rust names a Solidity event (the decoder's sites). */
+const DECODE_REF_KINDS: Record<string, true> = { type: true, path: true, construct: true };
 /** Edges per kind a flow node contributes, so one hub symbol cannot flood the frontier. */
 const FLOW_BRIDGE_CAP = 6;
 const FLOW_CALL_CAP = 8;
@@ -1158,6 +1197,152 @@ export class CodemapQuery {
 			`${SYMBOL_SELECT} WHERE f.path = ? AND s.start_line <= ? AND s.end_line >= ? AND s.kind != 'impl'
 			ORDER BY (s.end_line - s.start_line), s.start_line LIMIT ${limit}`,
 			[rel, end, start],
+		).map(row => this.#flowNode(row));
+	}
+
+	// Dependency graph: file-level edges and the symbol listings drill-down needs. Like `flowOverlapping`, these see the whole index, not the scope.
+
+	/** Every parsed source file except test and fixture code, ordered by path. */
+	graphFiles(): GraphFile[] {
+		return this.#rows<{ path: string; symbols: number }>(
+			`SELECT f.path, (SELECT COUNT(*) FROM symbols s WHERE s.file_id = f.id AND s.kind != 'impl') AS symbols
+			FROM files f WHERE f.parsed = 1 ORDER BY f.path`,
+		)
+			.filter(row => !isTestPath(row.path))
+			.map(row => ({ rel: row.path, lang: LANG_BY_EXT[path.extname(row.path)] ?? "other", symbols: row.symbols }));
+	}
+
+	/**
+	 * File-to-file dependencies among {@link graphFiles}, aggregated per (from, to, label), ordered by path.
+	 * A `references` edge resolves a ref by exact name to the one file of the referencing language family that
+	 * defines it; names defined in several files, in the referencing file, or in no file of the family make none.
+	 * Names alone over-link (`x.filter()` hits any user-defined `filter`), so the referencing file must also reach
+	 * the definer: it imports the name (`import`/`use` refs), the ref is a qualified `path`, the family is Solidity
+	 * and the definer declares a contract/interface/library/struct/enum/event/error of that name (whole-file
+	 * imports name nothing), or the family is Go/Python and both files share a directory.
+	 * Bridge edges stay name-based and run from Rust: `decodes` (names a Solidity event), `calls contract` (calls a
+	 * Solidity function), `proves with` (names a Noir circuit in a string literal).
+	 */
+	graphEdges(): GraphEdge[] {
+		const files = new Map<number, { rel: string; family: string }>();
+		for (const row of this.#rows<{ id: number; path: string }>("SELECT id, path FROM files WHERE parsed = 1")) {
+			if (isTestPath(row.path)) continue;
+			const lang = LANG_BY_EXT[path.extname(row.path)] ?? "other";
+			// TypeScript and JavaScript import each other; one family.
+			files.set(row.id, { rel: row.path, family: lang === "ts" ? "js" : lang });
+		}
+		const rels = new Set([...files.values()].map(file => file.rel));
+
+		/** `family:name` → the one file defining it, or -1 when several do. */
+		const definer = new Map<string, number>();
+		/** `fileId\0name` of Solidity type-like definitions, which other files see without naming them in an import. */
+		const soliditySymbols = new Set<string>();
+		for (const row of this.#rows<{ name: string; fileId: number; kind: string }>(
+			`SELECT DISTINCT name, file_id AS fileId, kind FROM symbols WHERE kind IN ${GRAPH_DEF_KINDS}`,
+		)) {
+			const file = files.get(row.fileId);
+			if (!file) continue;
+			if (file.family === "sol" && Object.hasOwn(SOLIDITY_TYPE_KINDS, row.kind)) {
+				soliditySymbols.add(`${row.fileId}\0${row.name}`);
+			}
+			const key = `${file.family}:${row.name}`;
+			const known = definer.get(key);
+			if (known === undefined) definer.set(key, row.fileId);
+			else if (known !== row.fileId) definer.set(key, -1);
+		}
+
+		/** `fileId\0name` of every import ref: what each file names from elsewhere. */
+		const imported = new Set(
+			this.#rows<{ fileId: number; name: string }>(
+				"SELECT DISTINCT file_id AS fileId, name FROM refs WHERE kind = 'import'",
+			).map(row => `${row.fileId}\0${row.name}`),
+		);
+		const edges = new Map<string, GraphEdge>();
+		const link = (from: string, to: string, label: string, weight: number): void => {
+			const key = `${from}\0${to}\0${label}`;
+			const edge = edges.get(key);
+			if (edge) edge.weight += weight;
+			else edges.set(key, { from, to, weight, label, bridge: label !== "references" });
+		};
+		const bridgeTargets = new Map<string, string | undefined>();
+		/** File of the first definition of Solidity event/function `name` outside tests. */
+		const bridgeTarget = (label: string, name: string): string | undefined => {
+			const key = `${label}\0${name}`;
+			if (!bridgeTargets.has(key)) {
+				const defs = label === "decodes" ? this.#bridges.eventDefs(name) : this.#bridges.contractDefs(name);
+				bridgeTargets.set(key, defs.find(def => rels.has(def.path))?.path);
+			}
+			return bridgeTargets.get(key);
+		};
+
+		for (const row of this.#rows<{ fileId: number; name: string; kind: string; n: number }>(
+			`SELECT file_id AS fileId, name, kind, COUNT(*) AS n FROM refs WHERE kind IN ${GRAPH_REF_KINDS} GROUP BY file_id, name, kind`,
+		)) {
+			const from = files.get(row.fileId);
+			if (!from || from.family === "other" || Object.hasOwn(COMMON_CALLS, row.name)) continue;
+			const target = definer.get(`${from.family}:${row.name}`);
+			if (target !== undefined && target !== -1 && target !== row.fileId) {
+				const to = files.get(target)!;
+				// A bare name only counts when the file visibly reaches the definer; otherwise `x.filter()` links to any `filter`.
+				const reaches =
+					row.kind === "path" ||
+					imported.has(`${row.fileId}\0${row.name}`) ||
+					(from.family === "sol" && soliditySymbols.has(`${target}\0${row.name}`)) ||
+					((from.family === "go" || from.family === "py") &&
+						path.posix.dirname(from.rel) === path.posix.dirname(to.rel));
+				if (reaches) link(from.rel, to.rel, "references", row.n);
+			}
+			if (from.family !== "rust") continue;
+			let label: string | undefined;
+			if (Object.hasOwn(DECODE_REF_KINDS, row.kind) && this.#bridges.isEvent(row.name)) label = "decodes";
+			else if (row.kind === "call" && this.#bridges.isContractFunction(row.name)) label = "calls contract";
+			const to = label && bridgeTarget(label, row.name);
+			if (label && to) link(from.rel, to, label, row.n);
+		}
+
+		const circuitNames = this.#bridges.circuits().flatMap(circuit => circuit.names);
+		if (circuitNames.length > 0) {
+			for (const row of this.#rows<{ fileId: number; name: string; n: number }>(
+				`SELECT file_id AS fileId, name, COUNT(*) AS n FROM refs
+				WHERE kind = 'string' AND name IN (${placeholders(circuitNames.length)}) GROUP BY file_id, name`,
+				circuitNames,
+			)) {
+				const from = files.get(row.fileId);
+				if (from?.family !== "rust") continue;
+				for (const circuit of this.#bridges.circuitsNamed(row.name)) {
+					const main = path.posix.join(circuit.dir, "src/main.nr");
+					if (rels.has(main)) link(from.rel, main, "proves with", row.n);
+				}
+			}
+		}
+
+		return [...edges.values()].sort(
+			(a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to) || a.label.localeCompare(b.label),
+		);
+	}
+
+	/** Non-impl symbols defined in `rel` (root-relative), in source order. */
+	fileSymbols(rel: string, limit: number): FlowNode[] {
+		return this.#rows<SymbolRow>(
+			`${SYMBOL_SELECT} WHERE f.path = ? AND s.kind != 'impl' ORDER BY s.start_line, s.idx LIMIT ${limit}`,
+			[rel],
+		).map(row => this.#flowNode(row));
+	}
+
+	/**
+	 * What `node` contains, in source order: symbols nested in it, plus the methods of impl blocks in its file
+	 * whose self type is its name (`impl Foo` members belong to the struct `Foo`, not to the impl).
+	 */
+	symbolMembers(node: FlowNode, limit: number): FlowNode[] {
+		const bare = node.name.split(/::|\./).pop()!;
+		const owners = [node.id];
+		for (const impl of this.#rows<SymbolRow>(`${SYMBOL_SELECT} WHERE f.path = ? AND s.kind = 'impl'`, [node.rel])) {
+			if (impl.name === bare || lastTypeName(impl.implFor ?? impl.name) === bare) owners.push(impl.id);
+		}
+		return this.#rows<SymbolRow>(
+			`${SYMBOL_SELECT} WHERE s.parent_id IN (${placeholders(owners.length)}) AND s.id != ? AND s.kind != 'impl'
+			ORDER BY s.start_line, s.idx LIMIT ${limit}`,
+			[...owners, node.id],
 		).map(row => this.#flowNode(row));
 	}
 

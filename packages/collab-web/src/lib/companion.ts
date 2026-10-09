@@ -31,6 +31,8 @@ const USAGE_TIMEOUT_MS = 60_000;
 const GIT_WRITE_TIMEOUT_MS = 60_000;
 /** Pushes and pull requests talk to the remote. */
 const GIT_REMOTE_TIMEOUT_MS = 120_000;
+/** The first code map request indexes the whole repository (later ones only re-parse changed files). */
+const CODEMAP_TIMEOUT_MS = 180_000;
 
 /** One collab-hosting omp process, as `omp collab list --json` reports it. */
 export interface CompanionHost {
@@ -193,6 +195,101 @@ export interface SessionOverview {
 	worktree?: boolean;
 }
 
+/** What a code map view centres on. Paths are repository-relative; `""` is the repository root. */
+export type CodemapFocus =
+	| { kind: "dir"; path: string }
+	| { kind: "file"; path: string }
+	/** A symbol by its defining file, name as shown (`Owner::name` for members) and first line. */
+	| { kind: "symbol"; path: string; name: string; line: number };
+
+/** A folder, source file, or symbol of the indexed repository (test and fixture files are left out). */
+export interface CodemapNode {
+	kind: "dir" | "file" | "symbol";
+	/** Repository-relative folder or file; a symbol's defining file. */
+	path: string;
+	/** Base name for folders and files; the qualified name for symbols. */
+	label: string;
+	/** `rust`, `sol`, `noir`, `ts`, `js`, `py`, `go` or `other`; a folder's most common language by file count. */
+	lang: string;
+	/** Folders: source files below it. */
+	files?: number;
+	/** Folders and files: symbols defined below or in it. */
+	symbols?: number;
+	/** Symbols: `function`, `struct`, `event`, … */
+	symbolKind?: string;
+	/** Symbols: line span in `path`. */
+	line?: number;
+	endLine?: number;
+	/** Symbols: signature (at most ~140 chars) and the first sentence of the doc comment. */
+	signature?: string;
+	doc?: string;
+}
+
+/**
+ * A neighbour of the focus. `label` reads from the focus (`calls`, `decoded by`, `references`);
+ * `weight` counts the references behind a folder or file link (1 for symbol links);
+ * `bridge` marks cross-language and event links.
+ */
+export interface CodemapLink {
+	node: CodemapNode;
+	label: string;
+	weight: number;
+	bridge: boolean;
+}
+
+/** A link between two nodes of {@link CodemapMap}, by index into its `nodes`. */
+export interface CodemapEdge {
+	from: number;
+	to: number;
+	weight: number;
+	bridge: boolean;
+}
+
+/** A folder's contents and the links among them. */
+export interface CodemapMap {
+	nodes: CodemapNode[];
+	edges: CodemapEdge[];
+	/** Children left out by the node cap (the least connected go first). */
+	omitted: number;
+}
+
+/** One step of a walk from the focus symbol; `from` indexes the step it was reached from (null for the focus). */
+export interface CodemapFlowStep {
+	node: CodemapNode;
+	hop: number;
+	from: number | null;
+	label: string | null;
+	bridge: boolean;
+}
+
+export type CodemapFlowDirection = "down" | "up";
+
+/**
+ * The neighbourhood of one focus. Upstream is what uses or feeds the focus (callers, emitters,
+ * folders and files referencing it), downstream what it uses or leads to. Folder views roll
+ * outside paths up to the folder that branches off the focus's ancestry; file views list files.
+ */
+export interface CodemapView {
+	/** Repository folder name. */
+	repo: string;
+	focus: CodemapNode;
+	/** Folders from the root (`""`, labelled with the repo name) down to the focus's parent. */
+	crumbs: CodemapNode[];
+	upstream: CodemapLink[];
+	downstream: CodemapLink[];
+	/** Links beyond the caps. */
+	moreUpstream: number;
+	moreDownstream: number;
+	/** Folder: subfolders then files; file: its symbols in line order; symbol: its members. */
+	children: CodemapNode[];
+	/** Folder views only. */
+	map?: CodemapMap;
+	/** Symbol views requested with a flow direction only: the walk, the focus first. */
+	flow?: CodemapFlowStep[];
+	/** Index totals and how long refreshing it took for this answer. */
+	index: { files: number; symbols: number; refreshMs: number };
+}
+
 /** `PushSubscription.toJSON()` as the browser hands it out. */
 export interface PushSubscriptionJson {
 	endpoint: string;
@@ -235,7 +332,11 @@ export type CompanionRequest =
 	/** Spend and token totals across every omp session on the computer. */
 	| { t: "usage"; reqId: number; range: UsageRange }
 	/** Past and live sessions across projects, newest activity first; `q` filters by title or folder. */
-	| { t: "sessions"; reqId: number; limit?: number; q?: string };
+	| { t: "sessions"; reqId: number; limit?: number; q?: string }
+	/** Code map of the session's repository around `focus` (needs `canCodemap`); `flow` adds a walk for symbol foci. */
+	| { t: "codemap"; reqId: number; instanceId: string; focus: CodemapFocus; flow?: CodemapFlowDirection }
+	/** Files whose path matches `q`, then symbols matching its words. */
+	| { t: "codemap-search"; reqId: number; instanceId: string; q: string };
 
 export type CompanionReply =
 	/**
@@ -253,6 +354,8 @@ export type CompanionReply =
 			canStart?: boolean;
 			canSandbox?: boolean;
 			canPr?: boolean;
+			/** The companion can build code maps (its omp checkout loads the codemap index). */
+			canCodemap?: boolean;
 	  }
 	| { t: "link"; reqId: number; url: string }
 	| { t: "ok"; reqId: number }
@@ -265,7 +368,9 @@ export type CompanionReply =
 	/** The started session is hosting and listed under `instanceId`. */
 	| { t: "started"; reqId: number; instanceId: string }
 	| { t: "usage"; reqId: number; usage: UsageReport }
-	| { t: "sessions"; reqId: number; sessions: SessionOverview[] };
+	| { t: "sessions"; reqId: number; sessions: SessionOverview[] }
+	| { t: "codemap"; reqId: number; view: CodemapView }
+	| { t: "codemap-search"; reqId: number; hits: CodemapNode[] };
 
 /**
  * The companion room link inside a pasted message, scanned QR code, or URL
@@ -305,6 +410,8 @@ export interface CompanionSnapshot {
 	canSandbox: boolean;
 	/** The companion can open pull requests (`gh` installed and signed in). */
 	canPr: boolean;
+	/** The companion can build code maps. */
+	canCodemap: boolean;
 	/** Web Push application server key, once the companion has listed hosts. */
 	vapidKey: string | null;
 	/** Why the room is unreachable while `offline`. */
@@ -341,6 +448,7 @@ export class CompanionClient {
 		canStart: false,
 		canSandbox: false,
 		canPr: false,
+		canCodemap: false,
 		vapidKey: null,
 		error: null,
 	};
@@ -463,6 +571,15 @@ export class CompanionClient {
 		return (await this.#call({ t: "sessions", limit: opts.limit, q: opts.q }, "sessions", USAGE_TIMEOUT_MS)).sessions;
 	}
 
+	/** Code map around `focus`; the first request for a repository indexes it, so allow it time. */
+	async requestCodemap(instanceId: string, focus: CodemapFocus, flow?: CodemapFlowDirection): Promise<CodemapView> {
+		return (await this.#call({ t: "codemap", instanceId, focus, flow }, "codemap", CODEMAP_TIMEOUT_MS)).view;
+	}
+
+	async searchCodemap(instanceId: string, q: string): Promise<CodemapNode[]> {
+		return (await this.#call({ t: "codemap-search", instanceId, q }, "codemap-search", CODEMAP_TIMEOUT_MS)).hits;
+	}
+
 	/**
 	 * Start omp in `cwd` (resuming session `resume`); resolves with its host `instanceId` once it is listed.
 	 * `worktree` (new sessions only): work on a new branch in its own git worktree instead of `cwd`.
@@ -518,6 +635,7 @@ export class CompanionClient {
 				canStart: frame.canStart ?? false,
 				canSandbox: frame.canSandbox ?? false,
 				canPr: frame.canPr ?? false,
+				canCodemap: frame.canCodemap ?? false,
 				vapidKey: frame.vapidKey,
 				error: null,
 			});

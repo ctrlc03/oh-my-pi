@@ -38,7 +38,7 @@ type Tab = "agent" | "tree" | "branch";
 export function ChangesSheet({ changes, host, tree, onClose }: ChangesSheetProps): ReactNode {
 	const [tab, setTab] = useState<Tab>(changes.length === 0 && tree !== null ? "tree" : "agent");
 	return (
-		<Sheet label="changes" wide onClose={onClose}>
+		<Sheet label="changes" size="wide" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">
 					{tree === null

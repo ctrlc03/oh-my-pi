@@ -236,7 +236,7 @@ export class CollabHost {
 	 * yet, and after a shed, when the peer leaves the participant list but is
 	 * still owed a resync error.
 	 */
-	#peers = new Map<number, { name: string; canWrite: boolean }>();
+	#peers = new Map<number, { name: string; canWrite: boolean; zip: boolean }>();
 	/**
 	 * Never reset, including across a room recreation: ids must not be reissued, or
 	 * a late `ui-response` carrying an old id would settle an unrelated new request.
@@ -685,7 +685,8 @@ export class CollabHost {
 		// current-session data. Do not strand guests if it settles during a
 		// provisional /resume that later rolls back. All other traffic stays gated.
 		if (this.ending || (!this.#sessionStillCurrent() && frame.t !== "ui-request-end")) return;
-		this.#socket?.send(frame, toPeer);
+		// Compression is per recipient: only a peer that said `zip` in its hello can open it.
+		this.#socket?.send(frame, toPeer, toPeer !== 0 && this.#peers.get(toPeer)?.zip === true);
 	}
 
 	/**
@@ -726,7 +727,7 @@ export class CollabHost {
 		if (!this.#guestTrafficAllowed()) return;
 		switch (frame.t) {
 			case "hello":
-				this.#handleHello(frame.name, frame.proto, frame.writeToken, fromPeer);
+				this.#handleHello(frame, fromPeer);
 				break;
 			case "prompt":
 				if (this.#rejectWhileStarting("prompting", fromPeer)) break;
@@ -779,7 +780,8 @@ export class CollabHost {
 		return true;
 	}
 
-	#handleHello(name: string, proto: number, writeToken: string | undefined, fromPeer: number): void {
+	#handleHello(hello: Extract<CollabFrame, { t: "hello" }>, fromPeer: number): void {
+		const { name, proto, writeToken, resume } = hello;
 		if (this.#ctx.session.isSessionTransitioning) {
 			this.#send({ t: "error", message: "Session transition in progress; join again when it completes" }, fromPeer);
 			return;
@@ -794,7 +796,7 @@ export class CollabHost {
 		const cleanName = name.trim().slice(0, 64) || `guest-${fromPeer}`;
 		const canWrite = this.#verifyWriteToken(writeToken);
 		const firstPeer = this.#peers.size === 0;
-		this.#peers.set(fromPeer, { name: cleanName, canWrite });
+		this.#peers.set(fromPeer, { name: cleanName, canWrite, zip: hello.zip === true });
 
 		const socket = this.#socket;
 		if (!socket) return;
@@ -804,7 +806,16 @@ export class CollabHost {
 		// copy. Chunk frames are assembled from these strings only as the
 		// transport drains.
 		const snapshot = this.#ctx.sessionManager.snapshotForReplication();
-		const snapshotEntries = this.#serializeSnapshotEntries(snapshot.entries.filter(isWireSessionEntry));
+		const entries = snapshot.entries.filter(isWireSessionEntry);
+		// Delta resume: a guest that still holds this session up to `resume.entryId`
+		// gets only what follows it. A different session or an entry the host no
+		// longer has (rewritten history) falls back to the full snapshot. Ids are
+		// unique, so the last match is the match; searching from the tail is O(1)
+		// for the common case of a guest that is nearly current.
+		const resumeAt =
+			resume?.sessionId === snapshot.header.id ? entries.findLastIndex(e => e.id === resume.entryId) : -1;
+		const resumed = resumeAt >= 0;
+		const snapshotEntries = this.#serializeSnapshotEntries(resumed ? entries.slice(resumeAt + 1) : entries);
 		const state = this.#buildState();
 		// State broadcasts pause while no guest is joined, so the dedupe baseline
 		// may predate this welcome; with no other peer to keep current, the welcome
@@ -818,12 +829,17 @@ export class CollabHost {
 				state,
 				agents: this.#snapshotAgents(),
 				entryCount: snapshotEntries.json.length,
+				resumed: resumed ? true : undefined,
 				readOnly: canWrite ? undefined : true,
 				models: canWrite ? this.#welcomeModels() : undefined,
 			},
 			fromPeer,
 		);
-		socket.sendBatch(this.#snapshotChunks(snapshotEntries.json, snapshotEntries.bytes), fromPeer);
+		socket.sendBatch(
+			this.#snapshotChunks(snapshotEntries.json, snapshotEntries.bytes),
+			fromPeer,
+			this.#peers.get(fromPeer)?.zip === true,
+		);
 		if (canWrite) {
 			for (const pending of this.#pendingUi.values()) {
 				this.#send({ t: "ui-request", request: pending.request }, fromPeer);
@@ -852,6 +868,14 @@ export class CollabHost {
 	 * a throwing `toJSON`, nesting past the engine limit) — images are stripped
 	 * from private copies of the message entries first, so the chunker falls
 	 * back to clipping or placeholders only for what is still too large.
+	 *
+	 * A delta resume passes only the entries after the guest's last one, so the
+	 * threshold is judged on that tail alone: a small tail keeps its images even
+	 * when the full snapshot would have stripped them. This matches live `entry`
+	 * frames, which are never image-stripped. The shrink passes above are
+	 * per-entry and independent of the entries around them, and placeholders keep
+	 * the original `id`, so a resumed tail is byte-identical to the same entries
+	 * in a full snapshot except for that threshold decision.
 	 */
 	#serializeSnapshotEntries(entries: ReplicatedEntry[]): { json: string[]; bytes: number[] } {
 		const raw: (string | null)[] = [];

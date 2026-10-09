@@ -10,6 +10,7 @@
 - Added cross-language edges to `trace`: Solidity events link to the Rust code that decodes their logs and the internal type they become (`Decoded by`, `Becomes`, `Decoded from`), `impl From<A> for B` conversions, Rust calls of Solidity functions (`Called from Rust`, `Calls contract`), and Rust references to Noir circuits by package name or enum variant (`Circuit`). Noir `.nr` files are now indexed.
 - Added `flow` (same `codemap.enabled` setting) and `omp codemap flow "<question>" [PATH] [--from SYMBOL] [--hops N]`: traces a multi-step flow from a question by walking the index in both directions across Solidity, Rust, and Noir, with the judge role choosing entry points and pruning steps (structural walk when no native judge is configured).
 - Added dependency-graph queries to the codemap index (`graphFiles`, `graphEdges`, `fileSymbols`, `symbolMembers` on `CodemapQuery`): file-to-file edges from references the referencing file imports (or reaches by a qualified path) to the one same-language file defining the name, plus Rust → Solidity/Noir bridge edges (`decodes`, `calls contract`, `proves with`). Test and fixture files are left out.
+- Collab guests can resume a reconnect from the last entry they hold (`hello.resume`): the host sends only newer entries (`welcome.resumed`), or the full snapshot when the entry or session no longer matches. Guests that send `hello.zip` receive targeted frames over 1 KB deflate-compressed inside the seal (a 0x00 marker before the deflate-raw data); broadcasts stay uncompressed.
 
 ### Changed
 

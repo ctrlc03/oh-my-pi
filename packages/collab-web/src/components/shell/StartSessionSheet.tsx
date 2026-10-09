@@ -3,7 +3,9 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CompanionClient, RecentFolder } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
+import { setOpenIntent } from "../../lib/inbox";
 import { type RequestState, useRequest } from "../../lib/use-request";
+import { QuickReplies } from "./QuickReplies";
 import { Sheet } from "./Sheet";
 
 export interface StartSessionSheetProps {
@@ -37,6 +39,7 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 	const [sandboxed, setSandboxed] = useState(false);
 	const [worktree, setWorktree] = useState(false);
 	const [branch, setBranch] = useState("");
+	const [prompt, setPrompt] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const closedRef = useRef(false);
 	useEffect(() => {
@@ -55,6 +58,9 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 				sandboxed: target.sandboxed || undefined,
 				worktree: target.worktree,
 			});
+			const first = prompt.trim();
+			// Recorded even if the sheet was closed meanwhile: opening the session later still sends it.
+			if (first) setOpenIntent(instanceId, { prompt: first });
 			// Closed while omp booted: the session still appears in the computer's list.
 			if (!closedRef.current) await onOpen(instanceId);
 		} catch (err) {
@@ -132,6 +138,18 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 							spellCheck={false}
 						/>
 					)}
+					<label className="sh-start-prompt">
+						<span className="sh-field-label">First prompt (optional)</span>
+						<textarea
+							className="sh-input sh-start-prompt-input"
+							value={prompt}
+							onChange={e => setPrompt(e.currentTarget.value)}
+							placeholder="Sent as soon as the session is up"
+							rows={3}
+							spellCheck={false}
+						/>
+					</label>
+					<QuickReplies disabled={false} onPick={text => setPrompt(prev => (prev ? `${prev}\n${text}` : text))} />
 					<button
 						type="button"
 						className="sh-btn sh-btn-primary sh-start-new"

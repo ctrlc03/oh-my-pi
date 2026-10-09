@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { extractPairing } from "../src/lib/companion";
+import { extractPairing, formatPairingUrl } from "../src/lib/companion";
 import { encodeBase64Url } from "../src/lib/link";
 import { extractLink } from "../src/lib/rooms";
 
@@ -29,17 +29,32 @@ describe("extractLink", () => {
 describe("pairing links", () => {
 	const ROOM = `pAirPAirpAirPAirpAir12.${encodeBase64Url(new Uint8Array(32).fill(3))}`;
 	const PAIR_URL = `https://ctrlc03.github.io/oh-my-pi/#pair:${ROOM}`;
+	const INVITE = "q3JvY2tldC1pbnZpdGUtMTI";
 
 	it("yields the companion room from a URL, a scanned code, or pasted prose", () => {
-		expect(extractPairing(PAIR_URL)).toBe(ROOM);
-		expect(extractPairing(`pair:${ROOM}`)).toBe(ROOM);
-		expect(extractPairing(`open ${PAIR_URL}.`)).toBe(ROOM);
+		expect(extractPairing(PAIR_URL)).toEqual({ link: ROOM });
+		expect(extractPairing(`pair:${ROOM}`)).toEqual({ link: ROOM });
+		expect(extractPairing(`open ${PAIR_URL}.`)).toEqual({ link: ROOM });
+	});
+
+	it("carries the one-time invite the companion put in the pairing URL", () => {
+		const url = formatPairingUrl("https://ctrlc03.github.io/oh-my-pi/#stale", ROOM, INVITE);
+		expect(url).toBe(`https://ctrlc03.github.io/oh-my-pi/#pair:${ROOM}&invite=${INVITE}`);
+		expect(extractPairing(url)).toEqual({ link: ROOM, invite: INVITE });
+		expect(extractPairing(`scan this: <${url}>.`)).toEqual({ link: ROOM, invite: INVITE });
+	});
+
+	// A mangled invite must not pair as a device that then fails to authenticate with no explanation.
+	it("refuses a pairing link whose invite is malformed", () => {
+		expect(extractPairing(`pair:${ROOM}&invite=short`)).toBeNull();
+		expect(extractPairing(`pair:${ROOM}&invite=`)).toBeNull();
 	});
 
 	// Joining the companion room as a session would hang on a welcome that never comes.
 	it("is never mistaken for a session link, and a session link never pairs", () => {
 		expect(extractLink(PAIR_URL)).toBeNull();
 		expect(extractLink(`pair:${ROOM}`)).toBeNull();
+		expect(extractLink(formatPairingUrl(PAIR_URL, ROOM, INVITE))).toBeNull();
 		expect(extractPairing(WEB)).toBeNull();
 		expect(extractPairing(BARE)).toBeNull();
 	});

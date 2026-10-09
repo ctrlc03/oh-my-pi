@@ -1,4 +1,5 @@
 import {
+	Activity,
 	BatteryMedium,
 	BatteryWarning,
 	Bell,
@@ -10,8 +11,10 @@ import {
 	Moon,
 	Plus,
 	RefreshCw,
+	ScanLine,
 	Share2,
 	ShieldCheck,
+	Smartphone,
 	Unlink,
 	Users,
 } from "lucide-react";
@@ -21,12 +24,19 @@ import {
 	type CompanionHost,
 	type CompanionIdleSession,
 	type CompanionPower,
+	extractPairing,
 	LOW_BATTERY_PCT,
+	type PairingLink,
 } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
+import { applyOpenIntent } from "../../lib/inbox";
 import type { PushControl } from "../../lib/push";
 import { extractLink } from "../../lib/rooms";
 import type { CompanionHandle } from "../../lib/use-companion";
+import { DiagnosticsSheet } from "./DiagnosticsSheet";
+import { DevicesSheet } from "./DevicesSheet";
+import { InboxEntry } from "./InboxSheet";
+import { QrScanner } from "./QrScanner";
 import { SessionsSheet } from "./SessionsSheet";
 import { StartSessionSheet } from "./StartSessionSheet";
 import { UsageSheet } from "./UsageSheet";
@@ -35,6 +45,8 @@ export interface CompanionCardProps {
 	companion: CompanionHandle;
 	push: PushControl;
 	onJoin(link: string): void;
+	/** A pairing code was scanned while this device is refused (not paired yet, or removed). */
+	onPair(pairing: PairingLink): void;
 	onUnpair(): void;
 }
 
@@ -43,20 +55,24 @@ export function hostTitle(host: { sessionName: string | null; cwd: string }): st
 }
 
 /** Live list of every collab session on the paired computer; tap one to join it. */
-export function CompanionCard({ companion, push, onJoin, onUnpair }: CompanionCardProps): ReactNode {
+export function CompanionCard({ companion, push, onJoin, onPair, onUnpair }: CompanionCardProps): ReactNode {
 	const { client, snap } = companion;
 	const [error, setError] = useState<string | null>(null);
 	const [joining, setJoining] = useState<string | null>(null);
 	const live = snap.phase === "live";
 
 	const [starting, setStarting] = useState(false);
+	const [devicesOpen, setDevicesOpen] = useState(false);
+	const [scanning, setScanning] = useState(false);
 	const [statsSheet, setStatsSheet] = useState<"usage" | "sessions" | null>(null);
+	const [diagnosing, setDiagnosing] = useState(false);
 
 	/** Open a hosted session's control link. */
 	const open = async (instanceId: string): Promise<void> => {
 		if (!client) throw new Error("no paired computer");
 		const link = extractLink(await client.requestLink(instanceId));
 		if (!link) throw new Error("the computer returned an unreadable link");
+		applyOpenIntent(instanceId, link);
 		onJoin(link);
 	};
 
@@ -103,6 +119,17 @@ export function CompanionCard({ companion, push, onJoin, onUnpair }: CompanionCa
 				</h2>
 				<span className="sh-companion-actions">
 					<PushButton push={push} />
+					{live && (
+						<button
+							type="button"
+							className="sh-btn sh-btn-icon"
+							onClick={() => setDiagnosing(true)}
+							aria-label="diagnostics"
+							title="diagnostics"
+						>
+							<Activity size={15} />
+						</button>
+					)}
 					<button
 						type="button"
 						className="sh-btn sh-btn-icon"
@@ -116,7 +143,14 @@ export function CompanionCard({ companion, push, onJoin, onUnpair }: CompanionCa
 			</div>
 			{live && <PowerNote power={snap.power} />}
 			{client &&
-				(snap.phase === "offline" ? (
+				(snap.phase === "unpaired" ? (
+					<div className="sh-companion-offline">
+						<span>{snap.error}</span>
+						<button type="button" className="sh-btn" onClick={() => setScanning(true)}>
+							<ScanLine size={14} /> Scan QR
+						</button>
+					</div>
+				) : snap.phase === "offline" ? (
 					<div className="sh-companion-offline">
 						<span>{snap.error ?? "Your computer is unreachable."}</span>
 						<button type="button" className="sh-btn" onClick={() => client.connect()}>
@@ -143,6 +177,12 @@ export function CompanionCard({ companion, push, onJoin, onUnpair }: CompanionCa
 							)}
 							{live && (
 								<>
+									<InboxEntry
+										client={client}
+										count={snap.hosts.filter(host => host.inputRequired).length}
+										onOpenHost={open}
+										variant="card"
+									/>
 									<button
 										type="button"
 										className="sh-btn sh-card-action"
@@ -156,6 +196,9 @@ export function CompanionCard({ companion, push, onJoin, onUnpair }: CompanionCa
 										onClick={() => setStatsSheet("sessions")}
 									>
 										<LayoutList size={15} /> All sessions
+									</button>
+									<button type="button" className="sh-btn sh-card-action" onClick={() => setDevicesOpen(true)}>
+										<Smartphone size={15} /> Devices
 									</button>
 								</>
 							)}
@@ -171,7 +214,20 @@ export function CompanionCard({ companion, push, onJoin, onUnpair }: CompanionCa
 					onClose={() => setStarting(false)}
 				/>
 			)}
+			{devicesOpen && client && live && <DevicesSheet client={client} onClose={() => setDevicesOpen(false)} />}
+			{scanning && (
+				<QrScanner
+					onLink={found => {
+						setScanning(false);
+						const pairing = extractPairing(found);
+						if (pairing) onPair(pairing);
+						else setError("That code is not a pairing code. Show one with the Devices screen or --pair.");
+					}}
+					onClose={() => setScanning(false)}
+				/>
+			)}
 			{statsSheet === "usage" && client && <UsageSheet client={client} onClose={() => setStatsSheet(null)} />}
+			{diagnosing && client && <DiagnosticsSheet client={client} onClose={() => setDiagnosing(false)} />}
 			{statsSheet === "sessions" && client && (
 				<SessionsSheet
 					client={client}

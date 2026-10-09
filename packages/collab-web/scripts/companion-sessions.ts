@@ -79,11 +79,34 @@ function blocksOf(message: Entry): Entry[] {
 	return Array.isArray(message.content) ? message.content.filter(isRecord) : [];
 }
 
-/**
- * Text of the question the latest assistant `ask` tool call is waiting on, or
- * null when the latest call already has a result (or there is none).
- */
-export function pendingQuestion(entries: Entry[]): string | null {
+/** What the latest unanswered assistant `ask` tool call is waiting on. */
+export interface PendingAsk {
+	/** First question, truncated, with a `(+N more)` suffix for multi-question asks. */
+	text: string;
+	/** Option labels of the first question when it is a single-choice select; empty otherwise. */
+	options: string[];
+	/** When the call was written (Unix ms), or null when its entry has no timestamp. */
+	at: number | null;
+}
+
+function timeOf(entry: Entry): number | null {
+	const at = typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : Number.NaN;
+	return Number.isFinite(at) ? at : null;
+}
+
+/** Option labels of an ask question; none for multi-select questions, whose answer is not one tap. */
+function optionLabels(question: Entry): string[] {
+	if (question.multi === true || !Array.isArray(question.options)) return [];
+	const labels: string[] = [];
+	for (const option of question.options) {
+		const label = typeof option === "string" ? option : isRecord(option) ? option.label : undefined;
+		if (typeof label === "string" && label.trim()) labels.push(label);
+	}
+	return labels;
+}
+
+/** The latest `ask` tool call, or null when it already has a result (or there is none). */
+export function pendingAsk(entries: Entry[]): PendingAsk | null {
 	const answered: Record<string, true> = {};
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const message = messageOf(entries[i]!);
@@ -102,13 +125,25 @@ export function pendingQuestion(entries: Entry[]): string | null {
 		const first = typeof questions[0]?.question === "string" ? questions[0].question : null;
 		if (!first || !first.trim()) return null;
 		const more = questions.length > 1 ? ` (+${questions.length - 1} more)` : "";
-		return `${truncate(first, QUESTION_CHARS)}${more}`;
+		return {
+			text: `${truncate(first, QUESTION_CHARS)}${more}`,
+			options: optionLabels(questions[0]!),
+			at: timeOf(entries[i]!),
+		};
 	}
 	return null;
 }
 
-/** First ~140 characters of the latest assistant text after the last user message, or null. */
-export function lastAssistantSummary(entries: Entry[]): string | null {
+/**
+ * Text of the question the latest assistant `ask` tool call is waiting on, or
+ * null when the latest call already has a result (or there is none).
+ */
+export function pendingQuestion(entries: Entry[]): string | null {
+	return pendingAsk(entries)?.text ?? null;
+}
+
+/** The start of the latest assistant text after the last user message, and when it was written. */
+export function lastAssistantTurn(entries: Entry[]): { summary: string; at: number | null } | null {
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const message = messageOf(entries[i]!);
 		if (!message) continue;
@@ -118,9 +153,14 @@ export function lastAssistantSummary(entries: Entry[]): string | null {
 			.filter(b => b.type === "text" && typeof b.text === "string")
 			.map(b => b.text as string)
 			.join("\n");
-		if (text.trim()) return truncate(text, SUMMARY_CHARS);
+		if (text.trim()) return { summary: truncate(text, SUMMARY_CHARS), at: timeOf(entries[i]!) };
 	}
 	return null;
+}
+
+/** First ~140 characters of the latest assistant text after the last user message, or null. */
+export function lastAssistantSummary(entries: Entry[]): string | null {
+	return lastAssistantTurn(entries)?.summary ?? null;
 }
 
 /** Session file path per session id; stable once a session exists. */
@@ -149,14 +189,16 @@ export async function readSessionTail(sessionsDir: string, sessionId: string): P
 	}
 }
 
-interface SessionHead {
+export interface SessionHead {
 	id: string;
 	cwd: string;
 	title: string | null;
+	/** Epoch ms of the header's timestamp; 0 when it has none. */
+	startedAt: number;
 }
 
 /** Id, cwd and current title of a session file; null when the header is unreadable. */
-async function readSessionHead(file: string): Promise<SessionHead | null> {
+export async function readSessionHead(file: string): Promise<SessionHead | null> {
 	const head = await readHead(file);
 	const header = head.find(e => e.type === "session");
 	if (!header || typeof header.id !== "string" || !SAFE_ID_RE.test(header.id) || typeof header.cwd !== "string")
@@ -175,10 +217,15 @@ async function readSessionHead(file: string): Promise<SessionHead | null> {
 			}
 		}
 	}
-	return { id: header.id, cwd: header.cwd, title: title?.trim() || null };
+	return {
+		id: header.id,
+		cwd: header.cwd,
+		title: title?.trim() || null,
+		startedAt: Date.parse(String(header.timestamp)) || 0,
+	};
 }
 
-interface SessionFile {
+export interface SessionFile {
 	file: string;
 	mtime: number;
 }
@@ -267,4 +314,19 @@ export async function recentFolders(sessionsDir: string): Promise<RecentFolder[]
 		.map(f => ({ ...f, sessions: f.sessions.sort((a, b) => b.lastActive - a.lastActive) }))
 		.sort((a, b) => b.lastActive - a.lastActive)
 		.slice(0, MAX_FOLDERS);
+}
+
+/** Root session files of every folder, newest first, up to `limit`. */
+export async function recentSessionFiles(sessionsDir: string, limit: number): Promise<SessionFile[]> {
+	let names: string[];
+	try {
+		names = await fs.readdir(sessionsDir);
+	} catch {
+		return [];
+	}
+	const perDir = await Promise.all(names.map(name => sessionFilesOf(path.join(sessionsDir, name))));
+	return perDir
+		.flat()
+		.sort((a, b) => b.mtime - a.mtime)
+		.slice(0, limit);
 }

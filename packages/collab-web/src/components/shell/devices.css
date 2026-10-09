@@ -1,0 +1,80 @@
+/* Devices sheet: paired devices and the one-time pairing QR code.
+ * Builds on the shell.css sheet, recents and button primitives; token colours only. */
+
+.sh-devices-head-actions {
+	display: inline-flex;
+	gap: 4px;
+}
+
+.sh-devices-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-device {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-height: 48px;
+	padding: 4px 4px 4px 8px;
+	border-radius: var(--radius);
+}
+
+.sh-device:hover {
+	background: var(--hover);
+}
+
+.sh-device-info {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.sh-device-edit {
+	display: flex;
+	flex: 1;
+	align-items: center;
+	gap: 4px;
+}
+
+.sh-device-edit .sh-input {
+	flex: 1;
+	min-width: 0;
+}
+
+.sh-invite {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 12px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+}
+
+.sh-invite .sh-qr {
+	align-self: center;
+	width: min(100%, 240px);
+	height: auto;
+	border-radius: var(--radius);
+}
+
+/* Scanners want dark modules on a light square whatever the theme. */
+.sh-qr-paper {
+	fill: var(--qr-paper);
+}
+
+.sh-qr-ink {
+	fill: var(--qr-ink);
+}
+
+.sh-invite-actions {
+	display: flex;
+	gap: 8px;
+}

@@ -77,6 +77,8 @@ export interface SessionSheetProps {
 	onOpenSessions: (() => void) | null;
 	/** Code map of the session's repository; null unless the paired computer can build one. */
 	onOpenCodemap: (() => void) | null;
+	/** The session's terminal (tmux pane); null unless the paired computer hosts this session. */
+	onOpenPane: (() => void) | null;
 	push: PushControl;
 	onLeave(): void;
 	onClose(): void;
@@ -109,6 +111,7 @@ export function SessionSheet({
 	onOpenUsage,
 	onOpenSessions,
 	onOpenCodemap,
+	onOpenPane,
 	workingTree,
 	usage,
 	models,
@@ -350,6 +353,17 @@ export function SessionSheet({
 						<dd>
 							<button type="button" className="sh-sheet-link" onClick={onOpenCodemap}>
 								Browse the repository
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
+				{onOpenPane && (
+					<div className="sh-sheet-row">
+						<dt>Terminal</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onOpenPane}>
+								Watch the screen
 								<ChevronRight size={14} />
 							</button>
 						</dd>

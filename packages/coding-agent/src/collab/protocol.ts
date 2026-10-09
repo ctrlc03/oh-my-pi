@@ -74,6 +74,8 @@ export type CollabFrame =
 			readOnly?: boolean;
 			/** Models a writer may switch to with `session-cmd`; sent to writers only, its presence signals support. */
 			models?: WireModel[];
+			/** True when the host honoured `hello.resume`: the snapshot chunks carry only the entries after `resume.entryId`. */
+			resumed?: boolean;
 	  }
 	/**
 	 * Targeted snapshot fragment delivered after `welcome`. Splits a large

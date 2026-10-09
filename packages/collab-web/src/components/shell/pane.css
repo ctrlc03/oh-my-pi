@@ -1,0 +1,182 @@
+/* ---- session terminal view ---- */
+.sh-term-head-sub {
+	font: 400 11.5px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+/* The screen scrolls inside the sheet; lines keep their width so columns stay aligned. */
+.sh-term-view {
+	flex: 1 1 0;
+	min-height: 0;
+	overflow: auto;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-term {
+	margin: 0;
+	padding: 8px 10px;
+	min-width: max-content;
+	font: 400 12px / 1.35 var(--font-mono);
+	tab-size: 8;
+	color: var(--fg);
+}
+
+.sh-term-foot {
+	flex: none;
+	font: 400 11.5px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+.sh-term-b {
+	font-weight: 700;
+}
+
+.sh-term-dim {
+	opacity: 0.6;
+}
+
+.sh-term-i {
+	font-style: italic;
+}
+
+.sh-term-u {
+	text-decoration: underline;
+}
+
+.sh-term-fg-inv {
+	color: var(--bg-inset);
+}
+
+.sh-term-bg-inv {
+	background: var(--fg);
+}
+
+.sh-term-fg-0 {
+	color: var(--term-0);
+}
+
+.sh-term-fg-1 {
+	color: var(--term-1);
+}
+
+.sh-term-fg-2 {
+	color: var(--term-2);
+}
+
+.sh-term-fg-3 {
+	color: var(--term-3);
+}
+
+.sh-term-fg-4 {
+	color: var(--term-4);
+}
+
+.sh-term-fg-5 {
+	color: var(--term-5);
+}
+
+.sh-term-fg-6 {
+	color: var(--term-6);
+}
+
+.sh-term-fg-7 {
+	color: var(--term-7);
+}
+
+.sh-term-fg-8 {
+	color: var(--term-8);
+}
+
+.sh-term-fg-9 {
+	color: var(--term-9);
+}
+
+.sh-term-fg-10 {
+	color: var(--term-10);
+}
+
+.sh-term-fg-11 {
+	color: var(--term-11);
+}
+
+.sh-term-fg-12 {
+	color: var(--term-12);
+}
+
+.sh-term-fg-13 {
+	color: var(--term-13);
+}
+
+.sh-term-fg-14 {
+	color: var(--term-14);
+}
+
+.sh-term-fg-15 {
+	color: var(--term-15);
+}
+
+.sh-term-bg-0 {
+	background: var(--term-0);
+}
+
+.sh-term-bg-1 {
+	background: var(--term-1);
+}
+
+.sh-term-bg-2 {
+	background: var(--term-2);
+}
+
+.sh-term-bg-3 {
+	background: var(--term-3);
+}
+
+.sh-term-bg-4 {
+	background: var(--term-4);
+}
+
+.sh-term-bg-5 {
+	background: var(--term-5);
+}
+
+.sh-term-bg-6 {
+	background: var(--term-6);
+}
+
+.sh-term-bg-7 {
+	background: var(--term-7);
+}
+
+.sh-term-bg-8 {
+	background: var(--term-8);
+}
+
+.sh-term-bg-9 {
+	background: var(--term-9);
+}
+
+.sh-term-bg-10 {
+	background: var(--term-10);
+}
+
+.sh-term-bg-11 {
+	background: var(--term-11);
+}
+
+.sh-term-bg-12 {
+	background: var(--term-12);
+}
+
+.sh-term-bg-13 {
+	background: var(--term-13);
+}
+
+.sh-term-bg-14 {
+	background: var(--term-14);
+}
+
+.sh-term-bg-15 {
+	background: var(--term-15);
+}

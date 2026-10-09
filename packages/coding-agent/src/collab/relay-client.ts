@@ -68,6 +68,8 @@ const WS_BACKPRESSURE_DRAIN_RETRY_MS = 25;
 interface PendingSend {
 	frames: Iterator<CollabFrame | string>;
 	targetPeer: number;
+	/** Deflate frames over the size floor; set only for a peer that advertised support. */
+	compress: boolean;
 	bytes: number;
 	cancelled: boolean;
 	eager: boolean;
@@ -182,14 +184,24 @@ export class CollabSocket {
 	 * Queue one frame. An {@link EncodedFrame} is sealed as-is, so a caller that
 	 * already serialized the payload (to measure or bound it) does not pay for a
 	 * second `JSON.stringify`.
+	 *
+	 * `compress` deflates the frame when its JSON exceeds the size floor; set it
+	 * only toward a peer whose hello advertised `zip` (see {@link sealSerialized}).
 	 */
-	send(frame: CollabFrame | EncodedFrame, targetPeer = 0): void {
+	send(frame: CollabFrame | EncodedFrame, targetPeer = 0, compress = false): void {
 		if (this.#closed) return;
 		try {
 			const serialized = typeof frame === "string" ? frame : JSON.stringify(frame);
 			const prepared = Promise.withResolvers<void>();
 			this.#sendChain = Promise.all([this.#sendChain, prepared.promise]).then(() => {});
-			this.#enqueueSend([serialized].values(), targetPeer, Buffer.byteLength(serialized), prepared.resolve, true);
+			this.#enqueueSend(
+				[serialized].values(),
+				targetPeer,
+				compress,
+				Buffer.byteLength(serialized),
+				prepared.resolve,
+				true,
+			);
 		} catch (err) {
 			this.#failFatal(`could not serialize collab frame: ${String(err)}; rejoin to resync`);
 		}
@@ -198,10 +210,12 @@ export class CollabSocket {
 	/**
 	 * Keeps a snapshot contiguous with its welcome and ahead of subsequent live
 	 * traffic. {@link EncodedFrame} items are sealed as-is, as in {@link send}.
+	 *
+	 * `compress` applies to every frame of the batch, as in {@link send}.
 	 */
-	sendBatch(frames: Iterable<CollabFrame | EncodedFrame>, targetPeer = 0): void {
+	sendBatch(frames: Iterable<CollabFrame | EncodedFrame>, targetPeer = 0, compress = false): void {
 		if (this.#closed) return;
-		this.#enqueueSend(frames[Symbol.iterator](), targetPeer, 0);
+		this.#enqueueSend(frames[Symbol.iterator](), targetPeer, compress, 0);
 	}
 
 	/**
@@ -263,6 +277,7 @@ export class CollabSocket {
 	#enqueueSend(
 		frames: Iterator<CollabFrame | string>,
 		targetPeer: number,
+		compress: boolean,
 		bytes: number,
 		onPrepared?: () => void,
 		eager = false,
@@ -282,7 +297,7 @@ export class CollabSocket {
 			this.#failOverload();
 			return;
 		}
-		this.#pendingSends.push({ frames, targetPeer, bytes, cancelled: false, eager, onPrepared });
+		this.#pendingSends.push({ frames, targetPeer, compress, bytes, cancelled: false, eager, onPrepared });
 		this.#pendingSendBytes += bytes;
 		this.#pumpSends();
 	}
@@ -344,7 +359,7 @@ export class CollabSocket {
 			}
 			this.#pendingSendBytes += bytes;
 			try {
-				const sealed = await sealSerialized(this.#opts.key, serialized);
+				const sealed = await sealSerialized(this.#opts.key, serialized, pending.compress);
 				if (this.#closed || generation !== this.#sendGeneration) return;
 				if (pending.cancelled) continue;
 				const envelope = packEnvelope(pending.targetPeer, sealed);

@@ -10,6 +10,7 @@ import type {
 } from "../../lib/companion";
 import { useRequest } from "../../lib/use-request";
 import { Sheet } from "../shell/Sheet";
+import { FileSessions } from "./FileSessions";
 import { FlowGraph } from "./FlowGraph";
 import { FocusGraph } from "./FocusGraph";
 import { ForceMap } from "./ForceMap";
@@ -33,6 +34,15 @@ export interface CodemapSheetProps {
 	client: CompanionClient;
 	/** Companion host of the session whose repository is mapped. */
 	instanceId: string;
+	/** Start on this file instead of the repository root: absolute, or relative to the repository root. */
+	initialFile?: string;
+	/** The companion can start omp, so ended sessions in "sessions that changed this file" can be resumed. */
+	canStart: boolean;
+	/** Session on screen: marked and not openable. */
+	currentSessionId: string | null;
+	/** Fetch a link for a hosting session and join it; rejects with a readable message. */
+	onOpenHost(instanceId: string): Promise<void>;
+	onOpenLink(link: string): void;
 	/** Show a file, scrolled to `line` when given. */
 	onOpenFile(path: string, line?: number): void;
 	onClose(): void;
@@ -42,9 +52,21 @@ export interface CodemapSheetProps {
  * Browsable code map of the session's repository: folders and files by dependency, a symbol's
  * callers and callees, and cross-language flow walks. Every click re-centres on the clicked node.
  */
-export function CodemapSheet({ client, instanceId, onOpenFile, onClose }: CodemapSheetProps): ReactNode {
+export function CodemapSheet({
+	client,
+	instanceId,
+	initialFile,
+	canStart,
+	currentSessionId,
+	onOpenHost,
+	onOpenLink,
+	onOpenFile,
+	onClose,
+}: CodemapSheetProps): ReactNode {
 	const wide = useMedia(WIDE_QUERY);
-	const [focus, setFocus] = useState<CodemapFocus>({ kind: "dir", path: "" });
+	const [focus, setFocus] = useState<CodemapFocus>(
+		initialFile === undefined ? { kind: "dir", path: "" } : { kind: "file", path: initialFile },
+	);
 	const [trail, setTrail] = useState<CodemapFocus[]>([]);
 	const [folderTab, setFolderTab] = useState<FolderTab>("map");
 	const [symbolTab, setSymbolTab] = useState<SymbolTab>("neighbours");
@@ -202,6 +224,18 @@ export function CodemapSheet({ client, instanceId, onOpenFile, onClose }: Codema
 						)
 					) : (
 						<FocusGraph view={view} onFocus={goNode} onOpenFile={onOpenFile} />
+					)}
+					{view.focus.kind === "file" && (
+						<FileSessions
+							key={view.focus.path}
+							client={client}
+							instanceId={instanceId}
+							path={view.focus.path}
+							canStart={canStart}
+							currentSessionId={currentSessionId}
+							onOpenHost={onOpenHost}
+							onOpenLink={onOpenLink}
+						/>
 					)}
 				</div>
 			)}

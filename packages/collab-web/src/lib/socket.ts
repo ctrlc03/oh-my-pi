@@ -103,11 +103,15 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 		this.#scheduleRetry();
 	}
 
-	send(frame: Out, targetPeer = 0): void {
+	/**
+	 * `compress` deflates the frame when large; set it only toward a peer that
+	 * advertised it can open compressed frames (`hello.zip` / `list.zip`).
+	 */
+	send(frame: Out, targetPeer = 0, compress = false): void {
 		this.#sendChain = this.#sendChain
 			.then(async () => {
 				if (this.#closed) return;
-				const sealed = await seal(await this.#opts.key, frame);
+				const sealed = await seal(await this.#opts.key, frame, compress);
 				const envelope = packEnvelope(targetPeer, sealed);
 				const ws = this.#ws;
 				if (ws && ws.readyState === WebSocket.OPEN) {

@@ -70,6 +70,24 @@
 	--syn-attr: #c9aef5;
 	--syn-meta: #b9a77f;
 
+	/* terminal: the 16 ANSI colors of the session terminal view */
+	--term-0: #4a4a52;
+	--term-1: #ff6166;
+	--term-2: #3ecf8e;
+	--term-3: #f5a524;
+	--term-4: #6aa5ff;
+	--term-5: #e879c6;
+	--term-6: #5ad8e6;
+	--term-7: #c9c9d0;
+	--term-8: #6c6c74;
+	--term-9: #ff8a8e;
+	--term-10: #6ee7b0;
+	--term-11: #ffc457;
+	--term-12: #8fbaff;
+	--term-13: #f2a0dc;
+	--term-14: #8ae6f0;
+	--term-15: #ededef;
+
 	/* type — system stacks only */
 	--font-ui: "Inter var", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 	--font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
@@ -87,6 +105,10 @@
 	--shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.7), 0 1px 0 rgba(255, 255, 255, 0.06) inset;
 	--rail-mobile-shadow: -12px 0 32px rgba(0, 0, 0, 0.6);
 	--backdrop: rgba(0, 0, 0, 0.55);
+
+	/* QR codes: dark modules on a light square in every theme, or scanners fail */
+	--qr-paper: #fff;
+	--qr-ink: #000;
 }
 
 /* Light theme — explicit override (toggle writes data-theme="light"). */
@@ -145,6 +167,24 @@
 	--syn-function: #2a5fc4;
 	--syn-attr: #6a42b8;
 	--syn-meta: #8a6a1e;
+
+	/* terminal: the 16 ANSI colors of the session terminal view */
+	--term-0: #3a3a42;
+	--term-1: #c62a30;
+	--term-2: #12874f;
+	--term-3: #a86500;
+	--term-4: #2a5fc4;
+	--term-5: #a8217d;
+	--term-6: #0e7a8c;
+	--term-7: #6a6a73;
+	--term-8: #8b8b94;
+	--term-9: #dc3a40;
+	--term-10: #12a36b;
+	--term-11: #c77c02;
+	--term-12: #4a7fe0;
+	--term-13: #c42596;
+	--term-14: #1fa9bb;
+	--term-15: #151518;
 
 	--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
 	--shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.16);
@@ -209,6 +249,24 @@
 		--syn-function: #2a5fc4;
 		--syn-attr: #6a42b8;
 		--syn-meta: #8a6a1e;
+
+		/* terminal: the 16 ANSI colors of the session terminal view */
+		--term-0: #3a3a42;
+		--term-1: #c62a30;
+		--term-2: #12874f;
+		--term-3: #a86500;
+		--term-4: #2a5fc4;
+		--term-5: #a8217d;
+		--term-6: #0e7a8c;
+		--term-7: #6a6a73;
+		--term-8: #8b8b94;
+		--term-9: #dc3a40;
+		--term-10: #12a36b;
+		--term-11: #c77c02;
+		--term-12: #4a7fe0;
+		--term-13: #c42596;
+		--term-14: #1fa9bb;
+		--term-15: #151518;
 
 		--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
 		--shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.16);

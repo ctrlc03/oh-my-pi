@@ -17,6 +17,8 @@ import {
 	rewriteEnvelopePeer,
 	unpackEnvelope,
 } from "@oh-my-pi/pi-coding-agent/collab/protocol";
+import { ZIP_MARKER, ZIP_MIN_BYTES } from "@oh-my-pi/pi-wire";
+import * as web from "../../../collab-web/src/lib/codec";
 
 describe("collab crypto", () => {
 	it("round-trips a frame through seal/open", async () => {
@@ -37,6 +39,43 @@ describe("collab crypto", () => {
 		const sealed = await seal(await importRoomKey(generateRoomKey()), { t: "abort" });
 		const otherKey = await importRoomKey(generateRoomKey());
 		expect(open(otherKey, sealed)).rejects.toThrow();
+	});
+});
+
+describe("collab compressed seal", () => {
+	const BIG: CollabFrame = { t: "transcript", reqId: 1, text: "line of log output\n".repeat(400), newSize: 7600 };
+	const SMALL: CollabFrame = { t: "transcript", reqId: 1, text: "short", newSize: 5 };
+
+	/** First plaintext byte of a sealed frame: `{` for plain JSON, ZIP_MARKER for compressed. */
+	async function firstByte(key: CryptoKey, sealed: Uint8Array): Promise<number> {
+		const iv = sealed.slice(0, 12);
+		const plaintext = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, sealed.slice(12)));
+		return plaintext[0]!;
+	}
+
+	it("compresses a large frame on request and opens it back to the same frame", async () => {
+		const key = await importRoomKey(generateRoomKey());
+		const plain = await seal(key, BIG);
+		const zipped = await seal(key, BIG, true);
+		expect(await firstByte(key, plain)).toBe("{".charCodeAt(0));
+		expect(await firstByte(key, zipped)).toBe(ZIP_MARKER);
+		expect(zipped.byteLength).toBeLessThan(plain.byteLength / 10);
+		expect(await open(key, zipped)).toEqual(BIG);
+	});
+
+	it("leaves a frame under the size floor plain even when asked to compress", async () => {
+		const key = await importRoomKey(generateRoomKey());
+		expect(JSON.stringify(SMALL).length).toBeLessThan(ZIP_MIN_BYTES);
+		expect(await firstByte(key, await seal(key, SMALL, true))).toBe("{".charCodeAt(0));
+	});
+
+	it("interoperates with the web codec in both directions", async () => {
+		const raw = generateRoomKey();
+		const key = await importRoomKey(raw);
+		const webKey = await web.importRoomKey(raw);
+		expect(await web.open<CollabFrame>(webKey, await seal(key, BIG, true))).toEqual(BIG);
+		expect(await open(key, await web.seal(webKey, BIG, true))).toEqual(BIG);
+		expect(await open(key, await web.seal(webKey, BIG))).toEqual(BIG);
 	});
 });
 

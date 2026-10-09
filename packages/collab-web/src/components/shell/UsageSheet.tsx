@@ -6,6 +6,7 @@ import { fmtCost, fmtTokens, relTime, shortenPath } from "../../lib/format";
 import { readJson, writeJson } from "../../lib/storage";
 import { useRequest } from "../../lib/use-request";
 import { Sheet } from "./Sheet";
+import { SpendAlerts } from "./SpendAlerts";
 import "./stats.css";
 
 const RANGE_KEY = "omp.collab.usageRange";
@@ -153,6 +154,7 @@ export function UsageSheet({ client, onClose }: UsageSheetProps): ReactNode {
 					{report.syncedAt > 0 && <div className="sh-stats-foot">synced {relTime(report.syncedAt)}</div>}
 				</div>
 			)}
+			<SpendAlerts client={client} />
 		</Sheet>
 	);
 }

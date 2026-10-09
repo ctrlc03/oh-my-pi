@@ -46,6 +46,8 @@ export interface ToolRenderHost {
 	openAgent?(id: string): void;
 	/** Open a read-only viewer for a project file; absent where the host cannot read files. */
 	openFile?(path: string): void;
+	/** Open the project code map centred on a file; absent where the host has no code map. */
+	showInCodemap?(path: string): void;
 }
 
 export interface ToolRenderProps {

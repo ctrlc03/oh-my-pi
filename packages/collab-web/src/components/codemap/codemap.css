@@ -592,3 +592,13 @@
 		min-height: 44px;
 	}
 }
+
+/* ---- sessions that changed the focused file ---- */
+.sh-cm-sessions {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 12px;
+	padding-top: 8px;
+	border-top: 1px solid var(--border);
+}

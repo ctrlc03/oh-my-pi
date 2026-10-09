@@ -194,3 +194,36 @@ export function getHljs(): HljsLike | null {
 	const candidate = (globalThis as { hljs?: HljsLike }).hljs;
 	return candidate && typeof candidate.highlight === "function" ? candidate : null;
 }
+
+/** Path from a hashline `[path#TAG]` / `[path]` header line, or null. */
+function headerPath(line: string): string | null {
+	const trimmed = line.trimEnd();
+	if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return null;
+	let body = trimmed.slice(1, -1).trim();
+	const hash = /#[0-9a-fA-F]{4}$/.exec(body);
+	if (hash) body = body.slice(0, hash.index);
+	if (body.length >= 2) {
+		const first = body[0];
+		if ((first === '"' || first === "'") && first === body[body.length - 1]) body = body.slice(1, -1);
+	}
+	return body.length > 0 ? body : null;
+}
+
+const APPLY_PATCH_HEADER_RE = /^\*{3} (?:Update|Add|Delete) File:\s*(.+)$/;
+
+/** File paths named by hashline or apply_patch section headers, in order. */
+export function inputPaths(input: string): string[] {
+	const stripped = input.startsWith("\uFEFF") ? input.slice(1) : input;
+	const paths: string[] = [];
+	for (const rawLine of stripped.split("\n")) {
+		const line = rawLine.replace(/\r$/, "");
+		const fromHashline = headerPath(line);
+		if (fromHashline) {
+			paths.push(fromHashline);
+			continue;
+		}
+		const fromApplyPatch = APPLY_PATCH_HEADER_RE.exec(line.trim());
+		if (fromApplyPatch) paths.push(fromApplyPatch[1].trim());
+	}
+	return paths;
+}

@@ -88,6 +88,19 @@
 	color: var(--fg);
 }
 
+.sh-start-prompt {
+	display: grid;
+	gap: 6px;
+}
+
+.sh-input.sh-start-prompt-input {
+	height: auto;
+	min-height: 72px;
+	padding: 8px 11px;
+	line-height: 1.4;
+	resize: vertical;
+}
+
 /* ---- sandboxed sessions ---- */
 .sh-chip.sh-chip-sandboxed {
 	gap: 4px;

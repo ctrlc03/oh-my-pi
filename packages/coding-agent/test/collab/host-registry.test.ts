@@ -380,7 +380,7 @@ describe("collab host registry lifecycle (#6099)", () => {
 			send.mockClear();
 			abort.abort();
 			expect(await answer).toEqual({ kind: "unavailable" });
-			expect(send.mock.calls).toEqual([[{ t: "ui-request-end", reqId: 1 }, 1]]);
+			expect(send.mock.calls).toEqual([[{ t: "ui-request-end", reqId: 1 }, 1, false]]);
 			state.sessionId = original;
 			expect((await registry.listCollabHosts({ dir: tmp }))[0]?.inputRequired).toBe(false);
 		} finally {

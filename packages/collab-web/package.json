@@ -25,6 +25,7 @@
   "scripts": {
     "dev": "bun ./index.html",
     "mock-host": "bun scripts/mock-host.ts",
+    "companion": "bun scripts/companion.ts",
     "relay": "bun scripts/local-relay.ts",
     "build": "rm -rf dist && bun build ./index.html --outdir=dist --minify --splitting --define process.env.NODE_ENV='\"production\"' --entry-naming=[hash].[ext] --chunk-naming=[hash].[ext] --asset-naming=[hash].[ext] && mv dist/*.html dist/index.html && cp -R public/. dist/ && bun scripts/build-sw.ts",
     "gen:tool-views": "bun scripts/build-tool-views.ts",
@@ -46,6 +47,7 @@
     "react-dom": "catalog:"
   },
   "devDependencies": {
+    "@oh-my-pi/pi-tui": "catalog:",
     "@types/bun": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:"

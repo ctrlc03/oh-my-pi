@@ -30,10 +30,11 @@ export interface CollabSocketOptions {
 	key: CryptoKey | PromiseLike<CryptoKey>;
 }
 
-export class CollabSocket {
+/** `Out` is what this end seals and sends, `In` what it opens: guest frames out / host frames in by default. */
+export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 	/** Fires after every successful (re)connect. */
 	onOpen?: () => void;
-	onFrame?: (frame: HostFrame, fromPeer: number) => void;
+	onFrame?: (frame: In, fromPeer: number) => void;
 	onControl?: (msg: RelayControlMessage) => void;
 	/** Fires on each close; `willReconnect` distinguishes retries from terminal shutdown. */
 	onClose?: (reason: string, willReconnect: boolean) => void;
@@ -81,7 +82,7 @@ export class CollabSocket {
 		this.#openSocket();
 	}
 
-	send(frame: GuestFrame, targetPeer = 0): void {
+	send(frame: Out, targetPeer = 0): void {
 		this.#sendChain = this.#sendChain
 			.then(async () => {
 				if (this.#closed) return;
@@ -167,9 +168,9 @@ export class CollabSocket {
 		this.#recvChain = this.#recvChain
 			.then(async () => {
 				if (this.#ws !== ws) return;
-				let frame: HostFrame;
+				let frame: In;
 				try {
-					frame = (await open(await this.#opts.key, envelope.payload)) as HostFrame;
+					frame = await open<In>(await this.#opts.key, envelope.payload);
 				} catch {
 					this.#failFatal("bad key or corrupted frame");
 					return;

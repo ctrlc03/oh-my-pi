@@ -37,6 +37,17 @@ The client installs to a phone's home screen: Safari → Share → *Add to Home 
 
 Stored join links grant whatever their access says until the host closes the room; *forget* removes one. Foregrounding the app or regaining the network reconnects right away instead of waiting out the socket backoff.
 
+The composer keeps unsent text per room (it survives the OS killing the app), attaches images from the photo library, camera, or clipboard (anything over 1568px or 750 KB is downscaled to JPEG before it is sealed), and shows a row of one-tap quick replies while the input is empty. The pencil chip edits the quick replies; they are stored per device.
+
+### Companion: every session on your computer
+
+`bun run companion` (in this package) opens one long-lived encrypted room on the relay and pairs the app with the computer it runs on. Scan the QR code it prints, or open the printed `https://…/#pair:<link>` URL, once. From then on the connect screen lists every omp session on that computer that is hosting `/collab` (name, cwd, working / idle / needs input, guests), refreshed every few seconds, and a tap joins one with full control. No per-session link is needed.
+
+- Session data comes from the installed omp CLI (`omp collab list --json`, `omp collab link <id> --json`), so it works with any omp version that has `omp collab`. Set `OMP_BIN` when `omp` is not on `PATH` (for example under launchd).
+- The relay and web URLs come from `collab.relayUrl` and `collab.webUrl`. The room id and key persist in `~/.omp/agent/collab-companion.json` (mode 0600), so restarts keep devices paired; `--rotate` issues a new key and unpairs every device.
+- **The pairing link is a standing control capability for every session on the computer.** Treat it like an SSH key: the app keeps it in this origin's `localStorage` only, and *unpair* removes it.
+- Only sessions publishing control access are listed. The companion must be running for the list to load. Keep it alive with a LaunchAgent, `tmux`, or similar.
+
 To make `/collab` links and QR codes open your own deployment, set `collab.webUrl` to its URL. The repository's `collab-web pages` workflow deploys this package to a fork's GitHub Pages site (`https://<owner>.github.io/<repo>/`). It runs on pushes to the `collab-pwa` branch or on demand.
 
 ## Architecture

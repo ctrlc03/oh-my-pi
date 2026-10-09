@@ -1,11 +1,12 @@
 import type { SessionHeader, SessionState } from "@oh-my-pi/pi-wire";
-import { LogOut, PanelRight } from "lucide-react";
+import { Ellipsis, LogOut, PanelRight } from "lucide-react";
 import type { ReactNode } from "react";
-import { memo } from "react";
+import { memo, useCallback, useState } from "react";
 import type { ConnectionPhase } from "../../lib/client";
 import { fmtPercent, shortenPath } from "../../lib/format";
 import { OmpMark } from "./OmpMark";
 import { ThemeToggle } from "./ThemeToggle";
+import { SessionSheet } from "./SessionSheet";
 
 const PHASE_LABEL: Record<ConnectionPhase, string> = {
 	connecting: "Connecting",
@@ -38,6 +39,8 @@ export const HeaderBar = memo(function HeaderBar({
 	onLeave,
 }: HeaderBarProps): ReactNode {
 	const title = header?.title ?? state?.sessionName ?? "session";
+	const [sheetOpen, setSheetOpen] = useState(false);
+	const closeSheet = useCallback(() => setSheetOpen(false), []);
 	const usage = state?.contextUsage;
 	let pct: number | null = null;
 	if (usage) {
@@ -55,14 +58,18 @@ export const HeaderBar = memo(function HeaderBar({
 					<OmpMark />
 					<span className="sh-brand-slash">/</span>
 				</span>
-				<span className="sh-title" title={title}>
-					{title}
-				</span>
-				{state?.cwd && (
-					<span className="sh-cwd" title={state.cwd}>
-						{shortenPath(state.cwd)}
+				<button
+					type="button"
+					className="sh-title-block"
+					onClick={() => setSheetOpen(true)}
+					title={state?.cwd ? `${title}\n${state.cwd}` : title}
+				>
+					<span className="sh-title">{title}</span>
+					<span className="sh-title-sub">
+						<span className={`sh-dot sh-dot-${phase} sh-mobile-only`} />
+						{state?.cwd && <span className="sh-cwd">{shortenPath(state.cwd)}</span>}
 					</span>
-				)}
+				</button>
 			</div>
 			<div className="sh-header-right">
 				<span className={`sh-status sh-status-${phase}`} title={`connection: ${phase}`}>
@@ -106,14 +113,41 @@ export const HeaderBar = memo(function HeaderBar({
 					className={railOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
 					onClick={onToggleRail}
 					title={railOpen ? "hide agents" : "show agents"}
+					aria-label={railOpen ? "hide agents" : "show agents"}
 				>
-					<PanelRight size={14} />
+					<PanelRight size={16} />
 					{subCount > 0 && <span className="sh-badge">{subCount}</span>}
 				</button>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onLeave} title="leave session">
-					<LogOut size={14} />
+				<button
+					type="button"
+					className="sh-btn sh-btn-icon sh-leave"
+					onClick={onLeave}
+					title="leave session"
+					aria-label="leave session"
+				>
+					<LogOut size={16} />
+				</button>
+				<button
+					type="button"
+					className="sh-btn sh-btn-icon sh-mobile-only"
+					onClick={() => setSheetOpen(true)}
+					aria-label="session details"
+				>
+					<Ellipsis size={18} />
 				</button>
 			</div>
+			{sheetOpen && (
+				<SessionSheet
+					title={title}
+					state={state}
+					phase={phase}
+					phaseLabel={PHASE_LABEL[phase]}
+					readOnly={readOnly}
+					contextPct={pct}
+					onLeave={onLeave}
+					onClose={closeSheet}
+				/>
+			)}
 		</header>
 	);
 });

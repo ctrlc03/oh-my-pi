@@ -288,6 +288,37 @@
 	min-width: 0;
 }
 
+/* Title + cwd: one tap target that opens the session sheet. Inline on wide
+ * screens, stacked two-line on phones. */
+.sh-title-block {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	min-width: 0;
+	margin-left: -6px;
+	padding: 4px 6px;
+	text-align: left;
+	background: transparent;
+	border: 0;
+	border-radius: var(--radius);
+	transition: background 120ms ease-out;
+}
+
+.sh-title-block:hover {
+	background: var(--hover);
+}
+
+.sh-title-sub {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.sh-mobile-only {
+	display: none;
+}
+
 /* Connection status pill: dot + word. */
 .sh-status {
 	display: inline-flex;
@@ -553,7 +584,7 @@
 /* ---- banners ---- */
 .sh-banner {
 	position: fixed;
-	top: calc(var(--topbar-h) + 10px);
+	top: calc(var(--topbar-h) + env(safe-area-inset-top, 0px) + 10px);
 	left: 50%;
 	transform: translateX(-50%);
 	z-index: 50;
@@ -718,13 +749,22 @@
 	height: 36px;
 }
 
-.sh-connect-card {
+/* Recents card (when any) above the join card, centred as one column. */
+.sh-connect-stack {
 	position: relative;
 	align-self: center;
 	justify-self: center;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
 	width: 100%;
 	max-width: 420px;
-	margin-bottom: 8vh;
+	margin: 16px 0 8vh;
+}
+
+.sh-connect-card {
+	position: relative;
+	width: 100%;
 	padding: 28px;
 	display: flex;
 	flex-direction: column;
@@ -845,6 +885,319 @@
 	margin-top: 2px;
 }
 
+.sh-connect-quick {
+	display: grid;
+	grid-auto-flow: column;
+	grid-auto-columns: 1fr;
+	gap: 8px;
+}
+
+.sh-connect-quick .sh-btn {
+	height: 42px;
+	font-size: 14px;
+}
+
+/* ---- recent sessions ---- */
+.sh-recents {
+	gap: 8px;
+	padding: 16px 12px 10px 16px;
+}
+
+.sh-recents-title {
+	font-size: 12.5px;
+	font-weight: 500;
+	color: var(--fg-muted);
+}
+
+.sh-recents-list {
+	display: flex;
+	flex-direction: column;
+	margin: 0 0 0 -8px;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-recent {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.sh-recent-join {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-height: 48px;
+	padding: 7px 8px;
+	text-align: left;
+	background: transparent;
+	border: 0;
+	border-radius: var(--radius);
+	transition: background 120ms ease-out;
+}
+
+.sh-recent-join:hover,
+.sh-recent-join:active {
+	background: var(--hover);
+}
+
+.sh-recent-title {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	overflow: hidden;
+	font-size: 14px;
+	font-weight: 500;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.sh-recent-title svg {
+	flex: none;
+	color: var(--fg-faint);
+}
+
+.sh-recent-meta {
+	display: flex;
+	gap: 10px;
+	min-width: 0;
+	font: 400 11.5px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+.sh-recent-cwd {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+/* ---- session sheet (header title / ⋯) ---- */
+.sh-sheet-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 70;
+	background: var(--backdrop);
+	animation: sh-fade-in 150ms ease-out;
+}
+
+.sh-sheet {
+	position: fixed;
+	z-index: 71;
+	top: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
+	right: 12px;
+	width: min(380px, calc(100vw - 24px));
+	max-height: calc(var(--viewport-height, 100dvh) - var(--topbar-h) - 24px);
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 16px;
+	background: var(--glass);
+	backdrop-filter: blur(20px) saturate(170%);
+	-webkit-backdrop-filter: blur(20px) saturate(170%);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-xl);
+	box-shadow: var(--shadow-overlay);
+	animation: rise 260ms var(--ease-out) backwards;
+}
+
+.sh-sheet-grip {
+	display: none;
+}
+
+.sh-sheet-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.sh-sheet-title {
+	min-width: 0;
+	padding-top: 4px;
+	font-size: 16px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	overflow-wrap: anywhere;
+}
+
+.sh-sheet-cwd {
+	margin-top: -6px;
+	font: 400 12px / 1.5 var(--font-mono);
+	color: var(--fg-faint);
+	overflow-wrap: anywhere;
+}
+
+.sh-sheet-rows {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	border-top: 1px solid var(--border);
+}
+
+.sh-sheet-row {
+	display: grid;
+	grid-template-columns: 92px minmax(0, 1fr);
+	align-items: center;
+	gap: 12px;
+	min-height: 48px;
+	padding: 8px 0;
+	border-bottom: 1px solid var(--border);
+}
+
+.sh-sheet-row-top {
+	align-items: start;
+}
+
+.sh-sheet-row dt {
+	font-size: 13px;
+	color: var(--fg-muted);
+}
+
+.sh-sheet-row dd {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	margin: 0;
+	font-size: 14px;
+}
+
+.sh-sheet-mono {
+	font-family: var(--font-mono);
+	font-size: 13px;
+}
+
+.sh-sheet-faint {
+	color: var(--fg-faint);
+}
+
+.sh-sheet-gauge {
+	width: 120px;
+}
+
+.sh-sheet-row .sh-sheet-people {
+	flex-direction: column;
+	align-items: stretch;
+}
+
+.sh-sheet-person {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.sh-sheet-person .sh-avatar {
+	flex: none;
+	margin-left: 0;
+}
+
+.sh-sheet-person .sh-sheet-faint {
+	margin-left: auto;
+	font-size: 12px;
+}
+
+.sh-segmented {
+	display: inline-flex;
+	padding: 2px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-segment {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 32px;
+	padding: 0 10px;
+	font-size: 13px;
+	color: var(--fg-muted);
+	background: transparent;
+	border: 0;
+	border-radius: calc(var(--radius) - 2px);
+}
+
+.sh-segment-on {
+	color: var(--fg);
+	background: var(--selected);
+}
+
+.sh-sheet-leave {
+	height: 44px;
+	font-size: 14px;
+	color: var(--err);
+}
+
+/* ---- QR scanner ----
+ * The one place with raw colors: a camera viewfinder is black with white chrome
+ * in either theme, like the system camera. */
+.sh-scan {
+	position: fixed;
+	inset: 0;
+	z-index: 80;
+	background: #000;
+}
+
+.sh-scan-video {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.sh-scan-frame {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: min(70vw, 70vh, 320px);
+	aspect-ratio: 1;
+	transform: translate(-50%, -50%);
+	border: 2px solid rgba(255, 255, 255, 0.85);
+	border-radius: 20px;
+	box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45);
+}
+
+.sh-scan-top {
+	position: absolute;
+	top: 0;
+	right: 0;
+	left: 0;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 12px 12px 12px 18px;
+	padding-top: calc(12px + env(safe-area-inset-top, 0px));
+	font-size: 15px;
+	font-weight: 500;
+	color: #fff;
+}
+
+.sh-scan .sh-scan-close {
+	width: 44px;
+	height: 44px;
+	color: #fff;
+}
+
+.sh-scan-msg {
+	position: absolute;
+	right: 16px;
+	bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+	left: 16px;
+	padding: 12px 14px;
+	font-size: 14px;
+	text-align: center;
+	color: #fff;
+	background: rgba(0, 0, 0, 0.7);
+	border-radius: var(--radius-lg);
+}
+
 /* ---- responsive mobile styles ---- */
 @media (max-width: 900px) {
 	.sh-rail {
@@ -884,36 +1237,137 @@
 }
 
 @media (max-width: 640px) {
+	/* Edge to edge: on a phone every pixel of width goes to the transcript. */
 	.sh-main {
-		padding: 0 4px 4px;
+		padding: 0;
 	}
+	.sh-panel {
+		border-width: 1px 0 0;
+		border-radius: 0;
+		box-shadow: none;
+	}
+	.sh-header {
+		gap: 4px;
+		padding: 6px 4px 6px 12px;
+		padding-top: calc(6px + env(safe-area-inset-top, 0px));
+		padding-left: max(12px, env(safe-area-inset-left, 0px));
+		padding-right: max(4px, env(safe-area-inset-right, 0px));
+	}
+	.sh-header-left {
+		gap: 6px;
+	}
+	.sh-header-right {
+		gap: 0;
+	}
+	/* The compact bar keeps title, agents and ⋯. Everything else lives in the sheet. */
 	.sh-brand-slash,
-	.sh-cwd,
-	.sh-chip-meta,
-	.sh-gauge-track,
+	.sh-status,
+	.sh-header .sh-chip,
+	.sh-header .sh-gauge,
+	.sh-header .sh-avatars,
+	.sh-header .sh-theme-toggle,
+	.sh-leave,
 	.sh-btn-label,
 	.sh-queued-label {
 		display: none;
 	}
-	.sh-status {
-		width: 26px;
-		padding: 0;
-		justify-content: center;
-		font-size: 0;
+	.sh-header .sh-mobile-only {
+		display: inline-flex;
+	}
+	.sh-title-block {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 1px;
+		margin-left: 0;
+		padding: 3px 6px;
+	}
+	.sh-title {
+		max-width: 100%;
+		font-size: 15px;
+		font-weight: 600;
+	}
+	.sh-title-sub .sh-dot {
+		width: 7px;
+		height: 7px;
+	}
+	.sh-header .sh-btn-icon {
+		width: 44px;
+		height: 44px;
+	}
+	.sh-header .sh-badge {
+		top: 4px;
+		right: 4px;
 	}
 	.sh-composer {
-		padding: 0 8px 8px;
+		max-width: none;
+		padding: 8px 8px 8px;
 		padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+		padding-left: max(8px, env(safe-area-inset-left, 0px));
+		padding-right: max(8px, env(safe-area-inset-right, 0px));
 	}
 	.sh-composer-actions .sh-btn {
-		width: 34px;
-		height: 34px;
+		width: 40px;
+		height: 40px;
 		padding: 0;
 	}
 	.sh-ask-title,
 	.sh-ask-option-label {
 		font-size: 16px;
 	}
+	.sh-ask-option {
+		min-height: 44px;
+	}
+	.sh-ask-actions .sh-btn {
+		width: auto;
+		padding: 0 14px;
+	}
+	/* Bottom sheet, thumb reachable. */
+	.sh-sheet {
+		top: auto;
+		right: 0;
+		bottom: 0;
+		left: 0;
+		width: auto;
+		max-height: calc(var(--viewport-height, 100dvh) - env(safe-area-inset-top, 0px) - 24px);
+		padding: 8px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+		border-width: 1px 0 0;
+		border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+		animation: sh-sheet-up 280ms var(--ease-out) backwards;
+	}
+	.sh-sheet-grip {
+		display: block;
+		align-self: center;
+		width: 36px;
+		height: 4px;
+		margin-bottom: 4px;
+		background: var(--border-strong);
+		border-radius: 2px;
+	}
+	.sh-connect-card {
+		padding: 22px 18px;
+	}
+	.sh-recents {
+		padding: 14px 8px 8px 16px;
+	}
+	.sh-toasts {
+		bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+	}
+}
+
+@keyframes sh-sheet-up {
+	from {
+		transform: translateY(100%);
+	}
+	to {
+		transform: none;
+	}
+}
+
+/* On-screen keyboard up (set from the visual viewport in app.tsx): the home
+ * indicator inset is under the keyboard, so drop it instead of floating the
+ * composer a thumb's width above the keys. */
+:root[data-keyboard] .sh-composer {
+	padding-bottom: 8px;
 }
 
 @media (any-pointer: coarse) {
@@ -921,5 +1375,18 @@
 	.sh-input,
 	.sh-input-mono {
 		font-size: 16px;
+	}
+	.sh-btn-icon,
+	.sh-theme-toggle {
+		min-width: 40px;
+		min-height: 40px;
+	}
+}
+
+/* Installed app (home-screen PWA): no browser chrome above the header, so
+ * the status bar area belongs to the glass bar. */
+@media (display-mode: standalone) {
+	.sh-header {
+		min-height: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
 	}
 }

@@ -33,12 +33,17 @@ function autosize(el: HTMLTextAreaElement | null): void {
  * Decides whether an Enter keydown should commit the composer. Returns `false` while an IME
  * composition is active so the keystroke confirms the composition instead of submitting.
  * `nativeEvent.isComposing` covers most browsers; `composing` bridges WebKit, which fires the
- * confirming Enter keydown *after* `compositionend`.
+ * confirming Enter keydown *after* `compositionend`. On touch keyboards (`touch`) the return key
+ * inserts a newline: there is no Shift+Enter, and the send button is in thumb reach.
  */
-export function shouldSubmitOnEnter(e: KeyboardEvent<HTMLTextAreaElement>, composing: boolean): boolean {
-	if (e.key !== "Enter" || e.shiftKey) return false;
+export function shouldSubmitOnEnter(e: KeyboardEvent<HTMLTextAreaElement>, composing: boolean, touch = false): boolean {
+	if (e.key !== "Enter" || e.shiftKey || touch) return false;
 	return !(e.nativeEvent.isComposing || composing);
 }
+
+/** Primary input is a finger: a phone or tablet without a trackpad. */
+const TOUCH_QUERY = "(hover: none) and (pointer: coarse)";
+const isTouch = (): boolean => typeof matchMedia === "function" && matchMedia(TOUCH_QUERY).matches;
 
 /**
  * Tracks IME composition state via a ref the keydown handler reads synchronously. The
@@ -82,7 +87,7 @@ function AskEditor({ prefill, onSubmit }: AskEditorProps): ReactNode {
 	}, [draft]);
 
 	const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
-		if (shouldSubmitOnEnter(e, composingRef.current)) {
+		if (shouldSubmitOnEnter(e, composingRef.current, isTouch())) {
 			e.preventDefault();
 			onSubmit(draft);
 		}
@@ -147,7 +152,7 @@ export const Composer = memo(function Composer({
 	}, [client, live, readOnly, text]);
 
 	const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
-		if (shouldSubmitOnEnter(e, composingRef.current)) {
+		if (shouldSubmitOnEnter(e, composingRef.current, isTouch())) {
 			e.preventDefault();
 			send();
 		}
@@ -230,6 +235,7 @@ export const Composer = memo(function Composer({
 					disabled={!canPrompt}
 					rows={1}
 					spellCheck={false}
+					enterKeyHint={isTouch() ? "enter" : "send"}
 				/>
 				<div className="sh-composer-actions">
 					{busy && queued > 0 && (

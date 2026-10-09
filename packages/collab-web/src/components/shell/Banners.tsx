@@ -38,7 +38,7 @@ export function Banners({ phase, endedReason, loading, onRejoin, onNewLink }: Ba
 							Rejoin
 						</button>
 						<button type="button" className="sh-btn" onClick={onNewLink}>
-							New link
+							Other sessions
 						</button>
 					</div>
 				</div>

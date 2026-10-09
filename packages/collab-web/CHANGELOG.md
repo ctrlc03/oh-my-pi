@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- Made the web client an installable app: a service worker precaches the build for instant and offline launches, and the manifest and every emitted URL are relative, so the build also works under a path prefix such as a GitHub Pages project site
+- Added recent sessions to the connect screen: a home-screen launch reopens the last session, or lists rooms joined before for one-tap rejoin. Rooms the relay reports gone are dropped
+- Added *Paste link* and *Scan QR* to the connect screen, plus Android share-sheet intake (`share_target`)
+
+### Changed
+
+- Reworked the phone layout: a compact two-line header whose title opens a session sheet (connection, model, context, participants, theme, leave), an edge-to-edge transcript, 40–44px touch targets, and a full-screen agent drawer whose header wraps instead of truncating the agent name
+- Stopped the agents rail from opening on its own on narrow screens, where it covered the transcript. The header badge still counts subagents
+- Wrapped code blocks, tool output, and diffs on phones instead of scrolling them sideways, and let wide Markdown tables scroll as one block
+- Made the return key insert a newline on touch keyboards; the send button submits
+
+### Fixed
+
+- Fixed the transcript losing its bottom position when the on-screen keyboard opens or the composer grows
+- Fixed the composer floating above the keyboard by the home-indicator inset, and the connection banner sliding under the status bar in standalone mode
+- Fixed slow reconnects after the phone wakes: returning to the foreground or coming back online now retries immediately instead of waiting out a backoff of up to 30 seconds
+
 ## [18.8.0] - 2026-10-07
 
 ### Changed

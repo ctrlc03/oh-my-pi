@@ -120,7 +120,7 @@ export function ConnectScreen({
 										title={room.cwd ?? room.title}
 									>
 										<span className="sh-recent-title">
-											{room.title}
+											<span className="sh-recent-name">{room.title}</span>
 											{room.readOnly && <Eye size={13} aria-label="view-only" />}
 										</span>
 										<span className="sh-recent-meta">

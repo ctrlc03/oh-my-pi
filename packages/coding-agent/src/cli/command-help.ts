@@ -68,6 +68,10 @@ export const gitHelp = {
 	description: "Interactive fullscreen git UI: split diff viewer, staging sidebar, and commit composer",
 } satisfies CommandMetadata;
 
+export const codemapHelp = {
+	description: "Build, inspect, and query the persistent code index (symbols, references, event handlers)",
+} satisfies CommandMetadata;
+
 export const findHelp = {
 	description: "Semantic search: describe a behavior, get the files and line ranges that implement it",
 } satisfies CommandMetadata;

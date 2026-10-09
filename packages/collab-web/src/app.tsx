@@ -11,8 +11,10 @@ import { FileSheet } from "./components/shell/FileSheet";
 import { HeaderBar } from "./components/shell/HeaderBar";
 import { SearchBar } from "./components/shell/SearchBar";
 import { SessionAlert } from "./components/shell/SessionAlert";
+import { SessionsSheet } from "./components/shell/SessionsSheet";
 import { SessionSwitcher } from "./components/shell/SessionSwitcher";
 import { Toasts } from "./components/shell/Toasts";
+import { UsageSheet } from "./components/shell/UsageSheet";
 import { Transcript } from "./components/transcript/Transcript";
 import { collectChanges } from "./lib/changes";
 import { GuestClient } from "./lib/client";
@@ -353,6 +355,7 @@ function Session({
 		() => hosts?.find(host => host.sessionId === sessionId)?.instanceId ?? null,
 		[hosts, sessionId],
 	);
+	const hostRow = hosts?.find(host => host.instanceId === hostId);
 	const [filePath, setFilePath] = useState<string | null>(null);
 
 	// Task-card agent chips drill into the same drawer the rail uses.
@@ -420,6 +423,9 @@ function Session({
 	const otherHosts = companion?.snap.hosts.filter(host => host.sessionId !== sessionId) ?? [];
 	const canSwitch = otherHosts.length > 0 || rooms.some(room => room.roomId !== roomId);
 	const openSwitcher = useCallback(() => setSwitcherOpen(true), []);
+	const [statsSheet, setStatsSheet] = useState<"usage" | "sessions" | null>(null);
+	const openUsage = useCallback(() => setStatsSheet("usage"), []);
+	const openSessions = useCallback(() => setStatsSheet("sessions"), []);
 
 	const { newSince, seen: newSeen, markSeen, markTail } = useNewSince(client, roomId, snap.entries, live);
 	const sessionUsage = useMemo(() => sumUsage(snap.entries), [snap.entries]);
@@ -491,6 +497,8 @@ function Session({
 				models={snap.models}
 				onSessionCommand={sendSessionCommand}
 				onOpenChanges={openChanges}
+				onOpenUsage={companion ? openUsage : null}
+				onOpenSessions={companion ? openSessions : null}
 				push={push}
 			/>
 			<main className="sh-main">
@@ -575,12 +583,33 @@ function Session({
 					onClose={() => setSwitcherOpen(false)}
 				/>
 			)}
+			{statsSheet === "usage" && companionClient !== null && (
+				<UsageSheet client={companionClient} onClose={() => setStatsSheet(null)} />
+			)}
+			{statsSheet === "sessions" && companionClient !== null && companion !== null && (
+				<SessionsSheet
+					client={companionClient}
+					canStart={companion.snap.canStart}
+					currentSessionId={sessionId}
+					onOpenHost={onOpenHost}
+					onOpenLink={onOpenLink}
+					onClose={() => setStatsSheet(null)}
+				/>
+			)}
 			{changesOpen && (
 				<ChangesSheet
 					changes={changes}
 					host={toolHost}
 					tree={
-						companionClient !== null && hostId !== null ? { client: companionClient, instanceId: hostId } : null
+						companionClient !== null && hostId !== null
+							? {
+									client: companionClient,
+									instanceId: hostId,
+									canPr: companion?.snap.canPr ?? false,
+									busy: hostRow?.busy ?? null,
+									title: hostRow?.sessionName ?? null,
+								}
+							: null
 					}
 					onClose={() => setChangesOpen(false)}
 				/>

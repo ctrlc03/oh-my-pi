@@ -5,6 +5,11 @@
 		"jsx": "react-jsx",
 		"lib": ["ES2024", "DOM", "DOM.Iterable"],
 		"noEmit": true,
-		"types": ["bun", "react", "react-dom"]
+		"types": ["bun", "react", "react-dom"],
+		"paths": {
+			"@oh-my-pi/omp-stats/aggregator": ["./scripts/omp-stats.d.ts"],
+			"@oh-my-pi/omp-stats/rollup": ["./scripts/omp-stats.d.ts"],
+			"@oh-my-pi/omp-stats/trace": ["./scripts/omp-stats.d.ts"]
+		}
 	}
 }

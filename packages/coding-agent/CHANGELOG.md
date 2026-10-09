@@ -6,6 +6,9 @@
 
 - Collab guests with a full link can switch the host's model for the session, set its thinking level, and run compaction (`session-cmd`). Hosts send the model list to writers in `welcome.models` and the current model's thinking levels in `state.thinkingLevels`.
 - Interactive sessions that are not hosting now appear in `omp collab list` (an `idle` array with `--json`), and `omp collab start <instanceId|pid> [--view]` makes one start hosting as if `/collab` had been run, printing its link. Older omp versions ignore the new registry entries.
+- Added `trace` (setting `codemap.enabled`, off by default) and `omp codemap build|stats|trace|search`: a local symbol index of Rust, TypeScript/JavaScript, Solidity, Python, and Go code that lists a symbol's definitions, callers, references, actix `Handler<…>` implementations, publish sites, and Solidity `emit`s, and follows event chains (`--depth`). The index is cached as SQLite under the omp cache directory, and each query re-parses only files that changed. It makes no model calls.
+- Added cross-language edges to `trace`: Solidity events link to the Rust code that decodes their logs and the internal type they become (`Decoded by`, `Becomes`, `Decoded from`), `impl From<A> for B` conversions, Rust calls of Solidity functions (`Called from Rust`, `Calls contract`), and Rust references to Noir circuits by package name or enum variant (`Circuit`). Noir `.nr` files are now indexed.
+- Added `flow` (same `codemap.enabled` setting) and `omp codemap flow "<question>" [PATH] [--from SYMBOL] [--hops N]`: traces a multi-step flow from a question by walking the index in both directions across Solidity, Rust, and Noir, with the judge role choosing entry points and pruning steps (structural walk when no native judge is configured).
 
 ### Changed
 

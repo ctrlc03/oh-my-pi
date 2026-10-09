@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `extractSymbols` / `extractSymbolsAsync`: tree-sitter definitions (with signatures, doc comments, parents, and impl/base lists) and typed references (calls, types, constructions, paths, imports, Solidity `emit`, macros) for Rust, TypeScript/TSX/JavaScript, Solidity, Python, and Go.
+
 ### Changed
 
 - Reduced syntax-highlighting startup work by bundling the complete precompiled grammar set ([#14104](https://github.com/can1357/oh-my-pi/pull/14104) by [@iliaal](https://github.com/iliaal)).

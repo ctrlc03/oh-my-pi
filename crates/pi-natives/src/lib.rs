@@ -65,6 +65,7 @@ pub mod ps;
 pub mod pty;
 pub mod shell;
 pub mod summary;
+pub mod symbols;
 pub mod task;
 #[cfg(test)]
 pub(crate) mod testing;

@@ -73,6 +73,8 @@ import { SecurityScanTool } from "./security-scan";
 import { supportsExternalThinking, ThinkTool } from "./think";
 import { type TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
 import { TodoTool } from "./todo";
+import { FlowTool } from "./flow";
+import { TraceTool } from "./trace";
 import { WriteTool } from "./write";
 import { WaitTool } from "./wait";
 import { isMountableUnderXdev, resolveXdevTool, type XdevState } from "./xdev";
@@ -84,6 +86,7 @@ import {
 	cfgAstGrepEnabled,
 	cfgAsyncEnabled,
 	cfgCheckpointEnabled,
+	cfgCodemapEnabled,
 	cfgDebugEnabled,
 	cfgGithubEnabled,
 	cfgGlobEnabled,
@@ -155,6 +158,8 @@ export type {
 export * from "./security-scan";
 export * from "./think";
 export * from "./todo";
+export * from "./flow";
+export * from "./trace";
 export * from "./tts";
 export * from "./vibe";
 export * from "./wait";
@@ -575,6 +580,8 @@ export const BUILTIN_TOOLS: Record<BuiltinToolName, ToolFactory> = {
 	glob: s => new GlobTool(s, { rootPathAlias: true }),
 	grep: s => new GrepTool(s),
 	find: s => new FindTool(s),
+	trace: s => new TraceTool(s),
+	flow: s => new FlowTool(s),
 	lsp: LspTool.createIf,
 	checkpoint: CheckpointTool.createIf,
 	rewind: RewindTool.createIf,
@@ -758,6 +765,7 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 		if (name === "glob") return cfgGlobEnabled.get(session.settings);
 		if (name === "grep") return cfgGrepEnabled.get(session.settings);
 		if (name === "find") return isFindEnabled(session);
+		if (name === "trace" || name === "flow") return cfgCodemapEnabled.get(session.settings);
 		if (name === "github") return cfgGithubEnabled.get(session.settings);
 		if (name === "ast_grep") return cfgAstGrepEnabled.get(session.settings);
 		if (name === "ast_edit") return cfgAstEditEnabled.get(session.settings);

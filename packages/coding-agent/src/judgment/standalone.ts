@@ -6,10 +6,12 @@
 import { ModelRegistry } from "../config/model-registry";
 import { Settings } from "../config/settings";
 import { discoverAuthStorage, loadCliExtensionProviders } from "../sdk";
-import { type ChainJudge, resolveJudge, sharedJudgmentCache } from ".";
+import { type ChainJudge, hasNativeJudge, resolveJudge, sharedJudgmentCache } from ".";
 
 export interface StandaloneJudge {
 	judge: ChainJudge;
+	/** The judge role resolves first to a native System One model; prompted fallbacks cannot give calibrated probabilities. */
+	native: boolean;
 	/** Release the auth store; the judge must not be used afterwards. */
 	close(): void;
 }
@@ -34,6 +36,7 @@ export async function openStandaloneJudge(cwd: string, purpose: string): Promise
 				purpose,
 				cache: sharedJudgmentCache(),
 			}),
+			native: hasNativeJudge(settings, registry),
 			close: () => authStorage.close(),
 		};
 	} catch (error) {

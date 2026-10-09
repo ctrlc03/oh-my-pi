@@ -20,6 +20,8 @@ export interface FileEntry {
 	/** Root-relative display path with `/` separators; a file root's own {@link path}. */
 	rel: string;
 	size: number;
+	/** Modification time in ms since the epoch when the walker reported one. */
+	mtimeMs?: number;
 }
 
 /** Validated `find` scope: a directory to walk, or one file searched alone. */
@@ -274,7 +276,12 @@ export async function listFiles(root: SearchRoot, options: ListFilesOptions): Pr
 	for (const match of result.matches) {
 		const size = match.size ?? 0;
 		if (!eligibleFile(match.path, size, options.includeHidden)) continue;
-		entries.push({ path: resolveSearchResultPath(root.path, match.path), rel: match.path, size });
+		entries.push({
+			path: resolveSearchResultPath(root.path, match.path),
+			rel: match.path,
+			size,
+			mtimeMs: match.mtime,
+		});
 	}
 	entries.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
 	return entries;

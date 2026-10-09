@@ -39,6 +39,9 @@ export interface HeaderBarProps {
 	onChatChange(chat: boolean): void;
 	changeCount: number;
 	onOpenChanges(): void;
+	/** Usage and all-sessions screens; null when no computer is paired. */
+	onOpenUsage: (() => void) | null;
+	onOpenSessions: (() => void) | null;
 	/** The paired computer can show this session's git working tree. */
 	workingTree: boolean;
 	/** Cost and token totals for the session sheet; null when no message reported usage. */
@@ -68,6 +71,8 @@ export const HeaderBar = memo(function HeaderBar({
 	onChatChange,
 	changeCount,
 	onOpenChanges,
+	onOpenUsage,
+	onOpenSessions,
 	workingTree,
 	sessionUsage,
 	models,
@@ -220,6 +225,20 @@ export const HeaderBar = memo(function HeaderBar({
 						setSheetOpen(false);
 						onOpenChanges();
 					}}
+					onOpenUsage={
+						onOpenUsage &&
+						(() => {
+							setSheetOpen(false);
+							onOpenUsage();
+						})
+					}
+					onOpenSessions={
+						onOpenSessions &&
+						(() => {
+							setSheetOpen(false);
+							onOpenSessions();
+						})
+					}
 					workingTree={workingTree}
 					usage={sessionUsage}
 					models={models}

@@ -72,6 +72,9 @@ export interface SessionSheetProps {
 	/** Files the agent changed this session. */
 	changeCount: number;
 	onOpenChanges(): void;
+	/** Usage and all-sessions screens; null when no computer is paired. */
+	onOpenUsage: (() => void) | null;
+	onOpenSessions: (() => void) | null;
 	push: PushControl;
 	onLeave(): void;
 	onClose(): void;
@@ -101,6 +104,8 @@ export function SessionSheet({
 	onChatChange,
 	changeCount,
 	onOpenChanges,
+	onOpenUsage,
+	onOpenSessions,
 	workingTree,
 	usage,
 	models,
@@ -336,6 +341,28 @@ export function SessionSheet({
 						</button>
 					</dd>
 				</div>
+				{onOpenUsage && (
+					<div className="sh-sheet-row">
+						<dt>Usage</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onOpenUsage}>
+								Spend and tokens
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
+				{onOpenSessions && (
+					<div className="sh-sheet-row">
+						<dt>Sessions</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onOpenSessions}>
+								All projects
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
 				{push.status !== "unsupported" && (
 					<div className="sh-sheet-row">
 						<dt>Notify</dt>

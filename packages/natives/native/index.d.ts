@@ -1130,6 +1130,40 @@ export interface ClipboardImage {
   mimeType: string
 }
 
+export interface CodeSymbol {
+  /** Bare identifier: "handle", "CiphernodeSelector", "E3Requested". */
+  name: string
+  /**
+   * function, method, struct, enum, union, trait, impl, class, interface,
+   * type, const, static, variable, module, macro, contract, library, event,
+   * modifier or error.
+   */
+  kind: string
+  /** 1-indexed inclusive start line. */
+  startLine: number
+  /** 1-indexed inclusive end line (last line with content). */
+  endLine: number
+  /**
+   * Declaration header up to (not including) the body, whitespace
+   * collapsed, max 240 chars.
+   */
+  signature: string
+  /**
+   * Contiguous doc comment directly above, markers stripped, max 600
+   * chars.
+   */
+  doc?: string
+  /** Index into `symbols` of the innermost enclosing symbol. */
+  parent?: number
+  /**
+   * Rust `impl T for X`: `T` source text; TS/JS class `implements` /
+   * `extends` list; Solidity `contract A is B, C` bases, joined by ", ".
+   */
+  implTrait?: string
+  /** Rust impl self type text. */
+  implFor?: string
+}
+
 /** A context line (before or after a match). */
 export interface ContextLine {
   /** 1-indexed line number in the source file. */
@@ -1739,6 +1773,22 @@ export interface ExtractSegmentsResult {
   /** Visible width of the `after` segment. */
   afterWidth: number
 }
+
+/**
+ * Extract symbols and references synchronously on the calling thread.
+ *
+ * Prefer [`extract_symbols_async`] on hot paths: the tree-sitter parse blocks
+ * the JS thread for the whole call.
+ */
+export declare function extractSymbols(options: SymbolOptions): SymbolResult
+
+/**
+ * Extract symbols and references on libuv's thread pool.
+ *
+ * Same result as [`extract_symbols`], but the parse and walk run off the JS
+ * thread; only argument and result marshalling happen on it.
+ */
+export declare function extractSymbolsAsync(options: SymbolOptions): Promise<SymbolResult>
 
 /** Resolved filesystem entry kind for glob filters and match metadata. */
 export declare enum FileType {
@@ -3406,6 +3456,48 @@ export declare function supportsLanguage(lang: string): boolean
 export interface SvgCell {
   widthPx: number
   heightPx: number
+}
+
+export interface SymbolOptions {
+  /** Source code to index. */
+  code: string
+  /** Language alias (e.g. "rust", "typescript") used before path inference. */
+  lang?: string
+  /** File path used to infer language by extension when `lang` is omitted. */
+  path?: string
+}
+
+export interface SymbolRef {
+  /** Last identifier of the referenced path. */
+  name: string
+  /** 1-indexed line. */
+  line: number
+  /**
+   * "call" | "type" | "construct" | "import" | "emit" | "macro" | "path" |
+   * "string" (a name-like string literal).
+   */
+  kind: string
+  /** Index into `symbols` of the innermost enclosing symbol. */
+  scope?: number
+  /**
+   * Last identifier of the innermost call whose argument list contains this
+   * reference.
+   */
+  callee?: string
+}
+
+export interface SymbolResult {
+  /**
+   * Canonical language name when parsing succeeded ("noir" for `.nr`
+   * sources, which are parsed with the Rust grammar).
+   */
+  language?: string
+  /** True when the language is supported and tree-sitter produced a tree. */
+  parsed: boolean
+  /** Definitions in source order. */
+  symbols: Array<CodeSymbol>
+  /** References in source order. */
+  refs: Array<SymbolRef>
 }
 
 /** Options for [`TextPredictor::new`]. */

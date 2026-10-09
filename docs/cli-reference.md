@@ -249,6 +249,7 @@ Run `omp <command> --help` for each command's own flags and examples.
 | `cleanse` | Detect and fix project diagnostics with weighted parallel subagents. | |
 | `collab` | List active local Collab hosts without exposing URLs; `collab link <instanceId\|pid>` retrieves a control link (`--view` for view-only). | [collab](./collab.md) |
 | `clip` | Upload a `/record` recording to live.omp.sh as a public clip and print its URL. | |
+| `codemap` | `build`, `stats`, `trace <SYMBOL> [--depth N]`, `search <WORDS>`, or `flow "<QUESTION>" [--from SYMBOL] [--hops N]` over the persistent code index (`[PATH]` = repository root; `--json`). | |
 | `commit` | Generate a commit message and update changelogs. | |
 | `completions` | Print a shell completion script (bash, zsh, or fish). | |
 | `compress` | Rewrite a text file into the dense prompt register, reporting what it drops. | |

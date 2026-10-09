@@ -90,6 +90,11 @@ export const commands: CommandEntry[] = [
 		help: commandHelp.completeHelp,
 	},
 	{
+		name: "codemap",
+		load: () => import("./commands/codemap").then(m => m.default),
+		help: commandHelp.codemapHelp,
+	},
+	{
 		name: "compress",
 		load: () => import("./commands/compress").then(m => m.default),
 		help: commandHelp.compressHelp,

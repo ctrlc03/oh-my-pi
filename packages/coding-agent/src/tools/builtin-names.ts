@@ -12,6 +12,8 @@ export const BUILTIN_TOOL_NAMES = [
 	"glob",
 	"grep",
 	"find",
+	"trace",
+	"flow",
 	"lsp",
 	"checkpoint",
 	"rewind",

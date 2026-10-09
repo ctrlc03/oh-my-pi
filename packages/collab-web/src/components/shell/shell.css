@@ -899,6 +899,9 @@
 	height: 100%;
 	display: grid;
 	grid-template-rows: auto 1fr;
+	/* Pinned to the viewport like `.sh-app`: an implicit `auto` column grows to
+	 * the min-content of nowrap session titles and pushes the cards off-screen. */
+	grid-template-columns: minmax(0, 1fr);
 	background: var(--bg);
 	padding: 12px 16px 16px;
 	padding-top: calc(12px + env(safe-area-inset-top, 0px));
@@ -1113,15 +1116,24 @@
 	align-items: center;
 	gap: 6px;
 	min-width: 0;
-	overflow: hidden;
 	font-size: 14px;
 	font-weight: 500;
 	white-space: nowrap;
+}
+
+/* Only the name gives way; chips, icons and spinners keep their size. */
+.sh-recent-title > * {
+	flex: none;
+}
+
+.sh-recent-title > .sh-recent-name {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
 	text-overflow: ellipsis;
 }
 
 .sh-recent-title svg {
-	flex: none;
 	color: var(--fg-faint);
 }
 
@@ -1131,9 +1143,17 @@
 	min-width: 0;
 	font: 400 11.5px / 1.4 var(--font-mono);
 	color: var(--fg-faint);
+	white-space: nowrap;
 }
 
+/* The path is the one meta item that shrinks (ellipsized below). */
+.sh-recent-meta > * {
+	flex: none;
+}
+
+.sh-recent-meta > .sh-recent-cwd,
 .sh-recent-cwd {
+	flex: 0 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	white-space: nowrap;
@@ -1721,6 +1741,17 @@
 }
 
 /* ---- responsive mobile styles ---- */
+/* Tablet widths: the full chip row (model, thinking, context, people) leaves the
+ * title zero width, and the title is the tap target for the session sheet that
+ * shows all of them. Drop the chips; the phone rules below go further. */
+@media (max-width: 1100px) {
+	.sh-header .sh-chip,
+	.sh-header .sh-gauge,
+	.sh-header .sh-avatars {
+		display: none;
+	}
+}
+
 @media (max-width: 900px) {
 	.sh-rail {
 		position: absolute;

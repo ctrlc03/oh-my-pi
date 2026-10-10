@@ -134,16 +134,20 @@
 	padding: 4px 6px 12px 14px;
 }
 
+/* Start session takes its own row: beside five icon buttons it pushed the last
+ * ones out of the narrow drawer (tablets, coarse pointers with larger targets). */
 .sh-sidebar-foot {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
-	gap: 4px;
+	justify-content: space-between;
+	gap: 6px 4px;
 	padding: 8px 6px 2px 10px;
 	border-top: 1px solid var(--border);
 }
 
 .sh-sidebar-foot .sh-btn:not(.sh-btn-icon) {
-	flex: 1;
+	flex: 1 1 100%;
 }
 
 /* ---- shared controls ---- */

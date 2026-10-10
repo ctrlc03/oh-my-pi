@@ -1,5 +1,5 @@
 import type { SessionCommand, SessionHeader, SessionState, WireModel } from "@oh-my-pi/pi-wire";
-import { Ellipsis, LogOut, PanelLeft, PanelRight, Search, ShieldCheck, Waypoints } from "lucide-react";
+import { Ellipsis, LogOut, PanelLeft, PanelRight, Search, ShieldCheck, SquareCode, Waypoints } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback, useState } from "react";
 import type { ConnectionPhase } from "../../lib/client";
@@ -51,6 +51,8 @@ export interface HeaderBarProps {
 	onOpenPreview: (() => void) | null;
 	/** Issues and pull requests of the session's repository; null unless the paired computer's `gh` is signed in. */
 	onOpenGithub: (() => void) | null;
+	/** File tree and editor of the session's folder; null unless the paired computer can edit its files. */
+	onOpenEditor: (() => void) | null;
 	/** Images the agent's tools produced this session. */
 	screenCount: number;
 	onOpenScreens(): void;
@@ -90,6 +92,7 @@ export const HeaderBar = memo(function HeaderBar({
 	onOpenPane,
 	onOpenPreview,
 	onOpenGithub,
+	onOpenEditor,
 	screenCount,
 	onOpenScreens,
 	workingTree,
@@ -212,6 +215,17 @@ export const HeaderBar = memo(function HeaderBar({
 				>
 					<Search size={16} />
 				</button>
+				{onOpenEditor && (
+					<button
+						type="button"
+						className="sh-btn sh-btn-icon"
+						onClick={onOpenEditor}
+						title="editor"
+						aria-label="editor"
+					>
+						<SquareCode size={16} />
+					</button>
+				)}
 				{onOpenCodemap && (
 					<button
 						type="button"
@@ -307,6 +321,13 @@ export const HeaderBar = memo(function HeaderBar({
 						(() => {
 							setSheetOpen(false);
 							onOpenGithub();
+						})
+					}
+					onOpenEditor={
+						onOpenEditor &&
+						(() => {
+							setSheetOpen(false);
+							onOpenEditor();
 						})
 					}
 					screenCount={screenCount}

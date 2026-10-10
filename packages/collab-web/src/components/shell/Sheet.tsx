@@ -33,7 +33,8 @@ export function Sheet({ label, size, anchor, onClose, children }: SheetProps): R
 	const panel = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent): void => {
-			if (e.key !== "Escape") return;
+			// Escape an inner widget already handled (the editor closing its search panel) leaves the sheet open.
+			if (e.key !== "Escape" || e.defaultPrevented) return;
 			const sheets = document.querySelectorAll(".sh-sheet");
 			if (sheets[sheets.length - 1] === panel.current) onClose();
 		};

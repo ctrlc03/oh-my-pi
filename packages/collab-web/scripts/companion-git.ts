@@ -1,6 +1,7 @@
 /**
  * Git and file access for the companion's `git`, `git-diff`, `file` and
- * review/commit/push requests. Reads run in the session's cwd with
+ * review/commit/push requests; ./companion-files builds the editor's tree and
+ * saves on the path rules defined here. Reads run in the session's cwd with
  * `--no-optional-locks` (never touch the index of a repo omp is working in), a
  * timeout, and an output cap; writes (see ./companion-gitflow) drop the lock
  * flag and get a longer timeout. Paths from the device are confined to the
@@ -17,7 +18,8 @@ const GIT_WRITE_TIMEOUT_MS = 60_000;
 /** Largest git output read for status, numstat and log. */
 const GIT_OUTPUT_BYTES = 4 * 1024 * 1024;
 const DIFF_BYTES = 256 * 1024;
-const FILE_BYTES = 512 * 1024;
+/** Files up to this size are read whole: shown in full, versioned by content, and editable. */
+export const FILE_BYTES = 512 * 1024;
 /** A NUL within this prefix marks a file as binary. */
 const BINARY_SNIFF_BYTES = 8 * 1024;
 /** Untracked files above this size are not line-counted (reported as binary). */
@@ -111,12 +113,60 @@ export function isInside(base: string, target: string): boolean {
 	return rel === "" || (rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 }
 
-function checkPathText(value: string): void {
+export function checkPathText(value: string): void {
 	if (!value || value.length > MAX_PATH_CHARS || value.includes("\0")) throw new Error("invalid path");
 }
 
-function hasNul(bytes: Uint8Array): boolean {
+export function hasNul(bytes: Uint8Array): boolean {
 	return bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0);
+}
+
+/**
+ * Identifies a file's content on disk. `bytes` are the file's first {@link FILE_BYTES} bytes: for a file
+ * that fits, a hash of them plus the size (so an edit that restores the old mtime is still noticed);
+ * for a larger one the size plus modification time, since hashing it would mean reading it all.
+ */
+export function fileVersion(stat: { size: number; mtimeMs: number }, bytes: Uint8Array): string {
+	if (stat.size > FILE_BYTES || bytes.length !== stat.size) return `${stat.size}-${stat.mtimeMs}`;
+	return `${Bun.hash(bytes).toString(36)}-${bytes.length}`;
+}
+
+/** True when `real` (symlink-resolved, inside `base`) lies in a `.git` directory: the repository's own or a nested one. */
+export function isGitInternal(base: string, real: string): boolean {
+	// Compared case-insensitively: on a case-insensitive filesystem `.GIT` is the same directory.
+	return path
+		.relative(base, real)
+		.split(path.sep)
+		.some(part => part.toLowerCase() === ".git");
+}
+
+/** The directory paths from a device are confined to: the repository root, or the cwd outside a repository. */
+export interface RepoScope {
+	/** Repository root; null outside a repository. */
+	root: string | null;
+	/** `root`, or the cwd with symlinks resolved. */
+	base: string;
+}
+
+export async function repoScope(cwd: string): Promise<RepoScope> {
+	const root = await repoRoot(cwd);
+	return { root, base: root ?? (await fs.realpath(cwd)) };
+}
+
+/**
+ * The symlink-resolved path of `input` (absolute, or relative to `cwd`); null when it does not exist.
+ * @throws when it resolves outside the scope.
+ */
+export async function resolveInScope(cwd: string, scope: RepoScope, input: string): Promise<string | null> {
+	let real: string;
+	try {
+		real = await fs.realpath(path.resolve(cwd, input));
+	} catch {
+		return null;
+	}
+	if (!isInside(scope.base, real))
+		throw new Error(scope.root ? "path is outside the repository" : "path is outside the session directory");
+	return real;
 }
 
 /** Decode UTF-8 that may end mid-character because the bytes were cut. */
@@ -302,27 +352,35 @@ export async function gitDiff(
 	return { diff: decodeCut(result.out.subarray(0, end < 0 ? result.out.length : end + 1), true), truncated: true };
 }
 
-/** A file inside the session's repository (or cwd outside one); symlinks may not lead out of it. */
-export async function readRepoFile(cwd: string, input: string): Promise<FileContent> {
+/**
+ * A file inside the session's repository (or cwd outside one); symlinks may not lead out of it.
+ * `sandboxed`: the session may not change files, so the file is never `writable`.
+ */
+export async function readRepoFile(cwd: string, input: string, sandboxed: boolean): Promise<FileContent> {
 	checkPathText(input);
-	const root = await repoRoot(cwd);
-	const base = root ?? (await fs.realpath(cwd));
-	let real: string;
-	try {
-		real = await fs.realpath(path.resolve(cwd, input));
-	} catch {
-		throw new Error("file not found");
-	}
-	if (!isInside(base, real))
-		throw new Error(root ? "path is outside the repository" : "path is outside the session directory");
+	const scope = await repoScope(cwd);
+	const real = await resolveInScope(cwd, scope, input);
+	if (real === null) throw new Error("file not found");
 	const stat = await fs.stat(real);
 	if (!stat.isFile()) throw new Error("not a regular file");
 	const truncated = stat.size > FILE_BYTES;
 	const bytes = await Bun.file(real).slice(0, FILE_BYTES).bytes();
+	const text = hasNul(bytes) ? null : decodeCut(bytes, truncated);
+	const writable =
+		text !== null &&
+		!truncated &&
+		!sandboxed &&
+		!isGitInternal(scope.base, real) &&
+		(await fs.access(real, fs.constants.W_OK).then(
+			() => true,
+			() => false,
+		));
 	return {
-		path: path.relative(base, real) || path.basename(real),
+		path: path.relative(scope.base, real) || path.basename(real),
 		size: stat.size,
-		text: hasNul(bytes) ? null : decodeCut(bytes, truncated),
-		truncated: truncated && !hasNul(bytes),
+		text,
+		truncated: truncated && text !== null,
+		version: fileVersion(stat, bytes),
+		writable,
 	};
 }

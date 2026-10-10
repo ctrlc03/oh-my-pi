@@ -51,6 +51,8 @@ const TRANSCRIBE_TIMEOUT_MS = 120_000;
 const TRANSCRIBE_SETUP_TIMEOUT_MS = 30 * 60_000;
 /** GitHub listings go through `gh` to the GitHub API (the companion allows it 20s). */
 const GITHUB_TIMEOUT_MS = 30_000;
+/** Listing a huge repository can take git a while. */
+const TREE_TIMEOUT_MS = 60_000;
 /** Pings sent per round-trip measurement; the median is reported. */
 const PING_SAMPLES = 3;
 
@@ -217,7 +219,7 @@ export interface GithubItemDetail extends GithubItem {
 	size: { additions: number; deletions: number; files: number } | null;
 }
 
-/** A read-only file read inside a session's repository (or cwd outside a repository). */
+/** A file inside a session's repository (or cwd outside a repository); read-only unless `writable`. */
 export interface FileContent {
 	/** Path relative to the repository root (or cwd). */
 	path: string;
@@ -225,6 +227,23 @@ export interface FileContent {
 	size: number;
 	/** UTF-8 text, or null for a binary file. */
 	text: string | null;
+	truncated: boolean;
+	/**
+	 * Identifies the content on disk: a hash of the bytes plus the size for files the companion reads whole,
+	 * the size plus modification time for larger ones. `file-write` is refused unless its `base` equals it.
+	 */
+	version: string;
+	/** The app may save it: text, not truncated, writable by the companion, outside `.git`, and the session is not sandboxed. */
+	writable: boolean;
+}
+
+/** The files of a session's repository (or cwd outside a repository), for the editor's file picker. */
+export interface FileTree {
+	/** Absolute repository root, or the session's real cwd outside a repository. */
+	root: string;
+	/** Files under `root`, root-relative with "/" separators, sorted. */
+	files: string[];
+	/** The listing stopped at the cap. */
 	truncated: boolean;
 }
 
@@ -510,6 +529,18 @@ export interface SessionHolder {
 	app: string | null;
 }
 
+/** A `file-write` was refused because the file changed on disk since the edit started. */
+export class FileChangedError extends Error {
+	/** The file's version now; null when it was deleted. */
+	readonly version: string | null;
+
+	constructor(version: string | null) {
+		super("The file changed on disk since you opened it");
+		this.name = "FileChangedError";
+		this.version = version;
+	}
+}
+
 /** `start` refused to resume a session another omp on the computer has open; `force` resumes it anyway. */
 export class SessionOpenElsewhereError extends Error {
 	readonly holders: SessionHolder[];
@@ -609,7 +640,16 @@ export type CompanionRequest =
 	/** Issues or pull requests of the session's GitHub repository, read through `gh` (needs `canGithub`). */
 	| { t: "github"; reqId: number; instanceId: string; kind: GithubKind; filter: GithubFilter }
 	/** One issue or pull request with its description, comments and checks (needs `canGithub`). */
-	| { t: "github-item"; reqId: number; instanceId: string; kind: GithubKind; number: number };
+	| { t: "github-item"; reqId: number; instanceId: string; kind: GithubKind; number: number }
+	/** The files of the session's repository (needs `canEdit`). */
+	| { t: "tree"; reqId: number; instanceId: string }
+	/**
+	 * Replace the text of an existing file; `path` is absolute or relative to the session's cwd. `base` is the
+	 * `version` the edit started from: a file that changed since is refused (an error with `changed`).
+	 */
+	| { t: "file-write"; reqId: number; instanceId: string; path: string; text: string; base: string }
+	/** Current versions of up to 20 files, to notice edits made behind an open editor. */
+	| { t: "file-versions"; reqId: number; instanceId: string; paths: string[] };
 
 export type CompanionReply =
 	/**
@@ -629,6 +669,8 @@ export type CompanionReply =
 			canPr?: boolean;
 			/** The companion can build code maps (its omp checkout loads the codemap index). */
 			canCodemap?: boolean;
+			/** The companion can list and edit files of a session's repository. */
+			canEdit?: boolean;
 			/** The companion can screenshot local pages (it found Chrome or another Chromium browser). */
 			canPreview?: boolean;
 			/** The companion can list the session repository's issues and pull requests (`gh` signed in). */
@@ -650,11 +692,19 @@ export type CompanionReply =
 	| { t: "diag"; reqId: number; diag: CompanionDiag }
 	/** What the maintenance command printed (trimmed). */
 	| { t: "maintain"; reqId: number; output: string }
-	/** `openElsewhere`: why a `start` that resumes a session was refused; see {@link SessionOpenElsewhereError}. */
-	| { t: "error"; reqId: number; message: string; openElsewhere?: SessionHolder[] }
+	/**
+	 * `openElsewhere`: why a `start` that resumes a session was refused; see {@link SessionOpenElsewhereError}.
+	 * `changed`: a `file-write` was refused because the file changed on disk; its current version, null when deleted.
+	 */
+	| { t: "error"; reqId: number; message: string; openElsewhere?: SessionHolder[]; changed?: string | null }
 	| { t: "git"; reqId: number; git: GitSnapshot }
 	| { t: "diff"; reqId: number; diff: string; truncated: boolean }
 	| { t: "file"; reqId: number; file: FileContent }
+	| { t: "tree"; reqId: number; tree: FileTree }
+	/** The saved text's version. */
+	| { t: "file-saved"; reqId: number; version: string }
+	/** In the order of the request's paths; null for a file that is missing or unreadable. */
+	| { t: "file-versions"; reqId: number; versions: (string | null)[] }
 	| { t: "folders"; reqId: number; folders: RecentFolder[] }
 	| { t: "review"; reqId: number; review: GitReview }
 	/** The started session is hosting and listed under `instanceId`. */
@@ -791,6 +841,8 @@ export interface CompanionSnapshot {
 	canPr: boolean;
 	/** The companion can build code maps. */
 	canCodemap: boolean;
+	/** The companion can list and edit files of a session's repository. */
+	canEdit: boolean;
 	/** The companion can screenshot local pages. */
 	canPreview: boolean;
 	/** The companion can list the session repository's issues and pull requests. */
@@ -846,6 +898,7 @@ export class CompanionClient {
 		canSandbox: false,
 		canPr: false,
 		canCodemap: false,
+		canEdit: false,
 		canPreview: false,
 		canGithub: false,
 		transcribe: null,
@@ -946,6 +999,22 @@ export class CompanionClient {
 
 	async requestFile(instanceId: string, path: string): Promise<FileContent> {
 		return (await this.#call({ t: "file", instanceId, path }, "file")).file;
+	}
+
+	async requestTree(instanceId: string): Promise<FileTree> {
+		return (await this.#call({ t: "tree", instanceId }, "tree", TREE_TIMEOUT_MS)).tree;
+	}
+
+	/**
+	 * Save `text` over an existing file; resolves the new version.
+	 * @throws {FileChangedError} the file's version is no longer `base`.
+	 */
+	async writeFile(instanceId: string, path: string, text: string, base: string): Promise<string> {
+		return (await this.#call({ t: "file-write", instanceId, path, text, base }, "file-saved")).version;
+	}
+
+	async requestFileVersions(instanceId: string, paths: string[]): Promise<(string | null)[]> {
+		return (await this.#call({ t: "file-versions", instanceId, paths }, "file-versions")).versions;
 	}
 
 	async requestFolders(): Promise<RecentFolder[]> {
@@ -1215,6 +1284,7 @@ export class CompanionClient {
 				canSandbox: frame.canSandbox ?? false,
 				canPr: frame.canPr ?? false,
 				canCodemap: frame.canCodemap ?? false,
+				canEdit: frame.canEdit ?? false,
 				canPreview: frame.canPreview ?? false,
 				canGithub: frame.canGithub ?? false,
 				transcribe: frame.transcribe ?? null,
@@ -1228,11 +1298,11 @@ export class CompanionClient {
 		if (!pending) return;
 		this.#pending.delete(frame.reqId);
 		clearTimeout(pending.timer);
-		if (frame.t === "error")
-			pending.reject(
-				frame.openElsewhere ? new SessionOpenElsewhereError(frame.openElsewhere) : new Error(frame.message),
-			);
-		else if (frame.t !== pending.expect) pending.reject(new Error(`unexpected companion reply: ${frame.t}`));
+		if (frame.t === "error") {
+			if (frame.openElsewhere) pending.reject(new SessionOpenElsewhereError(frame.openElsewhere));
+			else if (frame.changed !== undefined) pending.reject(new FileChangedError(frame.changed));
+			else pending.reject(new Error(frame.message));
+		} else if (frame.t !== pending.expect) pending.reject(new Error(`unexpected companion reply: ${frame.t}`));
 		else pending.resolve(frame);
 	}
 

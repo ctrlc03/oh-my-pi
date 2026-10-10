@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentDrawer } from "./components/agents/AgentDrawer";
 import { AgentsPanel, isInactive } from "./components/agents/AgentsPanel";
 import { LazyCodemapSheet } from "./components/codemap/LazyCodemapSheet";
+import { LazyIdeSheet } from "./components/ide/LazyIdeSheet";
 import { Banners } from "./components/shell/Banners";
 import { ChangesSheet } from "./components/shell/ChangesSheet";
 import { Composer, type ComposerHandle } from "./components/shell/Composer";
@@ -415,6 +416,14 @@ function Session({
 	const [codemap, setCodemap] = useState<{ file?: string } | null>(null);
 	const canCodemap = companionClient !== null && hostId !== null && companion?.snap.canCodemap === true;
 	const openCodemap = useCallback(() => setCodemap({}), []);
+	// The editor replaces the read-only file viewer once the paired computer can save files.
+	const canEdit = companionClient !== null && hostId !== null && companion?.snap.canEdit === true;
+	const [editor, setEditor] = useState<{ target: { path: string; line?: number } | null } | null>(null);
+	const openEditor = useCallback(() => setEditor(open => open ?? { target: null }), []);
+	const openFile = useCallback(
+		(path: string, line?: number) => (canEdit ? setEditor({ target: { path, line } }) : setFile({ path, line })),
+		[canEdit],
+	);
 	const [paneOpen, setPaneOpen] = useState(false);
 	const openPane = useCallback(() => setPaneOpen(true), []);
 	const canPreview =
@@ -452,7 +461,7 @@ function Session({
 			openAgent: id => {
 				if (agentIds.has(id)) setSelectedId(id);
 			},
-			openFile: hostId !== null ? path => setFile({ path }) : undefined,
+			openFile: hostId !== null ? path => openFile(path) : undefined,
 			// Tool cards name paths as the agent wrote them: relative ones are relative to the session's folder.
 			showInCodemap: canCodemap
 				? path =>
@@ -461,7 +470,7 @@ function Session({
 						})
 				: undefined,
 		}),
-		[agentIds, hostId, canCodemap, cwd],
+		[agentIds, hostId, canCodemap, cwd, openFile],
 	);
 
 	// Auto-open the rail the first time a subagent appears, only where it docks
@@ -645,6 +654,7 @@ function Session({
 				onOpenPane={companionClient !== null && hostId !== null ? openPane : null}
 				onOpenPreview={canPreview ? openPreview : null}
 				onOpenGithub={canGithub ? openGithub : null}
+				onOpenEditor={canEdit ? openEditor : null}
 				screenCount={screens.length}
 				onOpenScreens={openScreens}
 				push={push}
@@ -789,7 +799,7 @@ function Session({
 					currentSessionId={sessionId}
 					onOpenHost={onOpenHost}
 					onOpenLink={onOpenLink}
-					onOpenFile={(path, line) => setFile({ path, line })}
+					onOpenFile={openFile}
 					onClose={() => setCodemap(null)}
 				/>
 			)}
@@ -811,6 +821,18 @@ function Session({
 					instanceId={hostId}
 					onSendToAgent={snap.readOnly ? null : sendToAgent}
 					onClose={() => setGithubOpen(false)}
+				/>
+			)}
+			{editor !== null && canEdit && (
+				<LazyIdeSheet
+					client={companionClient}
+					instanceId={hostId}
+					target={editor.target}
+					readOnly={snap.readOnly}
+					canDefinition={canCodemap}
+					edits={editCount}
+					onSendToAgent={snap.readOnly ? null : sendToAgent}
+					onClose={() => setEditor(null)}
 				/>
 			)}
 			{file !== null && companionClient !== null && hostId !== null && (

@@ -19,9 +19,10 @@
  * 0600), so restarts keep devices paired. The companion serves only devices that
  * authenticated: holding the room key alone gets nothing. A paired device can join
  * every session on this computer with full control, exactly as if it held each
- * session's control link, and can read files under each session's repository and
- * start omp in any folder. The app's Devices screen lists, renames and removes
- * devices and makes new invites; removing a device cuts it off at once.
+ * session's control link, can read and edit files under each session's
+ * repository (but not those of a sandboxed session, nor anything inside `.git`),
+ * and can start omp in any folder. The app's Devices screen lists, renames and
+ * removes devices and makes new invites; removing a device cuts it off at once.
  *
  * `--install` writes `~/Library/LaunchAgents/sh.omp.collab-companion.plist`
  * (RunAtLoad + KeepAlive, absolute bun/script/omp paths, log in
@@ -67,6 +68,7 @@ import {
 	type CompanionPower,
 	type CompanionReply,
 	type CompanionRequest,
+	FileChangedError,
 	formatPairingUrl,
 	LOW_BATTERY_PCT,
 	type PushSubscriptionJson,
@@ -85,6 +87,7 @@ import { CollabSocket } from "../src/lib/socket";
 import { checkFlow, checkFocus, checkSearch, codemapSearch, codemapView, loadCodemap } from "./companion-codemap";
 import { collectDiag, recordRelayEvent, recordRequestError } from "./companion-diag";
 import { findFileSessions, repoRelativeFocus } from "./companion-file-sessions";
+import { fileVersions, listTree, writeRepoFile } from "./companion-files";
 import { gitDiff, gitSnapshot, isInside, readRepoFile } from "./companion-git";
 import {
 	canCreatePr,
@@ -442,6 +445,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canSandbox: extras.canStart && sandboxAvailable,
 		canPr: extras.canPr,
 		canCodemap: codemapReady,
+		canEdit: true,
 		canPreview: previewChrome !== null,
 		// Reading issues and pull requests needs the same signed-in gh as opening one.
 		canGithub: extras.canPr,
@@ -459,8 +463,8 @@ function checkInstanceId(value: unknown): string {
 	return value;
 }
 
-/** Working directory of a listed session, refreshing the list once for an unknown instance. */
-async function sessionCwd(instanceId: unknown): Promise<string> {
+/** A listed session, refreshing the list once for an unknown instance. */
+async function listedSession(instanceId: unknown): Promise<CompanionHost | CompanionIdleSession> {
 	const id = checkInstanceId(instanceId);
 	const find = () => [...knownHosts, ...knownIdle].find(s => s.instanceId === id);
 	let session = find();
@@ -469,7 +473,12 @@ async function sessionCwd(instanceId: unknown): Promise<string> {
 		session = find();
 	}
 	if (!session) throw new Error("unknown session");
-	return session.cwd;
+	return session;
+}
+
+/** Working directory of a listed session. */
+async function sessionCwd(instanceId: unknown): Promise<string> {
+	return (await listedSession(instanceId)).cwd;
 }
 
 /** Working directory of a listed session whose repository the app may change: refused while its agent works. */
@@ -691,7 +700,8 @@ socket.onFrame = (frame, fromPeer) => {
 				recordRequestError(frame.t, errorText(err));
 				console.error(`companion: ${new Date().toISOString()} ${frame.t} failed: ${errorText(err)}`);
 				const openElsewhere = err instanceof SessionOpenElsewhereError ? err.holders : undefined;
-				socket.send({ t: "error", reqId, message: errorText(err), openElsewhere }, fromPeer);
+				const changed = err instanceof FileChangedError ? err.version : undefined;
+				socket.send({ t: "error", reqId, message: errorText(err), openElsewhere, changed }, fromPeer);
 			},
 		);
 	};
@@ -732,12 +742,42 @@ socket.onFrame = (frame, fromPeer) => {
 		case "file":
 			respond(frame.reqId, async () => {
 				if (typeof frame.path !== "string") throw new Error("invalid path");
+				const session = await listedSession(frame.instanceId);
 				return {
 					t: "file",
 					reqId: frame.reqId,
-					file: await readRepoFile(await sessionCwd(frame.instanceId), frame.path),
+					file: await readRepoFile(session.cwd, frame.path, session.sandboxed === true),
 				};
 			});
+			return;
+		case "tree":
+			respond(frame.reqId, async () => ({
+				t: "tree",
+				reqId: frame.reqId,
+				tree: await listTree(await sessionCwd(frame.instanceId)),
+			}));
+			return;
+		case "file-write":
+			respond(frame.reqId, async () => {
+				if (typeof frame.path !== "string" || typeof frame.text !== "string" || typeof frame.base !== "string")
+					throw new Error("invalid file-write");
+				const session = await listedSession(frame.instanceId);
+				const version = await writeRepoFile(
+					session.cwd,
+					frame.path,
+					frame.text,
+					frame.base,
+					session.sandboxed === true,
+				);
+				return { t: "file-saved", reqId: frame.reqId, version };
+			});
+			return;
+		case "file-versions":
+			respond(frame.reqId, async () => ({
+				t: "file-versions",
+				reqId: frame.reqId,
+				versions: await fileVersions(await sessionCwd(frame.instanceId), frame.paths),
+			}));
 			return;
 		case "folders":
 			respond(frame.reqId, async () => ({

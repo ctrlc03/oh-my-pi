@@ -25,6 +25,7 @@
 
 - Reduced memory growth after one-shot side requests without interrupting ongoing conversations ([#14334](https://github.com/can1357/oh-my-pi/pull/14334) by [@iliaal](https://github.com/iliaal)).
 - Fixed sessions staying untitled when you interrupted the first reply to send a queued steer message.
+- Fixed collab rooms ending with "collab send backlog exceeded its limit" while many subagents ran: guests now receive only each subagent's latest progress, sent once the previous update has gone out.
 
 ## [18.8.6] - 2026-10-08
 

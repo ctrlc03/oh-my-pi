@@ -245,6 +245,34 @@
 	border-color: var(--border-strong);
 }
 
+/* Turns hidden by "keep the latest turns": a quiet note where earlier rows would start. */
+.tr-trimmed {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: center;
+	gap: 6px 10px;
+	margin: 4px auto 16px;
+	color: var(--fg-faint);
+	font-size: 12px;
+	text-align: center;
+}
+
+.tr-trimmed-show {
+	height: 28px;
+	padding: 0 14px;
+	border: 1px solid var(--border-strong);
+	border-radius: 999px;
+	background: var(--bg-raised);
+	color: var(--fg-muted);
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.tr-trimmed-show:hover {
+	color: var(--fg);
+}
+
 .tr-shimmer {
 	color: var(--fg-muted);
 	font-size: 12.5px;

@@ -38,6 +38,9 @@ export interface HeaderBarProps {
 	sidebarAlert: boolean;
 	chat: boolean;
 	onChatChange(chat: boolean): void;
+	/** Latest turns this device keeps showing (null: all); undefined until the session is known. */
+	keepTurns: number | null | undefined;
+	onKeepTurnsChange(keep: number | null): void;
 	changeCount: number;
 	onOpenChanges(): void;
 	/** Usage and all-sessions screens; null when no computer is paired. */
@@ -84,6 +87,8 @@ export const HeaderBar = memo(function HeaderBar({
 	sidebarAlert,
 	chat,
 	onChatChange,
+	keepTurns,
+	onKeepTurnsChange,
 	changeCount,
 	onOpenChanges,
 	onOpenUsage,
@@ -276,6 +281,8 @@ export const HeaderBar = memo(function HeaderBar({
 					contextPct={pct}
 					chat={chat}
 					onChatChange={onChatChange}
+					keepTurns={keepTurns}
+					onKeepTurnsChange={onKeepTurnsChange}
 					changeCount={changeCount}
 					onOpenChanges={() => {
 						setSheetOpen(false);

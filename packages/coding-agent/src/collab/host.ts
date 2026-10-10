@@ -32,7 +32,6 @@ import { parseCompactArgs } from "../session/compact-modes";
 import { stripImagesFromMessage, USER_INTERRUPT_LABEL } from "../session/messages";
 import type { SessionEntry as StoredSessionEntry } from "../session/session-entries";
 import {
-	type SubagentLifecyclePayload,
 	type SubagentProgressPayload,
 	TASK_SUBAGENT_LIFECYCLE_CHANNEL,
 	TASK_SUBAGENT_PROGRESS_CHANNEL,
@@ -90,8 +89,8 @@ const STATE_TRIGGER_EVENTS: Record<string, true> = {
 
 const STATE_DEBOUNCE_MS = 100;
 const AGENTS_DEBOUNCE_MS = 100;
-/** Gathers the ticks of subagents running side by side into one flush. */
-const PROGRESS_GATHER_MS = 50;
+/** Gathers streaming updates and subagent ticks that land together into one flush. */
+const SUPERSEDING_GATHER_MS = 16;
 const STREAMING_STATE_INTERVAL_MS = 2000;
 const WELCOME_IMAGE_STRIP_THRESHOLD = 24 * 1024 * 1024;
 const WIRE_AGENT_EVENT_TYPES: Record<WireAgentEvent["type"], true> = {
@@ -265,15 +264,18 @@ export class CollabHost {
 	#agentsDebounce: Timer | null = null;
 	#busUnsubscribers: (() => void)[] = [];
 	/**
-	 * Unsent subagent progress, latest tick per subagent id. A tick carries the
-	 * agent's whole current view, so a newer one supersedes an unsent older one.
-	 * Forwarded one frame per tick, a dozen busy subagents outran a slow relay
-	 * link and tripped the send backlog limit, which ends the room.
+	 * Unsent broadcasts that each carry a whole current view, keyed by what they
+	 * describe: `message_update` the reply so far, `tool_execution_update` the
+	 * tool's partial result so far, a subagent progress tick the agent's state.
+	 * A newer one supersedes an unsent older one. Forwarded one frame per token
+	 * or tick, a long reply, a large tool call, or a busy task run outran a slow
+	 * relay link and tripped the send backlog limit, which ends the room. Built
+	 * lazily, so only the survivor is serialized.
 	 */
-	#pendingProgress = new Map<string, SubagentProgressPayload>();
-	#progressTimer: Timer | null = null;
+	#superseding = new Map<string, () => CollabFrame | EncodedFrame>();
+	#supersedingTimer: Timer | null = null;
 	/** A flush is still queued in the socket; the next waits for it to drain. */
-	#progressDraining = false;
+	#supersedingDraining = false;
 	#registryUnsubscribe?: () => void;
 	/** Set the moment `stop()` begins; `#stopped` follows once teardown has run. */
 	#stopping = false;
@@ -501,11 +503,13 @@ export class CollabHost {
 					observabilityBus.on(channel, data => {
 						if (!this.#broadcastAllowed()) return;
 						if (channel === TASK_SUBAGENT_PROGRESS_CHANNEL) {
-							this.#queueProgress(data as SubagentProgressPayload);
+							this.#supersede(`progress:${(data as SubagentProgressPayload).progress.id}`, () => ({
+								t: "bus",
+								channel,
+								data,
+							}));
 							return;
 						}
-						// A lifecycle frame must not overtake the progress it settles.
-						if (this.#pendingProgress.has((data as SubagentLifecyclePayload).id)) this.#sendPendingProgress();
 						this.#send({ t: "bus", channel, data });
 					}),
 				);
@@ -616,9 +620,9 @@ export class CollabHost {
 		this.#unsubscribe = undefined;
 		for (const unsubscribe of this.#busUnsubscribers) unsubscribe();
 		this.#busUnsubscribers = [];
-		clearTimeout(this.#progressTimer ?? undefined);
-		this.#progressTimer = null;
-		this.#pendingProgress.clear();
+		clearTimeout(this.#supersedingTimer ?? undefined);
+		this.#supersedingTimer = null;
+		this.#superseding.clear();
 		this.#registryUnsubscribe?.();
 		this.#registryUnsubscribe = undefined;
 		clearTimeout(this.#stateDebounce ?? undefined);
@@ -716,6 +720,7 @@ export class CollabHost {
 		// current-session data. Do not strand guests if it settles during a
 		// provisional /resume that later rolls back. All other traffic stays gated.
 		if (this.ending || (!this.#sessionStillCurrent() && frame.t !== "ui-request-end")) return;
+		this.#flushSuperseding();
 		// Compression is per recipient: only a peer that said `zip` in its hello can open it.
 		this.#socket?.send(frame, toPeer, toPeer !== 0 && this.#peers.get(toPeer)?.zip === true);
 	}
@@ -734,7 +739,15 @@ export class CollabHost {
 	/** Broadcast one session event, bounded and serialized exactly once. */
 	#broadcastEvent(event: AgentSessionEvent): void {
 		if (!this.#broadcastAllowed()) return;
-		this.#socket?.send(encodeEventFrame(serializeReplicatedEvent(event).json));
+		const encode = () => encodeEventFrame(serializeReplicatedEvent(event).json);
+		if (event.type === "message_update") {
+			this.#supersede("message", encode);
+		} else if (event.type === "tool_execution_update") {
+			this.#supersede(`tool:${event.toolCallId}`, encode);
+		} else {
+			this.#flushSuperseding();
+			this.#socket?.send(encode());
+		}
 	}
 
 	/** The wire-visible entries of root → leaf: what a joining guest replicates. */
@@ -776,6 +789,7 @@ export class CollabHost {
 			// (PR #11999 review). Notices never enter agent state.
 			this.#send({ t: "event", event: oversizedEntryNotice(entry.type) });
 		}
+		this.#flushSuperseding();
 		this.#socket?.send(encodeEntryFrame(bounded.json));
 	}
 
@@ -800,6 +814,7 @@ export class CollabHost {
 			bytes += fresh.bytes[inBranchFrame] ?? 0;
 			inBranchFrame++;
 		}
+		this.#flushSuperseding();
 		this.#socket?.send(encodeBranchFrame(keep, fresh.json.slice(0, inBranchFrame)));
 		for (const json of fresh.json.slice(inBranchFrame)) this.#socket?.send(encodeEntryFrame(json));
 	}
@@ -1286,40 +1301,41 @@ export class CollabHost {
 		);
 	}
 
-	#queueProgress(payload: SubagentProgressPayload): void {
-		this.#pendingProgress.set(payload.progress.id, payload);
-		if (this.#progressTimer || this.#progressDraining) return;
-		this.#progressTimer = setTimeout(() => {
-			this.#progressTimer = null;
-			this.#sendPendingProgress();
-		}, PROGRESS_GATHER_MS);
+	#supersede(key: string, build: () => CollabFrame | EncodedFrame): void {
+		// Re-inserted, not updated: the flush keeps the order the latest views arrived in.
+		this.#superseding.delete(key);
+		this.#superseding.set(key, build);
+		if (this.#supersedingTimer || this.#supersedingDraining) return;
+		this.#supersedingTimer = setTimeout(() => {
+			this.#supersedingTimer = null;
+			this.#flushSuperseding();
+		}, SUPERSEDING_GATHER_MS);
 	}
 
 	/**
-	 * Sends the latest tick of every subagent, then holds further ticks until the
-	 * socket has taken these: at most one tick per subagent is ever queued, however
-	 * slow the link.
+	 * Sends the latest view of everything pending, then holds further views until
+	 * the socket has taken these: however slow the link, at most one frame per
+	 * key is ever queued. Every other outbound frame flushes first, so an update
+	 * never lands after the `message_end`, entry, or lifecycle frame it precedes.
 	 */
-	#sendPendingProgress(): void {
-		clearTimeout(this.#progressTimer ?? undefined);
-		this.#progressTimer = null;
+	#flushSuperseding(): void {
+		if (this.#superseding.size === 0) return;
+		clearTimeout(this.#supersedingTimer ?? undefined);
+		this.#supersedingTimer = null;
 		const socket = this.#socket;
-		if (!socket || this.#pendingProgress.size === 0) return;
-		// The last guest left while ticks waited: the next welcome carries fresh state.
-		if (!this.#broadcastAllowed()) {
-			this.#pendingProgress.clear();
-			return;
-		}
-		for (const data of this.#pendingProgress.values()) {
-			this.#send({ t: "bus", channel: TASK_SUBAGENT_PROGRESS_CHANNEL, data });
-		}
-		this.#pendingProgress.clear();
-		this.#progressDraining = true;
+		const pending = [...this.#superseding.values()];
+		this.#superseding.clear();
+		// The last guest left while views waited: the next welcome carries fresh state.
+		if (!socket || !this.#broadcastAllowed()) return;
+		for (const build of pending) socket.send(build());
+		this.#supersedingDraining = true;
 		void socket.flush().finally(() => {
-			this.#progressDraining = false;
-			if (this.#socket !== socket || this.ending) return;
-			const next = this.#pendingProgress.values().next();
-			if (!next.done) this.#queueProgress(next.value);
+			this.#supersedingDraining = false;
+			if (this.#socket !== socket || this.ending || this.#superseding.size === 0) return;
+			this.#supersedingTimer = setTimeout(() => {
+				this.#supersedingTimer = null;
+				this.#flushSuperseding();
+			}, SUPERSEDING_GATHER_MS);
 		});
 	}
 

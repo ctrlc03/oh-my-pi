@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { importRoomKey } from "@oh-my-pi/pi-coding-agent/collab/crypto";
 import { CollabHost } from "@oh-my-pi/pi-coding-agent/collab/host";
-import { COLLAB_PROTO, parseCollabLink } from "@oh-my-pi/pi-coding-agent/collab/protocol";
+import type { AgentSessionEvent } from "@oh-my-pi/pi-coding-agent/session/agent-session";
+import { COLLAB_PROTO, type CollabFrame, parseCollabLink } from "@oh-my-pi/pi-coding-agent/collab/protocol";
 import { CollabSocket } from "@oh-my-pi/pi-coding-agent/collab/relay-client";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
@@ -11,12 +12,15 @@ import { TASK_SUBAGENT_LIFECYCLE_CHANNEL, TASK_SUBAGENT_PROGRESS_CHANNEL } from 
 import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
 import { installInMemoryRelay, uninstallInMemoryRelay } from "./helpers/in-memory-relay";
 
-// Many subagents tick progress far faster than a relay link drains. Forwarded
-// one frame per tick, a burst overflowed the socket's send backlog and ended
-// the room for every guest. Progress is state, so only the latest tick per
-// subagent needs to reach guests — and a lifecycle frame must still follow it.
+// Streaming replies and subagent progress update far faster than a relay link
+// drains. Forwarded one frame per token or tick, a burst overflowed the
+// socket's send backlog and ended the room for every guest. Each update carries
+// a whole current view, so only the latest needs to reach guests — and the
+// frame that settles it (message_end, lifecycle) must still follow it.
 
-function makeHostContext(eventBus: EventBus): InteractiveModeContext {
+type SessionListener = (event: AgentSessionEvent) => void;
+
+function makeHostContext(eventBus: EventBus, listeners: SessionListener[] = []): InteractiveModeContext {
 	return {
 		settings: Settings.isolated(),
 		sessionManager: SessionManager.inMemory(),
@@ -29,7 +33,10 @@ function makeHostContext(eventBus: EventBus): InteractiveModeContext {
 			thinkingLevel: undefined,
 			getAvailableEffortSelectors: () => [],
 			getQueuedMessages: () => ({ steering: [], followUp: [] }),
-			subscribe: () => () => {},
+			subscribe: (listener: SessionListener) => {
+				listeners.push(listener);
+				return () => {};
+			},
 			emitNotice: () => {},
 			promptCustomMessage: () => Promise.resolve(),
 			abort: () => Promise.resolve(),
@@ -66,22 +73,51 @@ afterEach(() => {
 	AgentRegistry.resetGlobalForTests();
 });
 
-describe("collab host subagent progress", () => {
+async function joinGuest(host: CollabHost, onFrame: (frame: CollabFrame) => void) {
+	const parsed = parseCollabLink(host.link);
+	if ("error" in parsed) throw new Error(parsed.error);
+	const guestSocket = new CollabSocket({ wsUrl: parsed.wsUrl, role: "guest", key: await importRoomKey(parsed.key) });
+	const welcomed = Promise.withResolvers<void>();
+	guestSocket.onFrame = frame => {
+		if (frame.t === "welcome") welcomed.resolve();
+		onFrame(frame);
+	};
+	guestSocket.onOpen = () => {
+		guestSocket.send({
+			t: "hello",
+			proto: COLLAB_PROTO,
+			name: "probe-guest",
+			writeToken: parsed.writeToken ? Buffer.from(parsed.writeToken).toString("base64url") : undefined,
+		});
+	};
+	guestSocket.connect();
+	await welcomed.promise;
+	return guestSocket;
+}
+
+function reply(text: string) {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: "anthropic-messages",
+		provider: "anthropic",
+		model: "probe",
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		stopReason: "stop",
+		timestamp: 0,
+	};
+}
+
+describe("collab host superseding broadcasts", () => {
 	it("survives a progress burst and delivers each subagent's latest tick before its lifecycle", async () => {
 		const bus = new EventBus();
 		const host = new CollabHost(makeHostContext(bus));
 		await host.start("ws://localhost:8788");
 
-		const parsed = parseCollabLink(host.link);
-		if ("error" in parsed) throw new Error(parsed.error);
-		const guestSocket = new CollabSocket({ wsUrl: parsed.wsUrl, role: "guest", key: await importRoomKey(parsed.key) });
-
-		const welcomed = Promise.withResolvers<void>();
 		const done = Promise.withResolvers<void>();
 		const seen: string[] = [];
 		const latest: Record<string, number> = {};
-		guestSocket.onFrame = frame => {
-			if (frame.t === "welcome") welcomed.resolve();
+		const guestSocket = await joinGuest(host, frame => {
 			if (frame.t !== "bus") return;
 			if (frame.channel === TASK_SUBAGENT_PROGRESS_CHANNEL) {
 				const { progress } = frame.data as ReturnType<typeof tick>;
@@ -93,19 +129,9 @@ describe("collab host subagent progress", () => {
 				seen.push(`lifecycle:${id}:${status}`);
 				if (id === "Agent11") done.resolve();
 			}
-		};
-		guestSocket.onOpen = () => {
-			guestSocket.send({
-				t: "hello",
-				proto: COLLAB_PROTO,
-				name: "probe-guest",
-				writeToken: parsed.writeToken ? Buffer.from(parsed.writeToken).toString("base64url") : undefined,
-			});
-		};
-		guestSocket.connect();
+		});
 
 		try {
-			await welcomed.promise;
 			const agents = Array.from({ length: 12 }, (_, i) => `Agent${i}`);
 			// Far more ticks than the socket's 256-entry backlog, all in one burst.
 			for (let n = 1; n <= 100; n++) {
@@ -123,6 +149,54 @@ describe("collab host subagent progress", () => {
 				expect(seen.indexOf(`progress:${id}:100`)).toBeLessThan(seen.indexOf(`lifecycle:${id}:completed`));
 			}
 			expect(seen.filter(entry => entry.startsWith("progress:")).length).toBeLessThan(100);
+		} finally {
+			guestSocket.close();
+			await host.stop("test cleanup").catch(() => {});
+		}
+	}, 20000);
+
+	it("survives a long streamed reply and delivers its final text before message_end", async () => {
+		const listeners: SessionListener[] = [];
+		const host = new CollabHost(makeHostContext(new EventBus(), listeners));
+		await host.start("ws://localhost:8788");
+
+		const ended = Promise.withResolvers<void>();
+		const seen: string[] = [];
+		let lastText = "";
+		const guestSocket = await joinGuest(host, frame => {
+			if (frame.t !== "event") return;
+			if (frame.event.type === "message_update") {
+				const part = (frame.event.message as ReturnType<typeof reply>).content[0];
+				lastText = part?.text ?? "";
+				seen.push("update");
+			}
+			if (frame.event.type === "message_end") {
+				seen.push(`end:${lastText.length}`);
+				ended.resolve();
+			}
+		});
+
+		try {
+			const emit = (event: unknown) => {
+				for (const listener of listeners) listener(event as AgentSessionEvent);
+			};
+			// Every token resends the whole reply so far, as a real stream does.
+			let text = "";
+			emit({ type: "message_start", message: reply("") });
+			for (let n = 0; n < 2000; n++) {
+				text += "token ";
+				emit({
+					type: "message_update",
+					message: reply(text),
+					assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "token ", partial: reply(text) },
+				});
+			}
+			emit({ type: "message_end", message: reply(text) });
+
+			await Promise.race([ended.promise, Bun.sleep(5000)]);
+			expect(host.ending).toBe(false);
+			expect(seen.at(-1)).toBe(`end:${text.length}`);
+			expect(seen.filter(entry => entry === "update").length).toBeLessThan(2000);
 		} finally {
 			guestSocket.close();
 			await host.stop("test cleanup").catch(() => {});

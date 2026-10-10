@@ -300,6 +300,7 @@
 - Fixed browser tab recordings and video frame/contact-sheet extraction creating `omp-browser-recording-*` and `omp-video-*` scratch directories in your working directory instead of the system temp directory.
 - Fixed edit snapshots retaining excess history when metadata or displayed-line provenance grows; the 64 MiB snapshot budget now counts UTF-8 bytes, so CJK- and emoji-heavy files keep fewer versions ([#14975](https://github.com/can1357/oh-my-pi/pull/14975) by [@iliaal](https://github.com/iliaal)).
 - Fixed collab rooms ending with "collab send backlog exceeded its limit" while many subagents ran: guests now receive only each subagent's latest progress, sent once the previous update has gone out.
+- Fixed collab rooms ending with "collab send backlog exceeded its limit" during long streamed replies, large tool calls, or busy subagent runs: guests now receive only the latest reply text, tool output, and subagent progress, sent once the previous update has gone out.
 
 ## [18.8.6] - 2026-10-08
 

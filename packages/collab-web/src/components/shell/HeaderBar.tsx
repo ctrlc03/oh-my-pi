@@ -49,6 +49,8 @@ export interface HeaderBarProps {
 	onOpenPane: (() => void) | null;
 	/** Live screenshot of a dev server the session runs; null unless the paired computer can capture pages. */
 	onOpenPreview: (() => void) | null;
+	/** Issues and pull requests of the session's repository; null unless the paired computer's `gh` is signed in. */
+	onOpenGithub: (() => void) | null;
 	/** Images the agent's tools produced this session. */
 	screenCount: number;
 	onOpenScreens(): void;
@@ -87,6 +89,7 @@ export const HeaderBar = memo(function HeaderBar({
 	onOpenCodemap,
 	onOpenPane,
 	onOpenPreview,
+	onOpenGithub,
 	screenCount,
 	onOpenScreens,
 	workingTree,
@@ -296,6 +299,13 @@ export const HeaderBar = memo(function HeaderBar({
 						(() => {
 							setSheetOpen(false);
 							onOpenPreview();
+						})
+					}
+					onOpenGithub={
+						onOpenGithub &&
+						(() => {
+							setSheetOpen(false);
+							onOpenGithub();
 						})
 					}
 					screenCount={screenCount}

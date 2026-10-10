@@ -54,7 +54,12 @@ function ghBin(): string | null {
 	return process.env.GH_BIN || Bun.which("gh");
 }
 
-async function gh(cwd: string, args: string[], timeout: number): Promise<{ code: number; out: string; err: string }> {
+/** Run `gh` in `cwd` without prompts; rejects only when it is not installed. */
+export async function gh(
+	cwd: string,
+	args: string[],
+	timeout: number,
+): Promise<{ code: number; out: string; err: string }> {
 	const bin = ghBin();
 	if (!bin) throw new Error("gh is not installed on this computer");
 	const proc = Bun.spawn([bin, ...args], {

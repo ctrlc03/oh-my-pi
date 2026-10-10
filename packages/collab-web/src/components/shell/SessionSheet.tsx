@@ -71,6 +71,8 @@ export interface SessionSheetProps {
 	onOpenPane: (() => void) | null;
 	/** Live screenshot of a dev server the session runs; null unless the paired computer can capture pages. */
 	onOpenPreview: (() => void) | null;
+	/** Issues and pull requests of the session's repository; null unless the paired computer's `gh` is signed in. */
+	onOpenGithub: (() => void) | null;
 	/** Images the agent's tools produced this session. */
 	screenCount: number;
 	onOpenScreens(): void;
@@ -108,6 +110,7 @@ export function SessionSheet({
 	onOpenCodemap,
 	onOpenPane,
 	onOpenPreview,
+	onOpenGithub,
 	screenCount,
 	onOpenScreens,
 	workingTree,
@@ -351,6 +354,17 @@ export function SessionSheet({
 						<dd>
 							<button type="button" className="sh-sheet-link" onClick={onOpenPreview}>
 								See the running app
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
+				{onOpenGithub && (
+					<div className="sh-sheet-row">
+						<dt>GitHub</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onOpenGithub}>
+								Issues and pull requests
 								<ChevronRight size={14} />
 							</button>
 						</dd>

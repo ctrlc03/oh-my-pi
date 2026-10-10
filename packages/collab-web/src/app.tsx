@@ -2,15 +2,16 @@ import type { SessionCommand } from "@oh-my-pi/pi-wire";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentDrawer } from "./components/agents/AgentDrawer";
-import { AgentsPanel } from "./components/agents/AgentsPanel";
+import { AgentsPanel, isInactive } from "./components/agents/AgentsPanel";
 import { LazyCodemapSheet } from "./components/codemap/LazyCodemapSheet";
 import { Banners } from "./components/shell/Banners";
 import { ChangesSheet } from "./components/shell/ChangesSheet";
-import { Composer } from "./components/shell/Composer";
+import { Composer, type ComposerHandle } from "./components/shell/Composer";
 import { ConnectScreen } from "./components/shell/ConnectScreen";
 import { FileSheet } from "./components/shell/FileSheet";
 import { HeaderBar } from "./components/shell/HeaderBar";
 import { PaneSheet } from "./components/shell/PaneSheet";
+import { GithubSheet } from "./components/shell/GithubSheet";
 import { PreviewSheet } from "./components/shell/PreviewSheet";
 import { ScreensSheet } from "./components/shell/ScreensSheet";
 import { SearchBar } from "./components/shell/SearchBar";
@@ -397,7 +398,8 @@ function Session({
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const autoOpenedRef = useRef(false);
 
-	const subCount = useMemo(() => snap.agents.filter(a => a.kind === "sub").length, [snap.agents]);
+	// Parked and aborted subagents stay in the rail (folded) but do not count on the badge or open the rail.
+	const subCount = useMemo(() => snap.agents.filter(a => a.kind === "sub" && !isInactive(a)).length, [snap.agents]);
 
 	// The paired computer's host for this very session. Working tree and file
 	// viewing read through it, and are hidden when there is none.
@@ -432,6 +434,14 @@ function Session({
 	);
 	const [previewOpen, setPreviewOpen] = useState(false);
 	const openPreview = useCallback(() => setPreviewOpen(true), []);
+	const canGithub = companionClient !== null && hostId !== null && companion?.snap.canGithub === true;
+	const [githubOpen, setGithubOpen] = useState(false);
+	const openGithub = useCallback(() => setGithubOpen(true), []);
+	const composerRef = useRef<ComposerHandle>(null);
+	const sendToAgent = useCallback((prompt: string) => {
+		setGithubOpen(false);
+		composerRef.current?.insert(prompt);
+	}, []);
 	const cwd = snap.state?.cwd ?? snap.header?.cwd ?? null;
 
 	// Task-card agent chips drill into the same drawer the rail uses.
@@ -633,6 +643,7 @@ function Session({
 				onOpenCodemap={canCodemap ? openCodemap : null}
 				onOpenPane={companionClient !== null && hostId !== null ? openPane : null}
 				onOpenPreview={canPreview ? openPreview : null}
+				onOpenGithub={canGithub ? openGithub : null}
 				screenCount={screens.length}
 				onOpenScreens={openScreens}
 				push={push}
@@ -678,6 +689,7 @@ function Session({
 						/>
 					</div>
 					<Composer
+						ref={composerRef}
 						key={roomId}
 						client={client}
 						phase={snap.phase}
@@ -788,6 +800,14 @@ function Session({
 					sessionId={sessionId}
 					edits={editCount}
 					onClose={() => setPreviewOpen(false)}
+				/>
+			)}
+			{githubOpen && canGithub && companionClient !== null && hostId !== null && (
+				<GithubSheet
+					client={companionClient}
+					instanceId={hostId}
+					onSendToAgent={snap.readOnly ? null : sendToAgent}
+					onClose={() => setGithubOpen(false)}
 				/>
 			)}
 			{file !== null && companionClient !== null && hostId !== null && (

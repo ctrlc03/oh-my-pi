@@ -97,6 +97,7 @@ import {
 	removeWorktree,
 	reviewDiff,
 } from "./companion-gitflow";
+import { githubItem, githubList } from "./companion-github";
 import { buildInbox } from "./companion-inbox";
 import { consumeInvite, type DeviceRecord, DeviceRegistry, issueInvite, parseDevices } from "./companion-devices";
 import { installLaunchAgent, launchLogPath, uninstallLaunchAgent } from "./companion-launchd";
@@ -442,6 +443,8 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canPr: extras.canPr,
 		canCodemap: codemapReady,
 		canPreview: previewChrome !== null,
+		// Reading issues and pull requests needs the same signed-in gh as opening one.
+		canGithub: extras.canPr,
 		transcribe: extras.transcribe ?? undefined,
 		power: power ?? undefined,
 	};
@@ -928,6 +931,19 @@ socket.onFrame = (frame, fromPeer) => {
 					// The companion and the omp processes are never dev servers.
 					new Set([process.pid, ...knownPids.values()]),
 				),
+			}));
+			return;
+		case "github":
+			respond(frame.reqId, async () => {
+				const { repo, items } = await githubList(await sessionCwd(frame.instanceId), frame.kind, frame.filter);
+				return { t: "github", reqId: frame.reqId, repo, items };
+			});
+			return;
+		case "github-item":
+			respond(frame.reqId, async () => ({
+				t: "github-item",
+				reqId: frame.reqId,
+				item: await githubItem(await sessionCwd(frame.instanceId), frame.kind, frame.number),
 			}));
 			return;
 		case "worktree-remove":

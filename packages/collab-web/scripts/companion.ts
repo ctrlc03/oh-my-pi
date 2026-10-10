@@ -110,6 +110,7 @@ import { createSessionLister } from "./companion-list";
 import { restartCompanion, updateOmp } from "./companion-maintain";
 import { capturePane } from "./companion-pane";
 import { holdAwake, powerNotice, readPower } from "./companion-power";
+import { capturePreview, closePreviewBrowser, findChrome, isViewport, previewTargets } from "./companion-preview";
 import { createSpendMonitor, parseSpendLimits, parseSpendState, type SpendState, withLimits } from "./companion-spend";
 import { canSandbox, findTmux, killTmuxSession, launchInTmux } from "./companion-start";
 import { fileSessionOverviews, isUsageRange, readSpend, sessionOverview, usageReport } from "./companion-stats";
@@ -295,6 +296,8 @@ const presence = new Map<number, { endpoint: string | null; visible: boolean }>(
 let lastHostsJson = "";
 /** The codemap module loaded; the hosts frame advertises code maps from then on. */
 let codemapReady = false;
+/** Chromium-based browser that screenshots previews; null until found, and when the computer has none. */
+let previewChrome: string | null = null;
 let pollTimer: Timer | undefined;
 /** Per-host state at the previous poll; null until a poll after (re)starting to watch. */
 let seen: Map<string, { busy: boolean | null; inputRequired: boolean }> | null = null;
@@ -438,6 +441,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canSandbox: canStart && sandboxAvailable,
 		canPr,
 		canCodemap: codemapReady,
+		canPreview: previewChrome !== null,
 		power: power ?? undefined,
 	};
 	const json = JSON.stringify(frame);
@@ -864,6 +868,30 @@ socket.onFrame = (frame, fromPeer) => {
 				hits: await codemapSearch(await sessionCwd(frame.instanceId), checkSearch(frame.q)),
 			}));
 			return;
+		case "preview":
+			respond(frame.reqId, async () => {
+				if (previewChrome === null) throw new Error("No Chrome or other Chromium browser found on this computer");
+				if (!isViewport(frame.viewport)) throw new Error("invalid viewport");
+				if (frame.fullPage !== undefined && typeof frame.fullPage !== "boolean") throw new Error("invalid request");
+				await sessionCwd(frame.instanceId);
+				return {
+					t: "preview",
+					reqId: frame.reqId,
+					shot: await capturePreview(previewChrome, frame.url, frame.viewport, frame.fullPage === true),
+				};
+			});
+			return;
+		case "preview-targets":
+			respond(frame.reqId, async () => ({
+				t: "preview-targets",
+				reqId: frame.reqId,
+				targets: await previewTargets(
+					await sessionCwd(frame.instanceId),
+					// The companion and the omp processes are never dev servers.
+					new Set([process.pid, ...knownPids.values()]),
+				),
+			}));
+			return;
 		case "worktree-remove":
 			respond(frame.reqId, async () => {
 				if (typeof frame.path !== "string") throw new Error("invalid worktree path");
@@ -970,12 +998,17 @@ void loadCodemap().then(ready => {
 	// The hosts frame only goes out when its JSON changes; this is such a change.
 	if (ready) void refresh();
 });
+void findChrome().then(found => {
+	previewChrome = found;
+	if (found !== null) void refresh();
+});
 
 function shutdown(): void {
 	clearTimeout(pollTimer);
 	awake.release();
 	socket.close();
-	process.exit(0);
+	// The warm preview browser is a separate process tree: close it before exiting.
+	void closePreviewBrowser().finally(() => process.exit(0));
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

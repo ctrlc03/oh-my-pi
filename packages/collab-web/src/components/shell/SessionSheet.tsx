@@ -79,6 +79,11 @@ export interface SessionSheetProps {
 	onOpenCodemap: (() => void) | null;
 	/** The session's terminal (tmux pane); null unless the paired computer hosts this session. */
 	onOpenPane: (() => void) | null;
+	/** Live screenshot of a dev server the session runs; null unless the paired computer can capture pages. */
+	onOpenPreview: (() => void) | null;
+	/** Images the agent's tools produced this session. */
+	screenCount: number;
+	onOpenScreens(): void;
 	push: PushControl;
 	onLeave(): void;
 	onClose(): void;
@@ -112,6 +117,9 @@ export function SessionSheet({
 	onOpenSessions,
 	onOpenCodemap,
 	onOpenPane,
+	onOpenPreview,
+	screenCount,
+	onOpenScreens,
 	workingTree,
 	usage,
 	models,
@@ -369,6 +377,26 @@ export function SessionSheet({
 						</dd>
 					</div>
 				)}
+				{onOpenPreview && (
+					<div className="sh-sheet-row">
+						<dt>Preview</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onOpenPreview}>
+								See the running app
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
+				<div className="sh-sheet-row">
+					<dt>Screens</dt>
+					<dd>
+						<button type="button" className="sh-sheet-link" onClick={onOpenScreens}>
+							{screenCount > 0 ? `${screenCount} image${screenCount === 1 ? "" : "s"}` : "None yet"}
+							<ChevronRight size={14} />
+						</button>
+					</dd>
+				</div>
 				{onOpenUsage && (
 					<div className="sh-sheet-row">
 						<dt>Usage</dt>

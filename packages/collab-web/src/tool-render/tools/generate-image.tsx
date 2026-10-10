@@ -5,22 +5,8 @@
  */
 import type { ReactNode } from "react";
 import { Badge, Badges, InvalidArg, Kv, KvGrid, Note, PathText, ResultImages, ResultText, Row } from "../parts";
-import type { ToolRenderer, ToolRenderProps, ToolResultBlock, ToolResultLike } from "../types";
-import { detailsRecord, isRecord, normalizeWs, resultImagesOf, str, truncate } from "../util";
-
-/** Result with `details.images` (`{data, mimeType}[]`) appended as image blocks. */
-function withDetailImages(result: ToolResultLike | undefined): ToolResultLike | undefined {
-	const details = detailsRecord(result);
-	if (!result || !details || !Array.isArray(details.images)) return result;
-	const extra: ToolResultBlock[] = [];
-	for (const img of details.images) {
-		if (isRecord(img) && typeof img.data === "string" && typeof img.mimeType === "string") {
-			extra.push({ type: "image", data: img.data, mimeType: img.mimeType });
-		}
-	}
-	if (extra.length === 0) return result;
-	return { content: [...result.content, ...extra], details: result.details, isError: result.isError };
-}
+import type { ToolRenderer, ToolRenderProps } from "../types";
+import { detailsRecord, isRecord, normalizeWs, resultImagesOf, str, truncate, withDetailImages } from "../util";
 
 function Summary({ args }: ToolRenderProps): ReactNode {
 	const subject = str(args.subject);

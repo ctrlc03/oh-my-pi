@@ -65,6 +65,7 @@ function Row({
 	gutter,
 	title,
 	entryId,
+	alsoEntries,
 	children,
 }: {
 	kind: "user" | "assistant" | "custom" | "marker";
@@ -72,10 +73,16 @@ function Row({
 	title?: string;
 	/** Session entry this row renders; search scrolls to it. */
 	entryId?: string;
+	/** Further entries this row also renders (a folded tool run spans several). */
+	alsoEntries?: readonly string[];
 	children: ReactNode;
 }): ReactNode {
 	return (
-		<div className={`tr-row tr-row--${kind}`} data-entry={entryId}>
+		<div
+			className={`tr-row tr-row--${kind}`}
+			data-entry={entryId}
+			data-entries={alsoEntries && alsoEntries.length > 1 ? alsoEntries.join(" ") : undefined}
+		>
 			<div className="tr-gutter" title={title}>
 				{gutter}
 			</div>
@@ -384,7 +391,12 @@ function ChatRow({
 			);
 		case "tools":
 			return (
-				<Row kind="assistant" gutter={item.lead ? "agent" : ""}>
+				<Row
+					kind="assistant"
+					gutter={item.lead ? "agent" : ""}
+					entryId={item.entryId ?? undefined}
+					alsoEntries={item.entryIds}
+				>
 					<ToolRun calls={item.calls} results={results} active={active} host={host} />
 				</Row>
 			);
@@ -576,7 +588,12 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	useLayoutEffect(() => {
 		const el = rootRef.current;
 		if (el === null || !searchable) return;
-		const row = searchTarget === null ? null : el.querySelector(`[data-entry="${CSS.escape(searchTarget)}"]`);
+		const row =
+			searchTarget === null
+				? null
+				: el.querySelector(
+						`[data-entry="${CSS.escape(searchTarget)}"], [data-entries~="${CSS.escape(searchTarget)}"]`,
+					);
 		if (searchTarget !== null && row === null) {
 			const index = entries.findIndex(entry => entry.id === searchTarget);
 			if (index >= 0 && index < start) {

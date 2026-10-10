@@ -1,0 +1,72 @@
+/* ---- live preview of a dev server ---- */
+.sh-preview-url {
+	display: flex;
+	gap: 8px;
+}
+
+.sh-preview-url .sh-input {
+	flex: 1;
+	min-width: 0;
+}
+
+.sh-preview-url .sh-btn {
+	height: 36px;
+}
+
+.sh-preview-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+
+.sh-preview-target {
+	height: 28px;
+	padding: 0 10px;
+}
+
+.sh-preview-target[aria-pressed="true"] {
+	color: var(--fg);
+	background: var(--selected);
+}
+
+/* The image scrolls inside the frame; it never grows past its CSS size, so a phone shot is not blown up on a wide screen. */
+.sh-preview-view {
+	flex: 1 1 0;
+	min-height: 0;
+	overflow: auto;
+	display: flex;
+	justify-content: center;
+	align-items: flex-start;
+	padding: 8px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-preview-shot {
+	flex: none;
+	width: 100%;
+	padding: 0;
+	background: none;
+	border: 0;
+	cursor: zoom-in;
+}
+
+.sh-preview-shot img {
+	display: block;
+	width: 100%;
+	height: auto;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-preview-foot {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font: 400 11.5px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+	overflow-wrap: anywhere;
+}

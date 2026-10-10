@@ -20,8 +20,8 @@ export type ChatItem =
 	/** A prompt, host-injected message, or divider, rendered as in the full view. */
 	| { kind: "entry"; key: string; entry: SessionEntry }
 	| { kind: "text"; key: string; entryId: string | null; text: string; pending: boolean; lead: boolean }
-	/** `entryId`: the entry of the run's first call; null for live tools not yet committed. */
-	| { kind: "tools"; key: string; entryId: string | null; calls: ChatToolCall[]; lead: boolean }
+	/** `entryId`: the entry of the run's first call; null for live tools not yet committed. `entryIds`: every entry the run's calls came from. */
+	| { kind: "tools"; key: string; entryId: string | null; entryIds: string[]; calls: ChatToolCall[]; lead: boolean }
 	| { kind: "stop"; key: string; entryId: string | null; stopReason: "error" | "aborted"; errorMessage?: string };
 
 /**
@@ -36,7 +36,7 @@ export function buildChatItems(
 	tailTools: readonly ActiveTool[],
 ): ChatItem[] {
 	const items: ChatItem[] = [];
-	let run: { calls: ChatToolCall[]; lead: boolean; entryId: string | null } | null = null;
+	let run: { calls: ChatToolCall[]; lead: boolean; entryId: string | null; entryIds: string[] } | null = null;
 	let inAgentTurn = false;
 
 	const flush = (): void => {
@@ -45,6 +45,7 @@ export function buildChatItems(
 			kind: "tools",
 			key: `tools:${run.calls[0]?.id}`,
 			entryId: run.entryId,
+			entryIds: run.entryIds,
 			calls: run.calls,
 			lead: run.lead,
 		});
@@ -52,9 +53,10 @@ export function buildChatItems(
 	};
 	const addCall = (call: ChatToolCall, entryId: string | null): void => {
 		if (run === null) {
-			run = { calls: [], lead: !inAgentTurn, entryId };
+			run = { calls: [], lead: !inAgentTurn, entryId, entryIds: [] };
 			inAgentTurn = true;
 		}
+		if (entryId !== null && !run.entryIds.includes(entryId)) run.entryIds.push(entryId);
 		run.calls.push(call);
 	};
 	const human = (entry: SessionEntry): void => {

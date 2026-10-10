@@ -11,6 +11,8 @@ import { ConnectScreen } from "./components/shell/ConnectScreen";
 import { FileSheet } from "./components/shell/FileSheet";
 import { HeaderBar } from "./components/shell/HeaderBar";
 import { PaneSheet } from "./components/shell/PaneSheet";
+import { PreviewSheet } from "./components/shell/PreviewSheet";
+import { ScreensSheet } from "./components/shell/ScreensSheet";
 import { SearchBar } from "./components/shell/SearchBar";
 import { SessionAlert } from "./components/shell/SessionAlert";
 import { SessionsSheet } from "./components/shell/SessionsSheet";
@@ -37,6 +39,7 @@ import {
 	roomIdOf,
 	setActiveLink,
 } from "./lib/rooms";
+import { collectScreens } from "./lib/screens";
 import { readJson, writeJson } from "./lib/storage";
 import { sumUsage } from "./lib/usage";
 import { type CompanionHandle, useCompanion } from "./lib/use-companion";
@@ -402,6 +405,10 @@ function Session({
 	const openCodemap = useCallback(() => setCodemap({}), []);
 	const [paneOpen, setPaneOpen] = useState(false);
 	const openPane = useCallback(() => setPaneOpen(true), []);
+	const canPreview =
+		companionClient !== null && hostId !== null && sessionId !== null && companion?.snap.canPreview === true;
+	const [previewOpen, setPreviewOpen] = useState(false);
+	const openPreview = useCallback(() => setPreviewOpen(true), []);
 	const cwd = snap.state?.cwd ?? snap.header?.cwd ?? null;
 
 	// Task-card agent chips drill into the same drawer the rail uses.
@@ -490,7 +497,23 @@ function Session({
 	const closeSearch = useCallback(() => setSearch(null), []);
 	const onSearch = useCallback((query: string, target: string | null) => setSearch({ query, target }), []);
 
+	// Jumping from the screens gallery: the transcript scrolls to this entry. A search takes over once open.
+	const [jumpTarget, setJumpTarget] = useState<string | null>(null);
+	const jumpSearch = useMemo(
+		() => (jumpTarget === null ? undefined : { query: "", target: jumpTarget }),
+		[jumpTarget],
+	);
+
 	const changes = useMemo(() => collectChanges(snap.entries), [snap.entries]);
+	// Every completed edit or write adds a call: the preview re-captures when this grows.
+	const editCount = useMemo(() => changes.reduce((n, file) => n + file.calls.length, 0), [changes]);
+	const screens = useMemo(() => collectScreens(snap.entries), [snap.entries]);
+	const [screensOpen, setScreensOpen] = useState(false);
+	const openScreens = useCallback(() => {
+		setJumpTarget(null);
+		setScreensOpen(true);
+	}, []);
+	const closeScreens = useCallback(() => setScreensOpen(false), []);
 	const [changesOpen, setChangesOpen] = useState(false);
 	const openChanges = useCallback(() => setChangesOpen(true), []);
 
@@ -586,6 +609,9 @@ function Session({
 				onOpenSessions={companion ? openSessions : null}
 				onOpenCodemap={canCodemap ? openCodemap : null}
 				onOpenPane={companionClient !== null && hostId !== null ? openPane : null}
+				onOpenPreview={canPreview ? openPreview : null}
+				screenCount={screens.length}
+				onOpenScreens={openScreens}
 				push={push}
 			/>
 			<main className="sh-main">
@@ -619,7 +645,7 @@ function Session({
 							host={toolHost}
 							phase={snap.phase}
 							chat={chat}
-							search={search ?? undefined}
+							search={search ?? jumpSearch}
 							newSince={newSince ?? undefined}
 							newSeen={newSeen}
 							onNewSeen={markSeen}
@@ -708,6 +734,7 @@ function Session({
 					onClose={() => setChangesOpen(false)}
 				/>
 			)}
+			{screensOpen && <ScreensSheet screens={screens} onJump={setJumpTarget} onClose={closeScreens} />}
 			{codemap !== null && canCodemap && companion !== null && (
 				<LazyCodemapSheet
 					key={codemap.file ?? ""}
@@ -724,6 +751,15 @@ function Session({
 			)}
 			{paneOpen && companionClient !== null && hostId !== null && (
 				<PaneSheet client={companionClient} instanceId={hostId} onClose={() => setPaneOpen(false)} />
+			)}
+			{previewOpen && canPreview && companionClient !== null && hostId !== null && sessionId !== null && (
+				<PreviewSheet
+					client={companionClient}
+					instanceId={hostId}
+					sessionId={sessionId}
+					edits={editCount}
+					onClose={() => setPreviewOpen(false)}
+				/>
 			)}
 			{file !== null && companionClient !== null && hostId !== null && (
 				<FileSheet

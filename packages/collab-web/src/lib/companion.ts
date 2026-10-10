@@ -442,6 +442,26 @@ export interface PushSubscriptionJson {
 	keys: { p256dh: string; auth: string };
 }
 
+/** An omp process on the computer that has a session open. */
+export interface SessionHolder {
+	pid: number;
+	/** Terminal it runs in, e.g. `ttys014`; null when it has none. */
+	tty: string | null;
+	/** App the process runs under (a terminal emulator, or `tmux`); null when unknown. */
+	app: string | null;
+}
+
+/** `start` refused to resume a session another omp on the computer has open; `force` resumes it anyway. */
+export class SessionOpenElsewhereError extends Error {
+	readonly holders: SessionHolder[];
+
+	constructor(holders: SessionHolder[]) {
+		super("This session is open in another omp on the computer.");
+		this.name = "SessionOpenElsewhereError";
+		this.holders = holders;
+	}
+}
+
 export type CompanionRequest =
 	/** `zip`: this device opens compressed frames; the companion compresses larger replies to it. */
 	| { t: "list"; zip?: boolean }
@@ -477,8 +497,18 @@ export type CompanionRequest =
 	 * Start omp in `cwd` (resuming session `resume` when given), hosting with control access;
 	 * `sandboxed`: file read/search/edit tools only, with writes confined to `cwd` (needs `canSandbox`);
 	 * `worktree` (new sessions inside a git repository only): run on a new branch in its own git worktree.
+	 * Resuming a session another omp has open is refused (an error with `openElsewhere`) unless `force`;
+	 * a session that is already hosting is answered with its host.
 	 */
-	| { t: "start"; reqId: number; cwd: string; resume?: string; sandboxed?: boolean; worktree?: { branch?: string } }
+	| {
+			t: "start";
+			reqId: number;
+			cwd: string;
+			resume?: string;
+			sandboxed?: boolean;
+			worktree?: { branch?: string };
+			force?: boolean;
+	  }
 	/** Make an idle session host collab; answered with a `link`. */
 	| { t: "share"; reqId: number; instanceId: string }
 	/** The branch against its base branch, with commit, push and pull request state. */
@@ -555,7 +585,8 @@ export type CompanionReply =
 	| { t: "diag"; reqId: number; diag: CompanionDiag }
 	/** What the maintenance command printed (trimmed). */
 	| { t: "maintain"; reqId: number; output: string }
-	| { t: "error"; reqId: number; message: string }
+	/** `openElsewhere`: why a `start` that resumes a session was refused; see {@link SessionOpenElsewhereError}. */
+	| { t: "error"; reqId: number; message: string; openElsewhere?: SessionHolder[] }
 	| { t: "git"; reqId: number; git: GitSnapshot }
 	| { t: "diff"; reqId: number; diff: string; truncated: boolean }
 	| { t: "file"; reqId: number; file: FileContent }
@@ -793,10 +824,18 @@ export class CompanionClient {
 		this.#socket.connect();
 	}
 
-	/** Foreground / online: retry now. An offline room (companion stopped) is retried too. */
-	resume(): void {
+	/** The page is hidden on a device that suspends hidden pages; see {@link CollabSocket.suspend}. */
+	suspend(): void {
+		this.#socket.suspend();
+	}
+
+	/**
+	 * Back in the foreground or online again: replace a connection the background may have killed,
+	 * so a fresh `hosts` list arrives within a round trip. An offline room (companion stopped) is retried too.
+	 */
+	resume(cause: "foreground" | "online" = "foreground"): void {
 		if (this.#snapshot.phase === "offline") this.connect();
-		else this.#socket.resume();
+		else this.#socket.resume(cause);
 	}
 
 	close(): void {
@@ -944,7 +983,7 @@ export class CompanionClient {
 	 */
 	async startSession(
 		cwd: string,
-		options: { resume?: string; sandboxed?: boolean; worktree?: { branch?: string } } = {},
+		options: { resume?: string; sandboxed?: boolean; worktree?: { branch?: string }; force?: boolean } = {},
 	): Promise<string> {
 		const timeout = options.worktree ? WORKTREE_START_TIMEOUT_MS : START_TIMEOUT_MS;
 		return (await this.#call({ t: "start", cwd, ...options }, "started", timeout)).instanceId;
@@ -1102,7 +1141,10 @@ export class CompanionClient {
 		if (!pending) return;
 		this.#pending.delete(frame.reqId);
 		clearTimeout(pending.timer);
-		if (frame.t === "error") pending.reject(new Error(frame.message));
+		if (frame.t === "error")
+			pending.reject(
+				frame.openElsewhere ? new SessionOpenElsewhereError(frame.openElsewhere) : new Error(frame.message),
+			);
 		else if (frame.t !== pending.expect) pending.reject(new Error(`unexpected companion reply: ${frame.t}`));
 		else pending.resolve(frame);
 	}

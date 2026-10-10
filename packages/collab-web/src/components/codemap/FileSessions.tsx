@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CompanionClient } from "../../lib/companion";
 import { extractLink } from "../../lib/rooms";
 import { useRequest } from "../../lib/use-request";
+import { useOpenElsewhere } from "../shell/OpenElsewhere";
 import { SessionRow } from "../shell/SessionsSheet";
 
 export interface FileSessionsProps {
@@ -59,15 +60,21 @@ function FileSessionList({
 		};
 	}, []);
 
-	/** Run one row's action; the list stays up (with the error) when it fails. */
-	const run = async (id: string, action: () => Promise<void>): Promise<void> => {
+	const openElsewhere = useOpenElsewhere();
+
+	/** Run one row's action (`force` is passed to a resume); the list stays up (with the error) when it fails. */
+	const run = async (id: string, action: (force: boolean) => Promise<void>, force = false): Promise<void> => {
 		if (busy) return;
 		setBusy(id);
 		setError(null);
+		openElsewhere.dismiss();
 		try {
-			await action();
+			await action(force);
 		} catch (err) {
-			if (!closedRef.current) setError(err instanceof Error ? err.message : String(err));
+			if (closedRef.current) return;
+			if (!openElsewhere.intercept(err, () => void run(id, action, true))) {
+				setError(err instanceof Error ? err.message : String(err));
+			}
 		} finally {
 			if (!closedRef.current) setBusy(null);
 		}
@@ -95,6 +102,7 @@ function FileSessionList({
 	}
 	return (
 		<>
+			{openElsewhere.notice}
 			<ul className="sh-recents-list">
 				{state.value.map(session => (
 					<SessionRow
@@ -112,8 +120,13 @@ function FileSessionList({
 							})
 						}
 						onResume={() =>
-							run(session.sessionId, async () =>
-								onOpenHost(await client.startSession(session.folder, { resume: session.sessionId })),
+							run(session.sessionId, async force =>
+								onOpenHost(
+									await client.startSession(session.folder, {
+										resume: session.sessionId,
+										force: force || undefined,
+									}),
+								),
 							)
 						}
 					/>

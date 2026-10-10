@@ -39,4 +39,35 @@ export interface CollabSessionListing {
 	idle: CollabIdleSnapshot[];
 }
 
+/** Access a link grants: `view` (bare room key) or `control` (room key + write token). */
+export type CollabAccess = "view" | "control";
+
+/** One resolved capability: a browser URL for `access`, bound to the room `generation` it was issued for. */
+export interface CollabResolvedLink {
+	instanceId: string;
+	generation: number;
+	access: CollabAccess;
+	url: string;
+}
+
+/** Stable failure codes of {@link resolveCollabHostLink} and {@link startCollabSession}. */
+export type CollabLinkErrorCode =
+	| "not_found"
+	| "ambiguous"
+	| "stale_generation"
+	| "access_unavailable"
+	| "unreachable"
+	| "not_startable"
+	| "start_failed";
+
+export class CollabLinkError extends Error {
+	readonly code: CollabLinkErrorCode;
+}
+
 export function listCollabSessions(): Promise<CollabSessionListing>;
+
+/** The host named by an instance id (or pid): one link, bound to the generation observed while listing. */
+export function resolveCollabHostLink(selector: string, access: CollabAccess): Promise<CollabResolvedLink>;
+
+/** Makes an idle omp host (as `/collab` does) and returns its link; a host already hosting hands out its link. */
+export function startCollabSession(selector: string, access: CollabAccess): Promise<CollabResolvedLink>;

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { CompanionClient, type CompanionSnapshot, type Pairing } from "./companion";
+import { suspendsHiddenPages } from "./socket";
 
 export interface CompanionHandle {
 	/** null while no computer is paired or when the pairing link does not parse (`error`). */
@@ -51,12 +52,14 @@ export function useCompanion(pairing: Pairing | null): CompanionHandle {
 		setClient(next);
 		const wake = (): void => {
 			if (document.visibilityState === "visible") next.resume();
+			else if (suspendsHiddenPages()) next.suspend();
 		};
+		const online = (): void => next.resume("online");
 		document.addEventListener("visibilitychange", wake);
-		window.addEventListener("online", wake);
+		window.addEventListener("online", online);
 		return () => {
 			document.removeEventListener("visibilitychange", wake);
-			window.removeEventListener("online", wake);
+			window.removeEventListener("online", online);
 			next.close();
 		};
 	}, [pairing]);

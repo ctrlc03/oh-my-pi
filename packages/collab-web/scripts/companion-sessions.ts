@@ -166,7 +166,7 @@ export function lastAssistantSummary(entries: Entry[]): string | null {
 /** Session file path per session id; stable once a session exists. */
 const sessionFiles = new Map<string, string>();
 
-async function findSessionFile(sessionsDir: string, sessionId: string): Promise<string | null> {
+export async function findSessionFile(sessionsDir: string, sessionId: string): Promise<string | null> {
 	if (!SAFE_ID_RE.test(sessionId)) return null;
 	const cached = sessionFiles.get(sessionId);
 	if (cached && (await Bun.file(cached).exists())) return cached;

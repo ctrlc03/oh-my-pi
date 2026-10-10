@@ -5,6 +5,7 @@ import type { CompanionClient, RecentFolder } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import { setOpenIntent } from "../../lib/inbox";
 import { type RequestState, useRequest } from "../../lib/use-request";
+import { useOpenElsewhere } from "./OpenElsewhere";
 import { QuickReplies } from "./QuickReplies";
 import { Sheet } from "./Sheet";
 
@@ -41,6 +42,7 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 	const [branch, setBranch] = useState("");
 	const [prompt, setPrompt] = useState("");
 	const [error, setError] = useState<string | null>(null);
+	const openElsewhere = useOpenElsewhere();
 	const closedRef = useRef(false);
 	useEffect(() => {
 		closedRef.current = false;
@@ -49,14 +51,16 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 		};
 	}, []);
 
-	const start = async (target: Starting): Promise<void> => {
+	const start = async (target: Starting, force = false): Promise<void> => {
 		setStarting(target);
 		setError(null);
+		openElsewhere.dismiss();
 		try {
 			const instanceId = await client.startSession(target.cwd, {
 				resume: target.resume,
 				sandboxed: target.sandboxed || undefined,
 				worktree: target.worktree,
+				force: force || undefined,
 			});
 			const first = prompt.trim();
 			// Recorded even if the sheet was closed meanwhile: opening the session later still sends it.
@@ -65,7 +69,9 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 			if (!closedRef.current) await onOpen(instanceId);
 		} catch (err) {
 			if (closedRef.current) return;
-			setError(err instanceof Error ? err.message : String(err));
+			if (!openElsewhere.intercept(err, () => void start(target, true))) {
+				setError(err instanceof Error ? err.message : String(err));
+			}
 			setStarting(null);
 		}
 	};
@@ -85,6 +91,7 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 					<X size={16} />
 				</button>
 			</div>
+			{openElsewhere.notice}
 			{error && <div className="sh-connect-error">{error}</div>}
 			{starting !== null ? (
 				<div className="sh-start-progress" role="status">

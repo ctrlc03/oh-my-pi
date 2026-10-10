@@ -448,3 +448,29 @@
 		height: 44px;
 	}
 }
+
+.sh-open-elsewhere {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px 12px;
+	font-size: 12.5px;
+	color: var(--fg-muted);
+	background: color-mix(in srgb, var(--warn) 12%, transparent);
+	border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+	border-radius: var(--radius);
+}
+
+.sh-open-elsewhere-title {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-weight: 600;
+	color: var(--warn);
+}
+
+.sh-open-elsewhere-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}

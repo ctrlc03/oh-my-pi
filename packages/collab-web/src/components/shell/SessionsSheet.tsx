@@ -5,6 +5,7 @@ import type { CompanionClient, SessionOverview } from "../../lib/companion";
 import { fmtCost, fmtTokens, relTime, shortenPath } from "../../lib/format";
 import { extractLink } from "../../lib/rooms";
 import { useRequest } from "../../lib/use-request";
+import { useOpenElsewhere } from "./OpenElsewhere";
 import { Sheet } from "./Sheet";
 import "./review.css";
 import "./stats.css";
@@ -59,15 +60,21 @@ export function SessionsSheet({
 		};
 	}, []);
 
-	/** Run one row's action; the sheet stays up (with the error) when it fails. */
-	const run = async (id: string, action: () => Promise<void>): Promise<void> => {
+	const openElsewhere = useOpenElsewhere();
+
+	/** Run one row's action (`force` is passed to a resume); the sheet stays up (with the error) when it fails. */
+	const run = async (id: string, action: (force: boolean) => Promise<void>, force = false): Promise<void> => {
 		if (busy) return;
 		setBusy(id);
 		setError(null);
+		openElsewhere.dismiss();
 		try {
-			await action();
+			await action(force);
 		} catch (err) {
-			if (!closedRef.current) setError(err instanceof Error ? err.message : String(err));
+			if (closedRef.current) return;
+			if (!openElsewhere.intercept(err, () => void run(id, action, true))) {
+				setError(err instanceof Error ? err.message : String(err));
+			}
 		} finally {
 			if (!closedRef.current) setBusy(null);
 		}
@@ -79,8 +86,10 @@ export function SessionsSheet({
 		onOpenLink(link);
 	};
 
-	const resume = async (session: SessionOverview): Promise<void> => {
-		await onOpenHost(await client.startSession(session.folder, { resume: session.sessionId }));
+	const resume = async (session: SessionOverview, force: boolean): Promise<void> => {
+		await onOpenHost(
+			await client.startSession(session.folder, { resume: session.sessionId, force: force || undefined }),
+		);
 	};
 
 	const removeWorktree = async (folder: string): Promise<void> => {
@@ -119,6 +128,7 @@ export function SessionsSheet({
 					</button>
 				</span>
 			</div>
+			{openElsewhere.notice}
 			{error && <div className="sh-connect-error">{error}</div>}
 			<label className="sh-stats-search">
 				<Search size={14} />
@@ -213,7 +223,7 @@ export function SessionsSheet({
 										canStart={canStart}
 										onOpen={instanceId => run(session.sessionId, () => onOpenHost(instanceId))}
 										onShare={instanceId => run(session.sessionId, () => share(instanceId))}
-										onResume={() => run(session.sessionId, () => resume(session))}
+										onResume={() => run(session.sessionId, force => resume(session, force))}
 									/>
 								))}
 							</ul>

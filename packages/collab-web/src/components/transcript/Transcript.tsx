@@ -60,6 +60,24 @@ export function updateTranscriptTailLock(element: ScrollGeometry, lock: TailLock
 	lock.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 40;
 }
 
+/**
+ * The row to hold in place while earlier rows mount above the window: the first
+ * entry row on screen. It skips the window's first row, which can remount under a
+ * new key (in the chat view a folded tool run there absorbs the earlier calls and
+ * grows upward), and anything outside the row flow, such as the sticky zero-height
+ * "N new" dock, which keeps its place whatever mounts above and so would anchor nothing.
+ */
+function scrollAnchor(el: HTMLElement): { anchor: Element; entry: string | null; offset: number } | null {
+	const top = el.getBoundingClientRect().top;
+	const rows = Array.from(el.querySelectorAll(":scope > [data-entry]"));
+	for (const row of rows.length > 1 ? rows.slice(1) : rows) {
+		const rect = row.getBoundingClientRect();
+		if (rect.bottom <= top) continue;
+		return { anchor: row, entry: row.getAttribute("data-entry"), offset: rect.top - top };
+	}
+	return null;
+}
+
 function Row({
 	kind,
 	gutter,
@@ -495,11 +513,22 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	/** Scrolled away from the tail: offers the jump-to-latest button. */
 	const [away, setAway] = useState(false);
 	/**
-	 * First visible row and its offset from the viewport top, captured before
+	 * A row on screen and its offset from the viewport top, captured before
 	 * mounting earlier rows. Restoring against the row, not the total height
-	 * delta, stays exact when the same commit also appends live entries.
+	 * delta, stays exact when the same commit also appends live entries. `entry`
+	 * finds the row again when it remounted under a new key.
 	 */
-	const prependRef = useRef<{ anchor: Element; offset: number } | null>(null);
+	const prependRef = useRef<{ anchor: Element; entry: string | null; offset: number } | null>(null);
+	/** Where the last scroll event left the view: tells the reader scrolling up from the tail being followed. */
+	const lastTopRef = useRef(0);
+	/**
+	 * The scrollTop this component set while re-laying out the window. Its scroll
+	 * event is not the reader's: right after earlier rows mount, a short tail window
+	 * can leave the restored position within the lock distance of the bottom, and
+	 * taking that for "back at the tail" trimmed the rows again, which put the view
+	 * near the top and mounted them again, in a loop.
+	 */
+	const ownTopRef = useRef<number | null>(null);
 
 	// Follow the tail while bottom-locked; releasing/re-arming happens in onScroll.
 	useEffect(() => {
@@ -526,27 +555,36 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		followTranscriptTail(el, lockRef, true);
 	}, [phase]);
 
-	// Keep the reader's content in place when earlier rows mount above it.
+	// Keep the reader's content in place when earlier rows mount above it, and on
+	// the latest message when rows above are trimmed at the tail.
 	useLayoutEffect(() => {
 		const el = rootRef.current;
+		if (el === null) return;
 		const before = prependRef.current;
-		if (el === null || before === null) return;
 		prependRef.current = null;
-		if (!before.anchor.isConnected) return;
-		el.scrollTop += before.anchor.getBoundingClientRect().top - el.getBoundingClientRect().top - before.offset;
+		if (before !== null) {
+			const anchor = before.anchor.isConnected
+				? before.anchor
+				: before.entry === null
+					? null
+					: el.querySelector(`[data-entry="${CSS.escape(before.entry)}"]`);
+			if (anchor === null) return;
+			el.scrollTop += anchor.getBoundingClientRect().top - el.getBoundingClientRect().top - before.offset;
+		} else if (lockRef.current) {
+			el.scrollTop = el.scrollHeight;
+		} else {
+			return;
+		}
+		ownTopRef.current = el.scrollTop;
 	}, [start]);
 
 	const showEarlier = (): void => {
 		const el = rootRef.current;
 		if (el === null || start === 0 || prependRef.current !== null) return;
-		const top = el.getBoundingClientRect().top;
-		for (const row of el.children) {
-			if (row.classList.contains("tr-earlier")) continue;
-			const rect = row.getBoundingClientRect();
-			if (rect.bottom <= top) continue;
-			prependRef.current = { anchor: row, offset: rect.top - top };
-			break;
-		}
+		prependRef.current = scrollAnchor(el);
+		// Reading back: new entries must not pull the view to the bottom, even when the
+		// restored position lands within the lock distance of it.
+		lockRef.current = false;
 		setPinnedStart(Math.max(0, start - WINDOW));
 	};
 
@@ -704,6 +742,12 @@ export function Transcript(props: TranscriptProps): ReactNode {
 			onScroll={() => {
 				const el = rootRef.current;
 				if (el === null) return;
+				const top = el.scrollTop;
+				const up = top < lastTopRef.current;
+				lastTopRef.current = top;
+				const own = ownTopRef.current !== null && Math.abs(top - ownTopRef.current) < 1;
+				ownTopRef.current = null;
+				if (own) return;
 				updateTranscriptTailLock(el, lockRef);
 				if (away === lockRef.current) setAway(!lockRef.current);
 				// Back at the bottom: drop the pin so the window trims to the tail again.
@@ -712,7 +756,11 @@ export function Transcript(props: TranscriptProps): ReactNode {
 				} else if (pinnedStart === null) {
 					setPinnedStart(start);
 				}
-				if (el.scrollTop <= EARLIER_TRIGGER_PX) showEarlier();
+				// Only the reader heading up mounts earlier rows. Following the tail of a
+				// short window also sits near the top, and a taller viewport (the keyboard
+				// closing, the composer shrinking) clamps the view upward to the bottom.
+				const atBottom = el.scrollHeight - el.clientHeight - top < 1;
+				if (top <= EARLIER_TRIGGER_PX && (!lockRef.current || (up && !atBottom))) showEarlier();
 				if (pillActive && dividerInView()) onNewSeen?.();
 			}}
 		>

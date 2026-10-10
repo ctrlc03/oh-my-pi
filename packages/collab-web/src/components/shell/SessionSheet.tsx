@@ -74,6 +74,8 @@ export interface SessionSheetProps {
 	onOpenPreview: (() => void) | null;
 	/** Issues and pull requests of the session's repository; null unless the paired computer's `gh` is signed in. */
 	onOpenGithub: (() => void) | null;
+	/** File tree and editor of the session's folder; null unless the paired computer can edit its files. */
+	onOpenEditor: (() => void) | null;
 	/** Images the agent's tools produced this session. */
 	screenCount: number;
 	onOpenScreens(): void;
@@ -112,6 +114,7 @@ export function SessionSheet({
 	onOpenPane,
 	onOpenPreview,
 	onOpenGithub,
+	onOpenEditor,
 	screenCount,
 	onOpenScreens,
 	workingTree,
@@ -379,6 +382,17 @@ export function SessionSheet({
 						</button>
 					</dd>
 				</div>
+				{onOpenEditor && (
+					<div className="sh-sheet-row">
+						<dt>Editor</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onOpenEditor}>
+								{readOnly ? "Browse the files" : "Browse and edit files"}
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
 				{onOpenCodemap && (
 					<div className="sh-sheet-row">
 						<dt>Code map</dt>

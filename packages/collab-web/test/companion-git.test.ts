@@ -50,28 +50,28 @@ describe("isInside", () => {
 
 describe("readRepoFile containment", () => {
 	it("reads files inside the repository, by relative or absolute path", async () => {
-		expect((await readRepoFile(repo, "tracked.txt")).text).toBe("one\nthree\nfour\n");
-		expect((await readRepoFile(repo, path.join(repo, "tracked.txt"))).path).toBe("tracked.txt");
+		expect((await readRepoFile(repo, "tracked.txt", false)).text).toBe("one\nthree\nfour\n");
+		expect((await readRepoFile(repo, path.join(repo, "tracked.txt"), false)).path).toBe("tracked.txt");
 	});
 
 	it("rejects paths that leave the repository", async () => {
-		await expect(readRepoFile(repo, "../parent-secret.txt")).rejects.toThrow("outside");
-		await expect(readRepoFile(repo, path.join(outside, "secret.txt"))).rejects.toThrow("outside");
-		await expect(readRepoFile(repo, "/etc/hosts")).rejects.toThrow("outside");
+		await expect(readRepoFile(repo, "../parent-secret.txt", false)).rejects.toThrow("outside");
+		await expect(readRepoFile(repo, path.join(outside, "secret.txt"), false)).rejects.toThrow("outside");
+		await expect(readRepoFile(repo, "/etc/hosts", false)).rejects.toThrow("outside");
 	});
 
 	it("rejects symlinks that resolve outside the repository", async () => {
-		await expect(readRepoFile(repo, "link-to-secret")).rejects.toThrow("outside");
-		await expect(readRepoFile(repo, "link-to-dir/secret.txt")).rejects.toThrow("outside");
+		await expect(readRepoFile(repo, "link-to-secret", false)).rejects.toThrow("outside");
+		await expect(readRepoFile(repo, "link-to-dir/secret.txt", false)).rejects.toThrow("outside");
 	});
 
 	it("confines a session outside any repository to its cwd", async () => {
-		expect((await readRepoFile(plain, "ok.txt")).text).toBe("plain\n");
-		await expect(readRepoFile(plain, "../repo/tracked.txt")).rejects.toThrow("outside");
+		expect((await readRepoFile(plain, "ok.txt", false)).text).toBe("plain\n");
+		await expect(readRepoFile(plain, "../repo/tracked.txt", false)).rejects.toThrow("outside");
 	});
 
 	it("reports a file with NUL bytes as binary", async () => {
-		const file = await readRepoFile(repo, "bin.dat");
+		const file = await readRepoFile(repo, "bin.dat", false);
 		expect(file.text).toBeNull();
 		expect(file.size).toBe(4);
 	});

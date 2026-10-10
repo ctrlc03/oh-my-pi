@@ -1,0 +1,506 @@
+/* Editor sheet. Builds on the shell.css sheet, button and input primitives; the
+ * CodeMirror chrome is themed in editor.ts, token colours only. */
+
+.sh-ide {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 10px;
+	min-height: 0;
+}
+
+/* ---- header ---- */
+.sh-ide-head {
+	flex: none;
+	align-items: center;
+}
+
+.sh-ide-actions {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 6px;
+}
+
+.sh-ide-save {
+	gap: 6px;
+	height: 32px;
+	padding: 0 12px;
+}
+
+.sh-ide-quick {
+	position: relative;
+	flex: 1;
+	min-width: 0;
+}
+
+.sh-ide-quick .sh-input {
+	width: 100%;
+	height: 32px;
+}
+
+.sh-ide-quick-list {
+	position: absolute;
+	z-index: 3;
+	top: calc(100% + 4px);
+	right: 0;
+	left: 0;
+	max-height: min(420px, 50vh);
+	margin: 0;
+	padding: 4px;
+	overflow-y: auto;
+	list-style: none;
+	background: var(--bg-overlay);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow-overlay);
+}
+
+.sh-ide-quick-row {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	width: 100%;
+	padding: 6px 8px;
+	color: var(--fg);
+	text-align: left;
+	background: none;
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.sh-ide-quick-row:hover,
+.sh-ide-quick-row-on {
+	background: var(--selected);
+}
+
+.sh-ide-quick-name {
+	flex: none;
+	font-size: 13px;
+}
+
+.sh-ide-quick-dir {
+	min-width: 0;
+	overflow: hidden;
+	font-size: 12px;
+	color: var(--fg-faint);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ---- body: file list beside the editor ---- */
+.sh-ide-body {
+	position: relative;
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-ide-tree {
+	flex: none;
+	width: 250px;
+	padding: 4px 0;
+	overflow: auto;
+	background: var(--bg-raised);
+	border-right: 1px solid var(--border);
+}
+
+/* Narrow screens: the list slides over the editor instead of squeezing it. */
+.sh-ide-body[data-wide="false"] .sh-ide-tree {
+	position: absolute;
+	z-index: 2;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: min(300px, 86%);
+	box-shadow: var(--shadow-overlay);
+}
+
+.sh-ide-tree-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-ide-tree-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	width: 100%;
+	padding-block: 3px;
+	padding-inline-end: 8px;
+	font-size: 13px;
+	color: var(--fg-muted);
+	text-align: left;
+	background: none;
+	border: 0;
+}
+
+.sh-ide-tree-row:hover {
+	color: var(--fg);
+	background: var(--hover);
+}
+
+.sh-ide-tree-row-on {
+	color: var(--fg);
+	background: var(--selected);
+}
+
+.sh-ide-tree-row svg {
+	flex: none;
+}
+
+.sh-ide-tree-folder {
+	color: var(--fg-faint);
+}
+
+.sh-ide-tree-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-ide-tree .sh-file-note,
+.sh-ide-tree .sh-file-status,
+.sh-ide-tree .sh-tree-error {
+	margin: 8px;
+}
+
+.sh-ide-main {
+	position: relative;
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+
+/* ---- tabs ---- */
+.sh-ide-tabs {
+	display: flex;
+	flex: none;
+	min-height: 34px;
+	overflow-x: auto;
+	background: var(--bg-raised);
+	border-bottom: 1px solid var(--border);
+	scrollbar-width: none;
+}
+
+.sh-ide-tab {
+	display: flex;
+	flex: none;
+	align-items: center;
+	max-width: 220px;
+	color: var(--fg-muted);
+	border-right: 1px solid var(--border);
+}
+
+.sh-ide-tab-on {
+	color: var(--fg);
+	background: var(--bg-inset);
+	box-shadow: inset 0 2px var(--accent);
+}
+
+.sh-ide-tab-opening {
+	gap: 6px;
+	padding: 0 10px;
+	font-size: 12.5px;
+}
+
+.sh-ide-tab-name {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	height: 100%;
+	padding: 0 4px 0 10px;
+	overflow: hidden;
+	font-size: 12.5px;
+	color: inherit;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	background: none;
+	border: 0;
+}
+
+.sh-ide-tab-warn {
+	flex: none;
+	color: var(--warn);
+}
+
+.sh-ide-tab-close {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	margin-right: 4px;
+	color: var(--fg-faint);
+	background: none;
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.sh-ide-tab-close > * {
+	grid-area: 1 / 1;
+}
+
+.sh-ide-tab-close:hover {
+	color: var(--fg);
+	background: var(--hover);
+}
+
+/* An unsaved tab shows a dot where its close button sits, until hovered. */
+.sh-ide-tab-close .sh-ide-dot,
+.sh-ide-tab-close[data-dirty="true"] svg {
+	visibility: hidden;
+}
+
+.sh-ide-tab-close[data-dirty="true"] .sh-ide-dot,
+.sh-ide-tab-close[data-dirty="true"]:hover svg {
+	visibility: visible;
+}
+
+.sh-ide-tab-close[data-dirty="true"]:hover .sh-ide-dot {
+	visibility: hidden;
+}
+
+.sh-ide-dot {
+	width: 8px;
+	height: 8px;
+	background: var(--fg-muted);
+	border-radius: 50%;
+}
+
+.sh-ide-dot-on {
+	flex: none;
+	margin-left: auto;
+	background: var(--warn);
+}
+
+/* ---- notices above the editor ---- */
+.sh-ide-bar {
+	flex: none;
+	margin: 0;
+	border-radius: 0;
+}
+
+.sh-ide-conflict {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 10px;
+	font-size: 12.5px;
+	color: var(--fg);
+	background: color-mix(in srgb, var(--warn) 12%, transparent);
+	border-bottom: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+}
+
+.sh-ide-conflict > svg {
+	color: var(--warn);
+}
+
+.sh-ide-conflict > span {
+	flex: 1 1 200px;
+}
+
+.sh-ide-conflict .sh-btn {
+	height: 28px;
+	padding: 0 10px;
+}
+
+/* ---- editor ---- */
+.sh-ide-editor {
+	flex: 1;
+	min-height: 0;
+	font-size: 12.5px;
+}
+
+.sh-ide-editor[hidden] {
+	display: none;
+}
+
+.sh-ide-empty {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	padding: 24px;
+	font-size: 13px;
+	color: var(--fg-faint);
+	text-align: center;
+	background: var(--bg-inset);
+}
+
+/* syntax: tokens from tokens.css */
+.sh-ide-kw {
+	color: var(--syn-keyword);
+}
+
+.sh-ide-str {
+	color: var(--syn-string);
+}
+
+.sh-ide-num {
+	color: var(--syn-number);
+}
+
+.sh-ide-comment {
+	font-style: italic;
+	color: var(--syn-comment);
+}
+
+.sh-ide-type {
+	color: var(--syn-type);
+}
+
+.sh-ide-fn {
+	color: var(--syn-function);
+}
+
+.sh-ide-attr {
+	color: var(--syn-attr);
+}
+
+.sh-ide-meta {
+	color: var(--syn-meta);
+}
+
+.sh-ide-strong {
+	font-weight: 600;
+}
+
+.sh-ide-em {
+	font-style: italic;
+}
+
+.sh-ide-invalid {
+	color: var(--err);
+}
+
+/* ---- definitions ---- */
+.sh-ide-defs {
+	position: absolute;
+	z-index: 3;
+	right: 12px;
+	bottom: 36px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	width: min(460px, calc(100% - 24px));
+	max-height: 50%;
+	padding: 10px;
+	background: var(--bg-overlay);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow-overlay);
+}
+
+.sh-ide-defs-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	font-size: 13px;
+}
+
+.sh-ide-defs-list {
+	margin: 0;
+	padding: 0;
+	overflow-y: auto;
+	list-style: none;
+}
+
+.sh-ide-def {
+	display: grid;
+	gap: 2px;
+	width: 100%;
+	padding: 6px 8px;
+	color: var(--fg);
+	text-align: left;
+	background: none;
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.sh-ide-def:hover {
+	background: var(--hover);
+}
+
+.sh-ide-def-label {
+	font-size: 13px;
+}
+
+.sh-ide-def-where {
+	font-size: 12px;
+	color: var(--fg-faint);
+}
+
+.sh-ide-def-sig {
+	overflow: hidden;
+	font-family: var(--font-mono);
+	font-size: 11.5px;
+	color: var(--fg-muted);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ---- status bar ---- */
+.sh-ide-status {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 14px;
+	min-height: 26px;
+	padding: 0 10px;
+	overflow: hidden;
+	font-size: 11.5px;
+	color: var(--fg-faint);
+	white-space: nowrap;
+	background: var(--bg-raised);
+	border-top: 1px solid var(--border);
+}
+
+.sh-ide-status-path {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sh-ide-status-changed {
+	color: var(--ok);
+}
+
+.sh-ide-notice {
+	margin-left: auto;
+	color: var(--fg);
+}
+
+@media (max-width: 640px) {
+	.sh-ide-status > span:not(.sh-ide-status-path, .sh-ide-notice, .sh-ide-status-changed) {
+		display: none;
+	}
+}
+
+/* Phones zoom into anything under 16px that takes focus. */
+@media (any-pointer: coarse) {
+	.sh-ide-quick .sh-input,
+	.sh-ide-editor {
+		font-size: 16px;
+	}
+	.sh-ide-tree-row {
+		min-height: 36px;
+		font-size: 14px;
+	}
+	.sh-ide-tab-close {
+		width: 32px;
+		height: 32px;
+	}
+}

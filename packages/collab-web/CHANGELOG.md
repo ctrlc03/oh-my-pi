@@ -58,6 +58,7 @@
 - Stopped the agents rail from opening on its own on narrow screens, where it covered the transcript. The header badge still counts subagents
 - Wrapped code blocks, tool output, and diffs on phones instead of scrolling them sideways, and let wide Markdown tables scroll as one block
 - Made the return key insert a newline on touch keyboards; the send button submits
+- Restyled the client around a warm plum palette, in dark and light: a conversation panel with a lit edge and accent glow, a centred reading column with larger type, prompts as tinted bubbles on the right under the sender's name (the agent's prose runs without a label), a glass composer with the field above a toolbar and a round send button (one row on phones), pill quick replies, and solid pink lead buttons
 
 ### Fixed
 

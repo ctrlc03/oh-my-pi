@@ -276,10 +276,12 @@ export function App(): ReactNode {
 	}, [connect, pair]);
 
 	// Back from the background or offline: reconnect now, not when the backoff expires.
+	// Going to the background: save the transcript now, as the OS may kill the app there.
 	useEffect(() => {
 		if (!client) return;
 		const wake = (): void => {
 			if (document.visibilityState === "visible") client.resume();
+			else client.persist();
 		};
 		document.addEventListener("visibilitychange", wake);
 		window.addEventListener("online", wake);

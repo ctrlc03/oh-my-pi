@@ -31,6 +31,7 @@ import type {
 import { CAN_INFLATE, importRoomKey } from "./codec";
 import { recordEvent } from "./diag-log";
 import { COLLAB_PROTO, encodeBase64Url, parseCollabLink } from "./link";
+import { type ReplicaStore, replicaStore } from "./replica-cache";
 import { loadPromptQueue, type QueuedPrompt, savePromptQueue } from "./rooms";
 import { CollabSocket } from "./socket";
 
@@ -91,6 +92,8 @@ const WELCOME_TIMEOUT_MS = 30_000;
 const SNAPSHOT_PROGRESS_TIMEOUT_MS = 30_000;
 /** Commit delay when `requestAnimationFrame` is unavailable (tests, non-DOM hosts). */
 const FRAME_FALLBACK_MS = 16;
+/** Entry changes are written to the device's transcript store at most this often. */
+const PERSIST_DELAY_MS = 1000;
 
 /** Runs `callback` on the next animation frame; returns its cancel function. */
 function scheduleFrame(callback: () => void): () => void {
@@ -199,14 +202,26 @@ export class GuestClient {
 	#publishedEntries: readonly SessionEntry[] = [];
 	/** Cancels the scheduled deferred commit; null when none is pending. */
 	#cancelFrameCommit: (() => void) | null = null;
+	/** Device transcript store; null where IndexedDB is unavailable. */
+	readonly #store: ReplicaStore | null;
+	/** Resolves once the saved transcript (if any) seeded the replica; null until `connect`. */
+	#seeded: Promise<void> | null = null;
+	#closed = false;
+	/** Bumped whenever the replica is replaced rather than appended to. */
+	#replicaGen = 0;
+	/** Generation and length of the replica last handed to the store. */
+	#savedGen = 0;
+	#savedCount = 0;
+	#persistTimer: Timer | null = null;
 
 	/** @throws Error when the link does not parse. */
-	constructor(link: string, displayName: string) {
+	constructor(link: string, displayName: string, store: ReplicaStore | null = replicaStore()) {
 		const parsed = parseCollabLink(link);
 		if ("error" in parsed) throw new Error(parsed.error);
 		this.#name = displayName;
 		this.#writeToken = parsed.writeToken ? encodeBase64Url(parsed.writeToken) : undefined;
 		this.#roomId = parsed.roomId;
+		this.#store = store;
 		// A view link never queues: the host would drop every prompt.
 		if (this.#writeToken !== undefined) this.#queue = loadPromptQueue(parsed.roomId);
 		this.#socket = new CollabSocket({ wsUrl: parsed.wsUrl, role: "guest", key: importRoomKey(parsed.key) });
@@ -222,13 +237,71 @@ export class GuestClient {
 			this.#endedReason = null;
 			this.#commit();
 		}
-		this.#socket.connect();
+		if (this.#store === null) {
+			this.#socket.connect();
+			return;
+		}
+		// The first hello offers a delta resume from the saved transcript, so it waits for the read.
+		this.#seeded ??= this.#store.load(this.#roomId).then(cached => this.#seed(cached));
+		void this.#seeded.then(() => {
+			if (!this.#closed) this.#socket.connect();
+		});
 	}
 
 	close(): void {
+		this.#closed = true;
 		this.#clearWelcomeTimer();
 		this.#clearSnapshotProgressTimer();
+		this.persist();
 		this.#socket.close();
+	}
+
+	/** Write pending transcript changes to the device now (the app is going to the background). */
+	persist(): void {
+		if (this.#persistTimer !== null) {
+			clearTimeout(this.#persistTimer);
+			this.#persistTimer = null;
+		}
+		const store = this.#store;
+		const header = this.#header;
+		// Mid-snapshot, `#entries` is still the previous replica while `#header` is the incoming
+		// session's: completion schedules the write.
+		if (store === null || header === null || this.#pendingSnapshot !== null) return;
+		if (this.#replicaSessionId !== header.id) return;
+		const fail = (err: unknown): void => console.warn("collab: saving the transcript failed", err);
+		if (this.#savedGen !== this.#replicaGen) {
+			const entries = this.#entries.slice();
+			this.#savedGen = this.#replicaGen;
+			this.#savedCount = entries.length;
+			store.replace(this.#roomId, header, entries).catch(fail);
+		} else if (this.#entries.length > this.#savedCount) {
+			const from = this.#savedCount;
+			const added = this.#entries.slice(from);
+			this.#savedCount = this.#entries.length;
+			store.append(this.#roomId, header, from, added).catch(fail);
+		}
+	}
+
+	/** Shows the saved transcript, unless the connection already delivered one. */
+	#seed(cached: { header: SessionHeader; entries: SessionEntry[] } | null): void {
+		if (cached === null || this.#entries.length > 0 || this.#header !== null) return;
+		this.#entries = cached.entries;
+		this.#publishedEntries = cached.entries.slice();
+		this.#header = cached.header;
+		this.#replicaSessionId = cached.header.id;
+		this.#savedGen = this.#replicaGen;
+		this.#savedCount = cached.entries.length;
+		this.#commit();
+	}
+
+	/** Entries were added (`replaced` false) or the replica was replaced: save them shortly. */
+	#replicaChanged(replaced: boolean): void {
+		if (replaced) this.#replicaGen++;
+		if (this.#store === null || this.#persistTimer !== null) return;
+		this.#persistTimer = setTimeout(() => {
+			this.#persistTimer = null;
+			this.persist();
+		}, PERSIST_DELAY_MS);
 	}
 
 	/** Reconnect now instead of waiting out a pending backoff (foreground / online). */
@@ -452,12 +525,16 @@ export class GuestClient {
 							this.#socket.reconnect("lost the session replica; rejoining for a full snapshot");
 							return;
 						}
-						this.#entries.length = at + 1;
+						if (at + 1 < this.#entries.length) {
+							this.#entries.length = at + 1;
+							this.#replicaChanged(true);
+						}
 					}
 					if (frame.entryCount === 0) {
 						if (!resumed) {
 							this.#entries = [];
 							this.#publishedEntries = [];
+							this.#replicaChanged(true);
 						}
 						this.#replicaSessionId = frame.header.id;
 						this.#pendingSnapshot = null;
@@ -516,6 +593,7 @@ export class GuestClient {
 				this.#pendingSnapshot = null;
 				this.#clearSnapshotProgressTimer();
 				this.#phase = "live";
+				this.#replicaChanged(!pending.resumed);
 				break;
 			}
 			case "entry":
@@ -533,6 +611,7 @@ export class GuestClient {
 				}
 				this.#entries.push(frame.entry);
 				this.#publishedEntries = [...this.#entries];
+				this.#replicaChanged(false);
 				break;
 			case "event":
 				this.#applyEvent(frame.event);

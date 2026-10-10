@@ -47,6 +47,7 @@
 - Live preview: phone, tablet, or desktop screenshots (optionally full page) of the session's local dev server, taken by Chrome on the computer and refreshed after the agent edits files
 - Voice input: a mic button in the composer; the companion transcribes on the computer with omp's local speech model and the text lands in the draft
 - Starting a session in a folder macOS keeps the LaunchAgent out of (`~/Documents` and the like until bun is allowed under Files and Folders) says so instead of "folder does not exist"; start and resume errors show at the top of the sheet instead of below the session list
+- Transcripts are saved on the device: reopening the app shows the session at once and fetches only what is new instead of the whole session
 - Added *All sessions* through the companion: past and live sessions across projects, grouped by folder with spend, searchable, with *Open*, *Share*, or *Resume* on each row
 
 ### Changed

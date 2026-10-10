@@ -11,6 +11,7 @@ import type {
 	WireMessage,
 } from "@oh-my-pi/pi-wire";
 import { GuestClient } from "../src/lib/client";
+import type { CachedReplica, ReplicaStore } from "../src/lib/replica-cache";
 import { COLLAB_PROTO, encodeBase64Url } from "../src/lib/link";
 import { CollabSocket } from "../src/lib/socket";
 
@@ -645,6 +646,171 @@ describe("GuestClient delta resume", () => {
 			connect(client);
 			client.close();
 			expect(lastHello(sent).resume).toEqual({ sessionId: HEADER.id, entryId: "e2" });
+		});
+	});
+});
+
+describe("GuestClient saved transcript", () => {
+	const e1 = messageEntry("e1", { role: "user", content: "one", timestamp: 1 });
+	const e2 = messageEntry("e2", { role: "user", content: "two", timestamp: 2 });
+	const e3 = messageEntry("e3", { role: "user", content: "three", timestamp: 3 });
+	const e4 = messageEntry("e4", { role: "user", content: "four", timestamp: 4 });
+
+	/** The IndexedDB store's contract, in memory: rooms point at sessions, appends extend a saved prefix. */
+	function memoryStore(): ReplicaStore {
+		const rooms = new Map<string, string>();
+		const sessions = new Map<string, CachedReplica>();
+		return {
+			async load(roomId) {
+				const saved = sessions.get(rooms.get(roomId) ?? "");
+				return saved ? { header: saved.header, entries: [...saved.entries] } : null;
+			},
+			async replace(roomId, header, entries) {
+				sessions.set(header.id, { header, entries: [...entries] });
+				rooms.set(roomId, header.id);
+			},
+			async append(roomId, header, from, entries) {
+				const saved = sessions.get(header.id);
+				if (!saved || saved.entries.length < from) throw new Error("append past the saved prefix");
+				saved.entries.length = from;
+				saved.entries.push(...entries);
+				rooms.set(roomId, header.id);
+			},
+			async move(from, to) {
+				const sessionId = rooms.get(from);
+				rooms.delete(from);
+				if (sessionId !== undefined) rooms.set(to, sessionId);
+			},
+			async forget(roomId) {
+				rooms.delete(roomId);
+			},
+		};
+	}
+
+	/** Lets the store's read and the connect that follows it settle. */
+	const settle = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0));
+
+	async function withSocket(body: (sent: GuestFrame[]) => Promise<void>): Promise<void> {
+		const sent: GuestFrame[] = [];
+		const sendSpy = vi.spyOn(CollabSocket.prototype, "send").mockImplementation((frame: GuestFrame) => {
+			sent.push(frame);
+		});
+		const connectSpy = vi.spyOn(CollabSocket.prototype, "connect").mockImplementation(function (this: CollabSocket) {
+			this.onOpen?.();
+		});
+		try {
+			await body(sent);
+		} finally {
+			sendSpy.mockRestore();
+			connectSpy.mockRestore();
+		}
+	}
+
+	function lastHello(sent: GuestFrame[]): Extract<GuestFrame, { t: "hello" }> {
+		const hello = sent.findLast(frame => frame.t === "hello");
+		if (hello?.t !== "hello") throw new Error("no hello sent");
+		return hello;
+	}
+
+	function welcome(entryCount: number, extra: Partial<Extract<HostFrame, { t: "welcome" }>> = {}): HostFrame {
+		return { ...(welcomeFrame(entryCount) as Extract<HostFrame, { t: "welcome" }>), ...extra };
+	}
+
+	/** A client that joined, received `entries` as a full snapshot, and was closed (the app went away). */
+	async function visit(store: ReplicaStore, entries: SessionEntry[]): Promise<void> {
+		const client = new GuestClient(LINK, "tester", store);
+		client.connect();
+		await settle();
+		client.applyFrameForTest(welcome(entries.length));
+		client.applyFrameForTest(snapshotChunk(entries));
+		client.close();
+		await settle();
+	}
+
+	async function reopen(store: ReplicaStore): Promise<GuestClient> {
+		const client = new GuestClient(LINK, "tester", store);
+		client.connect();
+		await settle();
+		return client;
+	}
+
+	it("shows the saved transcript before the host answers and resumes after its last entry", async () => {
+		await withSocket(async sent => {
+			const store = memoryStore();
+			await visit(store, [e1, e2]);
+
+			const reopened = await reopen(store);
+			expect(reopened.getSnapshot().entries).toEqual([e1, e2]);
+			expect(reopened.getSnapshot().header).toEqual(HEADER);
+			expect(lastHello(sent).resume).toEqual({ sessionId: HEADER.id, entryId: "e2" });
+			reopened.close();
+		});
+	});
+
+	it("saves what a resumed join and live entries add, for the next open", async () => {
+		await withSocket(async sent => {
+			const store = memoryStore();
+			await visit(store, [e1, e2]);
+
+			const second = await reopen(store);
+			second.applyFrameForTest(welcome(1, { resumed: true }));
+			second.applyFrameForTest(snapshotChunk([e3]));
+			second.applyFrameForTest({ t: "entry", entry: e4 });
+			second.close();
+			await settle();
+
+			const third = await reopen(store);
+			expect(third.getSnapshot().entries).toEqual([e1, e2, e3, e4]);
+			expect(lastHello(sent).resume).toEqual({ sessionId: HEADER.id, entryId: "e4" });
+			third.close();
+		});
+	});
+
+	it("replaces the saved transcript when the host sends a full snapshot instead", async () => {
+		await withSocket(async () => {
+			const store = memoryStore();
+			await visit(store, [e1, e2]);
+
+			// An older host, or rewritten history: the whole session again, from the start.
+			const second = await reopen(store);
+			second.applyFrameForTest(welcome(2));
+			// The saved transcript stays on screen until the new one is complete.
+			second.applyFrameForTest(snapshotChunk([e3], false));
+			expect(second.getSnapshot().entries).toEqual([e1, e2]);
+			second.applyFrameForTest(snapshotChunk([e4]));
+			second.close();
+			await settle();
+
+			const third = await reopen(store);
+			expect(third.getSnapshot().entries).toEqual([e3, e4]);
+			third.close();
+		});
+	});
+
+	it("keeps the saved transcript when a different session's snapshot never finished", async () => {
+		await withSocket(async () => {
+			const store = memoryStore();
+			await visit(store, [e1, e2]);
+
+			const second = await reopen(store);
+			second.applyFrameForTest(welcome(2, { header: { ...HEADER, id: "s2" } }));
+			second.applyFrameForTest(snapshotChunk([e3], false));
+			second.close();
+			await settle();
+
+			const third = await reopen(store);
+			expect(third.getSnapshot().entries).toEqual([e1, e2]);
+			third.close();
+		});
+	});
+
+	it("does not connect a client closed while the saved transcript was being read", async () => {
+		await withSocket(async sent => {
+			const client = new GuestClient(LINK, "tester", memoryStore());
+			client.connect();
+			client.close();
+			await settle();
+			expect(sent.some(frame => frame.t === "hello")).toBe(false);
 		});
 	});
 });

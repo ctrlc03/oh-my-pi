@@ -85,6 +85,7 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 					<X size={16} />
 				</button>
 			</div>
+			{error && <div className="sh-connect-error">{error}</div>}
 			{starting !== null ? (
 				<div className="sh-start-progress" role="status">
 					<LoaderCircle size={22} className="sh-spin" />
@@ -188,7 +189,6 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 					)}
 				</>
 			)}
-			{error && <div className="sh-connect-error">{error}</div>}
 		</Sheet>
 	);
 }

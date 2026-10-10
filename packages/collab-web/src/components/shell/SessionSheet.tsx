@@ -19,6 +19,7 @@ import type { PushControl } from "../../lib/push";
 import { type ThemePreference, useThemePreference } from "../../lib/theme";
 import { formatUsage, type SessionUsage } from "../../lib/usage";
 import { PushButton, SandboxedChip } from "./CompanionCard";
+import { ModelList } from "./ModelControls";
 import { Sheet } from "./Sheet";
 
 const THEMES: readonly { value: ThemePreference; label: string; Icon: LucideIcon }[] = [
@@ -46,17 +47,6 @@ const SHORTCUTS: readonly { keys: string; action: string }[] = [
 	{ keys: "/", action: "find in session" },
 	{ keys: "Esc", action: "close, or stop a running turn" },
 ];
-
-/** Models grouped by provider, in the host's order. */
-function groupByProvider(models: readonly WireModel[]): [string, WireModel[]][] {
-	const groups = new Map<string, WireModel[]>();
-	for (const model of models) {
-		const group = groups.get(model.provider);
-		if (group) group.push(model);
-		else groups.set(model.provider, [model]);
-	}
-	return [...groups];
-}
 
 export interface SessionSheetProps {
 	title: string;
@@ -179,34 +169,12 @@ export function SessionSheet({
 					</div>
 				)}
 				{canControl && pickerOpen && models && (
-					<div className="sh-model-list" role="listbox" aria-label="model">
-						{groupByProvider(models).map(([provider, group]) => (
-							<div key={provider} className="sh-model-group">
-								<div className="sh-model-provider">{provider}</div>
-								{group.map(model => {
-									const current = model.id === state?.model?.id && model.provider === state.model.provider;
-									return (
-										<button
-											key={model.id}
-											type="button"
-											role="option"
-											aria-selected={current}
-											className={current ? "sh-model sh-model-on" : "sh-model"}
-											onClick={() => {
-												setPickerOpen(false);
-												if (!current) onSessionCommand("model", `${model.provider}/${model.id}`);
-											}}
-										>
-											<span>{model.name}</span>
-											{model.contextWindow !== null && (
-												<span className="sh-sheet-faint">{fmtTokens(model.contextWindow)}</span>
-											)}
-										</button>
-									);
-								})}
-							</div>
-						))}
-					</div>
+					<ModelList
+						models={models}
+						current={state?.model}
+						onChange={spec => onSessionCommand("model", spec)}
+						onDone={() => setPickerOpen(false)}
+					/>
 				)}
 				{canControl && levels.length > 0 && (
 					<div className="sh-sheet-row">

@@ -687,6 +687,11 @@ function Session({
 						queuedMessageCount={snap.state?.queuedMessageCount ?? 0}
 						voice={voice}
 						draftKey={roomId}
+						models={snap.models}
+						model={snap.state?.model}
+						thinkingLevel={snap.state?.thinkingLevel}
+						thinkingLevels={snap.state?.thinkingLevels}
+						onSessionCommand={sendSessionCommand}
 					/>
 				</section>
 				{railOpen && (

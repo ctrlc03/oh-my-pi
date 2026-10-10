@@ -51,6 +51,7 @@
 - Added *All sessions* through the companion: past and live sessions across projects, grouped by folder with spend, searchable, with *Open*, *Share*, or *Resume* on each row
 - Resuming a session that is open in another omp on the computer (for example a Terminal omp that predates collab hosting) now warns first, naming where it runs, instead of starting a second copy that writes to the same session file; *Resume anyway* overrides. A session that already hosts opens that host
 - Made the host list and opening a session faster: the companion gathers a `hosts` reply's inputs concurrently (a cold first reply halves, about 600 ms to 300 ms), and opening or sharing a session asks omp's registry in-process instead of spawning `omp collab link` (about 315 ms to 1 ms)
+- Added model and thinking-level pills to the composer toolbar, each opening a picker above it (a bottom sheet on phones), so switching models no longer needs the session sheet
 
 ### Changed
 

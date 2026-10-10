@@ -1,4 +1,4 @@
-import type { CollabUiRequest, ImageContent } from "@oh-my-pi/pi-wire";
+import type { CollabUiRequest, ImageContent, SessionCommand, WireModel } from "@oh-my-pi/pi-wire";
 import { ImagePlus, SendHorizontal, Square, X } from "lucide-react";
 import type { ClipboardEvent, KeyboardEvent, ReactNode, RefObject } from "react";
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -6,6 +6,7 @@ import type { ConnectionPhase, GuestClient } from "../../lib/client";
 import { MAX_ATTACHMENTS, toImageContent } from "../../lib/images";
 import { loadDraft, saveDraft } from "../../lib/rooms";
 import { insertAtCaret } from "../../lib/voice";
+import { ModelControls } from "./ModelControls";
 import { QuickReplies } from "./QuickReplies";
 import { useVoiceInput, VoiceButton, type VoiceSource, VoiceStatus } from "./VoiceInput";
 
@@ -23,6 +24,13 @@ export interface ComposerProps {
 	draftKey: string | null;
 	/** Voice input through the paired computer; null when it is unavailable. */
 	voice: VoiceSource | null;
+	/** Models this writer may switch to; null when the host predates session controls. */
+	models: readonly WireModel[] | null;
+	model: WireModel | undefined;
+	thinkingLevel: string | undefined;
+	/** Levels the current model accepts; absent on hosts without session controls. */
+	thinkingLevels: readonly string[] | undefined;
+	onSessionCommand(cmd: SessionCommand, arg?: string): void;
 }
 
 /** Textarea metrics: line-height 20px + 8px vertical padding × 2 (kept in sync with shell.css). */
@@ -140,6 +148,11 @@ export const Composer = memo(function Composer({
 	queuedMessageCount,
 	draftKey,
 	voice,
+	models,
+	model,
+	thinkingLevel,
+	thinkingLevels,
+	onSessionCommand,
 }: ComposerProps): ReactNode {
 	const [text, setText] = useState(() => (draftKey ? loadDraft(draftKey) : ""));
 	const [images, setImages] = useState<ImageContent[]>([]);
@@ -341,6 +354,16 @@ export const Composer = memo(function Composer({
 						>
 							<ImagePlus size={16} />
 						</button>
+						{models !== null && (
+							<ModelControls
+								models={models}
+								model={model}
+								thinkingLevel={thinkingLevel}
+								thinkingLevels={thinkingLevels}
+								disabled={!live}
+								onSessionCommand={onSessionCommand}
+							/>
+						)}
 					</>
 				)}
 				<textarea

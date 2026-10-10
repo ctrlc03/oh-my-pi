@@ -523,10 +523,10 @@
 
 .sh-composer-inner {
 	display: grid;
-	grid-template-columns: auto minmax(0, 1fr) auto;
+	grid-template-columns: auto auto minmax(0, 1fr) auto;
 	grid-template-areas:
-		"input input input"
-		"attach . actions";
+		"input input input input"
+		"attach tools . actions";
 	align-items: center;
 	gap: 6px 8px;
 	padding: 12px 10px 10px;
@@ -603,6 +603,57 @@
 .sh-attach {
 	grid-area: attach;
 	border-radius: 999px;
+}
+
+/* Model and thinking pills beside the attach button. */
+.sh-composer-tools {
+	grid-area: tools;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.sh-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+	height: 30px;
+	padding: 0 11px;
+	font-size: 12.5px;
+	font-weight: 500;
+	color: var(--fg-muted);
+	background: var(--hover);
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	transition:
+		background 140ms ease-out,
+		color 140ms ease-out,
+		border-color 140ms ease-out;
+}
+
+.sh-pill:hover:not(:disabled),
+.sh-pill[aria-expanded="true"] {
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft);
+	border-color: transparent;
+}
+
+.sh-pill:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.sh-pill svg {
+	flex: none;
+}
+
+.sh-pill-text {
+	max-width: 18ch;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 }
 
 /* ---- voice input (status line above the composer, mic button in its actions) ---- */
@@ -1289,6 +1340,9 @@
 	min-width: 0;
 	display: flex;
 	flex-direction: column;
+	/* Stretched and capped (below): on iPad Safari a long title overflowed the row,
+	 * clipped with no ellipsis, instead of shrinking to the button's width. */
+	align-items: stretch;
 	gap: 2px;
 	min-height: 48px;
 	padding: 7px 8px;
@@ -1297,6 +1351,10 @@
 	border: 0;
 	border-radius: var(--radius);
 	transition: background 120ms ease-out;
+}
+
+.sh-recent-join > * {
+	max-width: 100%;
 }
 
 .sh-recent-join:hover,
@@ -1728,6 +1786,27 @@
 	color: var(--accent);
 }
 
+/* Picker opened from a composer pill: a compact menu rising from the pill (the
+ * phone rules below turn it back into a bottom sheet). Position comes from Sheet. */
+.sh-sheet-anchored {
+	top: auto;
+	right: auto;
+	left: var(--anchor-left);
+	bottom: var(--anchor-bottom);
+	width: 320px;
+	max-height: min(440px, calc(var(--viewport-height, 100dvh) - var(--anchor-bottom) - 16px));
+	gap: 0;
+	padding: 8px;
+}
+
+/* The sheet scrolls, so the list drops the in-sheet picker's own cap and rule. */
+.sh-sheet-anchored .sh-model-list {
+	max-height: none;
+	overflow: visible;
+	padding: 0;
+	border-bottom: 0;
+}
+
 /* Keyboard shortcuts only help where a precise pointer (so, a keyboard) is the primary input. */
 .sh-shortcuts {
 	display: none;
@@ -2150,13 +2229,20 @@
 		padding-left: max(8px, env(safe-area-inset-left, 0px));
 		padding-right: max(8px, env(safe-area-inset-right, 0px));
 	}
-	/* One row on a phone: the toolbar row would cost a line of transcript. */
+	/* One field row on a phone, the model pills in a slim row above it: a full
+	 * toolbar row under the field would cost a line of transcript. */
 	.sh-composer-inner {
 		grid-template-columns: auto minmax(0, 1fr) auto;
-		grid-template-areas: "attach input actions";
+		grid-template-areas:
+			"tools tools tools"
+			"attach input actions";
 		align-items: end;
+		row-gap: 0;
 		padding: 6px;
 		border-radius: var(--radius-xl);
+	}
+	.sh-composer-tools {
+		padding: 2px 2px 4px;
 	}
 	.sh-composer-input {
 		min-height: 0;

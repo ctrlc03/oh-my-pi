@@ -885,6 +885,7 @@ The `cost` segment shows recorded session costs. For an active provider/model wi
 | `followUpMode`         | enum    | `one-at-a-time` | `all`, `one-at-a-time`.                                                                                 |
 | `interruptMode`        | enum    | `immediate`     | `immediate`, `wait`.                                                                                    |
 | `doubleEscapeAction`   | enum    | `rewind`          | `rewind`, `tree`, `none`: open the rewind selector, open the session tree, or do nothing. |
+| `rewind.snapshotFiles` | boolean | `true` | Snapshot the git working tree before each prompt (private store under the agent dir; your repo's index, refs and stash are never touched) so a rewind can also restore the files the dropped turns changed, and `/redo-files` or the app's *Undo restore* can bring them back. See [Rewinding files](./collab.md#rewinding-files). Off by default under `bun test`. |
 | `autoResume`           | boolean | `false`         | Auto-resume the most recent session in the cwd.                                                         |
 | `plan.enabled`         | boolean | `true`          | Enable plan mode.                                                                                       |
 | `plan.defaultOnStartup` | boolean | `false`         | Start each fresh interactive session in plan mode when plan mode is enabled. Print/JSON (`--print`) mode ignores this and prints a note; use `--plan-yolo` for a headless plan flow. |

@@ -62,6 +62,7 @@ import {
 	foreignSessionSourceName,
 	persistForeignSession,
 } from "../../session/foreign-session-import";
+import { describeFileRestore, type FileRestoreResult } from "../../session/file-snapshots";
 import type { ForeignSessionInfo, ForeignSessionSource } from "../../session/foreign-session-store";
 import { previewModelCompactionPoint, setModelCompactionPoint } from "../../session/model-compaction-threshold";
 import { isTranscriptEntry, type TranscriptEntry } from "../../session/session-context";
@@ -197,6 +198,9 @@ interface OpenMenu {
 	/** Shows `component` as a new overlay and focuses it; also raises a covered menu. */
 	mount?: () => OverlayHandle;
 }
+
+/** How long an Esc Esc rewind waits to learn which files a restore would change before offering only the conversation rewind. */
+const FILE_PREVIEW_BUDGET_MS = 1_500;
 
 export class SelectorController {
 	/**
@@ -1358,24 +1362,67 @@ export class SelectorController {
 	 * alternate screen never flashes a stale transcript.
 	 */
 	async #rewindFromTranscript(entryId: string, done: () => void): Promise<void> {
+		let closed = false;
+		const close = () => {
+			if (closed) return;
+			closed = true;
+			done();
+		};
 		const entry = this.ctx.sessionManager.getEntry(entryId);
 		if (!entry || !isTranscriptEntry(entry)) {
-			done();
+			close();
 			return;
 		}
 
 		const isUserTarget = isUserRequestEntry(entry);
 		const realLeafId = this.ctx.sessionManager.getLeafId();
 		if (entryId === realLeafId && !isUserTarget) {
-			done();
+			close();
 			this.ctx.showStatus("Already at this point");
 			return;
 		}
+		const session = this.ctx.session;
+		let restoredFiles: FileRestoreResult | undefined;
+		if (isUserTarget && session.canRestoreFiles) {
+			// Past a short budget (a big repository, a snapshot still running) rewind without offering files.
+			const timedOut = Symbol("preview timed out");
+			let timer: Timer | undefined;
+			const plan = await Promise.race([
+				session.previewFileRestore(entryId).catch(() => undefined),
+				new Promise<typeof timedOut>(resolve => {
+					timer = setTimeout(() => resolve(timedOut), FILE_PREVIEW_BUDGET_MS);
+				}),
+			]).finally(() => clearTimeout(timer));
+			if (plan === timedOut)
+				this.ctx.showStatus("Could not check which files changed in time; rewinding the conversation only");
+			if (typeof plan === "object" && plan.revert + plan.remove + plan.recreate > 0) {
+				// The choice needs the editor area, so the fullscreen selector closes first.
+				close();
+				const restore = "Rewind and restore files";
+				const choice = await this.ctx.showHookSelector(
+					`Restore files too?\n${describeFileRestore(plan)} would go back to how they were before this prompt (undo with /redo-files).`,
+					[restore, "Rewind conversation only", "Cancel"],
+				);
+				if (choice === undefined || choice === "Cancel") {
+					this.ctx.showStatus("Rewind cancelled");
+					return;
+				}
+				if (choice === restore) {
+					try {
+						restoredFiles = await session.restoreFiles(entryId);
+					} catch (error) {
+						this.ctx.showError(error instanceof Error ? error.message : String(error));
+						return;
+					}
+				}
+			}
+		}
 		const treeRewind = this.#treeRewindBoundary(entryId, realLeafId);
 		try {
-			const result = await this.ctx.session.navigateTree(entryId, { summarize: false });
+			const result = await session.navigateTree(entryId, { summarize: false });
 			if (result.cancelled) {
-				done();
+				if (restoredFiles) await session.redoFileRestore().catch(() => undefined);
+				close();
 				this.ctx.showStatus("Navigation cancelled");
 				return;
 			}
@@ -1390,10 +1437,15 @@ export class SelectorController {
 			if (result.editorText && (isUserTarget || !this.ctx.editor.getText().trim())) {
 				this.ctx.editor.setDraft(result.editorText, result.editorImages);
 			}
-			done();
-			this.ctx.showStatus("Rewound to selected point");
+			close();
+			this.ctx.showStatus(
+				restoredFiles
+					? `Rewound to selected point and restored ${describeFileRestore(restoredFiles.plan)} (undo with /redo-files)`
+					: "Rewound to selected point",
+			);
 		} catch (error) {
-			done();
+			if (restoredFiles) await session.redoFileRestore().catch(() => undefined);
+			close();
 			this.ctx.showError(error instanceof Error ? error.message : String(error));
 		}
 	}

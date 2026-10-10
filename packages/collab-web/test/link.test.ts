@@ -4,6 +4,7 @@ import {
 	encodeBase64Url,
 	formatCollabLink,
 	generateRoomId,
+	normalizeLocalRelayUrl,
 	packEnvelope,
 	parseCollabLink,
 	rewriteEnvelopePeer,
@@ -137,6 +138,56 @@ describe("collab link parsing", () => {
 			expect(parsed.roomId).toBe(roomId);
 			expect(parsed.key).toEqual(KEY);
 		}
+	});
+});
+
+describe("collab link local relay", () => {
+	it("round-trips the local relay through the explicit relay form, also behind the default relay", () => {
+		const link = formatCollabLink(DEFAULT_RELAY_URL, ROOM, KEY, undefined, "ws://127.0.0.1:7467");
+		expect(link.startsWith("my.omp.sh/r/")).toBe(true);
+		expect(link.endsWith("?local=127.0.0.1:7467")).toBe(true);
+		const parsed = parseCollabLink(link);
+		if ("error" in parsed) throw new Error(parsed.error);
+		expect(parsed.wsUrl).toBe(`${DEFAULT_RELAY_URL}/r/${ROOM}`);
+		expect(parsed.localWsUrl).toBe(`ws://127.0.0.1:7467/r/${ROOM}`);
+		expect(parsed.key).toEqual(KEY);
+	});
+
+	it("finds the local relay in a web deep link and leaves links without one alone", () => {
+		const withLocal = parseCollabLink(
+			`https://my.omp.sh/#${formatCollabLink(DEFAULT_RELAY_URL, ROOM, KEY, undefined, "ws://localhost:9000")}`,
+		);
+		if ("error" in withLocal) throw new Error(withLocal.error);
+		expect(withLocal.localWsUrl).toBe(`ws://localhost:9000/r/${ROOM}`);
+		const plain = parseCollabLink(formatCollabLink(DEFAULT_RELAY_URL, ROOM, KEY));
+		if ("error" in plain) throw new Error(plain.error);
+		expect(plain.localWsUrl).toBeUndefined();
+	});
+
+	it("drops a local relay that is not loopback instead of connecting out to it", () => {
+		for (const local of ["evil.example.com:7467", "127.0.0.1", "127.0.0.1:7467/x", "user@127.0.0.1:7467"]) {
+			const parsed = parseCollabLink(`my.omp.sh/r/${ROOM}.${KEY_TEXT}?local=${local}`);
+			if ("error" in parsed) throw new Error(parsed.error);
+			expect(parsed.localWsUrl).toBeUndefined();
+			expect(parsed.wsUrl).toBe(`${DEFAULT_RELAY_URL}/r/${ROOM}`);
+		}
+	});
+
+	it("refuses to format a link around a non-loopback local relay", () => {
+		expect(() => formatCollabLink(DEFAULT_RELAY_URL, ROOM, KEY, undefined, "ws://evil.example.com:7467")).toThrow();
+	});
+
+	it("normalizes only loopback hosts with an explicit port", () => {
+		expect(normalizeLocalRelayUrl("ws://127.0.0.1:7467")).toBe("ws://127.0.0.1:7467");
+		expect(normalizeLocalRelayUrl("http://localhost:7467/")).toBe("ws://localhost:7467");
+		expect(normalizeLocalRelayUrl("127.0.0.1:7467")).toBe("ws://127.0.0.1:7467");
+		expect(normalizeLocalRelayUrl("ws://[::1]:7467")).toBe("ws://[::1]:7467");
+		expect(normalizeLocalRelayUrl("wss://127.0.0.1:7467")).toBeNull();
+		expect(normalizeLocalRelayUrl("ws://127.0.0.1")).toBeNull();
+		expect(normalizeLocalRelayUrl("ws://192.168.1.5:7467")).toBeNull();
+		expect(normalizeLocalRelayUrl("ws://127.0.0.1:7467/r/x")).toBeNull();
+		expect(normalizeLocalRelayUrl("ws://127.0.0.1.evil.com:7467")).toBeNull();
+		expect(normalizeLocalRelayUrl("")).toBeNull();
 	});
 });
 

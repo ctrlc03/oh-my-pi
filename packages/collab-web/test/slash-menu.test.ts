@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { CollabCommand, HostFrame, SessionHeader, SessionState } from "@oh-my-pi/pi-wire";
 import { GuestClient } from "../src/lib/client";
 import { COLLAB_PROTO, encodeBase64Url } from "../src/lib/link";
-import { applySlash, matchSlash, slashQuery } from "../src/lib/slash-menu";
+import { applySlash, matchArgument, matchSlash, slashQuery, usableCommands } from "../src/lib/slash-menu";
 
 const COMMANDS: CollabCommand[] = [
 	{ name: "plan", description: "Start plan mode" },
@@ -29,7 +29,7 @@ describe("slashQuery", () => {
 describe("matchSlash", () => {
 	it("lists every host command for a bare slash, in host order", () => {
 		const items = matchSlash("", COMMANDS, []);
-		expect(items.map(i => (i.kind === "command" ? i.command.name : i.text))).toEqual([
+		expect(items.map(i => (i.kind === "saved" ? i.text : i.command.name))).toEqual([
 			"plan",
 			"skill:review",
 			"fix-tests",
@@ -71,6 +71,62 @@ describe("applySlash", () => {
 	it("completes a command to `/name ` and a saved prompt to its text", () => {
 		expect(applySlash({ kind: "command", command: COMMANDS[1]! })).toBe("/skill:review ");
 		expect(applySlash({ kind: "saved", text: "Run the tests" })).toBe("Run the tests");
+	});
+});
+
+describe("argument suggestions", () => {
+	const resume: CollabCommand = {
+		name: "resume",
+		args: "<session>",
+		choices: [
+			{ value: "5f3a9c1e", label: "migrate settings", description: "42 messages" },
+			{ value: "c07d44b2", label: "relay audit", description: "18 messages" },
+		],
+		switchesSession: true,
+	};
+	const commands: CollabCommand[] = [
+		{ name: "model", args: "<provider/id>" },
+		{ name: "effort", args: "<level>" },
+		resume,
+	];
+	const sources = {
+		models: [
+			{ id: "big", name: "Big", provider: "acme", contextWindow: null },
+			{ id: "small", name: "Small", provider: "acme", contextWindow: null },
+		],
+		thinkingLevels: ["off", "low", "high"],
+	};
+	const values = (draft: string) =>
+		matchArgument(draft, commands, sources).map(item => (item.kind === "choice" ? item.choice.value : ""));
+
+	it("suggests models for /model and the session's thinking levels for /effort", () => {
+		expect(values("/model ")).toEqual(["acme/big", "acme/small"]);
+		expect(values("/model sma")).toEqual(["acme/small"]);
+		expect(values("/effort h")).toEqual(["high"]);
+		expect(values("/effort ")).toEqual(["off", "low", "high"]);
+	});
+
+	it("suggests what the host listed for a command, matching its title and description too", () => {
+		expect(values("/resume ")).toEqual(["5f3a9c1e", "c07d44b2"]);
+		expect(values("/resume audit")).toEqual(["c07d44b2"]);
+		expect(values("/resume 18 mess")).toEqual(["c07d44b2"]);
+	});
+
+	it("offers nothing without a space after the name, for an unlisted command, or once the argument spans lines", () => {
+		expect(values("/model")).toEqual([]);
+		expect(values("/ghost ")).toEqual([]);
+		expect(values("/resume x\ny")).toEqual([]);
+		expect(matchArgument("/model ", commands, { models: null, thinkingLevels: undefined })).toEqual([]);
+	});
+
+	it("completes a picked suggestion to the full command", () => {
+		const [first] = matchArgument("/resume ", commands, sources);
+		expect(first && applySlash(first)).toBe("/resume 5f3a9c1e");
+	});
+
+	it("hides the commands that end the room unless a paired computer brings the guest along", () => {
+		expect(usableCommands(commands, true)).toEqual(commands);
+		expect(usableCommands(commands, false).map(command => command.name)).toEqual(["model", "effort"]);
 	});
 });
 

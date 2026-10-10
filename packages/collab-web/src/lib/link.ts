@@ -12,6 +12,8 @@ import type { ParsedCollabLink } from "@oh-my-pi/pi-wire";
 import {
 	DEFAULT_RELAY_URL,
 	ENVELOPE_HEADER_LENGTH,
+	LOCAL_RELAY_LINK_PARAM,
+	normalizeLocalRelayUrl,
 	ROOM_ID_BYTES,
 	ROOM_KEY_BYTES,
 	WRITE_TOKEN_BYTES,
@@ -19,7 +21,7 @@ import {
 
 export { COLLAB_PROTO } from "@oh-my-pi/pi-wire";
 export type { ParsedCollabLink };
-export { DEFAULT_RELAY_URL, ENVELOPE_HEADER_LENGTH, ROOM_ID_BYTES };
+export { DEFAULT_RELAY_URL, ENVELOPE_HEADER_LENGTH, normalizeLocalRelayUrl, ROOM_ID_BYTES };
 
 const ROOM_PATH_RE = /^\/r\/([A-Za-z0-9_-]{10,64})(?:\.([A-Za-z0-9_-]+))?$/;
 const BARE_LINK_RE = /^([A-Za-z0-9_-]{10,64})[#.]([A-Za-z0-9_-]+)$/;
@@ -124,8 +126,18 @@ function normalizeRelayOrigin(relayUrl: string): { origin: string } | { error: s
  *
  * Full links append the write token to the key
  * (`base64url(key ∥ writeToken)`); read-only (view) links carry the bare key.
+ *
+ * `localRelayUrl` (a loopback relay the host also serves the room on) is appended as
+ * `?local=<host:port>` and forces the explicit `<host>/r/…` form, which a client that
+ * predates the parameter still parses (the bare form would not).
  */
-export function formatCollabLink(relayUrl: string, roomId: string, key: Uint8Array, writeToken?: Uint8Array): string {
+export function formatCollabLink(
+	relayUrl: string,
+	roomId: string,
+	key: Uint8Array,
+	writeToken?: Uint8Array,
+	localRelayUrl?: string,
+): string {
 	const normalized = normalizeRelayOrigin(relayUrl);
 	if ("error" in normalized) throw new Error(normalized.error);
 	let secret = key;
@@ -135,11 +147,16 @@ export function formatCollabLink(relayUrl: string, roomId: string, key: Uint8Arr
 		secret.set(writeToken, key.byteLength);
 	}
 	const keyText = encodeBase64Url(secret);
-	if (normalized.origin === DEFAULT_RELAY_URL) return `${roomId}.${keyText}`;
+	const local = localRelayUrl === undefined ? null : normalizeLocalRelayUrl(localRelayUrl);
+	if (localRelayUrl !== undefined && local === null) {
+		throw new Error(`Invalid local relay URL: ${localRelayUrl} (use ws://127.0.0.1:<port>)`);
+	}
+	if (local === null && normalized.origin === DEFAULT_RELAY_URL) return `${roomId}.${keyText}`;
 	const compact = normalized.origin.startsWith("wss://")
 		? normalized.origin.slice("wss://".length)
 		: normalized.origin;
-	return `${compact}/r/${roomId}.${keyText}`;
+	const query = local === null ? "" : `?${LOCAL_RELAY_LINK_PARAM}=${local.slice("ws://".length)}`;
+	return `${compact}/r/${roomId}.${keyText}${query}`;
 }
 
 export function parseCollabLink(link: string): ParsedCollabLink | { error: string } {
@@ -186,5 +203,13 @@ export function parseCollabLink(link: string): ParsedCollabLink | { error: strin
 	}
 	const key = secret.subarray(0, ROOM_KEY_BYTES);
 	const writeToken = secret.byteLength > ROOM_KEY_BYTES ? secret.subarray(ROOM_KEY_BYTES) : undefined;
-	return { wsUrl: `${normalized.origin}/r/${roomId}`, roomId, key, writeToken };
+	// An unusable `local` value drops the optimisation, never the link.
+	const localRelay = normalizeLocalRelayUrl(url.searchParams.get(LOCAL_RELAY_LINK_PARAM) ?? "");
+	return {
+		wsUrl: `${normalized.origin}/r/${roomId}`,
+		roomId,
+		key,
+		writeToken,
+		...(localRelay ? { localWsUrl: `${localRelay}/r/${roomId}` } : {}),
+	};
 }

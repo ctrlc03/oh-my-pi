@@ -9,6 +9,7 @@
 import type { GuestFrame, HostFrame, RelayControlMessage } from "@oh-my-pi/pi-wire";
 import { open, seal } from "./codec";
 import { packEnvelope, unpackEnvelope } from "./link";
+import { LOCAL_CONNECT_TIMEOUT_MS, type LocalFailure, localRelayHealth, localRelayToTry } from "./relay-route";
 
 const RELAY_CLOSE_REASONS: Record<number, string> = {
 	4001: "room closed",
@@ -33,12 +34,18 @@ const STALE_AFTER_HIDDEN_MS = 10_000;
  * them there would only flash a reconnect on every tab return. Gate {@link CollabSocket.suspend} on it.
  */
 export function suspendsHiddenPages(): boolean {
-	return matchMedia("(pointer: coarse)").matches;
+	return typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
 }
 
 export interface CollabSocketOptions {
 	/** wss://host[:port]/r/<roomId> — no query string. */
 	wsUrl: string;
+	/**
+	 * ws://127.0.0.1:<port>/r/<roomId>: the same room on a relay on the host's machine. Tried first
+	 * where the device could be that machine, abandoned for `wsUrl` at once when it does not answer
+	 * (see `relay-route.ts`).
+	 */
+	localWsUrl?: string;
 	role: "host" | "guest";
 	/** Room key; a pending import promise is awaited inside the seal/open chains. */
 	key: CryptoKey | PromiseLike<CryptoKey>;
@@ -69,6 +76,11 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 	#pendingSends: Uint8Array<ArrayBuffer>[] = [];
 	/** When the page last went to the background; null while foregrounded. */
 	#hiddenAt: number | null = null;
+	/** Which relay the current connection attempt targets. */
+	#route: "local" | "public" = "public";
+	/** The current connection delivered a decrypted frame: its relay holds the room and works. */
+	#established = false;
+	#localTimer: Timer | undefined;
 
 	constructor(opts: CollabSocketOptions) {
 		this.#opts = opts;
@@ -129,6 +141,8 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 	 */
 	reconnect(reason: string): void {
 		if (this.#closed) return;
+		// A local connection that never delivered anything was no good; do not pick it again at once.
+		if (this.#route === "local" && !this.#established) this.#markLocalDown("relay");
 		const ws = this.#ws;
 		this.#ws = null;
 		if (ws) {
@@ -170,6 +184,7 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 	close(): void {
 		const hadActivity = this.#ws !== null || this.#retryTimer !== undefined;
 		this.#clearRetry();
+		this.#clearLocalTimer();
 		const wasClosed = this.#closed;
 		this.#closed = true;
 		this.#retryMissingRoom = false;
@@ -187,11 +202,51 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 	}
 
 	#openSocket(): void {
-		const ws = new WebSocket(`${this.#opts.wsUrl}?role=${this.#opts.role}`);
+		const local = localRelayToTry(this.#opts.localWsUrl, suspendsHiddenPages(), localRelayHealth, Date.now());
+		this.#connect(local === null ? this.#opts.wsUrl : local, local === null ? "public" : "local");
+	}
+
+	#markLocalDown(failure: LocalFailure): void {
+		if (this.#opts.localWsUrl !== undefined) localRelayHealth.markDown(this.#opts.localWsUrl, failure, Date.now());
+	}
+
+	/** The local attempt is over: remember it and take the public relay, with no backoff. */
+	#fallBackToPublic(failure: LocalFailure): void {
+		this.#clearLocalTimer();
+		this.#markLocalDown(failure);
+		this.#openSocket();
+	}
+
+	#connect(wsUrl: string, route: "local" | "public"): void {
+		this.#route = route;
+		this.#established = false;
+		let ws: WebSocket;
+		try {
+			ws = new WebSocket(`${wsUrl}?role=${this.#opts.role}`);
+		} catch (err) {
+			// The browser refused outright (Safari: ws:// from an https page).
+			if (route === "public") throw err;
+			this.#fallBackToPublic("relay");
+			return;
+		}
 		ws.binaryType = "arraybuffer";
 		this.#ws = ws;
+		if (route === "local") {
+			this.#localTimer = setTimeout(() => {
+				this.#localTimer = undefined;
+				if (this.#ws !== ws) return;
+				this.#ws = null;
+				try {
+					ws.close();
+				} catch {
+					// already closing/closed
+				}
+				this.#fallBackToPublic("relay");
+			}, LOCAL_CONNECT_TIMEOUT_MS);
+		}
 		ws.onopen = () => {
 			if (this.#ws !== ws) return;
+			this.#clearLocalTimer();
 			if (!this.#retryMissingRoom) this.#attempt = 0;
 			for (const envelope of this.#pendingSends) ws.send(envelope);
 			this.#pendingSends.length = 0;
@@ -206,7 +261,16 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 		};
 		ws.onclose = (event: CloseEvent) => {
 			if (this.#ws !== ws) return;
+			this.#clearLocalTimer();
 			this.#ws = null;
+			// 4001 is the host leaving, which the public relay will report too: the normal path.
+			if (route === "local" && event.code !== 4001) {
+				if (!this.#established) {
+					this.#fallBackToPublic(event.code === 4004 || event.code === 4029 ? "room" : "relay");
+					return;
+				}
+				if (event.code < 4000) this.#markLocalDown("relay");
+			}
 			this.#handleClose(event.code, event.reason);
 		};
 	}
@@ -243,6 +307,7 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 				if (this.#ws !== ws) return;
 				this.#retryMissingRoom = false;
 				this.#attempt = 0;
+				this.#established = true;
 				this.onFrame?.(frame, envelope.peerId);
 			})
 			.catch(() => {
@@ -276,6 +341,7 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 		if (this.#closed) return;
 		this.#closed = true;
 		this.#clearRetry();
+		this.#clearLocalTimer();
 		this.#pendingSends.length = 0;
 		const ws = this.#ws;
 		this.#ws = null;
@@ -304,6 +370,13 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 		if (this.#retryTimer !== undefined) {
 			clearTimeout(this.#retryTimer);
 			this.#retryTimer = undefined;
+		}
+	}
+
+	#clearLocalTimer(): void {
+		if (this.#localTimer !== undefined) {
+			clearTimeout(this.#localTimer);
+			this.#localTimer = undefined;
 		}
 	}
 }

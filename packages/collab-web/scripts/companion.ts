@@ -116,6 +116,7 @@ import {
 	SAFE_ID_RE,
 } from "./companion-sessions";
 import { createSessionLister } from "./companion-list";
+import { preferredRelayPort, startCompanionRelay } from "./companion-local-relay";
 import { restartCompanion, updateOmp } from "./companion-maintain";
 import { findSessionHolders } from "./companion-open";
 import { capturePane } from "./companion-pane";
@@ -293,6 +294,29 @@ if (flags.includes("--install")) {
 	process.exit(0);
 }
 if (flags.includes("--pair")) process.exit(0);
+
+// ── local relay ──────────────────────────────────────────────────────────────
+
+/**
+ * Loopback relay for the sessions this companion starts: the app on this computer joins them
+ * there instead of through the public relay (omp serves each room on both). Phones still use
+ * the public one. `--no-local-relay` turns it off.
+ */
+let localRelayUrl: string | undefined;
+if (!flags.includes("--no-local-relay")) {
+	try {
+		const configured = await configValue("collab.localRelayUrl").catch(() => "");
+		const started = startCompanionRelay({
+			preferredPort: preferredRelayPort(configured),
+			allowedOrigins: [new URL(webUrl).origin],
+		});
+		localRelayUrl = started.url;
+		console.log(`local relay on ${localRelayUrl}: sessions started from the app are also served there`);
+		console.log(`for sessions started by hand, set collab.localRelayUrl to ${localRelayUrl}`);
+	} catch (err) {
+		console.error(`companion: local relay unavailable, sessions use the public relay only: ${errorText(err)}`);
+	}
+}
 
 // ── room ─────────────────────────────────────────────────────────────────────
 
@@ -693,6 +717,7 @@ async function startSession(
 			tmux,
 			ompBin,
 			overlayPath,
+			localRelayUrl,
 			cwd: created?.path ?? cwd,
 			resume,
 			sandbox,

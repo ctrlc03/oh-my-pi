@@ -65,6 +65,7 @@
 	color: var(--fg-faint);
 }
 
+.sh-slash-choice,
 .sh-slash-desc,
 .sh-slash-saved {
 	min-width: 0;
@@ -72,6 +73,12 @@
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	color: var(--fg-muted);
+}
+
+.sh-slash-choice {
+	flex: none;
+	max-width: 60%;
+	color: var(--fg);
 }
 
 .sh-slash-saved {

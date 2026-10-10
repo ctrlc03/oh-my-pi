@@ -59,6 +59,8 @@ function fakeHost(access: CollabAccess, generation = 1): CollabHost {
 		sessionId: "sess-idle",
 		webLink: `https://collab.test/control/${generation}`,
 		webViewLink: `https://collab.test/view/${generation}`,
+		registryLink: (linkAccess: CollabAccess) =>
+			linkAccess === "view" ? `https://collab.test/view/${generation}` : `https://collab.test/control/${generation}`,
 		stop: async (reason: string) => {
 			fakeStops.push(reason);
 		},

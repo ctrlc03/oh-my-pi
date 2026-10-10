@@ -15,12 +15,23 @@ import { COLLAB_PROTO, type CollabFrame, parseCollabLink } from "@oh-my-pi/pi-co
 import { CollabSocket } from "@oh-my-pi/pi-coding-agent/collab/relay-client";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
+import { FileSnapshotError } from "@oh-my-pi/pi-coding-agent/session/file-snapshots";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { installInMemoryRelay, uninstallInMemoryRelay } from "./helpers/in-memory-relay";
 
 interface PromptCall {
 	streamingBehavior: unknown;
 	queueChipText: unknown;
+}
+
+/** The session's file-snapshot surface: what the host asks of it, and how it answers. */
+interface FilesDouble {
+	supported: boolean;
+	canRedo: boolean;
+	/** When set, restoring is refused with this message. */
+	refuse: string | undefined;
+	calls: string[];
+	plans: Record<string, { revert: number; remove: number; recreate: number } | undefined>;
 }
 
 interface HostHarness {
@@ -33,6 +44,7 @@ interface HostHarness {
 	promptWaiters: (() => void)[];
 	navigations: string[];
 	notices: string[];
+	files: FilesDouble;
 	/** Fires the session's `queue_update` event, as the real session does when its queues change. */
 	emitQueueUpdate(): void;
 }
@@ -72,6 +84,7 @@ function makeHost(): HostHarness {
 		a2: manager.appendMessage(assistant("two")),
 	};
 	const state = { busy: false, transitioning: false, navigationMoves: true, followUps: [] as string[] };
+	const files: FilesDouble = { supported: false, canRedo: false, refuse: undefined, calls: [], plans: {} };
 	const prompts: PromptCall[] = [];
 	const promptWaiters: (() => void)[] = [];
 	const navigations: string[] = [];
@@ -130,6 +143,23 @@ function makeHost(): HostHarness {
 				notices.push(message);
 			},
 			abort: () => Promise.resolve(),
+			get canRestoreFiles() {
+				return files.supported;
+			},
+			get canRedoFileRestore() {
+				return files.canRedo;
+			},
+			previewFileRestore: (entryId: string) => Promise.resolve(files.plans[entryId]),
+			restoreFiles: (entryId: string) => {
+				files.calls.push(`restore ${entryId}`);
+				if (files.refuse) return Promise.reject(new FileSnapshotError(files.refuse));
+				files.canRedo = true;
+				return Promise.resolve({ plan: { revert: 2, remove: 1, recreate: 0 }, skipped: 0 });
+			},
+			redoFileRestore: () => {
+				files.calls.push("redo");
+				return Promise.resolve({ plan: { revert: 2, remove: 0, recreate: 1 }, skipped: 0 });
+			},
 		},
 		eventBus: undefined,
 		statusLine: {
@@ -144,7 +174,7 @@ function makeHost(): HostHarness {
 		showStatus: () => {},
 		collabHost: undefined,
 	} as unknown as InteractiveModeContext;
-	return { ctx, manager, ids, state, prompts, promptWaiters, navigations, notices, emitQueueUpdate };
+	return { ctx, manager, ids, state, prompts, promptWaiters, navigations, notices, emitQueueUpdate, files };
 }
 
 interface TestGuest {
@@ -225,7 +255,7 @@ describe("collab follow-up delivery", () => {
 		await startHost();
 		const guest = await join();
 		const welcome = await guest.next("welcome");
-		expect(welcome.features).toEqual(["follow-up", "rewind", "commands"]);
+		expect(welcome.features).toEqual(expect.arrayContaining(["follow-up", "rewind", "commands"]));
 	});
 
 	it("queues a follow-up prompt behind the turn, and steers by default", async () => {
@@ -411,5 +441,135 @@ describe("collab rewind", () => {
 		const currentWelcome = await current.next("welcome");
 		expect(currentWelcome.resumed).toBe(true);
 		expect(await snapshotIds(current)).toEqual([reworded]);
+	});
+});
+
+describe("collab rewind with files", () => {
+	it("advertises rewind-files only when the session can restore files", async () => {
+		await startHost();
+		const without = await join();
+		expect((await without.next("welcome")).features).not.toContain("rewind-files");
+		await host.stop("again");
+		harness = makeHost();
+		harness.files.supported = true;
+		host = new CollabHost(harness.ctx);
+		await host.start("ws://localhost:8788");
+		const guest = await join();
+		expect((await guest.next("welcome")).features).toContain("rewind-files");
+	});
+
+	it("restores the files before moving the conversation, and tells the guest what changed", async () => {
+		await startHost();
+		harness.files.supported = true;
+		const guest = await join();
+		guest.socket.send({ t: "session-cmd", cmd: "rewind", arg: harness.ids.u2, restoreFiles: true });
+		const restored = await guest.next("files-restored");
+		expect(restored).toEqual({
+			t: "files-restored",
+			kind: "restore",
+			plan: { revert: 2, remove: 1, recreate: 0 },
+			skipped: 0,
+			canRedo: true,
+		});
+		expect(harness.files.calls).toEqual([`restore ${harness.ids.u2}`]);
+		expect(harness.manager.getLeafId()).toBe(harness.ids.a1);
+		expect(harness.notices).toContain("guest rewound the conversation and restored 3 files (2 reverted, 1 removed)");
+	});
+
+	it("leaves the files alone unless asked", async () => {
+		await startHost();
+		harness.files.supported = true;
+		const guest = await join();
+		guest.socket.send({ t: "session-cmd", cmd: "rewind", arg: harness.ids.u2 });
+		await guest.next("branch");
+		expect(harness.files.calls).toEqual([]);
+		expect(guest.frames.some(frame => frame.t === "files-restored")).toBe(false);
+	});
+
+	it("refuses the whole rewind when the files cannot be restored", async () => {
+		await startHost();
+		harness.files.supported = true;
+		harness.files.refuse = "no file snapshot was recorded before that prompt";
+		const guest = await join();
+		guest.socket.send({ t: "session-cmd", cmd: "rewind", arg: harness.ids.u2, restoreFiles: true });
+		const error = await guest.next("error");
+		expect(error.message).toBe("rewind: no file snapshot was recorded before that prompt");
+		expect(harness.navigations).toEqual([]);
+		expect(harness.manager.getLeafId()).toBe(harness.ids.a2);
+
+		// A host that cannot restore files at all says so rather than silently skipping them.
+		harness.files.supported = false;
+		const from = guest.frames.length;
+		guest.socket.send({ t: "session-cmd", cmd: "rewind", arg: harness.ids.u2, restoreFiles: true });
+		const unsupported = await guest.next("error", undefined, from);
+		expect(unsupported.message).toStartWith("rewind: files cannot be restored here");
+		expect(harness.navigations).toEqual([]);
+	});
+
+	it("puts the files back when the conversation does not move", async () => {
+		await startHost();
+		harness.files.supported = true;
+		harness.state.navigationMoves = false;
+		const guest = await join();
+		guest.socket.send({ t: "session-cmd", cmd: "rewind", arg: harness.ids.u2, restoreFiles: true });
+		const error = await guest.next("error");
+		expect(error.message).toBe("rewind: the conversation did not move");
+		expect(harness.files.calls).toEqual([`restore ${harness.ids.u2}`, "redo"]);
+		expect(guest.frames.some(frame => frame.t === "files-restored")).toBe(false);
+	});
+
+	it("refuses to restore files while the agent is working", async () => {
+		await startHost();
+		harness.files.supported = true;
+		const guest = await join();
+		harness.state.busy = true;
+		guest.socket.send({ t: "session-cmd", cmd: "rewind", arg: harness.ids.u2, restoreFiles: true });
+		expect((await guest.next("error")).message).toStartWith("rewind: wait for the current response");
+		const from = guest.frames.length;
+		guest.socket.send({ t: "session-cmd", cmd: "redo-files" });
+		expect((await guest.next("error", undefined, from)).message).toStartWith(
+			"redo-files: wait for the current response",
+		);
+		expect(harness.files.calls).toEqual([]);
+	});
+
+	it("answers a preview with the plan, or null for a prompt without a snapshot", async () => {
+		await startHost();
+		harness.files.supported = true;
+		harness.files.plans[harness.ids.u2] = { revert: 1, remove: 0, recreate: 4 };
+		const guest = await join();
+		guest.socket.send({ t: "session-cmd", cmd: "rewind-preview", arg: harness.ids.u2 });
+		expect(await guest.next("rewind-preview", frame => frame.entryId === harness.ids.u2)).toEqual({
+			t: "rewind-preview",
+			entryId: harness.ids.u2,
+			files: { revert: 1, remove: 0, recreate: 4 },
+		});
+		guest.socket.send({ t: "session-cmd", cmd: "rewind-preview", arg: harness.ids.u1 });
+		const none = await guest.next("rewind-preview", frame => frame.entryId === harness.ids.u1);
+		expect(none.files).toBeNull();
+		expect(harness.manager.getLeafId()).toBe(harness.ids.a2);
+	});
+
+	it("redoes the last file restore for a writer, refuses read-only links, and reports a refusal", async () => {
+		await startHost();
+		harness.files.supported = true;
+		const viewer = await join({ readOnly: true });
+		viewer.socket.send({ t: "session-cmd", cmd: "redo-files" });
+		expect((await viewer.next("error")).message).toContain("disabled on a read-only link");
+		viewer.socket.send({ t: "session-cmd", cmd: "rewind", arg: harness.ids.u2, restoreFiles: true });
+		await viewer.next("error", frame => frame.message.includes("read-only"), 1);
+		expect(harness.files.calls).toEqual([]);
+
+		const guest = await join();
+		guest.socket.send({ t: "session-cmd", cmd: "redo-files" });
+		const redone = await guest.next("files-restored");
+		expect(redone).toEqual({
+			t: "files-restored",
+			kind: "redo",
+			plan: { revert: 2, remove: 0, recreate: 1 },
+			skipped: 0,
+			canRedo: false,
+		});
+		expect(harness.notices).toContain("guest undid the file restore (3 files (2 reverted, 1 recreated))");
 	});
 });

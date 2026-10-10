@@ -39,6 +39,9 @@
 ### Fixed
 
 - Fixed archive extraction on Windows systems without symlink privileges by allowing symlink entries to be extracted using supported fallbacks, while skipping unresolvable dangling links instead of failing the entire archive.
+### Added
+
+- Added `getFileSnapshotsDir`, the agent-dir folder holding the per-repository working-tree snapshot stores used by rewind
 
 ## [18.8.9] - 2026-10-10
 

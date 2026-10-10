@@ -34,19 +34,43 @@ interface Harness {
 	retries: number;
 	/** Text the host's own input path (`session.prompt`) received: it runs extension commands, so a guest's text must never reach it. */
 	hostInputs: string[];
-	state: { planModeEnabled: boolean; retryResult: boolean; goalModeEnabled: boolean };
+	state: {
+		planModeEnabled: boolean;
+		retryResult: boolean;
+		goalModeEnabled: boolean;
+		busy: boolean;
+		streaming: boolean;
+	};
+	modelSwitches: string[];
+	thinkingLevels: string[];
+	compactions: (string | undefined)[];
+	/** Session-replacing handlers the host ran, by command name. */
+	switches: string[];
 	/** Resolves once `ready()` holds; re-checked each time the session double records something. */
 	until(ready: () => boolean): Promise<void>;
 }
 
 let skillDir: string;
+let workDir: string;
+let sessionCounter = 0;
 
-function makeHost(): Harness {
-	const manager = SessionManager.inMemory();
+const CATALOG = [
+	{ provider: "acme", id: "small", name: "Small", contextWindow: 100_000 },
+	{ provider: "acme", id: "big", name: "Big", contextWindow: 1_000_000 },
+];
+
+interface HostOptions {
+	/** A session on disk, for the commands that replace it; in memory by default. */
+	manager?: SessionManager;
+	autoStart?: "off" | "view" | "control";
+}
+
+function makeHost(options: HostOptions = {}): Harness {
+	const manager = options.manager ?? SessionManager.inMemory();
 	const prompts: PromptCall[] = [];
 	const waiters: (() => void)[] = [];
 	const notices: string[] = [];
-	const state = { planModeEnabled: false, retryResult: true, goalModeEnabled: false };
+	const state = { planModeEnabled: false, retryResult: true, goalModeEnabled: false, busy: false, streaming: false };
 	const hostInputs: string[] = [];
 	const harness = {
 		prompts,
@@ -55,6 +79,10 @@ function makeHost(): Harness {
 		retries: 0,
 		hostInputs,
 		state,
+		modelSwitches: [] as string[],
+		thinkingLevels: [] as string[],
+		compactions: [] as (string | undefined)[],
+		switches: [] as string[],
 	} as Harness;
 	harness.until = async ready => {
 		while (!ready()) await new Promise<void>(resolve => waiters.push(resolve));
@@ -65,6 +93,7 @@ function makeHost(): Harness {
 	const ctx = {
 		settings: Settings.isolated(),
 		sessionManager: manager,
+		collabController: { autoStartMode: options.autoStart ?? "off" },
 		skillCommands: new Map([
 			[
 				"skill:demo",
@@ -86,8 +115,12 @@ function makeHost(): Harness {
 			return Promise.resolve(false);
 		},
 		session: {
-			isStreaming: false,
-			isBusyForSnapshot: false,
+			get isStreaming() {
+				return state.streaming;
+			},
+			get isBusyForSnapshot() {
+				return state.busy;
+			},
 			isSessionTransitioning: false,
 			isCompacting: false,
 			isAborting: false,
@@ -95,7 +128,20 @@ function makeHost(): Harness {
 			sessionName: "slash",
 			model: undefined,
 			thinkingLevel: undefined,
-			getAvailableEffortSelectors: () => [],
+			getAvailableEffortSelectors: () => ["off", "low", "high"],
+			scopedModels: [],
+			modelRegistry: { getAvailable: () => CATALOG },
+			getContextUsage: () => ({ tokens: 10 }),
+			resolveTemporaryModelThinkingLevel: () => undefined,
+			setModelTemporary: (model: { provider: string; id: string }) => {
+				harness.modelSwitches.push(`${model.provider}/${model.id}`);
+				wake();
+				return Promise.resolve();
+			},
+			setThinkingLevel: (level: string) => {
+				harness.thinkingLevels.push(level);
+				wake();
+			},
 			getQueuedMessages: () => ({ steering: [], followUp: [] }),
 			slashCommands: [
 				{
@@ -157,6 +203,28 @@ function makeHost(): Harness {
 		renderInitialMessages: () => Promise.resolve(),
 		reloadTodos: () => Promise.resolve(),
 		showStatus: () => {},
+		handleCompactCommand: (instructions?: string) => {
+			harness.compactions.push(instructions);
+			wake();
+			return Promise.resolve("ok");
+		},
+		updateEditorBorderColor: () => {},
+		// The real ones refuse on the host terminal; these switch the session like they do when they run.
+		handleClearCommand: async () => {
+			harness.switches.push("new");
+			await manager.newSession();
+			wake();
+		},
+		handleForkCommand: async () => {
+			harness.switches.push("fork");
+			await manager.fork();
+			wake();
+		},
+		handleResumeSession: async (sessionPath: string) => {
+			harness.switches.push("resume");
+			await manager.setSessionFile(sessionPath);
+			wake();
+		},
 		collabHost: undefined,
 	} as unknown as InteractiveModeContext;
 	harness.ctx = ctx;
@@ -204,19 +272,21 @@ let host: CollabHost;
 beforeAll(async () => {
 	installInMemoryRelay();
 	skillDir = await fs.mkdtemp(path.join(os.tmpdir(), "collab-skill-"));
+	workDir = await fs.mkdtemp(path.join(os.tmpdir(), "collab-session-"));
 	await Bun.write(path.join(skillDir, "SKILL.md"), "---\nname: demo\ndescription: Demo skill\n---\nSKILL BODY\n");
 });
 afterAll(async () => {
 	uninstallInMemoryRelay();
 	await fs.rm(skillDir, { recursive: true, force: true });
+	await fs.rm(workDir, { recursive: true, force: true });
 });
 afterEach(async () => {
 	for (const cleanup of guestCleanups.splice(0).reverse()) cleanup();
 	await host.stop("test done");
 });
 
-async function startAndJoin(readOnly = false): Promise<TestGuest> {
-	harness = makeHost();
+async function startAndJoin(readOnly = false, options: HostOptions = {}): Promise<TestGuest> {
+	harness = makeHost(options);
 	host = new CollabHost(harness.ctx);
 	await host.start("ws://localhost:8788");
 	const guest = await joinAsGuest(host.link, readOnly);
@@ -246,7 +316,17 @@ describe("collab slash command list", () => {
 		expect(welcome.features).toContain("commands");
 		const commands = welcome.commands ?? [];
 		const names = commands.map(command => command.name);
-		expect(names).toEqual(["plan", "retry", "review", "fix-tests", "skill:demo"]);
+		expect(names).toEqual([
+			"plan",
+			"model",
+			"effort",
+			"compact",
+			"retry",
+			"rename",
+			"review",
+			"fix-tests",
+			"skill:demo",
+		]);
 		expect(commands.find(command => command.name === "review")).toEqual({
 			name: "review",
 			description: "Review files",
@@ -254,7 +334,7 @@ describe("collab slash command list", () => {
 		});
 		expect(commands.find(command => command.name === "plan")?.args).toBe("[prompt]");
 		// Builtins that exit, sign in or change settings; shadowed entries; extension commands.
-		for (const hidden of ["exit", "quit", "login", "settings", "model", "ext-wins", "ext-only"]) {
+		for (const hidden of ["exit", "quit", "login", "settings", "ext-wins", "ext-only"]) {
 			expect(names).not.toContain(hidden);
 		}
 	});
@@ -305,8 +385,8 @@ describe("collab slash command dispatch", () => {
 		const guest = await startAndJoin();
 		guest.socket.send({ t: "prompt", text: "/exit" });
 		expect(await errorAt(guest, 0)).toBe("/exit can only be run on the host");
-		guest.socket.send({ t: "prompt", text: "/model gpt-5" });
-		expect(await errorAt(guest, 1)).toBe("/model can only be run on the host");
+		guest.socket.send({ t: "prompt", text: "/login github" });
+		expect(await errorAt(guest, 1)).toBe("/login can only be run on the host");
 		guest.socket.send({ t: "prompt", text: "/ext-only now" });
 		expect(await errorAt(guest, 2)).toBe("/ext-only is a host command and can only be run on the host");
 		guest.socket.send({ t: "prompt", text: "/ext-wins now" });
@@ -409,5 +489,211 @@ describe("collab slash command dispatch", () => {
 		await errorAt(guest, 0);
 		expect(harness.planCalls).toEqual([]);
 		expect(harness.prompts).toEqual([]);
+	});
+});
+
+describe("collab guest session controls as slash commands", () => {
+	it("refuses the bare forms that would open a selector, and keeps the argument hint", async () => {
+		const guest = await startAndJoin();
+		const names = ["model", "effort", "rename", "resume"];
+		const hints = ["<provider/id>", "<level>", "<title>", "<session>"];
+		for (const name of names) guest.socket.send({ t: "prompt", text: `/${name}` });
+		for (const [index, name] of names.entries()) {
+			const message = await errorAt(guest, index);
+			expect(message).toStartWith(`/${name} needs an argument`);
+			expect(message).toContain(hints[index] ?? "");
+		}
+		expect(harness.modelSwitches).toEqual([]);
+		expect(harness.thinkingLevels).toEqual([]);
+		expect(ran()).toEqual([]);
+	});
+
+	it("switches the model for this session only, and announces it once", async () => {
+		const guest = await startAndJoin();
+		guest.socket.send({ t: "prompt", text: "/model acme/big" });
+		await harness.until(() => ran().length === 1);
+		expect(harness.modelSwitches).toEqual(["acme/big"]);
+		expect(ran()).toEqual(["guest ran /model"]);
+
+		guest.socket.send({ t: "prompt", text: "/model acme/ghost" });
+		expect(await errorAt(guest, 0)).toStartWith("/model: unknown model");
+		expect(harness.modelSwitches).toEqual(["acme/big"]);
+		expect(ran()).toEqual(["guest ran /model"]);
+	});
+
+	it("does not switch the model while the host is answering", async () => {
+		const guest = await startAndJoin();
+		harness.state.streaming = true;
+		guest.socket.send({ t: "prompt", text: "/model acme/big" });
+		expect(await errorAt(guest, 0)).toStartWith("/model: ");
+		expect(harness.modelSwitches).toEqual([]);
+		expect(ran()).toEqual([]);
+	});
+
+	it("sets the thinking level case-insensitively and refuses one the model lacks", async () => {
+		const guest = await startAndJoin();
+		guest.socket.send({ t: "prompt", text: "/effort HIGH" });
+		await harness.until(() => ran().length === 1);
+		expect(harness.thinkingLevels).toEqual(["high"]);
+		expect(ran()).toEqual(["guest ran /effort"]);
+
+		guest.socket.send({ t: "prompt", text: "/effort turbo" });
+		expect(await errorAt(guest, 0)).toStartWith("/effort: ");
+		expect(harness.thinkingLevels).toEqual(["high"]);
+		expect(ran()).toEqual(["guest ran /effort"]);
+	});
+
+	it("compacts with the instructions given, and not with nothing to compact", async () => {
+		const guest = await startAndJoin();
+		guest.socket.send({ t: "prompt", text: "/compact" });
+		expect(await errorAt(guest, 0)).toStartWith("/compact: ");
+		expect(harness.compactions).toEqual([]);
+		expect(ran()).toEqual([]);
+
+		const manager = harness.ctx.sessionManager;
+		manager.appendMessage({ role: "user", content: "one", timestamp: 1 });
+		manager.appendMessage({ role: "user", content: "two", timestamp: 2 });
+		guest.socket.send({ t: "prompt", text: "/compact keep the failing tests" });
+		await harness.until(() => ran().length === 1);
+		expect(harness.compactions).toEqual(["keep the failing tests"]);
+		expect(ran()).toEqual(["guest ran /compact"]);
+	});
+
+	it("renames the session as the guest asked and announces it once", async () => {
+		const guest = await startAndJoin();
+		guest.socket.send({ t: "prompt", text: "/rename   Release notes " });
+		await harness.until(() => ran().length === 1);
+		expect(harness.ctx.sessionManager.getSessionName()).toBe("Release notes");
+		expect(ran()).toEqual(["guest ran /rename"]);
+	});
+
+	it("refuses every control from a read-only link", async () => {
+		const guest = await startAndJoin(true);
+		for (const text of ["/model acme/big", "/effort high", "/compact", "/rename x"]) {
+			guest.socket.send({ t: "prompt", text });
+		}
+		await errorAt(guest, 3);
+		expect(harness.modelSwitches).toEqual([]);
+		expect(harness.thinkingLevels).toEqual([]);
+		expect(harness.compactions).toEqual([]);
+		expect(ran()).toEqual([]);
+	});
+});
+
+/** A session on disk in its own folder, as the host's `/resume` and `/fork` need. */
+async function onDiskSession(): Promise<{ manager: SessionManager; dir: string }> {
+	const dir = path.join(workDir, `sessions-${++sessionCounter}`);
+	await fs.mkdir(dir, { recursive: true });
+	const manager = SessionManager.create(workDir, dir);
+	await manager.ensureOnDisk();
+	return { manager, dir };
+}
+
+describe("collab session-replacing slash commands", () => {
+	it("lists /new, /resume and /fork only where the host reopens a room for guests to follow", async () => {
+		const offGuest = await startAndJoin();
+		const offNames = (await offGuest.next("welcome")).commands?.map(command => command.name) ?? [];
+		for (const name of ["new", "resume", "fork"]) expect(offNames).not.toContain(name);
+		await host.stop("next");
+
+		const { manager, dir } = await onDiskSession();
+		const earlier = SessionManager.create(workDir, dir);
+		await earlier.setSessionName("Earlier work", "user");
+		await earlier.ensureOnDisk();
+		const guest = await startAndJoin(false, { manager, autoStart: "control" });
+		const commands = (await guest.next("welcome")).commands ?? [];
+		for (const name of ["new", "resume", "fork"]) {
+			expect(commands.find(command => command.name === name)?.switchesSession).toBe(true);
+		}
+		const resume = commands.find(command => command.name === "resume");
+		expect(resume?.choices?.map(choice => choice.value)).toEqual([earlier.getSessionId()]);
+		expect(resume?.choices?.[0]?.label).toBe("Earlier work");
+		// An alias of /model listed too would double the entry.
+		expect(commands.filter(command => command.name === "model")).toHaveLength(1);
+		expect(commands.map(command => command.name)).not.toContain("switch");
+	});
+
+	it("starts a new session for /new and tells the host's terminal who asked", async () => {
+		const { manager } = await onDiskSession();
+		const guest = await startAndJoin(false, { manager, autoStart: "control" });
+		const before = manager.getSessionId();
+		guest.socket.send({ t: "prompt", text: "/new" });
+		await harness.until(() => ran().length === 1);
+		expect(manager.getSessionId()).not.toBe(before);
+		expect(ran()).toEqual(["guest ran /new"]);
+		expect(harness.switches).toEqual(["new"]);
+	});
+
+	it("forks a saved session and refuses to fork one that was never saved", async () => {
+		const { manager } = await onDiskSession();
+		const guest = await startAndJoin(false, { manager, autoStart: "control" });
+		const before = manager.getSessionId();
+		guest.socket.send({ t: "prompt", text: "/fork" });
+		await harness.until(() => ran().length === 1);
+		expect(manager.getSessionId()).not.toBe(before);
+		expect(ran()).toEqual(["guest ran /fork"]);
+		await host.stop("next");
+
+		const unsaved = await startAndJoin(false, { autoStart: "control" });
+		unsaved.socket.send({ t: "prompt", text: "/fork" });
+		expect(await errorAt(unsaved, 0)).toStartWith("/fork: ");
+		expect(harness.switches).toEqual([]);
+		expect(ran()).toEqual([]);
+	});
+
+	it("resumes a session of the host's folder by id, and refuses an unknown one or the live one", async () => {
+		const { manager, dir } = await onDiskSession();
+		const other = SessionManager.create(workDir, dir);
+		await other.ensureOnDisk();
+		const guest = await startAndJoin(false, { manager, autoStart: "control" });
+		const live = manager.getSessionId();
+
+		guest.socket.send({ t: "prompt", text: "/resume no-such-session" });
+		expect(await errorAt(guest, 0)).toStartWith("/resume: ");
+		guest.socket.send({ t: "prompt", text: `/resume ${live}` });
+		expect(await errorAt(guest, 1)).toStartWith("/resume: ");
+		expect(harness.switches).toEqual([]);
+
+		guest.socket.send({ t: "prompt", text: `/resume ${other.getSessionId()}` });
+		await harness.until(() => ran().length === 1);
+		expect(manager.getSessionId()).toBe(other.getSessionId());
+		expect(ran()).toEqual(["guest ran /resume"]);
+	});
+
+	it("does not replace the session when the host would not follow, is busy, or is in a mode", async () => {
+		const { manager } = await onDiskSession();
+		const before = manager.getSessionId();
+		const closed = await startAndJoin(false, { manager, autoStart: "off" });
+		closed.socket.send({ t: "prompt", text: "/new" });
+		expect(await errorAt(closed, 0)).toStartWith("/new: ");
+		await host.stop("next");
+
+		const guest = await startAndJoin(false, { manager, autoStart: "control" });
+		harness.state.busy = true;
+		guest.socket.send({ t: "prompt", text: "/new" });
+		expect(await errorAt(guest, 0)).toStartWith("/new: ");
+		harness.state.busy = false;
+		harness.state.planModeEnabled = true;
+		guest.socket.send({ t: "prompt", text: "/new" });
+		expect(await errorAt(guest, 1)).toStartWith("/new: ");
+		expect(harness.switches).toEqual([]);
+		expect(manager.getSessionId()).toBe(before);
+		expect(ran()).toEqual([]);
+	});
+
+	it("takes no arguments for /new and /fork, and refuses all three from a read-only link", async () => {
+		const { manager } = await onDiskSession();
+		const writer = await startAndJoin(false, { manager, autoStart: "control" });
+		writer.socket.send({ t: "prompt", text: "/new please" });
+		expect(await errorAt(writer, 0)).toBe("/new takes no arguments");
+		await host.stop("next");
+
+		const viewer = await startAndJoin(true, { manager, autoStart: "control" });
+		const before = manager.getSessionId();
+		for (const text of ["/new", "/fork", `/resume ${before}`]) viewer.socket.send({ t: "prompt", text });
+		await errorAt(viewer, 2);
+		expect(harness.switches).toEqual([]);
+		expect(manager.getSessionId()).toBe(before);
+		expect(ran()).toEqual([]);
 	});
 });

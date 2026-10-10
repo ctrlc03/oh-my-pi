@@ -94,6 +94,7 @@ import {
 	escapeXmlText,
 	formatDuration,
 	getAgentDbPath,
+	getFileSnapshotsDir,
 	isBunTestRuntime,
 	isInteractiveHost,
 	isRecord,
@@ -281,6 +282,7 @@ import type {
 	HandoffResult,
 	ModelCycleResult,
 	Prewalk,
+	PromptModelOverride,
 	PromptOptions,
 	ResetSessionContextResult,
 	ResolvedRoleModel,
@@ -388,7 +390,7 @@ import {
 	USER_INTERRUPT_LABEL,
 	VIBE_MODE_CONTEXT_MESSAGE_TYPE,
 } from "./messages";
-import { ModelControls, type ModelControlsHost } from "./model-controls";
+import { ModelControls, type ModelControlsHost, type PromptModelBaseline } from "./model-controls";
 import {
 	isPrewalkPlanNudge,
 	PrewalkCoordinator,
@@ -491,8 +493,16 @@ import {
 	cfgTierOpenai,
 	cfgProvidersAnthropicSlowMode,
 	type ResetAutoRedeemMode,
+	cfgRewindSnapshotFiles,
 } from "./settings";
 import { type AnthropicSlowModeController, anthropicSlowModeLanes, formatUsageLimitLabel } from "./anthropic-slow-mode";
+import {
+	type CapturedSnapshot,
+	FileSnapshotError,
+	FileSnapshotStore,
+	type FileRestorePlan,
+	type FileRestoreResult,
+} from "./file-snapshots";
 import type { UsageLimitState } from "./usage-limit";
 import { cfgInterruptMode } from "../modes/settings";
 import { cfgFollowUpMode } from "../modes/settings";
@@ -1080,6 +1090,10 @@ export class AgentSession implements SettingsScope {
 	readonly #streamingEditGuard: StreamingEditGuard;
 	readonly #loopGuards: LoopGuards;
 	#promptInFlightCount = 0;
+	/** The session's own model and thinking state while a prompt's override is applied. */
+	#promptModelBaseline: PromptModelBaseline | undefined;
+	/** Per-prompt model choices of queued messages; `null` = a follow-up that chose the session's model. */
+	readonly #queuedPromptModels = new WeakMap<object, PromptModelOverride | null>();
 	#abortInProgress = false;
 	/** Submissions accepted by prompt()/promptCustomMessage()/sendCustomMessage() that have not
 	 *  yet dispatched a turn, queued, or bailed. Preprocessing (manual-compaction wait, slash
@@ -1138,6 +1152,15 @@ export class AgentSession implements SettingsScope {
 	#pendingRewindReport: string | undefined = undefined;
 	#lastCompletedRewind: CompletedRewindState | undefined = undefined;
 	#rewoundToolResultIds = new Set<string>();
+	/** Working-tree snapshots that let a rewind restore the files too (see `file-snapshots.ts`). */
+	readonly #fileSnapshots = new FileSnapshotStore({
+		storeRoot: () => getFileSnapshotsDir(),
+		cwd: () => this.sessionManager.getCwd(),
+		sessionId: () => this.sessionManager.getSessionId(),
+		enabled: () => cfgRewindSnapshotFiles.get(this.settings),
+	});
+	/** The working-tree snapshot taken before each prompt, until its entry is persisted and bound. */
+	#turnFileSnapshots = new WeakMap<object, CapturedSnapshot>();
 	#lastSuccessfulYieldToolCallId: string | undefined = undefined;
 	/**
 	 * Sticky across an in-flight prompt run: a successful `yield` makes the run
@@ -1193,6 +1216,13 @@ export class AgentSession implements SettingsScope {
 		if (onSettled) this.#inFlightSettledCallbacks.push(onSettled);
 		this.#promptInFlightCount = Math.max(0, this.#promptInFlightCount - 1);
 		if (this.#promptInFlightCount !== 0) return;
+		if (this.#promptModelBaseline && !this.#isDisposed) {
+			// Hold the session busy until the model is back, so a prompt arriving meanwhile queues
+			// instead of starting on the override.
+			this.#promptInFlightCount++;
+			void this.#restorePromptModel().finally(() => this.#endInFlight());
+			return;
+		}
 		this.yieldQueue.requestIdleFlush();
 		this.#releasePowerAssertion();
 		this.#flushPendingAgentEnd();
@@ -1201,6 +1231,40 @@ export class AgentSession implements SettingsScope {
 			return;
 		}
 		void this.#flushInFlightSettledCallbacks().finally(() => this.#drainStrandedQueuedMessages());
+	}
+
+	/**
+	 * Runs the next turn on a per-prompt override model. The session's own model and thinking
+	 * state are captured on the first override and put back by {@link #restorePromptModel} when the
+	 * session settles, so chained overrides and queued follow-ups share one baseline. `null` (a
+	 * queued follow-up that chose no model) returns to the session's own model now.
+	 */
+	async #selectPromptModel(override: PromptModelOverride | null | undefined): Promise<void> {
+		if (override === undefined) return;
+		if (override === null) {
+			await this.#restorePromptModel();
+			return;
+		}
+		const current = this.model;
+		if (!current) return;
+		const baseline = this.#promptModelBaseline ?? this.#models.capturePromptModelBaseline(current);
+		await this.#models.applyPromptModel(baseline, override.model, override.thinkingLevel);
+		this.#promptModelBaseline = baseline;
+	}
+
+	/** Puts the session's own model back after a per-prompt override; a failure leaves a notice, never an error. */
+	async #restorePromptModel(): Promise<void> {
+		const baseline = this.#promptModelBaseline;
+		if (!baseline) return;
+		this.#promptModelBaseline = undefined;
+		try {
+			await this.#models.restorePromptModel(baseline);
+		} catch (error) {
+			this.emitNotice(
+				"warning",
+				`Could not switch back to ${baseline.model.provider}/${baseline.model.id}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
 	}
 
 	async #flushInFlightSettledCallbacks(): Promise<void> {
@@ -3588,6 +3652,7 @@ export class AgentSession implements SettingsScope {
 		// A digest entry carries no persistence key, so the memo stays valid across it.
 		if (message.role === "assistant") this.#tools.recordReplyPrompt(message);
 		const entryId = this.sessionManager.appendMessage(message);
+		if (message.role === "user") this.#bindFileSnapshot(message, entryId);
 		if (message.role === "assistant") {
 			(message as PersistedAssistantMessage)[kPersistedSessionEntryId] = entryId;
 		}
@@ -3676,7 +3741,7 @@ export class AgentSession implements SettingsScope {
 			// One-run instructions must not return from persisted history: prewalk
 			// nudges are consumed once, and Vibe context is rebuilt only while active.
 			if (!isPrewalkPlanNudge(message) && message.customType !== VIBE_MODE_CONTEXT_MESSAGE_TYPE) {
-				this.sessionManager.appendCustomMessageEntry(
+				const entryId = this.sessionManager.appendCustomMessageEntry(
 					message.customType,
 					message.content,
 					message.display,
@@ -3687,6 +3752,7 @@ export class AgentSession implements SettingsScope {
 					// provider preparation / hook time from the prompt→yield anchor.
 					message.timestamp,
 				);
+				this.#bindFileSnapshot(message, entryId);
 			}
 			if (message.role === "custom" && message.customType === "ttsr-injection") {
 				this.#ttsr.markInjectedFromDetails(message.details);
@@ -6794,6 +6860,58 @@ export class AgentSession implements SettingsScope {
 		if (this.isBusyForSnapshot) throw new SessionBusyError(action);
 	}
 
+	/** Whether rewinding can also restore files: snapshots are enabled and the cwd is inside a git repository. */
+	get canRestoreFiles(): boolean {
+		return this.#fileSnapshots.supported;
+	}
+
+	/** Whether the last file restore can still be undone (nothing has changed the files since). */
+	get canRedoFileRestore(): boolean {
+		return this.#fileSnapshots.canRedo;
+	}
+
+	#assertIdleForFileRestore(): void {
+		if (this.isBusyForSnapshot || this.isSessionTransitioning) {
+			throw new FileSnapshotError("wait for the current response, compaction, or command to finish");
+		}
+	}
+
+	/** What restoring the files to before prompt `entryId` would change; undefined when it has no snapshot. */
+	previewFileRestore(entryId: string): Promise<FileRestorePlan | undefined> {
+		return this.#fileSnapshots.preview(entryId);
+	}
+
+	/**
+	 * Put the working tree back to how it was before prompt `entryId`; the state it replaces is kept
+	 * for {@link redoFileRestore}. Refuses (FileSnapshotError) while the agent or a command is running.
+	 */
+	restoreFiles(entryId: string): Promise<FileRestoreResult> {
+		this.#assertIdleForFileRestore();
+		return this.#fileSnapshots.restoreBefore(entryId);
+	}
+
+	/** Undo the last file restore. Refuses (FileSnapshotError) while busy or when files changed since. */
+	redoFileRestore(): Promise<FileRestoreResult> {
+		this.#assertIdleForFileRestore();
+		return this.#fileSnapshots.redo();
+	}
+
+	/** Snapshot the working tree before the user prompts in `messages` reach the agent; their entries get bound to it. */
+	async #snapshotFilesBeforePrompt(messages: readonly AgentMessage[], signal: AbortSignal): Promise<void> {
+		const prompts = messages.filter(isUserAuthoredQueuedMessage);
+		if (prompts.length === 0) return;
+		const snapshot = await this.#fileSnapshots.capture(undefined, signal);
+		if (!snapshot) return;
+		for (const message of prompts) this.#turnFileSnapshots.set(message, snapshot);
+	}
+
+	#bindFileSnapshot(message: object, entryId: string): void {
+		const snapshot = this.#turnFileSnapshots.get(message);
+		if (!snapshot) return;
+		this.#turnFileSnapshots.delete(message);
+		void this.#fileSnapshots.bind(snapshot, entryId);
+	}
+
 	get goalRuntime(): GoalRuntime {
 		return this.#goalRuntime;
 	}
@@ -7535,6 +7653,7 @@ export class AgentSession implements SettingsScope {
 		options?: Pick<PromptOptions, "streamingBehavior" | "toolChoice" | "onPromptAdmitted"> & {
 			queueChipText?: string;
 			queueOnly?: boolean;
+			modelOverride?: PromptModelOverride;
 		},
 	): Promise<boolean> {
 		return this.#admitSubmission(() => this.#promptCustomMessage(message, options));
@@ -7545,6 +7664,7 @@ export class AgentSession implements SettingsScope {
 		options?: Pick<PromptOptions, "streamingBehavior" | "toolChoice" | "onPromptAdmitted"> & {
 			queueChipText?: string;
 			queueOnly?: boolean;
+			modelOverride?: PromptModelOverride;
 		},
 	): Promise<boolean> {
 		// Same barrier/claim protocol as prompt(): skill invocations, collab peer
@@ -7566,6 +7686,7 @@ export class AgentSession implements SettingsScope {
 			| (Pick<PromptOptions, "streamingBehavior" | "toolChoice" | "onPromptAdmitted"> & {
 					queueChipText?: string;
 					queueOnly?: boolean;
+					modelOverride?: PromptModelOverride;
 			  })
 			| undefined,
 		outcome: PromptDispatchOutcome,
@@ -7602,6 +7723,7 @@ export class AgentSession implements SettingsScope {
 				queueChipText: options?.queueChipText,
 				prependMessages: keywordNotices,
 				onPromptAdmitted: options?.onPromptAdmitted,
+				modelOverride: options?.modelOverride,
 			});
 			outcome.sessionClaimed = true;
 			return true;
@@ -7648,6 +7770,7 @@ export class AgentSession implements SettingsScope {
 				preprocessed: { content: preparedMessage.content, descriptionNotice },
 				prependMessages: keywordNotices,
 				onPromptAdmitted: options?.onPromptAdmitted,
+				modelOverride: options?.modelOverride,
 			});
 			outcome.sessionClaimed = true;
 			return true;
@@ -7692,14 +7815,32 @@ export class AgentSession implements SettingsScope {
 			}
 			text.push(parts.join(""));
 		}
-		return this.#prepareAgentStart(
-			first,
-			text.join("\n\n"),
-			images.length > 0 ? images : undefined,
-			this.#promptGeneration,
-			signal,
-			"queued",
-		);
+		const generation = this.#promptGeneration;
+		// The last queued choice in the batch decides the model the batch's turn runs on.
+		let choice: PromptModelOverride | null | undefined;
+		for (const message of userMessages) {
+			if (this.#queuedPromptModels.has(message)) choice = this.#queuedPromptModels.get(message);
+		}
+		const snapshotted = this.#snapshotFilesBeforePrompt(userMessages, signal);
+		return snapshotted.then(async () => {
+			if (choice !== undefined) {
+				try {
+					await this.#selectPromptModel(choice);
+				} catch (error) {
+					// Block the queued settle drain before Agent turns this error into an assistant message.
+					this.#queuedMessageDrainBlocked = true;
+					throw error;
+				}
+			}
+			return this.#prepareAgentStart(
+				first,
+				text.join("\n\n"),
+				images.length > 0 ? images : undefined,
+				generation,
+				signal,
+				"queued",
+			);
+		});
 	};
 
 	/**
@@ -7828,6 +7969,8 @@ export class AgentSession implements SettingsScope {
 			prependMessages?: AgentMessage[];
 			skipPostPromptRecoveryWait?: boolean;
 			acceptTerminalEmptyStop?: boolean;
+			/** Model this prompt's run uses instead of the session's; restored when the session settles. */
+			modelOverride?: PromptModelOverride;
 		},
 	): Promise<boolean> {
 		// Returns false when the prompt was dropped before reaching the agent —
@@ -7842,6 +7985,7 @@ export class AgentSession implements SettingsScope {
 		try {
 			options?.onPromptAdmitted?.();
 			await this.#recovery.maybeRestoreRetryFallbackPrimary();
+			await this.#selectPromptModel(options?.modelOverride);
 			if (!(await this.#runUsageAwarePreflightForNextModelCall())) return false;
 			// Flush any pending bash messages before the new prompt
 			await this.#bash.flushPending();
@@ -7939,6 +8083,8 @@ export class AgentSession implements SettingsScope {
 					messages.push(await this.#normalizeAgentMessageImages(fileMentionMessage));
 				}
 			}
+
+			await this.#snapshotFilesBeforePrompt([message], setupAbort.signal);
 
 			const preparation = await this.#prepareAgentStart(
 				message,
@@ -8422,6 +8568,8 @@ export class AgentSession implements SettingsScope {
 				timestamp: timestamp ?? Date.now(),
 			};
 			this.#queuedMessageRawText.set(userMessage, rawText);
+			// A follow-up that chose no model runs on the session's own, never on a guest's override still in force.
+			this.#queuedPromptModels.set(userMessage, null);
 			this.agent.followUp(userMessage);
 		} else {
 			for (const notice of prependMessages) this.agent.steer(notice);
@@ -8641,6 +8789,8 @@ export class AgentSession implements SettingsScope {
 			prependMessages?: readonly CustomMessage[];
 			/** Called synchronously once the message is pushed onto its queue. See {@link PromptOptions.onPromptAdmitted}. */
 			onPromptAdmitted?: () => void;
+			/** Model this message's run uses once the agent dequeues it. */
+			modelOverride?: PromptModelOverride;
 		},
 	): Promise<void> {
 		// Captured before the normalization await below — see #sessionGeneration's doc comment.
@@ -8674,6 +8824,7 @@ export class AgentSession implements SettingsScope {
 			? preprocessed.descriptionNotice
 			: await this.#buildSkillImageDescriptionNotice(normalizedAppMessage);
 		if (deliverAs === "aside") {
+			if (options?.modelOverride) throw new Error("A model override cannot ride an aside");
 			if (await this.#sessionGenerationChanged(sessionGeneration)) return;
 			// Non-interrupting: rides the same step-boundary aside poll as
 			// sendCustomMessage's streaming aside branch — not an agent-core queue
@@ -8692,6 +8843,11 @@ export class AgentSession implements SettingsScope {
 			return;
 		}
 		this.#allowQueuedMessageDrainRetry();
+		// A follow-up always records its choice (`null` = the session's model) so it never inherits a
+		// previous override; a steer joins the running turn and records only an explicit one.
+		if (options?.modelOverride || deliverAs === "followUp") {
+			this.#queuedPromptModels.set(normalizedAppMessage, options?.modelOverride ?? null);
+		}
 		// Keyword notices and their user message must enter the queue in one synchronous phase.
 		if (deliverAs === "followUp") {
 			for (const notice of prependMessages) this.agent.followUp(notice);
@@ -8814,6 +8970,7 @@ export class AgentSession implements SettingsScope {
 			this.#allowQueuedMessageDrainRetry();
 
 			if (options?.deliverAs === "followUp") {
+				this.#queuedPromptModels.set(normalizedAppMessage, null);
 				this.agent.followUp(normalizedAppMessage);
 			} else {
 				this.agent.steer(normalizedAppMessage);
@@ -10154,9 +10311,9 @@ export class AgentSession implements SettingsScope {
 		return this.#models.cycleThinkingLevel();
 	}
 
-	/** Lists all selectable effort selectors for the active model. */
-	getAvailableEffortSelectors(): ConfiguredThinkingLevel[] {
-		return this.#models.getAvailableEffortSelectors();
+	/** Lists all selectable effort selectors for `model` (the active one by default). */
+	getAvailableEffortSelectors(model?: Model): ConfiguredThinkingLevel[] {
+		return this.#models.getAvailableEffortSelectors(model);
 	}
 
 	/** Reports whether `/fast` is enabled for the active model family. */

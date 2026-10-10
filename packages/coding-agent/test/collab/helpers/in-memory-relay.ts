@@ -16,6 +16,8 @@ import { rewriteEnvelopePeer, unpackEnvelope } from "@oh-my-pi/pi-coding-agent/c
 
 /** Active relay the fake transport routes through; set between install/uninstall. */
 let activeRelay: InMemoryRelay | null = null;
+/** Extra relays addressed by the `host[:port]` of the URL a socket connects to; everything else uses {@link activeRelay}. */
+const relaysByHost = new Map<string, InMemoryRelay>();
 
 /** Pristine constructor captured before any test swaps it. */
 const RealWebSocket = globalThis.WebSocket;
@@ -40,12 +42,19 @@ export class FakeWebSocket {
 	readonly #pongListeners: Array<() => void> = [];
 
 	constructor(url: string) {
-		const relay = activeRelay;
+		const target = new URL(url);
+		const relay = relaysByHost.get(target.host) ?? activeRelay;
 		if (!relay) throw new Error("FakeWebSocket: no active in-memory relay");
 		this.#relay = relay;
-		this.role = new URL(url).searchParams.get("role") === "host" ? "host" : "guest";
+		this.role = target.searchParams.get("role") === "host" ? "host" : "guest";
 		queueMicrotask(() => {
 			if (this.readyState !== FakeWebSocket.CONNECTING) return;
+			if (relay.offline) {
+				// Refused connection: the close arrives without an open, as for an unreachable host.
+				this.readyState = FakeWebSocket.CLOSED;
+				this.onclose?.({ code: 1006, reason: "" });
+				return;
+			}
 			this.readyState = FakeWebSocket.OPEN;
 			relay.connect(this);
 			this.onopen?.();
@@ -92,6 +101,13 @@ export class FakeWebSocket {
 		queueMicrotask(() => this.onclose?.({ code: 4001, reason: "room closed" }));
 	}
 
+	/** The transport died under this socket (relay process killed): abnormal closure, no goodbye. */
+	drop(): void {
+		if (this.readyState === FakeWebSocket.CLOSED) return;
+		this.readyState = FakeWebSocket.CLOSED;
+		queueMicrotask(() => this.onclose?.({ code: 1006, reason: "" }));
+	}
+
 	/** Relay → this socket: a binary frame, delivered as ArrayBuffer (binaryType "arraybuffer"). */
 	deliver(bytes: Uint8Array): void {
 		if (this.readyState !== FakeWebSocket.OPEN) return;
@@ -111,6 +127,23 @@ export class InMemoryRelay {
 	#host: FakeWebSocket | null = null;
 	readonly #guests = new Map<number, FakeWebSocket>();
 	#nextPeerId = 1;
+	/** While set, new connections are refused without ever opening. */
+	offline = false;
+
+	/** Whether a host currently holds the room. */
+	get hasHost(): boolean {
+		return this.#host !== null;
+	}
+
+	/** Kill the relay process: every connection drops, the room is gone, and new connections are refused. */
+	goOffline(): void {
+		this.offline = true;
+		const sockets = [...(this.#host ? [this.#host] : []), ...this.#guests.values()];
+		this.#host = null;
+		this.#guests.clear();
+		this.#nextPeerId = 1;
+		for (const socket of sockets) socket.drop();
+	}
 
 	connect(ws: FakeWebSocket): void {
 		if (ws.role === "host") {
@@ -164,6 +197,13 @@ export function installInMemoryRelay(): InMemoryRelay {
 	return activeRelay;
 }
 
+/** A second relay that sockets reach by connecting to a URL with this `host[:port]`; call after {@link installInMemoryRelay}. */
+export function addInMemoryRelay(host: string): InMemoryRelay {
+	const relay = new InMemoryRelay();
+	relaysByHost.set(host, relay);
+	return relay;
+}
+
 /**
  * Restore the real WebSocket constructor and drop the active relay. Sockets
  * already constructed keep their own relay reference, so in-flight teardown
@@ -172,4 +212,5 @@ export function installInMemoryRelay(): InMemoryRelay {
 export function uninstallInMemoryRelay(): void {
 	globalThis.WebSocket = RealWebSocket;
 	activeRelay = null;
+	relaysByHost.clear();
 }

@@ -25,7 +25,8 @@ import {
 	publishCollabIdle,
 } from "./registry";
 
-import { cfgCollabAutoStart, cfgCollabRelayUrl, cfgCollabWebUrl } from "./settings";
+import { normalizeLocalRelayUrl } from "./protocol";
+import { cfgCollabAutoStart, cfgCollabLocalRelayUrl, cfgCollabRelayUrl, cfgCollabWebUrl } from "./settings";
 
 export type CollabAutoStart = "off" | CollabAccess;
 
@@ -156,7 +157,7 @@ export class CollabController {
 			throw new CollabLinkError("start_failed", err instanceof Error ? err.message : String(err));
 		}
 		if (!existing) this.#ctx.showStatus(`Collab started from omp collab start (${access} access)`, { dim: true });
-		const url = access === "view" ? host.webViewLink : host.webLink;
+		const url = host.registryLink(access);
 		if (!url) throw new CollabLinkError("start_failed", "the room has no link yet; try again");
 		return { generation: host.generation, access, url };
 	}
@@ -314,6 +315,22 @@ export class CollabController {
 	}
 
 	/**
+	 * `collab.localRelayUrl` as the host takes it, or undefined when unset, unusable, or the same
+	 * relay as the public one. An unusable value is logged and ignored: the optimisation must
+	 * never stop a session from being shared.
+	 */
+	#resolveLocalRelayUrl(relayUrl: string): string | undefined {
+		const input = cfgCollabLocalRelayUrl.get(this.#ctx.settings).trim();
+		if (!input) return undefined;
+		const local = normalizeLocalRelayUrl(input);
+		if (local === null) {
+			logger.warn("Collab local relay ignored: collab.localRelayUrl must be ws://127.0.0.1:<port>", { input });
+			return undefined;
+		}
+		return normalizeLocalRelayUrl(relayUrl) === local ? undefined : local;
+	}
+
+	/**
 	 * Install the next room synchronously at ordinary startup so early dialogs
 	 * can be retained. During a session transition, wait for its final identity
 	 * and state first. Connect only after the previous room is fully gone.
@@ -349,7 +366,7 @@ export class CollabController {
 			// A previous room may still be withdrawing subscriptions and registry
 			// state after a fatal close. Finish that before installing new taps.
 			if (previous) await this.#stopHost(previous, "replaced");
-			await host.start(relayUrl, webUrl);
+			await host.start(relayUrl, webUrl, this.#resolveLocalRelayUrl(relayUrl));
 		} catch (err) {
 			if (this.#host === host) this.#host = undefined;
 			if (this.#ctx.collabHost === host) this.#ctx.collabHost = undefined;

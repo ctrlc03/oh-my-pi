@@ -18,6 +18,19 @@ export const cfgCollabRelayUrl = register({
 	},
 });
 
+export const cfgCollabLocalRelayUrl = register({
+	id: "collab.localRelayUrl",
+	type: "string",
+	default: "",
+	ui: {
+		tab: "interaction",
+		group: "Collab",
+		label: "Local Relay URL",
+		description:
+			"Also serve each /collab room on a relay on this computer (ws://127.0.0.1:<port>) so the web app here connects over loopback; guests elsewhere keep using collab.relayUrl. Empty = off",
+	},
+});
+
 export const cfgCollabWebUrl = register({
 	id: "collab.webUrl",
 	type: "string",

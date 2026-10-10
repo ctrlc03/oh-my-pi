@@ -951,3 +951,49 @@ describe("GuestClient capabilities and branches", () => {
 		}
 	});
 });
+
+describe("GuestClient file restore", () => {
+	const restored: HostFrame = {
+		t: "files-restored",
+		kind: "restore",
+		plan: { revert: 2, remove: 1, recreate: 0 },
+		skipped: 0,
+		canRedo: true,
+	};
+
+	it("keeps the host's preview and restore report, and drops the restore once a turn starts", () => {
+		const client = liveClient();
+		expect(client.getSnapshot().rewindPreview).toBeNull();
+		client.applyFrameForTest({ t: "rewind-preview", entryId: "e1", files: null });
+		expect(client.getSnapshot().rewindPreview).toEqual({ entryId: "e1", files: null });
+
+		client.applyFrameForTest(restored);
+		expect(client.getSnapshot().fileRestore).toEqual({
+			kind: "restore",
+			plan: { revert: 2, remove: 1, recreate: 0 },
+			skipped: 0,
+			canRedo: true,
+		});
+		// The files change again, so the host would refuse the undo: the offer goes away.
+		client.applyFrameForTest({ t: "event", event: { type: "agent_start" } });
+		expect(client.getSnapshot().fileRestore).toBeNull();
+	});
+
+	it("sends the file restore choice with a rewind, and nothing extra otherwise", () => {
+		const sent: GuestFrame[] = [];
+		const sendSpy = vi.spyOn(CollabSocket.prototype, "send").mockImplementation((frame: GuestFrame) => {
+			sent.push(frame);
+		});
+		try {
+			const client = liveClient();
+			client.sendSessionCommand("rewind", "e1", true);
+			client.sendSessionCommand("compact");
+			expect(sent).toEqual([
+				{ t: "session-cmd", cmd: "rewind", arg: "e1", restoreFiles: true },
+				{ t: "session-cmd", cmd: "compact", arg: undefined, restoreFiles: undefined },
+			]);
+		} finally {
+			sendSpy.mockRestore();
+		}
+	});
+});

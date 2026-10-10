@@ -397,6 +397,16 @@ export interface AgentSessionConfig {
 	autoTitle?: boolean;
 }
 
+/**
+ * A model (and optionally a thinking level) one prompt runs on instead of the session's. The
+ * session's own model and thinking state come back when the run settles; nothing is written to
+ * the transcript or settings. Without `thinkingLevel` the session's level is kept for the model.
+ */
+export interface PromptModelOverride {
+	model: Model;
+	thinkingLevel?: ConfiguredThinkingLevel;
+}
+
 /** Options for AgentSession.prompt(). */
 export interface PromptOptions {
 	/** Whether to expand file-based prompt templates (default: true). */

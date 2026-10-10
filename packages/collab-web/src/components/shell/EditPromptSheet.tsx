@@ -1,6 +1,7 @@
 import type { ImageContent, SessionEntry, TextContent } from "@oh-my-pi/pi-wire";
 import { type ReactNode, type RefObject, useCallback, useEffect, useState } from "react";
 import type { GuestClient, GuestSnapshot } from "../../lib/client";
+import { describeFilePlan } from "../../lib/file-restore";
 import { isPrompt } from "../../lib/trim";
 import type { ComposerHandle } from "./Composer";
 import { Sheet } from "./Sheet";
@@ -33,12 +34,18 @@ export function useEditPrompt(
 ): { onEditPrompt: ((entryId: string) => void) | undefined; sheet: ReactNode } {
 	const [confirming, setConfirming] = useState<string | null>(null);
 	const [pending, setPending] = useState<PendingEdit | null>(null);
+	const [restoreFiles, setRestoreFiles] = useState(true);
 	const { entries, notices, working } = snap;
 	const allowed = snap.features.rewind === true && !snap.readOnly && !working && snap.phase === "live";
+	const filesAvailable = snap.features["rewind-files"] === true;
 
 	useEffect(() => {
 		if (!allowed) setConfirming(null);
 	}, [allowed]);
+
+	useEffect(() => {
+		if (allowed && filesAvailable && confirming !== null) client.sendSessionCommand("rewind-preview", confirming);
+	}, [allowed, filesAvailable, confirming, client]);
 
 	useEffect(() => {
 		if (pending === null) return;
@@ -53,6 +60,19 @@ export function useEditPrompt(
 
 	const edit = useCallback((entryId: string) => setConfirming(entryId), []);
 	const close = useCallback(() => setConfirming(null), []);
+
+	const preview = snap.rewindPreview?.entryId === confirming ? snap.rewindPreview.files : undefined;
+	const restorable =
+		preview !== undefined && preview !== null && preview.revert + preview.remove + preview.recreate > 0;
+	const restoring = restorable && restoreFiles;
+	const filesNote =
+		preview === undefined
+			? "Checking which files would change…"
+			: preview === null
+				? "No file snapshot was recorded before this prompt, so its files cannot be restored."
+				: restorable
+					? `Restoring puts ${describeFilePlan(preview)} back as they were before this prompt. You can undo the restore afterwards.`
+					: "No files changed after this prompt.";
 
 	const confirm = (): void => {
 		const entry = entries.findLast(candidate => candidate.id === confirming);
@@ -72,7 +92,7 @@ export function useEditPrompt(
 			images: blocks.filter((block): block is ImageContent => block.type === "image"),
 			noticeFloor: notices.at(-1)?.id ?? 0,
 		});
-		client.sendSessionCommand("rewind", entry.id);
+		client.sendSessionCommand("rewind", entry.id, restoring);
 	};
 
 	const sheet =
@@ -85,6 +105,20 @@ export function useEditPrompt(
 					The turns after this prompt leave the conversation; the session file keeps them as a branch. The prompt
 					goes back into the message box, ready to change and send again.
 				</p>
+				{filesAvailable && (
+					<>
+						<label className="sh-review-draft">
+							<input
+								type="checkbox"
+								checked={restoring}
+								disabled={!restorable}
+								onChange={e => setRestoreFiles(e.currentTarget.checked)}
+							/>
+							Also restore the files
+						</label>
+						<p className="sh-edit-prompt-note">{filesNote}</p>
+					</>
+				)}
 				<div className="sh-edit-prompt-actions">
 					<button type="button" className="sh-btn" onClick={close}>
 						Cancel

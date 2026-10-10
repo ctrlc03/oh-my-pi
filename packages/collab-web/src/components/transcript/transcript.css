@@ -227,6 +227,14 @@
 	font-size: 11px;
 }
 
+/* Which model gave a reply when it was not the session's. */
+.tr-model {
+	margin-top: 4px;
+	color: var(--fg-faint);
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
 .tr-earlier {
 	display: block;
 	margin: 4px auto 16px;

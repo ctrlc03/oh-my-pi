@@ -16,12 +16,15 @@ import type {
 	GuestFrame,
 	ParsedCollabLink,
 	Participant,
+	RewindFilesPlan,
 	AgentSnapshot as WireAgentSnapshot,
 	WireModel,
 } from "@oh-my-pi/pi-wire";
 import {
 	DEFAULT_RELAY_URL,
 	ENVELOPE_HEADER_LENGTH,
+	LOCAL_RELAY_LINK_PARAM,
+	normalizeLocalRelayUrl,
 	ROOM_ID_BYTES,
 	ROOM_KEY_BYTES,
 	WRITE_TOKEN_BYTES,
@@ -42,7 +45,7 @@ export type {
 	RelayControlToHost,
 } from "@oh-my-pi/pi-wire";
 export { COLLAB_PROMPT_MESSAGE_TYPE, COLLAB_PROTO } from "@oh-my-pi/pi-wire";
-export { DEFAULT_RELAY_URL, ENVELOPE_HEADER_LENGTH, ROOM_ID_BYTES };
+export { DEFAULT_RELAY_URL, ENVELOPE_HEADER_LENGTH, normalizeLocalRelayUrl, ROOM_ID_BYTES };
 
 export type CollabParticipant = Participant;
 export type AgentSnapshot = WireAgentSnapshot;
@@ -57,7 +60,7 @@ export type { CollabSessionState };
 export type CollabFrame =
 	// guest -> host (hello/abort/agent-cmd/fetch-transcript/ui-response are taken verbatim from the wire grammar)
 	| Exclude<GuestFrame, { t: "prompt" }>
-	| { t: "prompt"; text: string; images?: ImageContent[]; deliver?: "follow-up" }
+	| { t: "prompt"; text: string; images?: ImageContent[]; deliver?: "follow-up"; model?: string; thinking?: string }
 	// host -> guest
 	| {
 			t: "welcome";
@@ -102,6 +105,10 @@ export type CollabFrame =
 	/** Full agent-registry snapshot (debounced on registry change). */
 	| { t: "agents"; agents: AgentSnapshot[] }
 	| { t: "ui-request"; request: CollabUiRequest }
+	/** Targeted reply to `session-cmd` `rewind-preview`: what restoring the files before prompt `entryId` would change; `null` when it has no snapshot. */
+	| { t: "rewind-preview"; entryId: string; files: RewindFilesPlan | null }
+	/** Targeted reply once files were restored (`kind: "restore"`, with a rewind) or the restore was undone (`kind: "redo"`). */
+	| { t: "files-restored"; kind: "restore" | "redo"; plan: RewindFilesPlan; skipped: number; canRedo: boolean }
 	| { t: "ui-request-end"; reqId: number }
 	/** Targeted reply to fetch-transcript; `error` marks a terminal read failure that guests must surface without hot retrying. */
 	| { t: "transcript"; reqId: number; text: string; newSize: number; error?: string }
@@ -147,6 +154,11 @@ const BRANCH_FRAME_HEAD = `{"t":"${BRANCH_FIELDS.t}","${BRANCH_FIELDS.keep}":`;
 /** The single construction point of {@link EncodedFrame}. */
 function encodedFrame(json: string): EncodedFrame {
 	return json as EncodedFrame;
+}
+
+/** Any `CollabFrame` as its JSON form, serialized once for a sender that fans it out to several sockets. */
+export function serializeFrame(frame: CollabFrame): EncodedFrame {
+	return encodedFrame(JSON.stringify(frame));
 }
 
 /** `{ t: "entry", entry }` from the entry's JSON. */
@@ -257,17 +269,33 @@ function normalizeRelayOrigin(relayUrl: string): { origin: string } | { error: s
  * Full links append the write token to the key
  * (`base64url(key ∥ writeToken)`); read-only (view) links carry the bare
  * 32-byte key, which is also the pre-token link format.
+ *
+ * `localRelayUrl` (a loopback relay the host also serves the room on) is appended as
+ * `?local=<host:port>`. Such a link always names its relay explicitly: a bare
+ * `<roomId>.<key>?local=…` would not parse in a client that predates the parameter,
+ * while `<host>/r/<roomId>.<key>?local=…` only has its query ignored.
  */
-export function formatCollabLink(relayUrl: string, roomId: string, key: Uint8Array, writeToken?: Uint8Array): string {
+export function formatCollabLink(
+	relayUrl: string,
+	roomId: string,
+	key: Uint8Array,
+	writeToken?: Uint8Array,
+	localRelayUrl?: string,
+): string {
 	const normalized = normalizeRelayOrigin(relayUrl);
 	if ("error" in normalized) throw new Error(normalized.error);
 	const secret = writeToken ? Buffer.concat([key, writeToken]) : Buffer.from(key);
 	const keyText = secret.toString("base64url");
-	if (normalized.origin === DEFAULT_RELAY_URL) return `${roomId}.${keyText}`;
+	const local = localRelayUrl === undefined ? null : normalizeLocalRelayUrl(localRelayUrl);
+	if (localRelayUrl !== undefined && local === null) {
+		throw new Error(`Invalid local relay URL: ${localRelayUrl} (use ws://127.0.0.1:<port>)`);
+	}
+	if (local === null && normalized.origin === DEFAULT_RELAY_URL) return `${roomId}.${keyText}`;
 	const compact = normalized.origin.startsWith("wss://")
 		? normalized.origin.slice("wss://".length)
 		: normalized.origin;
-	return `${compact}/r/${roomId}.${keyText}`;
+	const query = local === null ? "" : `?${LOCAL_RELAY_LINK_PARAM}=${local.slice("ws://".length)}`;
+	return `${compact}/r/${roomId}.${keyText}${query}`;
 }
 
 function normalizeCollabWebBaseUrl(relayUrl: string, webUrl?: string): string {
@@ -302,7 +330,8 @@ function normalizeCollabWebBaseUrl(relayUrl: string, webUrl?: string): string {
 /**
  * Render the browser deep link. The browser UI may be hosted separately from
  * the relay; the fragment always carries the relay-specific collab link, so
- * room secrets stay out of HTTP path and query bytes.
+ * room secrets stay out of HTTP path and query bytes. See {@link formatCollabLink}
+ * for `localRelayUrl`.
  */
 export function formatCollabWebLink(
 	relayUrl: string,
@@ -310,8 +339,10 @@ export function formatCollabWebLink(
 	key: Uint8Array,
 	writeToken?: Uint8Array,
 	webUrl?: string,
+	localRelayUrl?: string,
 ): string {
-	return `${normalizeCollabWebBaseUrl(relayUrl, webUrl)}/#${formatCollabLink(relayUrl, roomId, key, writeToken)}`;
+	const link = formatCollabLink(relayUrl, roomId, key, writeToken, localRelayUrl);
+	return `${normalizeCollabWebBaseUrl(relayUrl, webUrl)}/#${link}`;
 }
 
 export function parseCollabLink(link: string): ParsedCollabLink | { error: string } {
@@ -358,5 +389,13 @@ export function parseCollabLink(link: string): ParsedCollabLink | { error: strin
 	}
 	const key = secret.subarray(0, ROOM_KEY_BYTES);
 	const writeToken = secret.byteLength > ROOM_KEY_BYTES ? secret.subarray(ROOM_KEY_BYTES) : undefined;
-	return { wsUrl: `${normalized.origin}/r/${roomId}`, roomId, key, writeToken };
+	// An unusable `local` value drops the optimisation, never the link.
+	const localRelay = normalizeLocalRelayUrl(url.searchParams.get(LOCAL_RELAY_LINK_PARAM) ?? "");
+	return {
+		wsUrl: `${normalized.origin}/r/${roomId}`,
+		roomId,
+		key,
+		writeToken,
+		...(localRelay ? { localWsUrl: `${localRelay}/r/${roomId}` } : {}),
+	};
 }

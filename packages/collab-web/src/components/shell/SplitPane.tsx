@@ -179,6 +179,7 @@ export function SplitPane({
 					queued={snap.queued}
 					onCancelQueued={cancelQueued}
 					onEditPrompt={editPrompt.onEditPrompt}
+					sessionModel={snap.state?.model?.id}
 				/>
 			</div>
 			{editPrompt.sheet}
@@ -200,6 +201,8 @@ export function SplitPane({
 				model={snap.state?.model}
 				thinkingLevel={snap.state?.thinkingLevel}
 				thinkingLevels={snap.state?.thinkingLevels}
+				followsRoom={companionClient !== null && instanceId !== null}
+				promptModel={Object.hasOwn(snap.features, "prompt-model") && !snap.readOnly && snap.models !== null}
 				onSessionCommand={sendSessionCommand}
 			/>
 		</section>

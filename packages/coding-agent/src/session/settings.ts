@@ -21,6 +21,7 @@ import {
 } from "../tiny/dtype";
 import { DEFAULT_WEB_SEARCH_TIMEOUT_SECONDS, MAX_WEB_SEARCH_TIMEOUT_SECONDS } from "../web/search/types";
 import { DEFAULT_USAGE_RESERVE_PCT } from "@oh-my-pi/pi-ai/auth-storage";
+import { isBunTestRuntime } from "@oh-my-pi/pi-utils";
 import { configureProviderStoreResponses } from "@oh-my-pi/pi-ai/providers/openai-responses";
 import { configureProviderMaxInFlightRequests } from "@oh-my-pi/pi-ai/stream";
 import { THINKING_EFFORTS } from "@oh-my-pi/pi-catalog/effort";
@@ -1032,6 +1033,21 @@ export const cfgFeaturesUnexpectedStopDetection = register({
 				description: "Mechanical + small-model classification of text-only stops",
 			},
 		],
+	},
+});
+
+export const cfgRewindSnapshotFiles = register({
+	id: "rewind.snapshotFiles",
+	type: "boolean",
+	// Test runs default off: a session whose cwd is inside the checkout would snapshot the whole
+	// repository into the real agent dir for every prompt. Tests that exercise it opt in.
+	default: !isBunTestRuntime(),
+	ui: {
+		tab: "interaction",
+		group: "Agent",
+		label: "Snapshot Files For Rewind",
+		description:
+			"Snapshot the git working tree before each prompt (in a private store under the agent dir; your repo's index, refs and stash are never touched) so rewinding a prompt can also restore the files it changed",
 	},
 });
 

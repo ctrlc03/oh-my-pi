@@ -221,6 +221,7 @@ describe("collab guest session controls", () => {
 			name: "BIG",
 			provider: "acme",
 			contextWindow: 1_000_000,
+			thinkingLevels: ["off", "auto", "low", "high"],
 		});
 		expect(writerWelcome.state.thinkingLevels).toEqual(["off", "auto", "low", "high"]);
 

@@ -2,7 +2,7 @@
  * Offline mock collab host: starts the local relay, opens a room as host, and
  * serves the canned fixture session to any collab-web guest that joins.
  *
- *   bun scripts/mock-host.ts [--port 7466]
+ *   bun scripts/mock-host.ts [--port 7466] [--local-relay [PORT]]
  *
  * Prints a full join link (guests may prompt and run session controls) and a
  * view link (read-only). Replays a scripted streaming turn on every guest
@@ -10,12 +10,18 @@
  * fetch-transcript with byte slices of the fixture JSONL, and handles
  * `session-cmd` (model / thinking switches, compact, rename) — exactly the frames a
  * real `omp /collab` host emits.
+ *
+ * `--local-relay` also serves the room on a second loopback relay (default: the port after
+ * `--port`) and puts it in the links as `?local=`, the way omp does with `collab.localRelayUrl`:
+ * a guest on this computer joins through it and falls back to the main relay when it is down.
+ * Type `local off` / `local on` on stdin to stop and restart that relay and watch the fallback.
  */
 
 import type {
 	AgentSnapshot,
 	HostFrame,
 	ImageContent,
+	RewindFilesPlan,
 	SessionCommand,
 	SessionEntry,
 	SessionState,
@@ -37,6 +43,7 @@ import {
 	fixtureEntries,
 	fixtureHeader,
 	fixtureHostOnlyCommands,
+	fixtureResumeChoices,
 	fixtureModel,
 	fixtureModels,
 	fixtureThinkingLevels,
@@ -46,10 +53,15 @@ import {
 	type ScriptedStep,
 	subagentTranscriptJsonl,
 } from "./fixture";
-import { startLocalRelay } from "./local-relay";
+import { type LocalRelay, startLocalRelay } from "./local-relay";
 
 const DEFAULT_PORT = 7466;
+/** Local relay peer ids are shifted so both relays share one id space, as omp's host does. */
+const LOCAL_PEER_BASE = 0x4000_0000;
 const STEP_INTERVAL_MS = 40;
+/** What the real host tells guests when a session switch ends their room. */
+const MOCK_SESSION_SWITCH_REASON =
+	"session switched; prompts not shown in the conversation were not submitted. Rejoin and resend them";
 const TICK_INTERVAL_MS = 2_000;
 const AGENTS_SNAPSHOT_EVERY = 5;
 
@@ -69,15 +81,32 @@ function parsePort(argv: string[]): number {
 	return port;
 }
 
-const port = parsePort(Bun.argv.slice(2));
+function parseLocalRelayPort(argv: string[], mainPort: number): number | null {
+	const at = argv.indexOf("--local-relay");
+	if (at < 0) return null;
+	const next = argv[at + 1];
+	if (next === undefined || next.startsWith("--")) return mainPort + 1;
+	const localPort = Number(next);
+	if (!Number.isInteger(localPort) || localPort < 1 || localPort > 65_535) {
+		console.error(`mock-host: invalid --local-relay ${next}`);
+		process.exit(1);
+	}
+	return localPort;
+}
+
+const argv = Bun.argv.slice(2);
+const port = parsePort(argv);
+const localPort = parseLocalRelayPort(argv, port);
 const relay = startLocalRelay(port);
+let localRelay: LocalRelay | null =
+	localPort === null ? null : startLocalRelay(localPort, { refuseMissingRooms: true });
 const roomId = generateRoomId();
 const rawKey = generateRoomKey();
 const key = await importRoomKey(rawKey);
 const writeToken = crypto.getRandomValues(new Uint8Array(16));
 const writeTokenText = encodeBase64Url(writeToken);
-const link = formatCollabLink(relay.url, roomId, rawKey, writeToken);
-const viewLink = formatCollabLink(relay.url, roomId, rawKey);
+const link = formatCollabLink(relay.url, roomId, rawKey, writeToken, localRelay?.url);
+const viewLink = formatCollabLink(relay.url, roomId, rawKey, undefined, localRelay?.url);
 
 // ── mutable session state ────────────────────────────────────────────────────
 
@@ -93,9 +122,15 @@ let currentModel: WireModel = fixtureModel;
 let thinkingLevel = "medium";
 let lastEntryId: string | null = entries[entries.length - 1]?.id ?? null;
 let streaming = false;
+/** Whether the last mock file restore can still be undone with `redo-files`. */
+let fileRestoreRedoable = false;
 let queuedPrompts = 0;
+/** The per-prompt model (id) of each queued prompt, oldest first; `undefined` = the session's model. */
+let queuedModels: (string | undefined)[] = [];
+/** Model id the running scripted turn answers on when its prompt chose one. */
+let replayModel: string | undefined;
 /** Follow-up prompts held until the running replay ends, oldest first. */
-let followUps: { text: string; images: ImageContent[] | undefined; from: string }[] = [];
+let followUps: { text: string; images: ImageContent[] | undefined; from: string; model?: string }[] = [];
 let turnSeq = 0;
 let liveEntrySeq = 0;
 let replayQueue: ScriptedStep[] = [];
@@ -108,17 +143,26 @@ let sessionName = fixtureHeader.title;
 
 const ws = new WebSocket(`${relay.url}/r/${roomId}?role=host`);
 ws.binaryType = "arraybuffer";
+/** Host socket on the local relay; null while it is down or not requested. */
+let localWs: WebSocket | null = null;
 
 let sendChain: Promise<void> = Promise.resolve();
 let recvChain: Promise<void> = Promise.resolve();
 
-/** Seal and send a frame; peerId 0 broadcasts, N targets that guest. */
+/** Seal and send a frame; peerId 0 broadcasts to both relays, N targets that guest on its relay. */
 function sendFrame(frame: HostFrame, targetPeer = 0): void {
 	sendChain = sendChain
 		.then(async () => {
-			if (ws.readyState !== WebSocket.OPEN) return;
 			const sealed = await seal(key, frame);
-			ws.send(packEnvelope(targetPeer, sealed));
+			if (targetPeer === 0) {
+				for (const socket of [ws, localWs]) {
+					if (socket?.readyState === WebSocket.OPEN) socket.send(packEnvelope(0, sealed));
+				}
+				return;
+			}
+			const socket = targetPeer >= LOCAL_PEER_BASE ? localWs : ws;
+			if (socket?.readyState !== WebSocket.OPEN) return;
+			socket.send(packEnvelope(targetPeer >= LOCAL_PEER_BASE ? targetPeer - LOCAL_PEER_BASE : targetPeer, sealed));
 		})
 		.catch((err: unknown) => {
 			console.error("mock-host: send failed:", err);
@@ -166,8 +210,9 @@ function notice(level: "info" | "warning" | "error", message: string): void {
 
 // ── scripted turn replay ─────────────────────────────────────────────────────
 
-function startReplay(): void {
+function startReplay(model?: string): void {
 	turnSeq++;
+	replayModel = model;
 	replayQueue = makeScriptedTurn(turnSeq, lastEntryId);
 	scheduleStep();
 }
@@ -183,18 +228,37 @@ function scheduleStep(): void {
 		}
 		if (queuedPrompts > 0) {
 			queuedPrompts--;
-			startReplay();
+			startReplay(queuedModels.shift());
 			return;
 		}
 		const next = followUps.shift();
 		if (next !== undefined) {
 			appendPromptEntry(next.text, next.images, next.from);
-			startReplay();
+			startReplay(next.model);
 		}
 	}, STEP_INTERVAL_MS);
 }
 
-function applyStep(step: ScriptedStep): void {
+/** A scripted step with its assistant messages attributed to `model`, as a per-prompt model choice does on the real host. */
+function onModel(step: ScriptedStep, model: string | undefined): ScriptedStep {
+	if (model === undefined) return step;
+	if (step.kind === "entry" && step.entry.type === "message" && step.entry.message.role === "assistant") {
+		return { kind: "entry", entry: { ...step.entry, message: { ...step.entry.message, model } } };
+	}
+	if (
+		step.kind === "event" &&
+		(step.event.type === "message_start" ||
+			step.event.type === "message_update" ||
+			step.event.type === "message_end") &&
+		step.event.message.role === "assistant"
+	) {
+		return { kind: "event", event: { ...step.event, message: { ...step.event.message, model } } };
+	}
+	return step;
+}
+
+function applyStep(rawStep: ScriptedStep): void {
+	const step = onModel(rawStep, replayModel);
 	switch (step.kind) {
 		case "event":
 			sendFrame({ t: "event", event: step.event });
@@ -245,8 +309,13 @@ function handleHello(name: string, proto: number, token: string | undefined, fro
 			agents: agents.map(agent => ({ ...agent })),
 			entryCount: entries.length,
 			readOnly: writer ? undefined : true,
-			models: writer ? fixtureModels : undefined,
-			features: ["follow-up", "rewind", "commands"],
+			models: writer
+				? fixtureModels.map(model => ({
+						...model,
+						thinkingLevels: fixtureThinkingLevels[`${model.provider}/${model.id}`] ?? ["off"],
+					}))
+				: undefined,
+			features: ["follow-up", "rewind", "commands", "rewind-files", "prompt-model"],
 			commands: writer ? fixtureCommands : undefined,
 		},
 		fromPeer,
@@ -263,7 +332,17 @@ function refuseReadOnly(fromPeer: number): boolean {
 	return true;
 }
 
-function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer: number): void {
+/** The file changes a rewind to before `entries[at]` would undo: the mock invents them from the dropped turns. */
+function mockFilePlan(at: number): RewindFilesPlan {
+	const dropped = entries.slice(Math.max(at, 0));
+	return {
+		revert: dropped.filter(entry => entry.type === "message" && entry.message.role === "assistant").length,
+		remove: dropped.filter(entry => entry.type === "message" && entry.message.role === "user").length,
+		recreate: 0,
+	};
+}
+
+function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer: number, restoreFiles = false): void {
 	const who = peerName(fromPeer);
 	switch (cmd) {
 		case "model": {
@@ -350,14 +429,92 @@ function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer
 				return;
 			}
 			// The mock keeps only the active path, so the abandoned turns are simply dropped.
+			const plan = mockFilePlan(at);
 			entries.length = at;
 			lastEntryId = entries[at - 1]?.id ?? null;
 			sendFrame({ t: "branch", keep: lastEntryId, entries: [] });
-			notice("info", `${who} rewound the session to before a prompt`);
+			if (restoreFiles) {
+				fileRestoreRedoable = true;
+				sendFrame({ t: "files-restored", kind: "restore", plan, skipped: 0, canRedo: true }, fromPeer);
+				notice("info", `${who} rewound the session to before a prompt and restored its files`);
+			} else notice("info", `${who} rewound the session to before a prompt`);
 			broadcastState();
 			break;
 		}
+		case "rewind-preview": {
+			const at = entries.findIndex(entry => entry.id === arg);
+			sendFrame({ t: "rewind-preview", entryId: arg ?? "", files: at < 0 ? null : mockFilePlan(at) }, fromPeer);
+			break;
+		}
+		case "redo-files": {
+			if (streaming || isReplaying()) {
+				sendFrame({ t: "error", message: "redo-files: wait for the agent to finish its turn" }, fromPeer);
+				return;
+			}
+			if (!fileRestoreRedoable) {
+				sendFrame({ t: "error", message: "redo-files: there is no file restore to undo" }, fromPeer);
+				return;
+			}
+			fileRestoreRedoable = false;
+			sendFrame(
+				{
+					t: "files-restored",
+					kind: "redo",
+					plan: { revert: 2, remove: 0, recreate: 1 },
+					skipped: 0,
+					canRedo: false,
+				},
+				fromPeer,
+			);
+			notice("info", `${who} undid the file restore`);
+			break;
+		}
 	}
+}
+
+/** How the mock follows the real host's slash spellings of the session controls and the session-replacing commands. */
+const MOCK_SLASH_COMMANDS: Record<
+	string,
+	{ cmd?: SessionCommand; takes: "none" | "optional" | "required"; hint?: string }
+> = {
+	model: { cmd: "model", takes: "required", hint: "<provider/id>" },
+	switch: { cmd: "model", takes: "required", hint: "<provider/id>" },
+	effort: { cmd: "thinking", takes: "required", hint: "<level>" },
+	compact: { cmd: "compact", takes: "optional" },
+	rename: { cmd: "rename", takes: "required", hint: "<title>" },
+	new: { takes: "none" },
+	fork: { takes: "none" },
+	resume: { takes: "required", hint: "<session>" },
+};
+
+/**
+ * Run a session-control or session-replacing slash command like the real host: the bare
+ * selector form is refused with a hint, controls go through `handleSessionCmd`, and a
+ * session switch ends this room (`bye`), which is where a guest without a paired
+ * computer ends up. Resolves whether `name` was one of those commands.
+ */
+function runMockSlashCommand(name: string, args: string, fromPeer: number): boolean {
+	if (!Object.hasOwn(MOCK_SLASH_COMMANDS, name)) return false;
+	const spec = MOCK_SLASH_COMMANDS[name];
+	const refuse = (message: string): boolean => {
+		sendFrame({ t: "error", message }, fromPeer);
+		return true;
+	};
+	if (spec.takes === "none" && args) return refuse(`/${name} takes no arguments`);
+	if (spec.takes === "required" && !args) return refuse(`/${name} needs an argument: /${name} ${spec.hint}`);
+	if (spec.cmd) {
+		handleSessionCmd(spec.cmd, name === "effort" ? args.toLowerCase() : args || undefined, fromPeer);
+		return true;
+	}
+	if (streaming || isReplaying()) {
+		return refuse(`/${name}: wait for the current response or command to finish (stop it first if needed)`);
+	}
+	if (name === "resume" && !fixtureResumeChoices.some(choice => choice.value === args)) {
+		return refuse(`/resume: no session matching "${args}" in this folder`);
+	}
+	notice("info", `${peerName(fromPeer)} ran /${name}`);
+	sendFrame({ t: "bye", reason: MOCK_SESSION_SWITCH_REASON });
+	return true;
 }
 
 function appendPromptEntry(text: string, images: ImageContent[] | undefined, from: string): void {
@@ -383,6 +540,8 @@ function handlePrompt(
 	images: ImageContent[] | undefined,
 	deliver: "follow-up" | undefined,
 	fromPeer: number,
+	promptModel?: string,
+	promptThinking?: string,
 ): void {
 	if (refuseReadOnly(fromPeer)) return;
 	// Like the real host: only the listed commands run for a guest; other builtins stay on the host.
@@ -391,19 +550,46 @@ function handlePrompt(
 		sendFrame({ t: "error", message: `/${typed} can only be run on the host` }, fromPeer);
 		return;
 	}
+	const slash = /^\/(\S+)(?:\s+([\s\S]*\S))?\s*$/.exec(text);
+	if (slash && runMockSlashCommand(slash[1] ?? "", slash[2] ?? "", fromPeer)) return;
+	// Like the real host: a chosen model must be one the welcome offered, its thinking level one that model accepts.
+	let chosenModel: string | undefined;
+	if (promptModel !== undefined) {
+		const picked = fixtureModels.find(model => `${model.provider}/${model.id}` === promptModel);
+		if (!picked) {
+			sendFrame({ t: "error", message: `prompt not sent: unknown model "${promptModel}"` }, fromPeer);
+			return;
+		}
+		const levels = fixtureThinkingLevels[promptModel] ?? ["off"];
+		if (promptThinking !== undefined && !levels.includes(promptThinking)) {
+			sendFrame(
+				{
+					t: "error",
+					message: `prompt not sent: ${promptModel} does not accept thinking level "${promptThinking}"`,
+				},
+				fromPeer,
+			);
+			return;
+		}
+		chosenModel = picked.id;
+	} else if (promptThinking !== undefined) {
+		sendFrame({ t: "error", message: "prompt not sent: a thinking level needs a model to apply to" }, fromPeer);
+		return;
+	}
 	if (deliver === "follow-up" && isReplaying()) {
 		// Like the real host: no transcript entry until the turn that carries it starts.
-		followUps.push({ text, images, from: peerName(fromPeer) });
+		followUps.push({ text, images, from: peerName(fromPeer), model: chosenModel });
 		broadcastState();
 		return;
 	}
 	appendPromptEntry(text, images, peerName(fromPeer));
 	if (isReplaying()) {
 		queuedPrompts++;
+		queuedModels.push(chosenModel);
 		broadcastState();
 		return;
 	}
-	startReplay();
+	startReplay(chosenModel);
 }
 
 function handleAbort(fromPeer: number): void {
@@ -411,6 +597,7 @@ function handleAbort(fromPeer: number): void {
 	const wasReplaying = replayTimer !== null || replayQueue.length > 0;
 	cancelReplay();
 	queuedPrompts = 0;
+	queuedModels = [];
 	followUps = [];
 	notice("info", `${peerName(fromPeer)} interrupted`);
 	if (wasReplaying) sendFrame({ t: "event", event: { type: "agent_end" } });
@@ -436,13 +623,13 @@ function handleFrame(frame: WireFrame, fromPeer: number): void {
 			handleHello(frame.name, frame.proto, frame.writeToken, fromPeer);
 			break;
 		case "prompt":
-			handlePrompt(frame.text, frame.images, frame.deliver, fromPeer);
+			handlePrompt(frame.text, frame.images, frame.deliver, fromPeer, frame.model, frame.thinking);
 			break;
 		case "abort":
 			handleAbort(fromPeer);
 			break;
 		case "session-cmd":
-			if (!refuseReadOnly(fromPeer)) handleSessionCmd(frame.cmd, frame.arg, fromPeer);
+			if (!refuseReadOnly(fromPeer)) handleSessionCmd(frame.cmd, frame.arg, fromPeer, frame.restoreFiles === true);
 			break;
 		case "agent-cmd":
 			handleAgentCmd(frame.cmd, frame.agentId, fromPeer);
@@ -456,7 +643,7 @@ function handleFrame(frame: WireFrame, fromPeer: number): void {
 	}
 }
 
-function handleControl(text: string): void {
+function handleControl(text: string, base: number): void {
 	let msg: unknown;
 	try {
 		msg = JSON.parse(text);
@@ -465,13 +652,53 @@ function handleControl(text: string): void {
 	}
 	if (typeof msg !== "object" || msg === null) return;
 	const control = msg as { t?: unknown; peer?: unknown };
-	if (control.t === "peer-left" && typeof control.peer === "number") {
-		const name = peers.get(control.peer);
-		peers.delete(control.peer);
-		readOnlyPeers.delete(control.peer);
-		if (name) console.log(`mock-host: ${name} left (peer ${control.peer})`);
-		broadcastState();
-	}
+	if (control.t === "peer-left" && typeof control.peer === "number") releasePeer(control.peer + base);
+}
+
+function releasePeer(peer: number): void {
+	const name = peers.get(peer);
+	peers.delete(peer);
+	readOnlyPeers.delete(peer);
+	if (name) console.log(`mock-host: ${name} left (peer ${peer})`);
+	broadcastState();
+}
+
+/** Both relays feed one handler; `base` shifts the local relay's peer ids out of the main relay's range. */
+function attach(socket: WebSocket, base: number): void {
+	socket.onmessage = event => {
+		const data: unknown = event.data;
+		if (typeof data === "string") {
+			handleControl(data, base);
+			return;
+		}
+		if (!(data instanceof ArrayBuffer)) return;
+		const envelope = unpackEnvelope(new Uint8Array(data));
+		if (!envelope) return;
+		recvChain = recvChain
+			.then(async () => {
+				const frame = await open(key, envelope.payload);
+				handleFrame(frame, envelope.peerId + base);
+			})
+			.catch((err: unknown) => {
+				console.error("mock-host: dropping undecryptable frame:", err);
+			});
+	};
+}
+
+function connectLocal(): void {
+	if (localRelay === null) return;
+	const socket = new WebSocket(`${localRelay.url}/r/${roomId}?role=host`);
+	socket.binaryType = "arraybuffer";
+	localWs = socket;
+	attach(socket, LOCAL_PEER_BASE);
+	socket.onopen = () => console.log(`mock-host: serving the room on the local relay ${localRelay?.url}`);
+	socket.onclose = () => {
+		if (localWs !== socket) return;
+		localWs = null;
+		console.log("mock-host: local relay is down; guests on it must fall back to the main relay");
+		// Deleting the visited entry while iterating a Map is safe.
+		for (const peer of peers.keys()) if (peer >= LOCAL_PEER_BASE) releasePeer(peer);
+	};
 }
 
 ws.onopen = () => {
@@ -479,32 +706,34 @@ ws.onopen = () => {
 	console.log(`join link: ${link}`);
 	console.log(`view link (read-only): ${viewLink}`);
 	console.log("paste a link into the collab-web connect screen (bun ./index.html), Ctrl+C stops the host");
+	if (localRelay !== null) console.log("type `local off` / `local on` to stop / restart the local relay");
 };
 
-ws.onmessage = event => {
-	const data: unknown = event.data;
-	if (typeof data === "string") {
-		handleControl(data);
-		return;
-	}
-	if (!(data instanceof ArrayBuffer)) return;
-	const envelope = unpackEnvelope(new Uint8Array(data));
-	if (!envelope) return;
-	recvChain = recvChain
-		.then(async () => {
-			const frame = await open(key, envelope.payload);
-			handleFrame(frame, envelope.peerId);
-		})
-		.catch((err: unknown) => {
-			console.error("mock-host: dropping undecryptable frame:", err);
-		});
-};
+attach(ws, 0);
 
 ws.onclose = event => {
 	if (shuttingDown) return;
 	console.error(`mock-host: relay socket closed (${event.code} ${event.reason || "no reason"})`);
 	shutdown(1);
 };
+
+connectLocal();
+
+/** `local off` / `local on`: take the local relay away and bring it back on the same port. */
+async function readCommands(): Promise<void> {
+	if (localPort === null) return;
+	for await (const line of console) {
+		const command = line.trim();
+		if (command === "local off" && localRelay !== null) {
+			localRelay.stop();
+			localRelay = null;
+		} else if (command === "local on" && localRelay === null) {
+			localRelay = startLocalRelay(localPort, { refuseMissingRooms: true });
+			connectLocal();
+		}
+	}
+}
+void readCommands();
 
 // ── progress ticker ──────────────────────────────────────────────────────────
 
@@ -536,6 +765,7 @@ function shutdown(code: number): void {
 			// already closing
 		}
 		relay.stop();
+		localRelay?.stop();
 		process.exit(code);
 	});
 }

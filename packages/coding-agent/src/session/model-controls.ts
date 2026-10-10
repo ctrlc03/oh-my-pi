@@ -50,6 +50,15 @@ import type { SessionManager } from "./session-manager";
 import { cfgDefaultThinkingLevel, cfgProvidersFireworksTier } from "./settings";
 import { cfgDisabledProviders, cfgEnabledModels } from "../config/model-settings";
 
+/** The session's own model and thinking state, held while a prompt runs on another model. */
+export interface PromptModelBaseline {
+	model: Model;
+	sessionId: string;
+	thinkingLevel: ThinkingLevel | undefined;
+	autoThinking: boolean;
+	autoResolvedLevel: Effort | undefined;
+}
+
 /** Capabilities borrowed from the owning AgentSession. */
 export interface ModelControlsHost {
 	agent: Agent;
@@ -579,10 +588,10 @@ export class ModelControls {
 		);
 	}
 
-	/** All selectable effort selectors for the active model, in cycle order. */
-	getAvailableEffortSelectors(): ConfiguredThinkingLevel[] {
-		if (!this.#model?.reasoning) return [];
-		const efforts = this.getAvailableThinkingLevels();
+	/** All selectable effort selectors for `model` (the active one by default), in cycle order. */
+	getAvailableEffortSelectors(model: Model | undefined = this.#model): ConfiguredThinkingLevel[] {
+		if (!model?.reasoning) return [];
+		const efforts = getSupportedEfforts(model);
 		const ceiling = this.#thinkingLevelCeiling;
 		const selectable =
 			ceiling === undefined
@@ -850,5 +859,68 @@ export class ModelControls {
 	getAvailableThinkingLevels(): ReadonlyArray<Effort> {
 		if (!this.#model) return [];
 		return getSupportedEfforts(this.#model);
+	}
+
+	// =========================================================================
+	// Per-prompt model override
+	// =========================================================================
+
+	/** Snapshot of the session's own model and thinking state, taken before a prompt's override applies. */
+	capturePromptModelBaseline(model: Model): PromptModelBaseline {
+		return {
+			model,
+			sessionId: this.#host.sessionId(),
+			thinkingLevel: this.#thinkingLevel,
+			autoThinking: this.#autoThinking,
+			autoResolvedLevel: this.#autoResolvedLevel,
+		};
+	}
+
+	/**
+	 * Runs the next turn on `model` without making it the session's model: no transcript
+	 * entry, no settings write, no usage record. Without `thinkingLevel` the session's own
+	 * level (from `baseline`) is re-clamped to the new model. {@link restorePromptModel} undoes it.
+	 * @throws Error if no API key is configured for the model
+	 */
+	async applyPromptModel(
+		baseline: PromptModelBaseline,
+		model: Model,
+		thinkingLevel: ConfiguredThinkingLevel | undefined,
+	): Promise<void> {
+		const previousEditMode = this.#host.resolveActiveEditMode();
+		if (!this.#host.modelRegistry.hasConfiguredAuth(model)) {
+			throw new Error(`No API key for ${model.provider}/${model.id}`);
+		}
+		const targetModel = await this.#host.modelRegistry.refreshSelectedModelMetadata(model);
+		this.#host.clearActiveRetryFallback();
+		await this.#host.setModelWithProviderSessionReset(targetModel);
+		this.restoreThinkingLevel(thinkingLevel ?? (baseline.autoThinking ? AUTO_THINKING : baseline.thinkingLevel));
+		await this.#host.syncAfterModelChange(previousEditMode);
+		this.#notifyThinkingLevel();
+	}
+
+	/** Puts the session's own model and thinking state back after {@link applyPromptModel}. Skipped when the session was replaced meanwhile. */
+	async restorePromptModel(baseline: PromptModelBaseline): Promise<void> {
+		if (this.#host.sessionId() !== baseline.sessionId) return;
+		const previousEditMode = this.#host.resolveActiveEditMode();
+		this.#host.clearActiveRetryFallback();
+		await this.#host.setModelWithProviderSessionReset(baseline.model);
+		this.restoreThinkingSnapshot(baseline.thinkingLevel, baseline.autoThinking, baseline.autoResolvedLevel);
+		await this.#host.syncAfterModelChange(previousEditMode);
+		this.#notifyThinkingLevel();
+	}
+
+	/** Tells listeners the thinking level now in force, without a transcript entry. */
+	#notifyThinkingLevel(): void {
+		this.#host.emit(
+			this.#autoThinking
+				? {
+						type: "thinking_level_changed",
+						thinkingLevel: this.#thinkingLevel,
+						configured: AUTO_THINKING,
+						resolved: this.#autoResolvedLevel,
+					}
+				: { type: "thinking_level_changed", thinkingLevel: this.#thinkingLevel },
+		);
 	}
 }

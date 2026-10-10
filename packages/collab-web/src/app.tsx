@@ -10,6 +10,7 @@ import { ChangesSheet } from "./components/shell/ChangesSheet";
 import { Composer, type ComposerHandle } from "./components/shell/Composer";
 import { ConnectScreen } from "./components/shell/ConnectScreen";
 import { useEditPrompt } from "./components/shell/EditPromptSheet";
+import { FileRestoreBar } from "./components/shell/FileRestoreBar";
 import { FileSheet } from "./components/shell/FileSheet";
 import { FixItHost } from "./components/shell/FixItHost";
 import { HeaderBar } from "./components/shell/HeaderBar";
@@ -873,6 +874,7 @@ function Session({
 							onCancelQueued={cancelQueued}
 							trimmed={trimmed}
 							onEditPrompt={editPrompt.onEditPrompt}
+							sessionModel={snap.state?.model?.id}
 						/>
 					</div>
 					{editPrompt.sheet}
@@ -895,6 +897,8 @@ function Session({
 						model={snap.state?.model}
 						thinkingLevel={snap.state?.thinkingLevel}
 						thinkingLevels={snap.state?.thinkingLevels}
+						followsRoom={companionClient !== null && instanceId !== null}
+						promptModel={Object.hasOwn(snap.features, "prompt-model") && !snap.readOnly && snap.models !== null}
 						onSessionCommand={sendSessionCommand}
 					/>
 				</section>
@@ -952,6 +956,12 @@ function Session({
 				loading={snap.loading}
 				onRejoin={onRejoin}
 				onNewLink={onLeave}
+			/>
+			<FileRestoreBar
+				restore={snap.fileRestore}
+				working={snap.working}
+				readOnly={snap.readOnly}
+				onUndo={() => client.sendSessionCommand("redo-files")}
 			/>
 			<Toasts notices={snap.notices} />
 			{companion && <SessionAlert hosts={companion.snap.hosts} currentSessionId={sessionId} onOpen={onOpenHost} />}

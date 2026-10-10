@@ -3,6 +3,7 @@ import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import { journalJudgmentUsage, resolveJudge, sharedJudgmentCache } from "../judgment";
 import type { AgentSession } from "../session/agent-session";
 import type { SessionOAuthAccountList } from "../session/agent-session-types";
+import { describeFileRestore } from "../session/file-snapshots";
 import {
 	getChangelogPath,
 	parseChangelog,
@@ -505,6 +506,25 @@ export const BUILTIN_SESSION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 		handleTui: (_command, runtime) => {
 			runtime.ctx.handleHotkeysCommand();
 			clearSubmittedText(runtime);
+		},
+	},
+	{
+		name: "redo-files",
+		icon: "redo",
+		description: "Undo the last file restore from a rewind (puts the files back as they were before it)",
+		handleTui: async (_command, runtime) => {
+			clearSubmittedText(runtime);
+			const { ctx } = runtime;
+			if (!ctx.session.canRedoFileRestore) {
+				ctx.showStatus("No file restore to undo");
+				return;
+			}
+			try {
+				const result = await ctx.session.redoFileRestore();
+				ctx.showStatus(`Undid the file restore (${describeFileRestore(result.plan)})`);
+			} catch (error) {
+				ctx.showError(error instanceof Error ? error.message : String(error));
+			}
 		},
 	},
 	{

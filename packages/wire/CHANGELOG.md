@@ -19,6 +19,15 @@
 - `rename` session command: `session-cmd` with the new session name as `arg`.
 - `CollabFeature` and `welcome.features`; `prompt.deliver: "follow-up"`; `rewind` and `unqueue` session commands; `SessionState.followUps`; the `branch` host frame for active-path changes (protocol version unchanged).
 - The `commands` feature and `welcome.commands` (`CollabCommand`: name, description, argument hint): slash commands a writer may run by sending `/<name> …` as a prompt (protocol version unchanged).
+- `CollabCommand.choices` (`CollabCommandChoice`: value, label, description) and `CollabCommand.switchesSession`: suggested arguments for a slash command, and a marker for the commands that replace the host's session (`/new`, `/resume`, `/fork`), which end the room (protocol version unchanged).
+- `LOCAL_RELAY_LINK_PARAM`, `normalizeLocalRelayUrl`, and `ParsedCollabLink.localWsUrl`: a collab link may append `?local=<host>:<port>` naming a loopback relay that serves the same room on the host's computer; only `localhost`, `127.0.0.1`, and `[::1]` with an explicit port are accepted (protocol version unchanged).
+- The `rewind-files` feature: `session-cmd` `rewind` takes `restoreFiles` to also restore the files the dropped turns changed, `rewind-preview` asks what that would change, `redo-files` undoes the last restore; the host answers with the targeted `rewind-preview` and `files-restored` frames (`RewindFilesPlan`: files reverted, removed, recreated) (protocol version unchanged).
+## [18.8.8] - 2026-10-10
+- The `prompt-model` feature: `prompt.model` (`provider/id`) and `prompt.thinking` run one prompt on another model and thinking level, and `WireModel.thinkingLevels` lists the levels each offered model accepts (protocol version unchanged).
+
+### Added
+
+- Added `TspToolProps.command` (the command line Copy command copies), `TspToolProps.preview: "children"` (the collapsed body stays whole while its children clamp) and `TspCodeProps.preview`
 
 ## [18.8.0] - 2026-10-07
 

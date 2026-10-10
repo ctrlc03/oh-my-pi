@@ -44,6 +44,7 @@ import {
 import { collectScreens } from "./lib/screens";
 import { suspendsHiddenPages } from "./lib/socket";
 import { readJson, writeJson } from "./lib/storage";
+import { loadTrim, saveTrim, trimEntries } from "./lib/trim";
 import { sumUsage } from "./lib/usage";
 import { type CompanionHandle, useCompanion } from "./lib/use-companion";
 import { useHostRecovery } from "./lib/use-host-recovery";
@@ -535,6 +536,34 @@ function Session({
 		setChat(next);
 	}, []);
 
+	// Keep the latest turns (per device and session); *Show all* reveals the rest until the session changes.
+	const [trim, setTrim] = useState(() => ({
+		sessionId,
+		keep: sessionId === null ? null : loadTrim(sessionId),
+		revealed: false,
+	}));
+	if (trim.sessionId !== sessionId) {
+		setTrim({ sessionId, keep: sessionId === null ? null : loadTrim(sessionId), revealed: false });
+	}
+	const changeKeepTurns = useCallback(
+		(keep: number | null): void => {
+			if (sessionId === null) return;
+			saveTrim(sessionId, keep);
+			setTrim({ sessionId, keep, revealed: false });
+		},
+		[sessionId],
+	);
+	const showAllTurns = useCallback(() => setTrim(prev => ({ ...prev, revealed: true })), []);
+	const trimmed = useMemo(() => {
+		if (trim.keep === null || trim.revealed) return undefined;
+		const cut = trimEntries(snap.entries, trim.keep);
+		return cut.hiddenTurns === 0 ? undefined : { ...cut, onShowAll: showAllTurns };
+	}, [trim, snap.entries, showAllTurns]);
+	const shownEntries = useMemo(
+		() => (trimmed === undefined ? snap.entries : snap.entries.slice(trimmed.from)),
+		[snap.entries, trimmed],
+	);
+
 	const [search, setSearch] = useState<SearchState | null>(null);
 	const toggleSearch = useCallback(() => setSearch(open => (open ? null : { query: "", target: null })), []);
 	const closeSearch = useCallback(() => setSearch(null), []);
@@ -642,6 +671,8 @@ function Session({
 				sidebarAlert={otherHosts.some(host => host.inputRequired)}
 				chat={chat}
 				onChatChange={changeChat}
+				keepTurns={sessionId === null ? undefined : trim.keep}
+				onKeepTurnsChange={changeKeepTurns}
 				changeCount={changes.length}
 				workingTree={hostId !== null}
 				sessionUsage={sessionUsage}
@@ -679,7 +710,7 @@ function Session({
 					</>
 				)}
 				<section className="sh-panel" data-rail={railOpen ? "true" : "false"}>
-					{search && <SearchBar entries={snap.entries} onSearch={onSearch} onClose={closeSearch} />}
+					{search && <SearchBar entries={shownEntries} onSearch={onSearch} onClose={closeSearch} />}
 					<div className="sh-transcript">
 						<Transcript
 							entries={snap.entries}
@@ -697,6 +728,7 @@ function Session({
 							onTail={markTail}
 							queued={snap.queued}
 							onCancelQueued={cancelQueued}
+							trimmed={trimmed}
 						/>
 					</div>
 					<Composer

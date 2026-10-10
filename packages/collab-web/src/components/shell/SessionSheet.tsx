@@ -15,6 +15,7 @@ import {
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import type { ConnectionPhase } from "../../lib/client";
+import { TRIM_CHOICES } from "../../lib/trim";
 import { fmtPercent, fmtTokens } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
 import { type ThemePreference, useThemePreference } from "../../lib/theme";
@@ -60,6 +61,9 @@ export interface SessionSheetProps {
 	/** Chat view: prompts and replies only, tool runs folded. */
 	chat: boolean;
 	onChatChange(chat: boolean): void;
+	/** Latest turns this device keeps showing (null: all); undefined until the session is known. */
+	keepTurns: number | null | undefined;
+	onKeepTurnsChange(keep: number | null): void;
 	/** Files the agent changed this session. */
 	changeCount: number;
 	onOpenChanges(): void;
@@ -106,6 +110,8 @@ export function SessionSheet({
 	contextPct,
 	chat,
 	onChatChange,
+	keepTurns,
+	onKeepTurnsChange,
 	changeCount,
 	onOpenChanges,
 	onOpenUsage,
@@ -364,6 +370,32 @@ export function SessionSheet({
 						</div>
 					</dd>
 				</div>
+				{keepTurns !== undefined && (
+					<div className="sh-sheet-row">
+						<dt>Keep</dt>
+						<dd>
+							<div className="sh-segmented" role="radiogroup" aria-label="turns shown on this device">
+								{TRIM_CHOICES.map(keep => (
+									<button
+										key={keep ?? "all"}
+										type="button"
+										role="radio"
+										aria-checked={keepTurns === keep}
+										className={keepTurns === keep ? "sh-segment sh-segment-on" : "sh-segment"}
+										onClick={() => onKeepTurnsChange(keep)}
+										title={
+											keep === null
+												? "show the whole session"
+												: `show only the last ${keep} turn${keep === 1 ? "" : "s"} on this device`
+										}
+									>
+										{keep === null ? "All" : `Last ${keep}`}
+									</button>
+								))}
+							</div>
+						</dd>
+					</div>
+				)}
 				<div className="sh-sheet-row">
 					<dt>Changes</dt>
 					<dd>

@@ -12,6 +12,7 @@
 - Kept unsent composer text per room across reloads and app restarts
 - Added the collab companion (`bun run companion`): pair the app with a computer once, then pick any session hosting `/collab` on it from the connect screen, with live working / needs-input state
 - Added a chat view, chosen per device from the session sheet (default on phones): prompts and replies only, each run of tool calls folded into one expandable line, and one live status line while the agent works
+- Added *Keep* to the session sheet: show only the last 1, 3, or 10 turns of a session on this device, with *Show all* to reveal the rest. The session and its transcript are untouched
 - Added find in session over prompts and replies, a jump-to-latest button, and copy buttons on code blocks
 - Added a *Changes* sheet listing every file the agent changed through its edit tools, with diffs
 - Added a sessions sidebar for switching sessions: docked beside the transcript on wide screens (open state remembered), a slide-over drawer on tablets and phones. It lists every session on the paired computer with working / needs-input state, sessions not sharing yet, and recent rooms, with Start session, Usage and All sessions at the bottom. A banner also appears when another session on the paired computer starts waiting for input

@@ -44,6 +44,7 @@ The composer keeps unsent text per room (it survives the OS killing the app), at
 Inside a session:
 
 - **Chat view** (⋯ → *View*): prompts and replies only. Thinking and model/thinking-level markers are hidden, each run of tool calls folds into one line that expands to the usual cards, and a single status line tracks the running tool. The choice is stored per device; without one, phones (≤640px) start in chat view and larger screens in the full transcript.
+- **Keep latest turns** (⋯ → *Keep*): show only the last 1, 3, or 10 turns of a long session on this device; a note at the top counts the hidden turns and *Show all* brings them back. Only the display is trimmed: the session, the agent, and the saved transcript are untouched. Find searches the kept turns. Stored per device and session (50 sessions).
 - **Find** (magnifier): searches prompt and reply text, newest match first; ↑/↓ or Enter/Shift+Enter step through matches, which are highlighted with the CSS Custom Highlight API.
 - **Changes** (⋯ → *Changes*): every file changed through `edit`, `apply_patch`, `write`, or an applied `ast_edit`, newest first, with line counts and each change's diff. Built from the transcript, so shell commands and edits made outside the session do not appear here; the companion's *Working tree* tab covers those.
 - **New since you left**: rejoining a room shows a divider before the first entry you have not seen and an *N new* pill that jumps to it. The last seen entry is stored per room (50 rooms).

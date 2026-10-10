@@ -37,6 +37,11 @@ export interface TranscriptProps {
 	/** Prompts waiting for the connection, shown as pending bubbles at the end. */
 	queued?: readonly QueuedPrompt[];
 	onCancelQueued?(id: string): void;
+	/**
+	 * Kept latest turns: entries before `from` stay unmounted, and the top of the
+	 * transcript offers *Show all* instead of earlier rows.
+	 */
+	trimmed?: { from: number; hiddenTurns: number; onShowAll(): void };
 }
 
 interface ScrollGeometry {
@@ -487,14 +492,17 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		onTail,
 		queued,
 		onCancelQueued,
+		trimmed,
 	} = props;
 
 	// null follows the tail. A number pins the first mounted entry while the
 	// reader is scrolled away from the bottom, so appended entries never
 	// unmount rows above the reader and shift the page under them.
 	const [pinnedStart, setPinnedStart] = useState<number | null>(null);
-	const tailStart = Math.max(0, entries.length - WINDOW);
-	const start = pinnedStart === null ? tailStart : Math.min(pinnedStart, tailStart);
+	/** First entry that may mount: past the hidden turns when the transcript is trimmed. */
+	const floor = trimmed?.from ?? 0;
+	const tailStart = Math.max(floor, entries.length - WINDOW);
+	const start = pinnedStart === null ? tailStart : Math.max(floor, Math.min(pinnedStart, tailStart));
 	const visible = useMemo(() => entries.slice(start), [entries, start]);
 
 	// A tool result always follows its call, so visible rows only pair with visible results.
@@ -580,12 +588,19 @@ export function Transcript(props: TranscriptProps): ReactNode {
 
 	const showEarlier = (): void => {
 		const el = rootRef.current;
-		if (el === null || start === 0 || prependRef.current !== null) return;
+		if (el === null || start <= floor || prependRef.current !== null) return;
 		prependRef.current = scrollAnchor(el);
 		// Reading back: new entries must not pull the view to the bottom, even when the
 		// restored position lands within the lock distance of it.
 		lockRef.current = false;
-		setPinnedStart(Math.max(0, start - WINDOW));
+		setPinnedStart(Math.max(floor, start - WINDOW));
+	};
+
+	// Revealing hidden turns keeps the mounted rows: *show earlier* then takes over.
+	const showAll = (): void => {
+		lockRef.current = false;
+		setPinnedStart(start);
+		trimmed?.onShowAll();
 	};
 
 	// Tool calls committed anywhere in the session: rescanned when entries change,
@@ -636,6 +651,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 			const index = entries.findIndex(entry => entry.id === searchTarget);
 			if (index >= 0 && index < start) {
 				lockRef.current = false;
+				if (index < floor) trimmed?.onShowAll();
 				setPinnedStart(index);
 			}
 		} else if (row !== null && scrolledToRef.current !== `${searchTarget}:${chat}`) {
@@ -713,6 +729,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		if (index < 0) return;
 		lockRef.current = false;
 		scrollToNewRef.current = true;
+		if (index < floor) trimmed?.onShowAll();
 		setPinnedStart(index);
 	};
 
@@ -767,10 +784,21 @@ export function Transcript(props: TranscriptProps): ReactNode {
 			{settled && entries.length === 0 && stream === null && !working && (
 				<div className="tr-empty">no activity yet</div>
 			)}
-			{start > 0 && (
+			{start > floor && (
 				<button type="button" className="tr-earlier" onClick={showEarlier}>
-					show {start.toLocaleString("en-US")} earlier
+					show {(start - floor).toLocaleString("en-US")} earlier
 				</button>
+			)}
+			{start === floor && trimmed !== undefined && trimmed.hiddenTurns > 0 && (
+				<div className="tr-trimmed">
+					<span>
+						{trimmed.hiddenTurns.toLocaleString("en-US")} earlier turn{trimmed.hiddenTurns === 1 ? "" : "s"}{" "}
+						hidden on this device
+					</span>
+					<button type="button" className="tr-trimmed-show" onClick={showAll}>
+						Show all
+					</button>
+				</div>
 			)}
 			{pillActive && (
 				<div className="tr-new-dock">

@@ -31,7 +31,12 @@ import type { AgentSessionEvent } from "../session/agent-session";
 import { parseCompactArgs } from "../session/compact-modes";
 import { stripImagesFromMessage, USER_INTERRUPT_LABEL } from "../session/messages";
 import type { SessionEntry as StoredSessionEntry } from "../session/session-entries";
-import { TASK_SUBAGENT_LIFECYCLE_CHANNEL, TASK_SUBAGENT_PROGRESS_CHANNEL } from "../task/types";
+import {
+	type SubagentLifecyclePayload,
+	type SubagentProgressPayload,
+	TASK_SUBAGENT_LIFECYCLE_CHANNEL,
+	TASK_SUBAGENT_PROGRESS_CHANNEL,
+} from "../task/types";
 import { generateRoomKey, generateWriteToken, importRoomKey } from "./crypto";
 import { collabDisplayName } from "./display-name";
 import {
@@ -85,6 +90,8 @@ const STATE_TRIGGER_EVENTS: Record<string, true> = {
 
 const STATE_DEBOUNCE_MS = 100;
 const AGENTS_DEBOUNCE_MS = 100;
+/** Gathers the ticks of subagents running side by side into one flush. */
+const PROGRESS_GATHER_MS = 50;
 const STREAMING_STATE_INTERVAL_MS = 2000;
 const WELCOME_IMAGE_STRIP_THRESHOLD = 24 * 1024 * 1024;
 const WIRE_AGENT_EVENT_TYPES: Record<WireAgentEvent["type"], true> = {
@@ -257,6 +264,16 @@ export class CollabHost {
 	#streamingInterval: Timer | null = null;
 	#agentsDebounce: Timer | null = null;
 	#busUnsubscribers: (() => void)[] = [];
+	/**
+	 * Unsent subagent progress, latest tick per subagent id. A tick carries the
+	 * agent's whole current view, so a newer one supersedes an unsent older one.
+	 * Forwarded one frame per tick, a dozen busy subagents outran a slow relay
+	 * link and tripped the send backlog limit, which ends the room.
+	 */
+	#pendingProgress = new Map<string, SubagentProgressPayload>();
+	#progressTimer: Timer | null = null;
+	/** A flush is still queued in the socket; the next waits for it to drain. */
+	#progressDraining = false;
 	#registryUnsubscribe?: () => void;
 	/** Set the moment `stop()` begins; `#stopped` follows once teardown has run. */
 	#stopping = false;
@@ -482,7 +499,14 @@ export class CollabHost {
 			for (const channel of COLLAB_BUS_CHANNELS) {
 				this.#busUnsubscribers.push(
 					observabilityBus.on(channel, data => {
-						if (this.#broadcastAllowed()) this.#send({ t: "bus", channel, data });
+						if (!this.#broadcastAllowed()) return;
+						if (channel === TASK_SUBAGENT_PROGRESS_CHANNEL) {
+							this.#queueProgress(data as SubagentProgressPayload);
+							return;
+						}
+						// A lifecycle frame must not overtake the progress it settles.
+						if (this.#pendingProgress.has((data as SubagentLifecyclePayload).id)) this.#sendPendingProgress();
+						this.#send({ t: "bus", channel, data });
 					}),
 				);
 			}
@@ -592,6 +616,9 @@ export class CollabHost {
 		this.#unsubscribe = undefined;
 		for (const unsubscribe of this.#busUnsubscribers) unsubscribe();
 		this.#busUnsubscribers = [];
+		clearTimeout(this.#progressTimer ?? undefined);
+		this.#progressTimer = null;
+		this.#pendingProgress.clear();
 		this.#registryUnsubscribe?.();
 		this.#registryUnsubscribe = undefined;
 		clearTimeout(this.#stateDebounce ?? undefined);
@@ -1257,6 +1284,43 @@ export class CollabHost {
 					lastActivity: ref.lastActivity,
 				}))
 		);
+	}
+
+	#queueProgress(payload: SubagentProgressPayload): void {
+		this.#pendingProgress.set(payload.progress.id, payload);
+		if (this.#progressTimer || this.#progressDraining) return;
+		this.#progressTimer = setTimeout(() => {
+			this.#progressTimer = null;
+			this.#sendPendingProgress();
+		}, PROGRESS_GATHER_MS);
+	}
+
+	/**
+	 * Sends the latest tick of every subagent, then holds further ticks until the
+	 * socket has taken these: at most one tick per subagent is ever queued, however
+	 * slow the link.
+	 */
+	#sendPendingProgress(): void {
+		clearTimeout(this.#progressTimer ?? undefined);
+		this.#progressTimer = null;
+		const socket = this.#socket;
+		if (!socket || this.#pendingProgress.size === 0) return;
+		// The last guest left while ticks waited: the next welcome carries fresh state.
+		if (!this.#broadcastAllowed()) {
+			this.#pendingProgress.clear();
+			return;
+		}
+		for (const data of this.#pendingProgress.values()) {
+			this.#send({ t: "bus", channel: TASK_SUBAGENT_PROGRESS_CHANNEL, data });
+		}
+		this.#pendingProgress.clear();
+		this.#progressDraining = true;
+		void socket.flush().finally(() => {
+			this.#progressDraining = false;
+			if (this.#socket !== socket || this.ending) return;
+			const next = this.#pendingProgress.values().next();
+			if (!next.done) this.#queueProgress(next.value);
+		});
 	}
 
 	#scheduleAgentsBroadcast(): void {

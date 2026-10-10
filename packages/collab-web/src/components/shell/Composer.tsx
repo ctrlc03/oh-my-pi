@@ -358,12 +358,12 @@ export const Composer = memo(function Composer({
 					onCompositionEnd={onCompositionEnd}
 					placeholder={
 						readOnly
-							? "Read-only session — watching only"
+							? "Watching only"
 							: !live
-								? "Offline — prompts send when you're back"
+								? "Offline — sends when back"
 								: images.length > 0
-									? "Say something about the image…"
-									: "Prompt the host agent…"
+									? "Add a message…"
+									: "Message the agent…"
 					}
 					disabled={!canType}
 					rows={1}

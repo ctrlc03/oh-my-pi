@@ -560,8 +560,12 @@
 	resize: none;
 }
 
+/* One line, ellipsized: a wrapped placeholder spills past the one-row field on narrow phones. */
 .sh-composer-input::placeholder {
 	color: var(--fg-faint);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .sh-composer-input:disabled {

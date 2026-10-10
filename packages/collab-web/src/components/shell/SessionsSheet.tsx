@@ -119,6 +119,7 @@ export function SessionsSheet({
 					</button>
 				</span>
 			</div>
+			{error && <div className="sh-connect-error">{error}</div>}
 			<label className="sh-stats-search">
 				<Search size={14} />
 				<input
@@ -220,7 +221,6 @@ export function SessionsSheet({
 					))}
 				</div>
 			)}
-			{error && <div className="sh-connect-error">{error}</div>}
 		</Sheet>
 	);
 }

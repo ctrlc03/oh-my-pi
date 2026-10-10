@@ -59,7 +59,14 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 	try {
 		cwd = await fs.realpath(launch.cwd);
 		if (!(await fs.stat(cwd)).isDirectory()) throw new Error("not a directory");
-	} catch {
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code;
+		// macOS privacy protection (TCC) answers EPERM for ~/Documents, ~/Desktop, iCloud Drive and
+		// external volumes when the companion runs from launchd without a Full Disk Access grant.
+		if (code === "EPERM" || code === "EACCES")
+			throw new Error(
+				"macOS blocked the companion from this folder: allow bun under System Settings → Privacy & Security → Files and Folders, then restart the companion",
+			);
 		throw new Error("folder does not exist on this computer");
 	}
 	await writeOverlay(launch.overlayPath);

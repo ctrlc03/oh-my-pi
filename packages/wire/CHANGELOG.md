@@ -8,6 +8,11 @@
 - `rename` session command: `session-cmd` with the new session name as `arg`.
 - `CollabFeature` and `welcome.features`; `prompt.deliver: "follow-up"`; `rewind` and `unqueue` session commands; `SessionState.followUps`; the `branch` host frame for active-path changes (protocol version unchanged).
 - The `commands` feature and `welcome.commands` (`CollabCommand`: name, description, argument hint): slash commands a writer may run by sending `/<name> …` as a prompt (protocol version unchanged).
+## [18.8.8] - 2026-10-10
+
+### Added
+
+- Added `TspToolProps.command` (the command line Copy command copies), `TspToolProps.preview: "children"` (the collapsed body stays whole while its children clamp) and `TspCodeProps.preview`
 
 ## [18.8.0] - 2026-10-07
 

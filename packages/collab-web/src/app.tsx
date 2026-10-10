@@ -48,6 +48,7 @@ import {
 import { collectScreens } from "./lib/screens";
 import { suspendsHiddenPages } from "./lib/socket";
 import { readJson, writeJson } from "./lib/storage";
+import { currentSubagents } from "./lib/subagents";
 import { currentTodos } from "./lib/todos";
 import { loadTrim, saveTrim, trimEntries } from "./lib/trim";
 import { sumUsage } from "./lib/usage";
@@ -476,12 +477,17 @@ function Session({
 
 	// Task-card agent chips drill into the same drawer the rail uses.
 	const agentIds = useMemo(() => new Set(snap.agents.map(a => a.id)), [snap.agents]);
+	const hasAgent = useCallback((id: string) => agentIds.has(id), [agentIds]);
+	const openAgent = useCallback(
+		(id: string) => {
+			if (agentIds.has(id)) setSelectedId(id);
+		},
+		[agentIds],
+	);
 	const toolHost = useMemo<ToolRenderHost>(
 		() => ({
-			hasAgent: id => agentIds.has(id),
-			openAgent: id => {
-				if (agentIds.has(id)) setSelectedId(id);
-			},
+			hasAgent,
+			openAgent,
 			openFile: hostId !== null ? path => openFile(path) : undefined,
 			// Tool cards name paths as the agent wrote them: relative ones are relative to the session's folder.
 			showInCodemap: canCodemap
@@ -491,7 +497,7 @@ function Session({
 						})
 				: undefined,
 		}),
-		[agentIds, hostId, canCodemap, cwd, openFile],
+		[hasAgent, openAgent, hostId, canCodemap, cwd, openFile],
 	);
 
 	// Auto-open the rail the first time a subagent appears, only where it docks
@@ -602,6 +608,7 @@ function Session({
 	const screens = useMemo(() => collectScreens(snap.entries), [snap.entries]);
 	// From the full entry list: the per-device trim must not hide the agent's task list.
 	const todos = useMemo(() => currentTodos(snap.entries, snap.activeTools), [snap.entries, snap.activeTools]);
+	const subagents = useMemo(() => currentSubagents(snap.progress, snap.lifecycle), [snap.progress, snap.lifecycle]);
 	const [screensOpen, setScreensOpen] = useState(false);
 	const openScreens = useCallback(() => {
 		setJumpTarget(null);
@@ -764,7 +771,7 @@ function Session({
 						/>
 					</div>
 					{editPrompt.sheet}
-					<TaskProgress todos={todos} />
+					<TaskProgress todos={todos} subagents={subagents} hasAgent={hasAgent} onOpenAgent={openAgent} />
 					<Composer
 						ref={composerRef}
 						key={roomId}

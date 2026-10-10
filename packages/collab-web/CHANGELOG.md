@@ -15,7 +15,7 @@
 - Added *Keep* to the session sheet: show only the last 1, 3, or 10 turns of a session on this device, with *Show all* to reveal the rest. The session and its transcript are untouched
 - Added *After turn* (Alt+Enter) to the composer while the agent works: the prompt runs as its own turn once the current one ends instead of steering it. Queued follow-ups show as chips that can be taken back (needs the omp hosting the session to include this change)
 - Added *Edit & resend* on prompts: rewinds the conversation to just before the prompt and puts it back into the message box; the later turns stay in the session file as a branch (needs the omp hosting the session to include this change)
-- Added a task bar above the composer showing the agent's todo progress and current task, with the full list on tap
+- Added a task bar above the composer showing the agent's todo progress and current task and how many subagents are working, with the full plan and every subagent of the current run (to do, working, done, failed) on tap
 - Added *Copy reply* and *Share* under each finished turn, and ⋯ → *Export* to share, download or copy the session as Markdown
 - Added file attachments: text files are pasted into the prompt as fenced blocks; PDFs and other files up to 10 MB are uploaded to the computer through the companion and the prompt names their path
 - Added line comments on the working tree and branch diffs, sent to the agent as one review prompt

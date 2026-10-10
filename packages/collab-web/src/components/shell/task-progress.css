@@ -51,6 +51,12 @@
 	content: "· ";
 }
 
+.sh-tasks-agents {
+	flex: none;
+	color: var(--accent);
+	font-variant-numeric: tabular-nums;
+}
+
 .sh-tasks-chev {
 	margin-left: auto;
 }
@@ -73,6 +79,12 @@
 	transition: transform 300ms var(--ease-out);
 }
 
+/* The plan and the subagents scroll together inside the popover. */
+.sh-tasks-body {
+	min-height: 0;
+	overflow-y: auto;
+}
+
 /* The shared todo board styles hang off `.tv-card`; map its tokens onto the app's. */
 .sh-tasks-board {
 	--tv-fg: var(--fg);
@@ -82,16 +94,129 @@
 	--tv-ok: var(--ok);
 	font-family: var(--font-mono);
 	line-height: 1.5;
-	overflow-y: auto;
 }
 
 .sh-tasks-board .tv-todo {
 	font-size: 12px;
 }
 
+/* Subagents of the current `task` run: what each was asked, its state, what it is doing. */
+.sh-tasks-subagents {
+	margin-top: 10px;
+}
+
+.sh-tasks-section {
+	margin-bottom: 4px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--fg-faint);
+}
+
+.sh-tasks-agent-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-tasks-agent-row {
+	display: flex;
+	gap: 8px;
+	width: 100%;
+	padding: 6px 4px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+}
+
+button.sh-tasks-agent-row {
+	cursor: pointer;
+}
+
+button.sh-tasks-agent-row:hover {
+	background: var(--hover);
+}
+
+.sh-tasks-agent-icon {
+	flex: none;
+	width: 1ch;
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--fg-faint);
+}
+
+.sh-tasks-agent--running .sh-tasks-agent-icon {
+	color: var(--accent);
+}
+
+.sh-tasks-agent--completed .sh-tasks-agent-icon {
+	color: var(--ok);
+}
+
+.sh-tasks-agent--failed .sh-tasks-agent-icon,
+.sh-tasks-agent--aborted .sh-tasks-agent-icon {
+	color: var(--err);
+}
+
+.sh-tasks-agent-main {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;
+	font-size: 12.5px;
+	line-height: 1.5;
+}
+
+.sh-tasks-agent-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+}
+
+.sh-tasks-agent-name {
+	font-weight: 600;
+	color: var(--fg);
+}
+
+.sh-tasks-agent-status,
+.sh-tasks-agent-time {
+	font-size: 11.5px;
+	color: var(--fg-faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.sh-tasks-agent--running .sh-tasks-agent-status {
+	color: var(--accent);
+}
+
+.sh-tasks-agent--failed .sh-tasks-agent-status,
+.sh-tasks-agent--aborted .sh-tasks-agent-status {
+	color: var(--err);
+}
+
+.sh-tasks-agent-label {
+	color: var(--fg-muted);
+}
+
+.sh-tasks-agent-activity {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 11.5px;
+	color: var(--fg-faint);
+}
+
 @media (max-width: 640px) {
 	.sh-tasks-btn {
 		padding: 6px 12px 7px;
+	}
+	.sh-tasks-agents {
+		display: none;
 	}
 }
 

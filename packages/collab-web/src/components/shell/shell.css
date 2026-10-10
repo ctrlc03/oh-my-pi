@@ -571,6 +571,56 @@
 	margin-left: -4px;
 }
 
+/* ---- voice input (status line above the composer, mic button in its actions) ---- */
+.sh-voice {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 4px 8px;
+	font-size: 12.5px;
+	color: var(--fg-muted);
+}
+
+.sh-voice-text {
+	flex: 1;
+	min-width: 0;
+}
+
+.sh-voice-actions {
+	display: flex;
+	gap: 6px;
+	flex: none;
+}
+
+.sh-voice-error {
+	color: var(--err);
+}
+
+.sh-voice-time {
+	font-variant-numeric: tabular-nums;
+	color: var(--fg);
+}
+
+.sh-voice-dot {
+	flex: none;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--err);
+	animation: pulse 1.2s ease-in-out infinite;
+}
+
+.sh-voice-btn-rec {
+	color: var(--err);
+	background: color-mix(in srgb, var(--err) 12%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sh-voice-dot {
+		animation: none;
+	}
+}
+
 /* ---- quick replies (chip row above the composer) ---- */
 .sh-quick {
 	display: grid;

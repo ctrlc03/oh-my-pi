@@ -24,14 +24,15 @@ const PASSTHROUGH_TYPES: Record<string, true> = {
 };
 const JPEG_QUALITY = 0.85;
 
-function blobToBase64(blob: Blob): Promise<string> {
+/** Base64 of `blob`'s bytes (no `data:` prefix). Goes through `FileReader`, not `btoa(String.fromCharCode(...bytes))`, which overflows the stack on large buffers. */
+export function blobToBase64(blob: Blob): Promise<string> {
 	const { promise, resolve, reject } = Promise.withResolvers<string>();
 	const reader = new FileReader();
 	reader.onload = () => {
 		const url = String(reader.result);
 		resolve(url.slice(url.indexOf(",") + 1));
 	};
-	reader.onerror = () => reject(reader.error ?? new Error("could not read the image"));
+	reader.onerror = () => reject(reader.error ?? new Error("could not read the file"));
 	reader.readAsDataURL(blob);
 	return promise;
 }

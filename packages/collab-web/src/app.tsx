@@ -187,8 +187,9 @@ export function App(): ReactNode {
 		[connect],
 	);
 
-	// A notification tap: open its session as soon as the companion lists hosts.
 	const { phase: companionPhase, hosts } = companion.snap;
+
+	// A notification tap: open its session as soon as the companion lists hosts.
 	useEffect(() => {
 		if (pendingOpen === null || companionPhase !== "live") return;
 		setPendingOpen(null);
@@ -407,6 +408,19 @@ function Session({
 	const openPane = useCallback(() => setPaneOpen(true), []);
 	const canPreview =
 		companionClient !== null && hostId !== null && sessionId !== null && companion?.snap.canPreview === true;
+	// Voice input rides the companion; a reconnect blip (`connecting`) must not discard a recording.
+	const companionPhase = companion?.snap.phase;
+	const transcribe = companion?.snap.transcribe ?? null;
+	const machine = companion?.snap.machine ?? null;
+	const voice = useMemo(
+		() =>
+			companionClient !== null &&
+			transcribe !== null &&
+			(companionPhase === "live" || companionPhase === "connecting")
+				? { client: companionClient, info: transcribe, machine }
+				: null,
+		[companionClient, transcribe, machine, companionPhase],
+	);
 	const [previewOpen, setPreviewOpen] = useState(false);
 	const openPreview = useCallback(() => setPreviewOpen(true), []);
 	const cwd = snap.state?.cwd ?? snap.header?.cwd ?? null;
@@ -662,6 +676,7 @@ function Session({
 						uiRequest={snap.uiRequest}
 						working={snap.working}
 						queuedMessageCount={snap.state?.queuedMessageCount ?? 0}
+						voice={voice}
 						draftKey={roomId}
 					/>
 				</section>

@@ -10,7 +10,7 @@ const LINK = `roomroomroom1234#${encodeBase64Url(new Uint8Array(32))}`;
 const client = new GuestClient(LINK, "tester");
 
 function props(uiRequest: ComposerProps["uiRequest"]): ComposerProps {
-	return { client, phase: "live", readOnly: false, uiRequest, working: true, queuedMessageCount: 0, draftKey: null };
+	return { client, phase: "live", readOnly: false, uiRequest, working: true, queuedMessageCount: 0, draftKey: null, voice: null };
 }
 
 describe("Composer host UI requests", () => {

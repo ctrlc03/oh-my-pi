@@ -114,6 +114,7 @@ import { capturePreview, closePreviewBrowser, findChrome, isViewport, previewTar
 import { createSpendMonitor, parseSpendLimits, parseSpendState, type SpendState, withLimits } from "./companion-spend";
 import { canSandbox, findTmux, killTmuxSession, launchInTmux } from "./companion-start";
 import { fileSessionOverviews, isUsageRange, readSpend, sessionOverview, usageReport } from "./companion-stats";
+import { createVoice } from "./companion-voice";
 import { generateVapidKeys, isPushSubscription, sendPush, type VapidKeys } from "./web-push";
 
 /** Host list refresh while at least one device is connected. */
@@ -214,6 +215,7 @@ async function loadState(relayUrl: string, rotate: boolean): Promise<CompanionSt
 }
 
 const lister = createSessionLister({ runOmp: omp, sandboxOverlayPath });
+const voice = createVoice(path.join(configDir, "agent", "config.yml"));
 
 async function resolveLink(instanceId: string): Promise<string> {
 	const parsed = JSON.parse(await omp(["collab", "link", instanceId, "--json"])) as { url?: unknown };
@@ -442,6 +444,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canPr,
 		canCodemap: codemapReady,
 		canPreview: previewChrome !== null,
+		transcribe: (await voice.info()) ?? undefined,
 		power: power ?? undefined,
 	};
 	const json = JSON.stringify(frame);
@@ -500,6 +503,9 @@ async function startSession(
 	) {
 		throw new Error("invalid request");
 	}
+	console.log(
+		`companion: ${new Date().toISOString()} starting omp in ${cwd}${resume === undefined ? "" : ` (resuming ${resume})`}`,
+	);
 	if (worktree !== undefined && resume !== undefined)
 		throw new Error("a worktree needs a new session, not a resumed one");
 	const tmux = await findTmux();
@@ -665,6 +671,7 @@ socket.onFrame = (frame, fromPeer) => {
 			reply => socket.send(reply, fromPeer, zipPeers.has(fromPeer)),
 			err => {
 				recordRequestError(frame.t, errorText(err));
+				console.error(`companion: ${new Date().toISOString()} ${frame.t} failed: ${errorText(err)}`);
 				socket.send({ t: "error", reqId, message: errorText(err) }, fromPeer);
 			},
 		);
@@ -881,6 +888,21 @@ socket.onFrame = (frame, fromPeer) => {
 				};
 			});
 			return;
+		case "transcribe":
+			respond(frame.reqId, async () => ({
+				t: "transcribe",
+				reqId: frame.reqId,
+				text: await voice.transcribe(frame.audio, frame.mimeType),
+			}));
+			return;
+		case "transcribe-setup":
+			respond(frame.reqId, async () => {
+				await voice.setup();
+				// Devices see `ready` once the model is downloaded.
+				void refresh();
+				return { t: "transcribe-setup", reqId: frame.reqId };
+			});
+			return;
 		case "preview-targets":
 			respond(frame.reqId, async () => ({
 				t: "preview-targets",
@@ -1007,8 +1029,8 @@ function shutdown(): void {
 	clearTimeout(pollTimer);
 	awake.release();
 	socket.close();
-	// The warm preview browser is a separate process tree: close it before exiting.
-	void closePreviewBrowser().finally(() => process.exit(0));
+	// The warm preview browser and the speech worker are separate process trees: close them before exiting.
+	void Promise.allSettled([closePreviewBrowser(), voice.close()]).then(() => process.exit(0));
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

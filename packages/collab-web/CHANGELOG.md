@@ -45,6 +45,7 @@
 - The installed app now picks up new deploys: launches load the page network-first (cached copy offline or after 3 s), precaching bypasses the HTTP cache, and a foregrounded app compares its bundle with the deployed one and offers a reload. Diagnostics shows the running app build
 - Screens gallery: every screenshot and image the session's tools produced, newest first, with a full-screen viewer
 - Live preview: phone, tablet, or desktop screenshots (optionally full page) of the session's local dev server, taken by Chrome on the computer and refreshed after the agent edits files
+- Voice input: a mic button in the composer; the companion transcribes on the computer with omp's local speech model and the text lands in the draft
 - Added *All sessions* through the companion: past and live sessions across projects, grouped by folder with spend, searchable, with *Open*, *Share*, or *Resume* on each row
 
 ### Changed

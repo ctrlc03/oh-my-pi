@@ -5,7 +5,9 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 import type { ConnectionPhase, GuestClient } from "../../lib/client";
 import { MAX_ATTACHMENTS, toImageContent } from "../../lib/images";
 import { loadDraft, saveDraft } from "../../lib/rooms";
+import { insertAtCaret } from "../../lib/voice";
 import { QuickReplies } from "./QuickReplies";
+import { useVoiceInput, VoiceButton, type VoiceSource, VoiceStatus } from "./VoiceInput";
 
 export interface ComposerProps {
 	client: GuestClient;
@@ -19,6 +21,8 @@ export interface ComposerProps {
 	queuedMessageCount: number;
 	/** Room the unsent draft is saved under; null keeps it in memory only. */
 	draftKey: string | null;
+	/** Voice input through the paired computer; null when it is unavailable. */
+	voice: VoiceSource | null;
 }
 
 /** Textarea metrics: line-height 20px + 8px vertical padding × 2 (kept in sync with shell.css). */
@@ -135,11 +139,15 @@ export const Composer = memo(function Composer({
 	working,
 	queuedMessageCount,
 	draftKey,
+	voice,
 }: ComposerProps): ReactNode {
 	const [text, setText] = useState(() => (draftKey ? loadDraft(draftKey) : ""));
 	const [images, setImages] = useState<ImageContent[]>([]);
 	const [attachError, setAttachError] = useState<string | null>(null);
 	const taRef = useRef<HTMLTextAreaElement | null>(null);
+	// Where the caret last was in the textarea; null until the user places it.
+	const caretRef = useRef<{ start: number; end: number } | null>(null);
+	const pendingCaretRef = useRef<number | null>(null);
 	const fileRef = useRef<HTMLInputElement | null>(null);
 	const { composingRef, onCompositionStart, onCompositionEnd } = useCompositionGuard();
 
@@ -160,6 +168,27 @@ export const Composer = memo(function Composer({
 		if (draftKey) saveDraft(draftKey, text);
 	}, [draftKey, text]);
 
+	// After a voice insert: put the caret behind the new words and bring the textarea forward.
+	useLayoutEffect(() => {
+		const caret = pendingCaretRef.current;
+		const ta = taRef.current;
+		if (caret === null || !ta) return;
+		pendingCaretRef.current = null;
+		ta.focus();
+		ta.setSelectionRange(caret, caret);
+		caretRef.current = { start: caret, end: caret };
+	}, [text]);
+
+	/** Transcribed speech goes into the draft at the caret (or the end) for the user to review; it is never sent. */
+	const insertVoice = (spoken: string): void => {
+		const at = caretRef.current ?? { start: text.length, end: text.length };
+		const next = insertAtCaret(text, spoken, at.start, at.end);
+		pendingCaretRef.current = next.caret;
+		setText(next.text);
+	};
+	const voiceInput = useVoiceInput(voice, insertVoice);
+	const showVoice = voice !== null && (canType || voiceInput.step !== "idle");
+
 	/** Sends `override` (a quick reply) or the typed text, with any attached images. */
 	const send = useCallback(
 		(override?: string): void => {
@@ -168,7 +197,10 @@ export const Composer = memo(function Composer({
 			client.sendPrompt(trimmed, images);
 			setImages([]);
 			setAttachError(null);
-			if (override === undefined) setText("");
+			if (override === undefined) {
+				setText("");
+				caretRef.current = null;
+			}
 		},
 		[canType, client, images, text],
 	);
@@ -284,6 +316,7 @@ export const Composer = memo(function Composer({
 					{attachError && <span className="sh-attachments-error">{attachError}</span>}
 				</div>
 			)}
+			{showVoice && <VoiceStatus voice={voice} input={voiceInput} />}
 			<div className="sh-composer-inner">
 				{!readOnly && (
 					<>
@@ -315,6 +348,10 @@ export const Composer = memo(function Composer({
 					className="sh-composer-input"
 					value={text}
 					onChange={e => setText(e.target.value)}
+					onSelect={e => {
+						const { selectionStart, selectionEnd } = e.currentTarget;
+						caretRef.current = { start: selectionStart, end: selectionEnd };
+					}}
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
 					onCompositionStart={onCompositionStart}
@@ -339,6 +376,7 @@ export const Composer = memo(function Composer({
 							<span className="sh-queued-label">queued </span>×{queued}
 						</span>
 					)}
+					{showVoice && <VoiceButton input={voiceInput} />}
 					{busy && !readOnly && (
 						<button
 							type="button"

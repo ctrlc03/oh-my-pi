@@ -221,11 +221,11 @@ async function join(options?: Parameters<typeof joinAsGuest>[1]): Promise<TestGu
 }
 
 describe("collab follow-up delivery", () => {
-	it("advertises the follow-up and rewind features in welcome", async () => {
+	it("advertises the follow-up, rewind and commands features in welcome", async () => {
 		await startHost();
 		const guest = await join();
 		const welcome = await guest.next("welcome");
-		expect(welcome.features).toEqual(["follow-up", "rewind"]);
+		expect(welcome.features).toEqual(["follow-up", "rewind", "commands"]);
 	});
 
 	it("queues a follow-up prompt behind the turn, and steers by default", async () => {

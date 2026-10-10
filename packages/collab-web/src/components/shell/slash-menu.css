@@ -1,0 +1,94 @@
+/* ---- slash-command popup (floats above the composer field) ---- */
+.sh-slash {
+	position: relative;
+	height: 0;
+	z-index: 5;
+}
+
+.sh-slash-list {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	margin-bottom: 8px;
+	display: grid;
+	/* Rows never outgrow the popup: long descriptions ellipsize instead. */
+	grid-template-columns: minmax(0, 1fr);
+	gap: 1px;
+	max-height: min(320px, 45vh);
+	padding: 4px;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	background: var(--bg-overlay);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-float);
+}
+
+.sh-slash-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 34px;
+	padding: 4px 10px;
+	font-size: 13px;
+	text-align: left;
+	color: var(--fg);
+	background: transparent;
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.sh-slash-item:hover,
+.sh-slash-item-on {
+	background: var(--selected);
+}
+
+.sh-slash-icon {
+	flex: none;
+	color: var(--fg-faint);
+}
+
+.sh-slash-item-on .sh-slash-icon {
+	color: var(--accent);
+}
+
+.sh-slash-name {
+	flex: none;
+	font-family: var(--font-mono);
+	font-weight: 500;
+}
+
+.sh-slash-args {
+	flex: none;
+	font-family: var(--font-mono);
+	color: var(--fg-faint);
+}
+
+.sh-slash-desc,
+.sh-slash-saved {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--fg-muted);
+}
+
+.sh-slash-saved {
+	flex: 1;
+}
+
+.sh-slash-tag {
+	flex: none;
+	padding: 0 6px;
+	font-size: 11px;
+	color: var(--fg-faint);
+	border: 1px solid var(--border);
+	border-radius: 999px;
+}
+
+@media (any-pointer: coarse) {
+	.sh-slash-item {
+		min-height: 44px;
+	}
+}

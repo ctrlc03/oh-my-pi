@@ -28,7 +28,7 @@ const LIST_FIELDS: Record<GithubKind, string> = {
 };
 const DETAIL_FIELDS: Record<GithubKind, string> = {
 	issue: `${LIST_FIELDS.issue},body,comments`,
-	pr: `${LIST_FIELDS.pr},body,comments,headRefName,baseRefName,additions,deletions,changedFiles`,
+	pr: `${LIST_FIELDS.pr},body,comments,headRefName,headRefOid,baseRefName,additions,deletions,changedFiles`,
 };
 
 /** `gh … list` flags per filter; issues have no review filter. */
@@ -59,6 +59,7 @@ interface RawItem {
 	body?: string;
 	comments?: { author?: { login?: string } | null; body?: string; createdAt?: string }[];
 	headRefName?: string;
+	headRefOid?: string;
 	baseRefName?: string;
 	additions?: number;
 	deletions?: number;
@@ -210,6 +211,7 @@ export async function githubItem(cwd: string, kind: unknown, number: unknown): P
 		comments,
 		olderComments: all.length - comments.length,
 		branch: pr ? { head: raw.headRefName ?? "", base: raw.baseRefName ?? "" } : null,
+		head: pr ? raw.headRefOid : undefined,
 		size: pr ? { additions: raw.additions ?? 0, deletions: raw.deletions ?? 0, files: raw.changedFiles ?? 0 } : null,
 	};
 }

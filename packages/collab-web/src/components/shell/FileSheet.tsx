@@ -5,6 +5,7 @@ import type { CompanionClient, FileContent } from "../../lib/companion";
 import { fmtBytes } from "../../lib/format";
 import { HIGHLIGHT_MAX_CHARS, languageOf, loadHighlighter } from "../../lib/highlight";
 import { useRequest } from "../../lib/use-request";
+import { DownloadButton } from "./DownloadButton";
 import { Sheet } from "./Sheet";
 
 export interface FileSheetProps {
@@ -30,6 +31,7 @@ export function FileSheet({ client, instanceId, path, line, onClose }: FileSheet
 					{shown}
 				</div>
 				<span className="sh-file-actions">
+					{state.status === "ready" && <DownloadButton client={client} instanceId={instanceId} path={path} />}
 					<button
 						type="button"
 						className="sh-btn sh-btn-icon"

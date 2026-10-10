@@ -1,0 +1,174 @@
+/* ---- Run sheet (scripts and build targets started on the computer) ---- */
+.sh-run-sub {
+	display: block;
+	margin-top: 2px;
+	font: 400 12px / 1.5 var(--font-ui);
+	color: var(--fg-faint);
+	letter-spacing: 0;
+}
+
+.sh-run-group {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+}
+
+.sh-run-heading {
+	margin: 8px 0 0;
+	font: 600 11.5px / 1.4 var(--font-ui);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--fg-faint);
+}
+
+.sh-run-list {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	border-top: 1px solid var(--border);
+}
+
+.sh-run-list > li {
+	border-bottom: 1px solid var(--border);
+}
+
+.sh-run-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	min-width: 0;
+	padding: 8px 2px;
+	color: var(--fg);
+}
+
+.sh-run-open {
+	font: inherit;
+	text-align: left;
+	background: transparent;
+	border: 0;
+	cursor: pointer;
+}
+
+.sh-run-open:hover {
+	background: var(--accent-soft);
+}
+
+.sh-run-row-main {
+	display: flex;
+	flex: 1 1 0;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.sh-run-name {
+	overflow: hidden;
+	font: 500 13px / 1.4 var(--font-mono);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-run-line {
+	overflow: hidden;
+	font: 400 12px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* The confirmation shows the exact command line that will run. */
+.sh-run-confirm {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+}
+
+.sh-run-command {
+	align-self: flex-start;
+	max-width: 100%;
+	padding: 4px 8px;
+	overflow-x: auto;
+	font: 500 13px / 1.4 var(--font-mono);
+	color: var(--fg);
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	white-space: pre;
+}
+
+.sh-run-detail {
+	max-height: 220px;
+	margin: 0;
+	padding: 8px 10px;
+	overflow: auto;
+	font: 400 12px / 1.4 var(--font-mono);
+	color: var(--fg);
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	white-space: pre;
+}
+
+.sh-run-note {
+	font-size: 12.5px;
+	color: var(--fg-muted);
+}
+
+.sh-run-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+.sh-run-summary {
+	display: flex;
+	flex: none;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 10px;
+}
+
+.sh-run-chip {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 4px;
+	height: 20px;
+	padding: 0 8px;
+	font: 500 11.5px / 1 var(--font-ui);
+	border-radius: 999px;
+	white-space: nowrap;
+}
+
+.sh-run-chip-run {
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft);
+}
+
+.sh-run-chip-ok {
+	color: var(--ok);
+	background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+.sh-run-chip-err {
+	color: var(--err);
+	background: color-mix(in srgb, var(--err) 14%, transparent);
+}
+
+.sh-run-view {
+	position: relative;
+}
+
+.sh-run-dropped {
+	padding: 6px 10px 0;
+	font: 400 11.5px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+}

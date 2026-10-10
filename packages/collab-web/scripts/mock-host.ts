@@ -33,8 +33,10 @@ import {
 } from "../src/lib/link";
 import {
 	fixtureAgents,
+	fixtureCommands,
 	fixtureEntries,
 	fixtureHeader,
+	fixtureHostOnlyCommands,
 	fixtureModel,
 	fixtureModels,
 	fixtureThinkingLevels,
@@ -244,7 +246,8 @@ function handleHello(name: string, proto: number, token: string | undefined, fro
 			entryCount: entries.length,
 			readOnly: writer ? undefined : true,
 			models: writer ? fixtureModels : undefined,
-			features: ["follow-up", "rewind"],
+			features: ["follow-up", "rewind", "commands"],
+			commands: writer ? fixtureCommands : undefined,
 		},
 		fromPeer,
 	);
@@ -382,6 +385,12 @@ function handlePrompt(
 	fromPeer: number,
 ): void {
 	if (refuseReadOnly(fromPeer)) return;
+	// Like the real host: only the listed commands run for a guest; other builtins stay on the host.
+	const typed = /^\/(\S+)/.exec(text)?.[1];
+	if (typed !== undefined && Object.hasOwn(fixtureHostOnlyCommands, typed)) {
+		sendFrame({ t: "error", message: `/${typed} can only be run on the host` }, fromPeer);
+		return;
+	}
 	if (deliver === "follow-up" && isReplaying()) {
 		// Like the real host: no transcript entry until the turn that carries it starts.
 		followUps.push({ text, images, from: peerName(fromPeer) });

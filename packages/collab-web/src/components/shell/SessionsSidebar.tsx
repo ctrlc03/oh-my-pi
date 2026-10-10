@@ -1,14 +1,16 @@
-import { Activity, ChartColumn, LayoutList, Laptop, Plus, Smartphone, X } from "lucide-react";
+import { Activity, ChartColumn, LayoutList, Laptop, PanelRight, Plus, Smartphone, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import type { CompanionHost, CompanionIdleSession } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
 import type { CompanionHandle } from "../../lib/use-companion";
+import type { BesideControl } from "../../lib/use-split";
 import { HostList, IdleList, PowerNote } from "./CompanionCard";
 import { DevicesSheet } from "./DevicesSheet";
 import { DiagnosticsSheet } from "./DiagnosticsSheet";
 import { InboxEntry } from "./InboxSheet";
+import { SchedulesEntry } from "./SchedulesSheet";
 import { StartSessionSheet } from "./StartSessionSheet";
 
 export interface SessionsSidebarProps {
@@ -23,6 +25,8 @@ export interface SessionsSidebarProps {
 	/** Usage and all-sessions screens; null when no computer is paired. */
 	onOpenUsage: (() => void) | null;
 	onOpenSessions: (() => void) | null;
+	/** Split view: sessions can open in a second pane beside the transcript. null where the screen has no room. */
+	beside?: Pick<BesideControl, "openHost" | "openLink"> | null;
 	onClose(): void;
 }
 
@@ -40,6 +44,7 @@ export function SessionsSidebar({
 	onOpenUsage,
 	onOpenSessions,
 	onClose,
+	beside = null,
 }: SessionsSidebarProps): ReactNode {
 	const [joining, setJoining] = useState<string | null>(null);
 	const [starting, setStarting] = useState(false);
@@ -57,6 +62,22 @@ export function SessionsSidebar({
 			setError(err instanceof Error ? err.message : String(err));
 			setJoining(null);
 		});
+	};
+
+	/** Open a companion host in the second pane; the sidebar stays as it is. */
+	const joinBeside = (host: CompanionHost): void => {
+		if (beside === null) return;
+		setJoining(host.instanceId);
+		setError(null);
+		beside
+			.openHost(host.instanceId)
+			.catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+			.finally(() => setJoining(null));
+	};
+
+	const openRoomBeside = (link: string): void => {
+		if (beside === null) return;
+		setError(beside.openLink(link));
 	};
 
 	/** Make an idle session host collab, then open its control link. */
@@ -108,6 +129,7 @@ export function SessionsSidebar({
 								disabled={!live}
 								currentSessionId={currentSessionId}
 								onJoin={join}
+								onOpenBeside={beside === null ? undefined : joinBeside}
 							/>
 						)}
 						<IdleList idle={snap.idle} joining={joining} disabled={!live} onShare={share} />
@@ -134,6 +156,18 @@ export function SessionsSidebar({
 											<span>{relTime(room.lastSeen)}</span>
 										</span>
 									</button>
+									{beside !== null && (
+										<button
+											type="button"
+											className="sh-btn sh-btn-icon"
+											onClick={() => openRoomBeside(room.link)}
+											disabled={joining !== null}
+											aria-label={`open ${room.title} beside`}
+											title="open beside"
+										>
+											<PanelRight size={15} />
+										</button>
+									)}
 								</li>
 							))}
 						</ul>
@@ -179,6 +213,14 @@ export function SessionsSidebar({
 						<InboxEntry
 							client={companion.client}
 							count={snap.hosts.filter(host => host.inputRequired).length}
+							onOpenHost={onOpenHost}
+							variant="icon"
+						/>
+					)}
+					{companion?.client && snap.canSchedule && (
+						<SchedulesEntry
+							client={companion.client}
+							canSandbox={snap.canSandbox}
 							onOpenHost={onOpenHost}
 							variant="icon"
 						/>

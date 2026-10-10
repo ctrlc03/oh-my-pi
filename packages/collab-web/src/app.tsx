@@ -11,15 +11,19 @@ import { Composer, type ComposerHandle } from "./components/shell/Composer";
 import { ConnectScreen } from "./components/shell/ConnectScreen";
 import { useEditPrompt } from "./components/shell/EditPromptSheet";
 import { FileSheet } from "./components/shell/FileSheet";
+import { FixItHost } from "./components/shell/FixItHost";
 import { HeaderBar } from "./components/shell/HeaderBar";
+import { useMedia } from "./components/codemap/shared";
 import { PaneSheet } from "./components/shell/PaneSheet";
 import { GithubSheet } from "./components/shell/GithubSheet";
 import { PreviewSheet } from "./components/shell/PreviewSheet";
+import { RunSheet } from "./components/shell/RunSheet";
 import { ScreensSheet } from "./components/shell/ScreensSheet";
 import { SearchBar } from "./components/shell/SearchBar";
 import { SessionAlert } from "./components/shell/SessionAlert";
 import { SessionsSheet } from "./components/shell/SessionsSheet";
 import { SessionsSidebar } from "./components/shell/SessionsSidebar";
+import { SplitPane } from "./components/shell/SplitPane";
 import { TaskProgress } from "./components/shell/TaskProgress";
 import { Toasts } from "./components/shell/Toasts";
 import { UpdateBar } from "./components/shell/UpdateBar";
@@ -28,10 +32,14 @@ import { Transcript } from "./components/transcript/Transcript";
 import { collectChanges } from "./lib/changes";
 import { GuestClient } from "./lib/client";
 import { extractPairing, loadPairing, type Pairing, savePairing } from "./lib/companion";
+import { subscribeDraft } from "./lib/draft-bus";
 import { sessionMarkdown } from "./lib/export";
 import { blobToBase64 } from "./lib/images";
-import { applyOpenIntent, claimPendingAnswer } from "./lib/inbox";
+import { useAppBadge } from "./lib/badge";
+import { applyOpenIntent, claimPendingAnswer, setOpenIntent } from "./lib/inbox";
+import { onJumpIntent, takeJumpIntent } from "./lib/jump-intent";
 import { useNewSince } from "./lib/new-since";
+import { emitRoute, parseRoute } from "./lib/notify-route";
 import { type PushControl, usePush } from "./lib/push";
 import { registerServiceWorker, takeSharedLink } from "./lib/pwa";
 import {
@@ -46,7 +54,15 @@ import {
 	setActiveLink,
 } from "./lib/rooms";
 import { collectScreens } from "./lib/screens";
-import { suspendsHiddenPages } from "./lib/socket";
+import {
+	type BesideControl,
+	focusedPane,
+	loadIdeDock,
+	saveIdeDock,
+	TWO_PANES_QUERY,
+	useBesideSession,
+	useClientWake,
+} from "./lib/use-split";
 import { readJson, writeJson } from "./lib/storage";
 import { currentSubagents } from "./lib/subagents";
 import { currentTodos } from "./lib/todos";
@@ -68,8 +84,6 @@ const SIDEBAR_KEY = "omp.collab.sidebar";
 /** Matches the shell.css breakpoint where the sessions sidebar stops docking beside the panel. */
 const SIDEBAR_DOCK_QUERY = "(min-width: 1101px)";
 const PHONE_QUERY = "(max-width: 640px)";
-/** Hash a notification tap launches the app with (see scripts/build-sw.ts): `#open:<instanceId>`. */
-const OPEN_PREFIX = "open:";
 /** Matches the shell.css breakpoint where the rail stops docking beside the transcript. */
 const WIDE_QUERY = "(min-width: 901px)";
 /** Visual viewport this much shorter than the layout viewport means an on-screen keyboard is up. */
@@ -98,6 +112,11 @@ function hashLink(): string | null {
 
 export function App(): ReactNode {
 	const [client, setClient] = useState<GuestClient | null>(null);
+	/**
+	 * The client on screen, closed here rather than inside a state updater: closing
+	 * notifies the session's store, and updaters run while React renders App.
+	 */
+	const clientRef = useRef<GuestClient | null>(null);
 	const [link, setLink] = useState<string | null>(null);
 	const [connectError, setConnectError] = useState<string | null>(null);
 	const [rooms, setRooms] = useState<RecentRoom[]>(loadRooms);
@@ -131,19 +150,17 @@ export function App(): ReactNode {
 		window.location.hash = link;
 		setLink(link);
 		setConnectError(null);
-		setClient(prev => {
-			prev?.close();
-			return next;
-		});
+		clientRef.current?.close();
+		clientRef.current = next;
+		setClient(next);
 	}, []);
 
 	const leave = useCallback((): void => {
 		setActiveLink(null);
 		setRooms(loadRooms());
-		setClient(prev => {
-			prev?.close();
-			return null;
-		});
+		clientRef.current?.close();
+		clientRef.current = null;
+		setClient(null);
 		history.replaceState(null, "", window.location.pathname + window.location.search);
 	}, []);
 
@@ -198,6 +215,21 @@ export function App(): ReactNode {
 	);
 
 	const { phase: companionPhase, hosts } = companion.snap;
+	// The app icon shows how many sessions wait on an answer, once the computer's list is known.
+	useAppBadge(companionPhase === "live" ? hosts.filter(host => host.inputRequired).length : null);
+
+	/** A notification tap's route: open a session (sending the reply typed in the notification once it is live), or pass it to the component that owns it. */
+	const followRoute = useCallback((hash: string): boolean => {
+		const route = parseRoute(hash);
+		if (route === null) return false;
+		if (route.kind === "route") {
+			emitRoute(route.route);
+			return true;
+		}
+		if (route.reply !== null) setOpenIntent(route.instanceId, { prompt: route.reply });
+		setPendingOpen(route.instanceId);
+		return true;
+	}, []);
 
 	// A notification tap: open its session as soon as the companion lists hosts.
 	useEffect(() => {
@@ -213,12 +245,20 @@ export function App(): ReactNode {
 	useEffect(() => {
 		if (!("serviceWorker" in navigator)) return;
 		const onMessage = (e: MessageEvent): void => {
-			const data = e.data as { t?: unknown; instanceId?: unknown } | null;
+			const data = e.data as { t?: unknown; instanceId?: unknown; text?: unknown; route?: unknown } | null;
 			if (data?.t === "open-session" && typeof data.instanceId === "string") setPendingOpen(data.instanceId);
+			else if (
+				data?.t === "notification-reply" &&
+				typeof data.instanceId === "string" &&
+				typeof data.text === "string"
+			) {
+				if (data.text.trim()) setOpenIntent(data.instanceId, { prompt: data.text });
+				setPendingOpen(data.instanceId);
+			} else if (data?.t === "open-route" && typeof data.route === "string") followRoute(data.route);
 		};
 		navigator.serviceWorker.addEventListener("message", onMessage);
 		return () => navigator.serviceWorker.removeEventListener("message", onMessage);
-	}, []);
+	}, [followRoute]);
 
 	// The companion holds pushes for this device while it shows the app.
 	const pushEndpoint = push.endpoint;
@@ -273,8 +313,7 @@ export function App(): ReactNode {
 			history.replaceState(null, "", window.location.pathname + window.location.search);
 			return;
 		}
-		if (hash?.startsWith(OPEN_PREFIX)) {
-			setPendingOpen(hash.slice(OPEN_PREFIX.length));
+		if (hash !== null && followRoute(hash)) {
 			history.replaceState(null, "", window.location.pathname + window.location.search);
 			return;
 		}
@@ -283,31 +322,12 @@ export function App(): ReactNode {
 		if (!initial) return;
 		connect(initial, storedName());
 		resumedRef.current = explicit === null;
-	}, [connect, pair]);
+	}, [connect, pair, followRoute]);
 
-	// Back from the background: reconnect now, not when the backoff expires; on phones and tablets,
-	// whose OS suspends hidden pages, also replace a connection it may have killed silently.
-	// Network back: replace the connection on every device.
-	// Going to the background: save the transcript now, as the OS may kill the app there.
-	useEffect(() => {
-		if (!client) return;
-		const wake = (): void => {
-			if (document.visibilityState === "visible") client.resume();
-			else {
-				client.persist();
-				if (suspendsHiddenPages()) client.suspend();
-			}
-		};
-		const online = (): void => client.resume("online");
-		document.addEventListener("visibilitychange", wake);
-		window.addEventListener("online", online);
-		window.addEventListener("pageshow", wake);
-		return () => {
-			document.removeEventListener("visibilitychange", wake);
-			window.removeEventListener("online", online);
-			window.removeEventListener("pageshow", wake);
-		};
-	}, [client]);
+	// Back from the background, network back, going to the background: see `useClientWake`.
+	useClientWake(client);
+	const besideName = useCallback((): string => credsRef.current?.name ?? storedName(), []);
+	const beside = useBesideSession(client ? link : null, companion.client, besideName, setRooms);
 
 	useEffect(() => {
 		if (!client) document.title = "omp collab";
@@ -316,6 +336,14 @@ export function App(): ReactNode {
 	return (
 		<>
 			<UpdateBar />
+			<FixItHost
+				client={companionClient}
+				live={companionPhase === "live"}
+				canFixIt={companion.snap.canFixIt}
+				canStart={companion.snap.canStart}
+				onOpenHost={openHost}
+				onOpenLink={openLink}
+			/>
 			{!client || !link ? (
 				<ConnectScreen
 					defaultName={storedName()}
@@ -348,6 +376,7 @@ export function App(): ReactNode {
 					onRoomGone={roomGone}
 					onRoomReplaced={replaceRoom}
 					onOpenHost={openHost}
+					beside={beside}
 					onOpenLink={openLink}
 				/>
 			)}
@@ -369,6 +398,8 @@ interface SessionProps {
 	onRoomReplaced(from: string, link: string, instanceId: string): void;
 	onOpenHost(instanceId: string): Promise<void>;
 	onOpenLink(link: string): void;
+	/** Split view: the second session pane and the controls that open it. */
+	beside: BesideControl;
 }
 
 function initialChat(): boolean {
@@ -400,6 +431,7 @@ function Session({
 	onRoomReplaced,
 	onOpenHost,
 	onOpenLink,
+	beside,
 }: SessionProps): ReactNode {
 	const snap = useGuestSnapshot(client);
 	const [railOpen, setRailOpen] = useState(false);
@@ -467,6 +499,16 @@ function Session({
 	const canGithub = companionClient !== null && hostId !== null && companion?.snap.canGithub === true;
 	const [githubOpen, setGithubOpen] = useState(false);
 	const openGithub = useCallback(() => setGithubOpen(true), []);
+	// Running commands needs a session this device may control and that is not confined to file tools.
+	const runSandboxed = companion?.snap.hosts.some(host => host.instanceId === hostId && host.sandboxed) ?? false;
+	const canRun =
+		companionClient !== null && hostId !== null && companion?.snap.canRun === true && !snap.readOnly && !runSandboxed;
+	const [runOpen, setRunOpen] = useState(false);
+	const openRun = useCallback(() => setRunOpen(true), []);
+	const sendRunOutput = useCallback((prompt: string) => {
+		setRunOpen(false);
+		composerRef.current?.insert(prompt);
+	}, []);
 	const composerRef = useRef<ComposerHandle>(null);
 	const editPrompt = useEditPrompt(client, snap, composerRef);
 	const sendToAgent = useCallback((prompt: string) => {
@@ -526,6 +568,15 @@ function Session({
 		const answer = claimPendingAnswer(roomId, uiRequest);
 		if (answer !== null) client.sendUiResponse(uiRequest.reqId, answer);
 	}, [client, live, roomId, uiRequest]);
+	// A draft for this room (the Fix-it flow) lands in the composer on screen; nothing is sent.
+	useEffect(() => {
+		if (roomId === null) return;
+		return subscribeDraft(roomId, text => {
+			const composer = composerRef.current;
+			composer?.insert(text);
+			return composer !== null;
+		});
+	}, [roomId]);
 	// The computer's process for this room. Matched by session id once welcomed; until
 	// then (and after the host switched sessions) the one it was opened from or last seen as.
 	const storedInstance = rooms.find(room => room.roomId === roomId)?.instanceId;
@@ -601,6 +652,19 @@ function Session({
 		() => (jumpTarget === null ? undefined : { query: "", target: jumpTarget }),
 		[jumpTarget],
 	);
+	// A message found in the all-sessions search: scroll to it once this session is on screen (the search
+	// drops its own state, as it would hide the jump).
+	useEffect(() => {
+		if (sessionId === null) return;
+		const apply = (): void => {
+			const entryId = takeJumpIntent(sessionId);
+			if (entryId === null) return;
+			setSearch(null);
+			setJumpTarget(entryId);
+		};
+		apply();
+		return onJumpIntent(apply);
+	}, [sessionId]);
 
 	const changes = useMemo(() => collectChanges(snap.entries), [snap.entries]);
 	// Every completed edit or write adds a call: the preview re-captures when this grows.
@@ -608,7 +672,10 @@ function Session({
 	const screens = useMemo(() => collectScreens(snap.entries), [snap.entries]);
 	// From the full entry list: the per-device trim must not hide the agent's task list.
 	const todos = useMemo(() => currentTodos(snap.entries, snap.activeTools), [snap.entries, snap.activeTools]);
-	const subagents = useMemo(() => currentSubagents(snap.progress, snap.lifecycle), [snap.progress, snap.lifecycle]);
+	const subagents = useMemo(
+		() => currentSubagents(snap.progress, snap.lifecycle, snap.agents),
+		[snap.progress, snap.lifecycle, snap.agents],
+	);
 	const [screensOpen, setScreensOpen] = useState(false);
 	const openScreens = useCallback(() => {
 		setJumpTarget(null);
@@ -668,7 +735,8 @@ function Session({
 					target.tagName === "SELECT");
 			const dialogOpen = document.querySelector('[role="dialog"]') !== null;
 			if (e.key === "Escape") {
-				if (dialogOpen) return;
+				// A sheet owns Esc, and so does the pane the user last touched when it is not this one.
+				if (dialogOpen || focusedPane() !== "main") return;
 				if (searchOpen) closeSearch();
 				else if (showSidebar && !matchMedia(SIDEBAR_DOCK_QUERY).matches) setSidebarOpen(false);
 				else if (live && !readOnly && working) client.sendAbort();
@@ -679,7 +747,7 @@ function Session({
 				if (!canShowSidebar) return;
 				e.preventDefault();
 				toggleSidebar();
-			} else if (e.key === "/" && !e.metaKey && !e.ctrlKey && !searchOpen) {
+			} else if (e.key === "/" && !e.metaKey && !e.ctrlKey && !searchOpen && focusedPane() === "main") {
 				e.preventDefault();
 				setSearch({ query: "", target: null });
 			}
@@ -687,6 +755,41 @@ function Session({
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
 	}, [canShowSidebar, client, closeSearch, live, readOnly, searchOpen, showSidebar, toggleSidebar, working]);
+
+	// Split view: the editor docks beside the transcript where there is room, unless a second
+	// session is open and the screen is too narrow for both (the session keeps the room, the editor is a sheet).
+	const twoPanes = useMedia(TWO_PANES_QUERY);
+	const [ideDockPref, setIdeDockPref] = useState(loadIdeDock);
+	const dockOffered = beside.available && (beside.pane === null || twoPanes);
+	const ideDock = useMemo(
+		() =>
+			dockOffered
+				? {
+						docked: ideDockPref,
+						onDockedChange: (next: boolean): void => {
+							saveIdeDock(next);
+							setIdeDockPref(next);
+						},
+					}
+				: null,
+		[dockOffered, ideDockPref],
+	);
+	const ideSheet =
+		editor !== null && canEdit ? (
+			<LazyIdeSheet
+				client={companionClient}
+				instanceId={hostId}
+				target={editor.target}
+				readOnly={snap.readOnly}
+				canDefinition={canCodemap}
+				edits={editCount}
+				onSendToAgent={snap.readOnly ? null : sendToAgent}
+				dock={ideDock}
+				onClose={() => setEditor(null)}
+			/>
+		) : null;
+	const ideDocked = ideSheet !== null && ideDock?.docked === true;
+	const besideOpen = beside.available && beside.pane !== null;
 
 	return (
 		<div className="sh-app">
@@ -723,12 +826,13 @@ function Session({
 				onOpenPane={companionClient !== null && hostId !== null ? openPane : null}
 				onOpenPreview={canPreview ? openPreview : null}
 				onOpenGithub={canGithub ? openGithub : null}
+				onOpenRun={canRun ? openRun : null}
 				onOpenEditor={canEdit ? openEditor : null}
 				screenCount={screens.length}
 				onOpenScreens={openScreens}
 				push={push}
 			/>
-			<main className="sh-main">
+			<main className="sh-main" data-split={(besideOpen ? 1 : 0) + (ideDocked ? 1 : 0) || undefined}>
 				{showSidebar && (
 					<>
 						<div className="sh-sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
@@ -743,6 +847,7 @@ function Session({
 								onOpenUsage={companion ? openUsage : null}
 								onOpenSessions={companion ? openSessions : null}
 								onClose={closeSidebar}
+								beside={beside.available ? beside : null}
 							/>
 						</aside>
 					</>
@@ -809,6 +914,23 @@ function Session({
 						</aside>
 					</>
 				)}
+				{beside.pane !== null && besideOpen && (
+					<SplitPane
+						key={beside.pane.link}
+						client={beside.pane.client}
+						link={beside.pane.link}
+						companion={companion}
+						chat={chat}
+						rooms={rooms}
+						onClose={beside.close}
+						onRejoin={beside.rejoin}
+						onMakeMain={onOpenLink}
+						onRemember={onRemember}
+						onReplaced={beside.replace}
+						onRoomGone={beside.gone}
+					/>
+				)}
+				{ideDocked && ideSheet}
 			</main>
 			{drawerAgent && (
 				<>
@@ -844,6 +966,7 @@ function Session({
 				<SessionsSheet
 					client={companionClient}
 					canStart={companion.snap.canStart}
+					canSearch={companion.snap.canSearch}
 					currentSessionId={sessionId}
 					onOpenHost={onOpenHost}
 					onOpenLink={onOpenLink}
@@ -897,26 +1020,27 @@ function Session({
 					onClose={() => setPreviewOpen(false)}
 				/>
 			)}
+			{runOpen && canRun && companionClient !== null && hostId !== null && (
+				<RunSheet
+					client={companionClient}
+					instanceId={hostId}
+					machine={machine}
+					onSendToAgent={sendRunOutput}
+					onClose={() => setRunOpen(false)}
+				/>
+			)}
 			{githubOpen && canGithub && companionClient !== null && hostId !== null && (
 				<GithubSheet
 					client={companionClient}
 					instanceId={hostId}
 					onSendToAgent={snap.readOnly ? null : sendToAgent}
+					canReview={companion?.snap.canPrReview === true}
+					sandboxed={companion?.snap.hosts.some(host => host.instanceId === hostId && host.sandboxed) ?? false}
+					canFixIt={companion?.snap.canFixIt === true}
 					onClose={() => setGithubOpen(false)}
 				/>
 			)}
-			{editor !== null && canEdit && (
-				<LazyIdeSheet
-					client={companionClient}
-					instanceId={hostId}
-					target={editor.target}
-					readOnly={snap.readOnly}
-					canDefinition={canCodemap}
-					edits={editCount}
-					onSendToAgent={snap.readOnly ? null : sendToAgent}
-					onClose={() => setEditor(null)}
-				/>
-			)}
+			{!ideDocked && ideSheet}
 			{file !== null && companionClient !== null && hostId !== null && (
 				<FileSheet
 					client={companionClient}

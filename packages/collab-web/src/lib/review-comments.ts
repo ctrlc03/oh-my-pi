@@ -85,8 +85,8 @@ export function sameHunk(rows: readonly DiffRow[], a: number, b: number): boolea
 	return true;
 }
 
-/** `tree`: working-tree tab; `branch`: branch-review tab. */
-export type ReviewScope = "tree" | "branch";
+/** `tree`: working-tree tab; `branch`: branch-review tab; `pr`: a GitHub pull request's files. */
+export type ReviewScope = "tree" | "branch" | "pr";
 
 export interface ReviewComment {
 	scope: ReviewScope;
@@ -151,14 +151,17 @@ function fenceFor(lines: readonly string[]): string {
 }
 
 /** One prompt for the whole review: per file, each comment's lines quoted, then what to change. */
-export function buildReviewPrompt(comments: readonly ReviewComment[]): string {
+export function buildReviewPrompt(
+	comments: readonly ReviewComment[],
+	heading = "Review comments on the changes:",
+): string {
 	const byPath = new Map<string, ReviewComment[]>();
 	for (const c of comments) {
 		const group = byPath.get(c.path);
 		if (group === undefined) byPath.set(c.path, [c]);
 		else group.push(c);
 	}
-	const blocks: string[] = ["Review comments on the changes:"];
+	const blocks: string[] = [heading];
 	for (const [path, group] of byPath) {
 		group.sort((a, b) => a.start - b.start || a.end - b.end);
 		for (const c of group) {
@@ -175,7 +178,7 @@ function isComment(v: unknown): v is ReviewComment {
 	if (typeof v !== "object" || v === null) return false;
 	const c = v as Record<string, unknown>;
 	return (
-		(c.scope === "tree" || c.scope === "branch") &&
+		(c.scope === "tree" || c.scope === "branch" || c.scope === "pr") &&
 		typeof c.path === "string" &&
 		typeof c.from === "string" &&
 		typeof c.to === "string" &&

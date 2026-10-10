@@ -1,0 +1,30 @@
+.sh-download {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}
+
+.sh-download-pct {
+	min-width: 3ch;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	color: var(--fg-muted);
+}
+
+.sh-download-err {
+	max-width: 160px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	color: var(--err);
+}
+
+@media (pointer: coarse) {
+	.sh-download .sh-btn-icon {
+		width: 44px;
+		height: 44px;
+	}
+}

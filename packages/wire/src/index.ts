@@ -360,7 +360,8 @@ export type GuestFrame =
 	/**
 	 * `deliver` absent = steer into the running turn. `follow-up`: when the
 	 * agent is working, deliver after the current turn ends as its own turn;
-	 * idle, it is a normal prompt. Hosts that predate the field steer.
+	 * idle, it is a normal prompt. Hosts that predate the field steer. Text
+	 * starting with `/<name>` for a `welcome.commands` entry runs that command.
 	 */
 	| { t: "prompt"; text: string; images?: ImageContent[]; deliver?: "follow-up" }
 	| { t: "ui-response"; reqId: number; value?: CollabUiResponseValue }
@@ -378,8 +379,21 @@ export type GuestFrame =
 	 */
 	| { t: "session-cmd"; cmd: SessionCommand; arg?: string };
 
-/** Optional host capabilities advertised in `welcome.features`. */
-export type CollabFeature = "follow-up" | "rewind";
+/**
+ * Optional host capabilities advertised in `welcome.features`. `commands`: the
+ * host lists the slash commands a writer may run in `welcome.commands` and
+ * dispatches a `prompt` whose text starts with one of them as that command.
+ */
+export type CollabFeature = "follow-up" | "rewind" | "commands";
+
+/** A slash command a writer may run by sending it as a `prompt` (`/name args`). */
+export interface CollabCommand {
+	/** Name without the leading slash; may contain `:` (e.g. `skill:review`). */
+	name: string;
+	description?: string;
+	/** Argument hint to show after the name, e.g. `[prompt]`. */
+	args?: string;
+}
 
 /**
  * Host session controls a writer may run through `session-cmd`. `rewind`:
@@ -417,6 +431,15 @@ export type HostFrame =
 			 * capability signal.
 			 */
 			models?: WireModel[];
+			/**
+			 * Slash commands a writer may run. Sent to writers only, by hosts that
+			 * advertise the `commands` feature. A `prompt` whose text starts with
+			 * `/<name>` for one of these runs it on the host, with the guest named
+			 * as its author; a host command that is not listed is refused with an
+			 * `error`, and any other text stays a literal prompt. Hosts that predate
+			 * the field send everything as literal text.
+			 */
+			commands?: CollabCommand[];
 			/**
 			 * True when the host honoured `hello.resume`: `entryCount` and the
 			 * `snapshot-chunk` frames carry only the entries AFTER the guest's

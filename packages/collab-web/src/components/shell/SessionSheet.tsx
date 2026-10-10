@@ -85,6 +85,8 @@ export interface SessionSheetProps {
 	onOpenGithub: (() => void) | null;
 	/** File tree and editor of the session's folder; null unless the paired computer can edit its files. */
 	onOpenEditor: (() => void) | null;
+	/** Scripts and build targets of the session's repository, run on the computer; null unless the companion can run them (and never for view-only or sandboxed sessions). */
+	onOpenRun: (() => void) | null;
 	/** Images the agent's tools produced this session. */
 	screenCount: number;
 	onOpenScreens(): void;
@@ -128,6 +130,7 @@ export function SessionSheet({
 	onOpenPreview,
 	onOpenGithub,
 	onOpenEditor,
+	onOpenRun,
 	screenCount,
 	onOpenScreens,
 	workingTree,
@@ -493,6 +496,17 @@ export function SessionSheet({
 						<dd>
 							<button type="button" className="sh-sheet-link" onClick={onOpenPreview}>
 								See the running app
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
+				{onOpenRun && (
+					<div className="sh-sheet-row">
+						<dt>Run</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onOpenRun}>
+								Scripts and build targets
 								<ChevronRight size={14} />
 							</button>
 						</dd>

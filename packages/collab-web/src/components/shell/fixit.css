@@ -1,0 +1,112 @@
+/* ---- fix it sheet (failing checks of a pull request, and the session to fix them in) ---- */
+.sh-fix {
+	display: grid;
+	gap: 12px;
+	padding-bottom: 4px;
+}
+
+.sh-fix-head {
+	display: grid;
+	gap: 6px;
+}
+
+.sh-fix-checks {
+	display: grid;
+	gap: 10px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-fix-check {
+	display: grid;
+	gap: 6px;
+	min-width: 0;
+}
+
+.sh-fix-check-name {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	font-size: 13px;
+}
+
+.sh-fix-check-name > svg {
+	flex: none;
+}
+
+.sh-fix-check-name > a,
+.sh-fix-check-name > span {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	color: var(--fg);
+}
+
+.sh-fix-log {
+	margin: 0;
+	padding: 8px 10px;
+	max-height: 11em;
+	overflow: auto;
+	font: 12px/1.45 var(--font-mono);
+	white-space: pre;
+	color: var(--fg-muted);
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+}
+
+.sh-fix-picks {
+	display: grid;
+	gap: 6px;
+}
+
+.sh-fix-pick {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 3px;
+	min-width: 0;
+	padding: 8px 10px;
+	text-align: left;
+	color: var(--fg);
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-fix-pick:disabled {
+	opacity: 0.6;
+}
+
+.sh-fix-pick-on {
+	background: var(--selected);
+	border-color: var(--accent);
+}
+
+.sh-fix-pick-name {
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+}
+
+.sh-fix-pick-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 10px;
+	font-size: 12px;
+	color: var(--fg-muted);
+}
+
+.sh-fix-pick-meta > span {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+}
+
+.sh-fix-branch-match {
+	color: var(--ok);
+}

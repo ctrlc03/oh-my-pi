@@ -103,32 +103,32 @@ export function TaskProgress({ todos, subagents, hasAgent, onOpenAgent }: TaskPr
 						</button>
 					</div>
 					<div className="sh-tasks-body">
-					{todos !== null && (
-						<div className="sh-tasks-board">
-							<Board phases={todos.phases} />
-						</div>
-					)}
-					{subagents !== null && (
-						<section className="sh-tasks-subagents" aria-label="subagents">
-							<div className="sh-tasks-section">{agentsSummary(subagents)}</div>
-							<ul className="sh-tasks-agent-list">
-								{subagents.rows.map(row => (
-									<SubagentItem
-										key={row.id}
-										row={row}
-										onOpen={
-											!hasAgent(row.id)
-												? null
-												: () => {
-														setAnchor(null);
-														onOpenAgent(row.id);
-													}
-										}
-									/>
-								))}
-							</ul>
-						</section>
-					)}
+						{todos !== null && (
+							<div className="sh-tasks-board">
+								<Board phases={todos.phases} />
+							</div>
+						)}
+						{subagents !== null && (
+							<section className="sh-tasks-subagents" aria-label="subagents">
+								<div className="sh-tasks-section">{agentsSummary(subagents)}</div>
+								<ul className="sh-tasks-agent-list">
+									{subagents.rows.map(row => (
+										<SubagentItem
+											key={row.id}
+											row={row}
+											onOpen={
+												!hasAgent(row.id)
+													? null
+													: () => {
+															setAnchor(null);
+															onOpenAgent(row.id);
+														}
+											}
+										/>
+									))}
+								</ul>
+							</section>
+						)}
 					</div>
 				</Sheet>
 			)}

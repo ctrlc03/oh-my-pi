@@ -10,6 +10,7 @@
 import type { ImageContent } from "@oh-my-pi/pi-ai";
 import type {
 	BusChannel,
+	CollabCommand,
 	CollabFeature,
 	CollabUiRequest,
 	GuestFrame,
@@ -75,6 +76,8 @@ export type CollabFrame =
 			readOnly?: boolean;
 			/** Models a writer may switch to with `session-cmd`; sent to writers only, its presence signals support. */
 			models?: WireModel[];
+			/** Slash commands a writer may run; sent to writers only, with the `commands` feature. */
+			commands?: CollabCommand[];
 			/** True when the host honoured `hello.resume`: the snapshot chunks carry only the entries after `resume.entryId`. */
 			resumed?: boolean;
 			/** Optional host capabilities; absent on hosts that predate the field (none). */

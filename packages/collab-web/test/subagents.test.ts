@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import type { AgentProgress, SubagentLifecyclePayload, SubagentProgressPayload } from "@oh-my-pi/pi-wire";
+import type {
+	AgentProgress,
+	AgentSnapshot,
+	SubagentLifecyclePayload,
+	SubagentProgressPayload,
+} from "@oh-my-pi/pi-wire";
 import { currentSubagents } from "../src/lib/subagents";
 
 function payload(
@@ -38,6 +43,10 @@ function progressMap(...items: SubagentProgressPayload[]): Map<string, SubagentP
 
 const noLifecycle = new Map<string, SubagentLifecyclePayload>();
 
+function agent(id: string, status: AgentSnapshot["status"], kind: AgentSnapshot["kind"] = "sub"): AgentSnapshot {
+	return { id, displayName: id, kind, status, hasSessionFile: true, createdAt: 0, lastActivity: 0 };
+}
+
 describe("currentSubagents", () => {
 	it("shows only task calls with work left, in spawn order", () => {
 		const work = currentSubagents(
@@ -48,6 +57,7 @@ describe("currentSubagents", () => {
 				payload("C", 2, "call-2", "pending"),
 			),
 			noLifecycle,
+			[],
 		);
 		expect(work?.rows.map(row => [row.id, row.status, row.activity])).toEqual([
 			["A", "running", "Reading the relay"],
@@ -62,6 +72,7 @@ describe("currentSubagents", () => {
 		const work = currentSubagents(
 			progressMap(payload("Old", 0, "call-1", "completed"), payload("New", 0, "call-2", "failed")),
 			noLifecycle,
+			[],
 		);
 		expect(work?.rows.map(row => row.id)).toEqual(["New"]);
 		expect([work?.active, work?.done]).toEqual([0, 0]);
@@ -71,12 +82,26 @@ describe("currentSubagents", () => {
 		const lifecycle = new Map<string, SubagentLifecyclePayload>([
 			["A", { id: "A", agent: "task", status: "completed", index: 0 }],
 		]);
-		const work = currentSubagents(progressMap(payload("A", 0, "call-1", "running")), lifecycle);
+		const work = currentSubagents(progressMap(payload("A", 0, "call-1", "running")), lifecycle, []);
 		expect(work?.rows[0]?.status).toBe("completed");
 		expect(work?.active).toBe(0);
 	});
 
 	it("is null before any subagent reports", () => {
-		expect(currentSubagents(new Map(), noLifecycle)).toBeNull();
+		expect(currentSubagents(new Map(), noLifecycle, [])).toBeNull();
+	});
+
+	it("lists a running subagent that has not ticked since joining, from the agents list", () => {
+		const work = currentSubagents(progressMap(payload("Ticked", 0, "call-1", "running")), noLifecycle, [
+			agent("Main", "running", "main"),
+			agent("Ticked", "running"),
+			agent("Quiet", "running"),
+			agent("Parked", "parked"),
+		]);
+		expect(work?.rows.map(row => [row.id, row.status])).toEqual([
+			["Ticked", "running"],
+			["Quiet", "running"],
+		]);
+		expect(work?.active).toBe(2);
 	});
 });

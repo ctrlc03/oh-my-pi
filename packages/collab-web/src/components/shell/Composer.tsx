@@ -19,7 +19,9 @@ import { loadDraft, saveDraft } from "../../lib/rooms";
 import { insertAtCaret } from "../../lib/voice";
 import { ModelControls } from "./ModelControls";
 import { QuickReplies } from "./QuickReplies";
+import { useSlashMenu } from "./SlashMenu";
 import { useVoiceInput, VoiceButton, type VoiceSource, VoiceStatus } from "./VoiceInput";
+import { useHandsFree } from "./VoiceMode";
 
 export interface ComposerProps {
 	client: GuestClient;
@@ -254,7 +256,11 @@ export const Composer = memo(function Composer({
 		}),
 		[text],
 	);
-	const voiceInput = useVoiceInput(voice, insertVoice);
+	// Hands-free mode takes the transcription (to send it after a countdown) while it is on.
+	const handsFreeRef = useRef<((spoken: string) => boolean) | null>(null);
+	const voiceInput = useVoiceInput(voice, spoken => {
+		if (!handsFreeRef.current?.(spoken)) insertVoice(spoken);
+	});
 	const showVoice = voice !== null && (canType || voiceInput.step !== "idle");
 
 	/** Sends `override` (a quick reply) or the typed text with its attachments; `deliver` queues it behind the running turn. */
@@ -273,6 +279,26 @@ export const Composer = memo(function Composer({
 		},
 		[canType, client, files, images, text, uploading],
 	);
+	const handsFree = useHandsFree({
+		client,
+		input: voiceInput,
+		enabled: showVoice && canType,
+		uiRequest,
+		working,
+		interceptRef: handsFreeRef,
+		onSend: spoken => send(spoken),
+		onDraft: insertVoice,
+	});
+	// "/" in the draft lists the host's commands; picking one fills the draft, nothing is sent.
+	const slash = useSlashMenu({
+		client,
+		text,
+		enabled: canType,
+		onPick: picked => {
+			pendingCaretRef.current = picked.length;
+			setText(picked);
+		},
+	});
 
 	/** Reads or uploads one non-image file into a chip; resolves with the message to show when it is refused or fails. */
 	const attachFile = async (file: File): Promise<string | null> => {
@@ -339,6 +365,7 @@ export const Composer = memo(function Composer({
 	};
 
 	const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
+		if (slash.onKeyDown(e)) return;
 		if (e.key === "Escape" && busy && canPrompt) {
 			e.preventDefault();
 			e.stopPropagation();
@@ -354,6 +381,7 @@ export const Composer = memo(function Composer({
 	if (uiRequest && canPrompt) {
 		return (
 			<div className="sh-composer sh-composer-ask">
+				{handsFree.status}
 				<div className="sh-ask-title">{uiRequest.title}</div>
 				{uiRequest.kind === "select" ? (
 					<div className="sh-ask-options">
@@ -473,6 +501,8 @@ export const Composer = memo(function Composer({
 				</div>
 			)}
 			{showVoice && <VoiceStatus voice={voice} input={voiceInput} />}
+			{handsFree.status}
+			{slash.menu}
 			<div className="sh-composer-inner">
 				{!readOnly && (
 					<>
@@ -542,6 +572,7 @@ export const Composer = memo(function Composer({
 						</span>
 					)}
 					{showVoice && <VoiceButton input={voiceInput} />}
+					{handsFree.button}
 					{busy && !readOnly && (
 						<button
 							type="button"

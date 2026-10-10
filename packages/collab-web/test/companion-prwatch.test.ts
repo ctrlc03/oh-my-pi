@@ -113,6 +113,7 @@ describe("createPrWatch alerts", () => {
 			body: "Checks passed",
 			url: "https://github.com/acme/app/pull/7",
 		});
+		expect(h.alerts[0]?.open).toBeUndefined();
 		h.advance(PR_IDLE_CHECK_MS);
 		await h.watch.tick();
 		expect(h.alerts).toHaveLength(1);
@@ -126,6 +127,7 @@ describe("createPrWatch alerts", () => {
 		h.show("/repo", [pr({ checks: "fail", failing: "ci / lint" })]);
 		await h.watch.tick();
 		expect(h.alerts.map(a => a.body)).toEqual(["Checks failed: ci / lint"]);
+		expect(h.alerts[0]?.open).toBe("fix:acme%2Fapp/7");
 	});
 
 	it("does not alert when checks were already finished before the poll", async () => {

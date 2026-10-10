@@ -1,0 +1,95 @@
+/* ---- pull request files and review (GitHub sheet) ---- */
+.sh-gh-body[hidden] {
+	display: none;
+}
+
+.sh-prr {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-height: 0;
+}
+
+.sh-prr-notes {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	flex: none;
+	font-size: 11px;
+	color: var(--accent-b);
+}
+
+/* Stays reachable while a long diff scrolls. */
+.sh-prr-bar {
+	position: sticky;
+	bottom: 0;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 0;
+	background: var(--bg-raised);
+	border-top: 1px solid var(--border);
+}
+
+.sh-prr-count {
+	margin-right: auto;
+	font-size: 12px;
+	color: var(--fg-faint);
+}
+
+.sh-prr-post {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 8px 10px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	font-size: 13px;
+	max-height: 40vh;
+	overflow-y: auto;
+}
+
+.sh-prr-post-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-prr-post-body {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.sh-prr-checks {
+	font-size: 13px;
+}
+
+.sh-prr-checks-ok {
+	color: var(--ok);
+}
+
+.sh-prr-checks-warn {
+	color: var(--warn);
+}
+
+.sh-prr-checks-err {
+	color: var(--err);
+}
+
+.sh-prr-checks-faint {
+	color: var(--fg-faint);
+}
+
+/* The extra confirmation a draft or failing checks need. */
+.sh-prr-override {
+	color: var(--warn);
+}
+
+.sh-prr-tabs {
+	margin: 4px 0 8px;
+}

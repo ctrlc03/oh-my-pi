@@ -56,6 +56,8 @@ export interface HeaderBarProps {
 	onOpenGithub: (() => void) | null;
 	/** File tree and editor of the session's folder; null unless the paired computer can edit its files. */
 	onOpenEditor: (() => void) | null;
+	/** Scripts and build targets of the session's repository, run on the computer; null unless allowed for this session. */
+	onOpenRun: (() => void) | null;
 	/** Images the agent's tools produced this session. */
 	screenCount: number;
 	onOpenScreens(): void;
@@ -100,6 +102,7 @@ export const HeaderBar = memo(function HeaderBar({
 	onOpenPreview,
 	onOpenGithub,
 	onOpenEditor,
+	onOpenRun,
 	screenCount,
 	onOpenScreens,
 	workingTree,
@@ -338,6 +341,13 @@ export const HeaderBar = memo(function HeaderBar({
 						(() => {
 							setSheetOpen(false);
 							onOpenEditor();
+						})
+					}
+					onOpenRun={
+						onOpenRun &&
+						(() => {
+							setSheetOpen(false);
+							onOpenRun();
 						})
 					}
 					screenCount={screenCount}

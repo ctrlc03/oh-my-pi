@@ -10,6 +10,8 @@ import {
 	LocateFixed,
 	MessageSquarePlus,
 	PanelLeft,
+	PanelRight,
+	PanelRightClose,
 	RefreshCw,
 	Save,
 	TriangleAlert,
@@ -21,7 +23,9 @@ import type { CodemapNode, CompanionClient, FileTree } from "../../lib/companion
 import { FileChangedError } from "../../lib/companion";
 import { useRequest } from "../../lib/use-request";
 import { useMedia, WIDE_QUERY } from "../codemap/shared";
+import { DownloadButton } from "../shell/DownloadButton";
 import { Sheet } from "../shell/Sheet";
+import { DockPane } from "../shell/SplitPane";
 import type { EditorHooks } from "./editor";
 import { baseExtensions, fromDisk, markChanged, selectedLines, tabExtensions, wordAt } from "./editor";
 import type { TreeDir } from "./file-tree";
@@ -44,6 +48,8 @@ export interface IdeSheetProps {
 	edits: number;
 	/** Put text in the message box; null for view-only links. */
 	onSendToAgent: ((text: string) => void) | null;
+	/** Docking the editor beside the transcript is possible: the header offers the toggle. null: it is always a sheet. */
+	dock?: { docked: boolean; onDockedChange(docked: boolean): void } | null;
 	onClose(): void;
 }
 
@@ -147,14 +153,18 @@ export function IdeSheet({
 	canDefinition,
 	edits,
 	onSendToAgent,
+	dock,
 	onClose,
 }: IdeSheetProps): ReactNode {
 	const mem = memoryFor(instanceId);
 	const [, rerender] = useReducer((n: number) => n + 1, 0);
 	const host = useRef<HTMLDivElement>(null);
 	const viewRef = useRef<EditorView | null>(null);
-	const wide = useMedia(WIDE_QUERY);
-	const [treeOpen, setTreeOpen] = useState(() => mem.tabs.length === 0 || matchMedia(WIDE_QUERY).matches);
+	const docked = dock?.docked === true;
+	// A docked pane is narrower than the window: the file list overlays the editor as on narrow screens.
+	const viewportWide = useMedia(WIDE_QUERY);
+	const wide = viewportWide && !docked;
+	const [treeOpen, setTreeOpen] = useState(() => mem.tabs.length === 0 || wide);
 	const [expanded, setExpanded] = useState(mem.expanded);
 	const [opening, setOpening] = useState<string | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
@@ -379,7 +389,8 @@ export function IdeSheet({
 		const ext = mem.active.slice(mem.active.lastIndexOf(".") + 1);
 		const lines = from === to ? `${from}` : `${from}-${to}`;
 		onSendToAgent(`\`${mem.active}:${lines}\`\n${fence}${ext}\n${text}\n${fence}\n`);
-		onClose();
+		// Docked, the editor stays beside the message box the text just went to.
+		if (!docked) onClose();
 	};
 
 	// The extensions call through `mem.hooks`: point it at this render's closures.
@@ -499,200 +510,220 @@ export function IdeSheet({
 	}, []);
 	const openFromTree = useCallback((rel: string) => void openRef.current(absolutePath(mem, rel)), [mem]);
 
-	return (
-		<Sheet label="editor" size="full" onClose={onClose}>
-			<div className="sh-ide" onKeyDown={onSheetKey}>
-				<div className="sh-sheet-head sh-ide-head">
-					<button
-						type="button"
-						className={treeOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
-						onClick={() => setTreeOpen(open => !open)}
-						aria-label={treeOpen ? "hide files" : "show files"}
-						aria-pressed={treeOpen}
-						title="files"
-					>
-						<PanelLeft size={16} />
-					</button>
-					<QuickOpen inputRef={quickInput} files={tree?.files ?? null} onOpen={openFromTree} />
-					<span className="sh-ide-actions">
-						{canDefinition && (
-							<button
-								type="button"
-								className="sh-btn sh-btn-icon"
-								onClick={() => {
-									const view = viewRef.current;
-									if (view !== null) void definitionAt(view.state.selection.main.head);
-								}}
-								disabled={active === undefined}
-								aria-label="go to definition"
-								title="go to definition (F12, or Cmd/Ctrl+click)"
-							>
-								<LocateFixed size={16} />
-							</button>
-						)}
-						{onSendToAgent !== null && (
-							<button
-								type="button"
-								className="sh-btn sh-btn-icon"
-								onClick={sendSelection}
-								disabled={active === undefined}
-								aria-label="ask the agent about the selection"
-								title="ask the agent about the selection"
-							>
-								<MessageSquarePlus size={16} />
-							</button>
-						)}
-						{active?.writable === true && (
-							<button
-								type="button"
-								className="sh-btn sh-ide-save"
-								onClick={() => void save(active.path)}
-								disabled={!active.dirty || active.saving}
-								title="save (Cmd/Ctrl+S)"
-							>
-								{active.saving ? <LoaderCircle size={14} className="sh-spin" /> : <Save size={14} />}
-								<span>Save</span>
-							</button>
-						)}
-						<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
-							<X size={16} />
+	const frame = (
+		<div className="sh-ide" onKeyDown={onSheetKey}>
+			<div className="sh-sheet-head sh-ide-head">
+				<button
+					type="button"
+					className={treeOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
+					onClick={() => setTreeOpen(open => !open)}
+					aria-label={treeOpen ? "hide files" : "show files"}
+					aria-pressed={treeOpen}
+					title="files"
+				>
+					<PanelLeft size={16} />
+				</button>
+				<QuickOpen inputRef={quickInput} files={tree?.files ?? null} onOpen={openFromTree} />
+				<span className="sh-ide-actions">
+					{canDefinition && (
+						<button
+							type="button"
+							className="sh-btn sh-btn-icon"
+							onClick={() => {
+								const view = viewRef.current;
+								if (view !== null) void definitionAt(view.state.selection.main.head);
+							}}
+							disabled={active === undefined}
+							aria-label="go to definition"
+							title="go to definition (F12, or Cmd/Ctrl+click)"
+						>
+							<LocateFixed size={16} />
 						</button>
-					</span>
-				</div>
-				<div className="sh-ide-body" data-tree={treeOpen ? "open" : "closed"} data-wide={wide ? "true" : "false"}>
-					{treeOpen && (
-						<aside className="sh-ide-tree" aria-label="files">
-							{treeState.status === "loading" && (
-								<div className="sh-companion-empty sh-file-status">
-									<LoaderCircle size={14} className="sh-spin" /> Listing files…
-								</div>
-							)}
-							{treeState.status === "error" && (
-								<div className="sh-tree-error">
-									<div className="sh-connect-error">{treeState.message}</div>
-									<button type="button" className="sh-btn" onClick={reloadTree}>
-										<RefreshCw size={14} /> Retry
-									</button>
-								</div>
-							)}
-							{rootDir !== null && (
-								<TreeView
-									dir={rootDir}
-									depth={0}
-									expanded={expanded}
-									active={mem.active}
-									dirty={dirtyPaths}
-									onToggle={toggleDir}
-									onOpen={openFromTree}
-								/>
-							)}
-							{tree?.truncated === true && (
-								<div className="sh-file-note">Only the first {tree.files.length} files are listed.</div>
-							)}
-						</aside>
 					)}
-					<section className="sh-ide-main">
-						<div className="sh-ide-tabs" role="tablist">
-							{mem.tabs.map(tab => (
-								<div
-									key={tab.path}
-									className={tab.path === mem.active ? "sh-ide-tab sh-ide-tab-on" : "sh-ide-tab"}
-									title={tab.path}
-								>
-									<button
-										type="button"
-										role="tab"
-										aria-selected={tab.path === mem.active}
-										className="sh-ide-tab-name"
-										onClick={() => activate(tab.path)}
-									>
-										{baseName(tab.path)}
-										{tab.conflict !== null && <TriangleAlert size={12} className="sh-ide-tab-warn" />}
-									</button>
-									<button
-										type="button"
-										className="sh-ide-tab-close"
-										onClick={() => closeTab(tab.path)}
-										aria-label={`close ${baseName(tab.path)}`}
-										data-dirty={tab.dirty ? "true" : "false"}
-									>
-										<span className="sh-ide-dot" aria-hidden />
-										<X size={12} />
-									</button>
-								</div>
-							))}
-							{opening !== null && (
-								<span className="sh-ide-tab sh-ide-tab-opening">
-									<LoaderCircle size={12} className="sh-spin" /> {baseName(opening)}
-								</span>
-							)}
-						</div>
-						{active?.conflict != null && (
-							<ConflictBar
-								tab={active}
-								onReload={() =>
-									void reloadFromDisk(active.path, true).catch((err: unknown) =>
-										notify(`Could not reload: ${messageOf(err)}`),
-									)
-								}
-								onOverwrite={() => {
-									if (active.conflict?.kind === "changed") void save(active.path, active.conflict.version);
-								}}
-								onClose={() => closeTab(active.path)}
-							/>
-						)}
-						{active?.truncated === true && (
-							<div className="sh-file-note sh-ide-bar">
-								Showing the start of the file only: it is larger than the editor reads, so it is read-only.
-							</div>
-						)}
-						<div ref={host} className="sh-ide-editor" hidden={active === undefined} />
-						{active === undefined && (
-							<div className="sh-ide-empty">
-								<FileCode size={28} />
-								<div>Pick a file from the list, or press Cmd/Ctrl+P to find one.</div>
-							</div>
-						)}
-						{definition !== null && (
-							<DefinitionList
-								definition={definition}
-								onPick={hit => {
-									setDefinition(null);
-									void openFile(absolutePath(mem, hit.path), hit.line);
-								}}
-								onClose={() => setDefinition(null)}
-							/>
-						)}
-						<div className="sh-ide-status">
-							{active === undefined ? (
-								<span>{tree === null ? "" : `${tree.files.length} files`}</span>
-							) : (
-								<>
-									<span className="sh-ide-status-path" title={active.path}>
-										{active.path}
-									</span>
-									{active.changed > 0 && (
-										<span className="sh-ide-status-changed">
-											{active.changed} line{active.changed === 1 ? "" : "s"} changed on disk
-										</span>
-									)}
-									{!active.writable && <span>Read-only</span>}
-									<span>{active.language ?? "Plain text"}</span>
-									<span>
-										Ln {cursor.line}, Col {cursor.col}
-										{cursor.selected > 0 ? ` (${cursor.selected} selected)` : ""}
-									</span>
-								</>
-							)}
-							{notice !== null && (
-								<span className="sh-ide-notice" role="status">
-									{notice}
-								</span>
-							)}
-						</div>
-					</section>
-				</div>
+					{onSendToAgent !== null && (
+						<button
+							type="button"
+							className="sh-btn sh-btn-icon"
+							onClick={sendSelection}
+							disabled={active === undefined}
+							aria-label="ask the agent about the selection"
+							title="ask the agent about the selection"
+						>
+							<MessageSquarePlus size={16} />
+						</button>
+					)}
+					{active !== undefined && (
+						<DownloadButton client={client} instanceId={instanceId} path={active.request} />
+					)}
+					{active?.writable === true && (
+						<button
+							type="button"
+							className="sh-btn sh-ide-save"
+							onClick={() => void save(active.path)}
+							disabled={!active.dirty || active.saving}
+							title="save (Cmd/Ctrl+S)"
+						>
+							{active.saving ? <LoaderCircle size={14} className="sh-spin" /> : <Save size={14} />}
+							<span>Save</span>
+						</button>
+					)}
+					{dock != null && (
+						<button
+							type="button"
+							className={docked ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
+							onClick={() => dock.onDockedChange(!docked)}
+							aria-pressed={docked}
+							aria-label={docked ? "show as a sheet" : "open beside the transcript"}
+							title={docked ? "show as a sheet" : "open beside the transcript"}
+						>
+							{docked ? <PanelRightClose size={16} /> : <PanelRight size={16} />}
+						</button>
+					)}
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+						<X size={16} />
+					</button>
+				</span>
 			</div>
+			<div className="sh-ide-body" data-tree={treeOpen ? "open" : "closed"} data-wide={wide ? "true" : "false"}>
+				{treeOpen && (
+					<aside className="sh-ide-tree" aria-label="files">
+						{treeState.status === "loading" && (
+							<div className="sh-companion-empty sh-file-status">
+								<LoaderCircle size={14} className="sh-spin" /> Listing files…
+							</div>
+						)}
+						{treeState.status === "error" && (
+							<div className="sh-tree-error">
+								<div className="sh-connect-error">{treeState.message}</div>
+								<button type="button" className="sh-btn" onClick={reloadTree}>
+									<RefreshCw size={14} /> Retry
+								</button>
+							</div>
+						)}
+						{rootDir !== null && (
+							<TreeView
+								dir={rootDir}
+								depth={0}
+								expanded={expanded}
+								active={mem.active}
+								dirty={dirtyPaths}
+								onToggle={toggleDir}
+								onOpen={openFromTree}
+							/>
+						)}
+						{tree?.truncated === true && (
+							<div className="sh-file-note">Only the first {tree.files.length} files are listed.</div>
+						)}
+					</aside>
+				)}
+				<section className="sh-ide-main">
+					<div className="sh-ide-tabs" role="tablist">
+						{mem.tabs.map(tab => (
+							<div
+								key={tab.path}
+								className={tab.path === mem.active ? "sh-ide-tab sh-ide-tab-on" : "sh-ide-tab"}
+								title={tab.path}
+							>
+								<button
+									type="button"
+									role="tab"
+									aria-selected={tab.path === mem.active}
+									className="sh-ide-tab-name"
+									onClick={() => activate(tab.path)}
+								>
+									{baseName(tab.path)}
+									{tab.conflict !== null && <TriangleAlert size={12} className="sh-ide-tab-warn" />}
+								</button>
+								<button
+									type="button"
+									className="sh-ide-tab-close"
+									onClick={() => closeTab(tab.path)}
+									aria-label={`close ${baseName(tab.path)}`}
+									data-dirty={tab.dirty ? "true" : "false"}
+								>
+									<span className="sh-ide-dot" aria-hidden />
+									<X size={12} />
+								</button>
+							</div>
+						))}
+						{opening !== null && (
+							<span className="sh-ide-tab sh-ide-tab-opening">
+								<LoaderCircle size={12} className="sh-spin" /> {baseName(opening)}
+							</span>
+						)}
+					</div>
+					{active?.conflict != null && (
+						<ConflictBar
+							tab={active}
+							onReload={() =>
+								void reloadFromDisk(active.path, true).catch((err: unknown) =>
+									notify(`Could not reload: ${messageOf(err)}`),
+								)
+							}
+							onOverwrite={() => {
+								if (active.conflict?.kind === "changed") void save(active.path, active.conflict.version);
+							}}
+							onClose={() => closeTab(active.path)}
+						/>
+					)}
+					{active?.truncated === true && (
+						<div className="sh-file-note sh-ide-bar">
+							Showing the start of the file only: it is larger than the editor reads, so it is read-only.
+						</div>
+					)}
+					<div ref={host} className="sh-ide-editor" hidden={active === undefined} />
+					{active === undefined && (
+						<div className="sh-ide-empty">
+							<FileCode size={28} />
+							<div>Pick a file from the list, or press Cmd/Ctrl+P to find one.</div>
+						</div>
+					)}
+					{definition !== null && (
+						<DefinitionList
+							definition={definition}
+							onPick={hit => {
+								setDefinition(null);
+								void openFile(absolutePath(mem, hit.path), hit.line);
+							}}
+							onClose={() => setDefinition(null)}
+						/>
+					)}
+					<div className="sh-ide-status">
+						{active === undefined ? (
+							<span>{tree === null ? "" : `${tree.files.length} files`}</span>
+						) : (
+							<>
+								<span className="sh-ide-status-path" title={active.path}>
+									{active.path}
+								</span>
+								{active.changed > 0 && (
+									<span className="sh-ide-status-changed">
+										{active.changed} line{active.changed === 1 ? "" : "s"} changed on disk
+									</span>
+								)}
+								{!active.writable && <span>Read-only</span>}
+								<span>{active.language ?? "Plain text"}</span>
+								<span>
+									Ln {cursor.line}, Col {cursor.col}
+									{cursor.selected > 0 ? ` (${cursor.selected} selected)` : ""}
+								</span>
+							</>
+						)}
+						{notice !== null && (
+							<span className="sh-ide-notice" role="status">
+								{notice}
+							</span>
+						)}
+					</div>
+				</section>
+			</div>
+		</div>
+	);
+	return docked ? (
+		<DockPane label="editor">{frame}</DockPane>
+	) : (
+		<Sheet label="editor" size="full" onClose={onClose}>
+			{frame}
 		</Sheet>
 	);
 }

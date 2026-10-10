@@ -1,6 +1,7 @@
-import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, MessageSquare, X } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Download, ExternalLink, MessageSquare, X } from "lucide-react";
 import type { PointerEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { imageBlob, imageFileName, saveBlob } from "../../lib/download";
 import { relTime } from "../../lib/format";
 import type { Screen } from "../../lib/screens";
 import { openImage } from "../../tool-render";
@@ -153,6 +154,15 @@ export function ScreensSheet({ screens, onJump, onClose }: ScreensSheetProps): R
 						<div className="sh-screen-actions">
 							<button type="button" className="sh-btn" onClick={() => openImage(viewing.image)}>
 								<ExternalLink size={14} /> Open original
+							</button>
+							<button
+								type="button"
+								className="sh-btn"
+								onClick={() =>
+									void saveBlob(imageBlob(viewing.image), imageFileName(viewing.tool, viewing.image.mimeType))
+								}
+							>
+								<Download size={14} /> Download
 							</button>
 							<button
 								type="button"

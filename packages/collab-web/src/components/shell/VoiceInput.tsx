@@ -16,6 +16,8 @@ type Step = "idle" | "confirm" | "downloading" | "starting" | "recording" | "tra
 
 export interface VoiceInput {
 	step: Step;
+	/** The microphone stream while `step` is "recording", for level metering; otherwise null. */
+	stream: MediaStream | null;
 	error: string | null;
 	/** Whole seconds recorded so far. */
 	elapsed: number;
@@ -28,6 +30,9 @@ export interface VoiceInput {
 }
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** The error shown when a recording held no words; hands-free mode listens again on it. */
+export const NO_SPEECH = "No speech was detected.";
 
 /**
  * Voice input state machine: setup prompt → recording → transcribing → `onText`. The text is
@@ -73,7 +78,7 @@ export function useVoiceInput(voice: VoiceSource | null, onText: (text: string) 
 			if (!current) throw new Error("Your computer is offline.");
 			const text = (await current.client.requestTranscribe(audio, blob.type || "application/octet-stream")).trim();
 			if (!aliveRef.current) return;
-			if (text === "") setError("No speech was detected.");
+			if (text === "") setError(NO_SPEECH);
 			else latest.current.onText(text);
 		} catch (err) {
 			if (aliveRef.current) setError(message(err));
@@ -140,7 +145,9 @@ export function useVoiceInput(voice: VoiceSource | null, onText: (text: string) 
 		);
 	}, []);
 
-	return { step, error, elapsed, press, cancel, download };
+	// `recordingRef` is set before the step becomes "recording", so the stream is there from the first such render.
+	const stream = step === "recording" ? (recordingRef.current?.stream ?? null) : null;
+	return { step, stream, error, elapsed, press, cancel, download };
 }
 
 export function VoiceButton({ input }: { input: VoiceInput }): ReactNode {

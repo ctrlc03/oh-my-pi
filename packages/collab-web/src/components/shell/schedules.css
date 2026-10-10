@@ -1,0 +1,126 @@
+/* Schedules sheet: scheduled prompts and their editor.
+ * Builds on the shell.css sheet, recents, chip and button primitives; token colours only. */
+
+.sh-sched-head-actions {
+	display: inline-flex;
+	gap: 4px;
+}
+
+.sh-sched-note {
+	margin: 0;
+	line-height: 1.45;
+}
+
+.sh-sched-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-sched {
+	display: grid;
+	gap: 8px;
+	padding: 10px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-sched-head {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+}
+
+.sh-sched-info {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+}
+
+.sh-sched-result {
+	font-size: 12px;
+	color: var(--fg-muted);
+	overflow-wrap: anywhere;
+}
+
+.sh-sched-result-ok {
+	color: var(--ok);
+}
+
+.sh-sched-result-err {
+	color: var(--err);
+}
+
+.sh-sched-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+
+.sh-sched-actions .sh-btn-icon:nth-last-child(2) {
+	margin-left: auto;
+}
+
+.sh-sched-confirm {
+	display: grid;
+	gap: 8px;
+	padding: 8px;
+	background: color-mix(in srgb, var(--warn) 10%, transparent);
+	border-radius: var(--radius-sm);
+}
+
+.sh-sched-confirm-actions {
+	display: flex;
+	gap: 6px;
+}
+
+.sh-sched-delete {
+	color: var(--err);
+	border-color: color-mix(in srgb, var(--err) 40%, transparent);
+}
+
+.sh-sched-form {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.sh-sched-form .sh-start-sandbox {
+	margin-bottom: 0;
+}
+
+.sh-sched-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+}
+
+.sh-sched-field .sh-segmented {
+	align-self: flex-start;
+}
+
+.sh-sched-days {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.sh-sched-day {
+	height: 30px;
+	padding: 0 12px;
+	cursor: pointer;
+}
+
+.sh-sched-day-on {
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft);
+	border-color: transparent;
+}

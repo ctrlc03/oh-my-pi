@@ -21,8 +21,8 @@ export interface ModelListProps {
 	current: WireModel | undefined;
 	/** `provider/id` of the picked model; called only when it differs from `current`. */
 	onChange(spec: string): void;
-	/** Any pick, current or not: the caller closes its picker. */
-	onDone(): void;
+	/** Any pick, current or not: the caller closes its picker. Absent keeps the picker open. */
+	onDone?(): void;
 }
 
 /** Every model the host offers, providers as headings, one tappable row per model. */
@@ -42,7 +42,7 @@ export function ModelList({ models, current, onChange, onDone }: ModelListProps)
 								aria-selected={on}
 								className={on ? "sh-model sh-model-on" : "sh-model"}
 								onClick={() => {
-									onDone();
+									onDone?.();
 									if (!on) onChange(`${model.provider}/${model.id}`);
 								}}
 							>
@@ -68,6 +68,8 @@ export interface ModelControlsProps {
 	thinkingLevels: readonly string[] | undefined;
 	disabled: boolean;
 	onSessionCommand(cmd: SessionCommand, arg?: string): void;
+	/** Extra pills after the thinking pill. */
+	children?: ReactNode;
 }
 
 interface OpenMenu {
@@ -84,6 +86,7 @@ export function ModelControls({
 	thinkingLevels,
 	disabled,
 	onSessionCommand,
+	children,
 }: ModelControlsProps): ReactNode {
 	const [menu, setMenu] = useState<OpenMenu | null>(null);
 	const close = useCallback(() => setMenu(null), []);
@@ -151,6 +154,7 @@ export function ModelControls({
 					</div>
 				</Sheet>
 			)}
+			{children}
 		</div>
 	);
 }

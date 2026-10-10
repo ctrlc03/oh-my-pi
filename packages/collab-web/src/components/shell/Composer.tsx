@@ -2,7 +2,7 @@ import type { CollabUiRequest, ImageContent, SessionCommand, WireModel } from "@
 import { File as FileIcon, FileText, ListEnd, LoaderCircle, Paperclip, SendHorizontal, Square, X } from "lucide-react";
 import type { ClipboardEvent, KeyboardEvent, ReactNode, Ref, RefObject } from "react";
 import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
-import type { ConnectionPhase, GuestClient } from "../../lib/client";
+import type { ConnectionPhase, GuestClient, PromptModelChoice } from "../../lib/client";
 import {
 	type AttachedFile,
 	composePrompt,
@@ -18,6 +18,7 @@ import { MAX_ATTACHMENTS, toImageContent } from "../../lib/images";
 import { loadDraft, saveDraft } from "../../lib/rooms";
 import { insertAtCaret } from "../../lib/voice";
 import { ModelControls } from "./ModelControls";
+import { modelOfChoice, PromptModelPicker } from "./PromptModelPicker";
 import { QuickReplies } from "./QuickReplies";
 import { useSlashMenu } from "./SlashMenu";
 import { useVoiceInput, VoiceButton, type VoiceSource, VoiceStatus } from "./VoiceInput";
@@ -49,6 +50,10 @@ export interface ComposerProps {
 	thinkingLevel: string | undefined;
 	/** Levels the current model accepts; absent on hosts without session controls. */
 	thinkingLevels: readonly string[] | undefined;
+	/** A paired computer can follow this session to its next room, so slash commands that replace the session are offered. */
+	followsRoom: boolean;
+	/** The host runs a prompt on a model the writer picks for it alone: offers the per-message model pill. */
+	promptModel: boolean;
 	onSessionCommand(cmd: SessionCommand, arg?: string): void;
 	ref?: Ref<ComposerHandle>;
 }
@@ -182,6 +187,8 @@ export const Composer = memo(function Composer({
 	model,
 	thinkingLevel,
 	thinkingLevels,
+	followsRoom,
+	promptModel,
 	onSessionCommand,
 	ref,
 }: ComposerProps): ReactNode {
@@ -196,6 +203,8 @@ export const Composer = memo(function Composer({
 	const pendingCaretRef = useRef<number | null>(null);
 	// Bumped by `replace` so the caret/focus effect also runs when the new text equals the old.
 	const [caretTick, setCaretTick] = useState(0);
+	// The model (and thinking level) the next message alone runs on; cleared once it is sent.
+	const [promptChoice, setPromptChoice] = useState<PromptModelChoice | null>(null);
 	const fileRef = useRef<HTMLInputElement | null>(null);
 	const { composingRef, onCompositionStart, onCompositionEnd } = useCompositionGuard();
 
@@ -268,7 +277,11 @@ export const Composer = memo(function Composer({
 		(override?: string, deliver?: "follow-up"): void => {
 			const prompt = override === undefined ? composePrompt(text, files) : override.trim();
 			if (!prompt || !canType || uploading) return;
-			client.sendPrompt(prompt, images, deliver);
+			// A choice for a model the host stopped offering is dropped rather than sent.
+			const choice =
+				promptModel && modelOfChoice(models ?? [], promptChoice) ? (promptChoice ?? undefined) : undefined;
+			client.sendPrompt(prompt, images, deliver, choice);
+			setPromptChoice(null);
 			setImages([]);
 			setFiles([]);
 			setAttachError(null);
@@ -277,7 +290,7 @@ export const Composer = memo(function Composer({
 				caretRef.current = null;
 			}
 		},
-		[canType, client, files, images, text, uploading],
+		[canType, client, files, images, models, promptChoice, promptModel, text, uploading],
 	);
 	const handsFree = useHandsFree({
 		client,
@@ -294,6 +307,9 @@ export const Composer = memo(function Composer({
 		client,
 		text,
 		enabled: canType,
+		models,
+		thinkingLevels,
+		followsRoom,
 		onPick: picked => {
 			pendingCaretRef.current = picked.length;
 			setText(picked);
@@ -534,7 +550,17 @@ export const Composer = memo(function Composer({
 								thinkingLevels={thinkingLevels}
 								disabled={!live}
 								onSessionCommand={onSessionCommand}
-							/>
+							>
+								{promptModel && (
+									<PromptModelPicker
+										models={models}
+										sessionModel={model}
+										choice={promptChoice}
+										onChoice={setPromptChoice}
+										disabled={!canType}
+									/>
+								)}
+							</ModelControls>
 						)}
 					</>
 				)}

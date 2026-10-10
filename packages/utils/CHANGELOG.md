@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `getFileSnapshotsDir`, the agent-dir folder holding the per-repository working-tree snapshot stores used by rewind
+
 ## [18.8.9] - 2026-10-10
 
 ### Added

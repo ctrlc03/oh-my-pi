@@ -231,6 +231,31 @@ describe("collab link format", () => {
 		expect(Buffer.from(parsed.writeToken ?? new Uint8Array())).toEqual(Buffer.from(token));
 	});
 
+	it("carries a loopback local relay through full and web links, with the write token intact", () => {
+		const token = generateWriteToken();
+		for (const link of [
+			formatCollabLink(DEFAULT_RELAY_URL, roomId, key, token, "ws://127.0.0.1:7467"),
+			formatCollabWebLink(DEFAULT_RELAY_URL, roomId, key, token, undefined, "ws://127.0.0.1:7467"),
+		]) {
+			const parsed = parseCollabLink(link);
+			if ("error" in parsed) throw new Error(parsed.error);
+			expect(parsed.wsUrl).toBe(`${DEFAULT_RELAY_URL}/r/${roomId}`);
+			expect(parsed.localWsUrl).toBe(`ws://127.0.0.1:7467/r/${roomId}`);
+			expect(Buffer.from(parsed.writeToken ?? new Uint8Array())).toEqual(Buffer.from(token));
+		}
+	});
+
+	it("drops a non-loopback local relay from a link and refuses to write one", () => {
+		const forged = formatCollabLink(DEFAULT_RELAY_URL, roomId, key, undefined, "ws://127.0.0.1:7467").replace(
+			"127.0.0.1:7467",
+			"evil.example.com:7467",
+		);
+		const parsed = parseCollabLink(forged);
+		if ("error" in parsed) throw new Error(parsed.error);
+		expect(parsed.localWsUrl).toBeUndefined();
+		expect(() => formatCollabLink(DEFAULT_RELAY_URL, roomId, key, undefined, "ws://evil.example.com:7467")).toThrow();
+	});
+
 	it("rejects secrets that are neither 32 nor 48 bytes", () => {
 		const bad = Buffer.alloc(40, 1).toString("base64url");
 		expect("error" in parseCollabLink(`${roomId}#${bad}`)).toBe(true);

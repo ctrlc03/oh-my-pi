@@ -13,28 +13,85 @@
  * MCP prompts (their handlers get a command context that can shut the host
  * down, replace its session, or open host UI, and nothing says which ones only
  * produce a prompt), and every builtin that exits, signs in, edits settings or
- * credentials, switches or moves the session, or opens a host selector.
+ * credentials, or opens a host selector. {@link COLLAB_RUNNABLE_BUILTINS} says
+ * which builtins stay and why the session-replacing ones are conditional.
  */
-import type { CollabCommand } from "@oh-my-pi/pi-wire";
+import type { CollabCommand, CollabCommandChoice, SessionCommand } from "@oh-my-pi/pi-wire";
 import { expandPromptTemplate, type PromptTemplate } from "../config/prompt-templates";
 import { expandSlashCommand, type FileSlashCommand } from "../extensibility/slash-commands";
 import { BUILTIN_SLASH_COMMAND_DEFS, lookupBuiltinSlashCommand } from "../slash-commands/builtin-registry";
 import { parseSlashCommand } from "../slash-commands/helpers/parse";
 
+/** How a writer may follow a builtin's name. */
+export interface CollabRunnableBuiltin {
+	/** Replaces the registry's description where its wording would mislead a guest. */
+	description?: string;
+	/** Argument hint shown after the name; the registry's inline hint when absent. */
+	args?: string;
+	/**
+	 * `none` refuses any argument, `required` refuses the bare name (its bare form
+	 * opens a selector on the host, or does something the guest did not ask for),
+	 * `optional` takes either. Absent: whatever the registry's `allowArgs` says.
+	 */
+	takes?: "none" | "optional" | "required";
+	/** Running it replaces the host's session, and with it the room: listed only where the host reopens one. */
+	switchesSession?: true;
+	/** Runs, but is not listed in `welcome.commands` (an alias of a listed command). */
+	unlisted?: true;
+	/** The guest session control (`session-cmd`) that runs it, with the same validation and refusals. */
+	sessionCmd?: SessionCommand;
+}
+
 /**
- * Builtins a writer may run, keyed by canonical name. `description` replaces the
- * registry's where its wording would mislead a guest.
+ * Builtins a writer may run, keyed by canonical name.
  *
  * - `plan`: enters plan mode, optionally with a first prompt. Session-scoped and
  *   reversible, no credentials or settings. Leaving it can open a confirm dialog
  *   on the host terminal, so the host refuses `/plan` while plan mode is on.
  * - `retry`: re-runs the last failed turn; no UI, no arguments.
+ * - `compact`, `model` / `switch`, `effort`, `rename`: the guest session controls
+ *   (`session-cmd`) with a slash spelling. `/model` is the session-only switch
+ *   (what `/switch` does): the host's `/model` opens a selector that can also
+ *   change saved defaults, which a guest never reaches.
+ * - `new`, `resume`, `fork`: replace the session; see ./guest-session-commands.
  *
- * `compact`, `rename` and the model/thinking switches are `session-cmd`s already.
+ * Not here, on purpose: `/clear` and `/shake` rewrite what the model sees without
+ * the transcript guests replicate showing it; `/handoff`, `/fresh`, `/branch`,
+ * `/tree` and `/delete` have a host selector or confirm in their way or destroy
+ * the host's work; the rest edit settings, accounts, files or the host process.
  */
-export const COLLAB_RUNNABLE_BUILTINS: Record<string, { description?: string }> = {
+export const COLLAB_RUNNABLE_BUILTINS: Record<string, CollabRunnableBuiltin> = {
 	plan: { description: "Enter plan mode: the agent plans before executing" },
 	retry: {},
+	compact: {
+		description: "Compact the conversation to free context",
+		args: "[instructions]",
+		takes: "optional",
+		sessionCmd: "compact",
+	},
+	model: { description: "Switch this session's model", args: "<provider/id>", takes: "required", sessionCmd: "model" },
+	switch: {
+		description: "Switch this session's model",
+		args: "<provider/id>",
+		takes: "required",
+		sessionCmd: "model",
+		unlisted: true,
+	},
+	effort: {
+		description: "Set the thinking level for this session",
+		args: "<level>",
+		takes: "required",
+		sessionCmd: "thinking",
+	},
+	rename: { description: "Rename this session", args: "<title>", takes: "required", sessionCmd: "rename" },
+	new: { description: "Start a new session; the room follows it", takes: "none", switchesSession: true },
+	resume: {
+		description: "Resume another session from this folder",
+		args: "<session>",
+		takes: "required",
+		switchesSession: true,
+	},
+	fork: { description: "Fork this session into a new one", takes: "none", switchesSession: true },
 };
 
 /** The host state command routing and listing read; the host builds it from its live session. */
@@ -45,6 +102,10 @@ export interface GuestCommandSource {
 	promptTemplates: readonly PromptTemplate[];
 	/** An extension, TypeScript custom or MCP prompt command named `name` exists: the host runs it, guests may not. */
 	hasHostOnlyCommand(name: string): boolean;
+	/** The host reopens a control room after its session switches, so a guest can follow `/new`, `/resume` and `/fork`. */
+	keepsGuestsAcrossSwitch: boolean;
+	/** Suggested `/resume` arguments: the folder's recent sessions. */
+	resumeChoices: readonly CollabCommandChoice[];
 }
 
 export type GuestCommandRoute =
@@ -73,7 +134,12 @@ function oneLine(text: string | undefined, limit: number): string | undefined {
 export function buildGuestCommands(source: GuestCommandSource): CollabCommand[] {
 	const commands: CollabCommand[] = [];
 	const seen: Record<string, true> = {};
-	const add = (name: string, description: string | undefined, args: string | undefined): void => {
+	const add = (
+		name: string,
+		description: string | undefined,
+		args: string | undefined,
+		extra?: Pick<CollabCommand, "choices" | "switchesSession">,
+	): void => {
 		if (commands.length >= MAX_WELCOME_COMMANDS || Object.hasOwn(seen, name) || /\s/.test(name)) return;
 		seen[name] = true;
 		const entry: CollabCommand = { name };
@@ -81,6 +147,8 @@ export function buildGuestCommands(source: GuestCommandSource): CollabCommand[] 
 		const hint = oneLine(args, 64);
 		if (desc) entry.description = desc;
 		if (hint) entry.args = hint;
+		if (extra?.choices && extra.choices.length > 0) entry.choices = extra.choices;
+		if (extra?.switchesSession) entry.switchesSession = true;
 		commands.push(entry);
 	};
 	// A name a builtin, extension or custom command owns never reaches the file or
@@ -92,7 +160,13 @@ export function buildGuestCommands(source: GuestCommandSource): CollabCommand[] 
 		const allowed = Object.hasOwn(COLLAB_RUNNABLE_BUILTINS, spec.name)
 			? COLLAB_RUNNABLE_BUILTINS[spec.name]
 			: undefined;
-		if (allowed) add(spec.name, allowed.description ?? spec.description, spec.inlineHint);
+		if (!allowed || allowed.unlisted) continue;
+		// A command that ends the room is no use to a guest the host would not follow.
+		if (allowed.switchesSession && !source.keepsGuestsAcrossSwitch) continue;
+		add(spec.name, allowed.description ?? spec.description, allowed.args ?? spec.inlineHint, {
+			choices: spec.name === "resume" ? [...source.resumeChoices] : undefined,
+			switchesSession: allowed.switchesSession,
+		});
 	}
 	for (const command of source.fileCommands) {
 		if (!taken(command.name)) add(command.name, command.description, command.argumentHint);
@@ -122,8 +196,17 @@ export function routeGuestCommand(text: string, source: GuestCommandSource): Gue
 		if (!Object.hasOwn(COLLAB_RUNNABLE_BUILTINS, builtin.name)) {
 			return { kind: "refused", message: `/${builtin.name} can only be run on the host` };
 		}
-		if (parsed.args && !builtin.allowArgs) {
+		const allowed = COLLAB_RUNNABLE_BUILTINS[builtin.name];
+		const takes = allowed.takes ?? (builtin.allowArgs ? "optional" : "none");
+		if (takes === "none" && parsed.args) {
 			return { kind: "refused", message: `/${builtin.name} takes no arguments` };
+		}
+		if (takes === "required" && !parsed.args) {
+			// The bare form opens a selector (or guesses) on the host terminal; a guest names its target.
+			return {
+				kind: "refused",
+				message: `/${builtin.name} needs an argument: /${builtin.name} ${allowed.args ?? builtin.inlineHint ?? "<value>"}`,
+			};
 		}
 		return { kind: "builtin", name: builtin.name, args: parsed.args };
 	}

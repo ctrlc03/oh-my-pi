@@ -22,6 +22,7 @@ import type {
 	CollabUiResponseValue,
 	HostFrame,
 	ImageContent,
+	RewindFilesPlan,
 	SessionCommand,
 	SessionEntry,
 	SessionHeader,
@@ -39,6 +40,14 @@ import { CollabSocket } from "./socket";
 
 export type ConnectionPhase = "connecting" | "waiting" | "live" | "reconnecting" | "ended";
 
+/** A model (and optionally a thinking level) one prompt runs on, instead of the session's. */
+export interface PromptModelChoice {
+	/** `provider/id`, one of `GuestSnapshot.models`. */
+	model: string;
+	/** One of that model's `thinkingLevels`; absent keeps the session's level. */
+	thinking?: string;
+}
+
 export interface ActiveTool {
 	toolCallId: string;
 	toolName: string;
@@ -46,6 +55,22 @@ export interface ActiveTool {
 	intent?: string;
 	partialResult?: unknown;
 	startedAt: number;
+}
+
+/** What restoring the files before one prompt would change; `files` is null when the host recorded no snapshot for it. */
+export interface RewindPreview {
+	entryId: string;
+	files: RewindFilesPlan | null;
+}
+
+/** A file restore the host performed (`restore`, with a rewind) or undid (`redo`). */
+export interface FileRestoreInfo {
+	kind: "restore" | "redo";
+	plan: RewindFilesPlan;
+	/** Files left alone because a path the snapshot does not cover was in the way. */
+	skipped: number;
+	/** Whether `redo-files` can still undo it. */
+	canRedo: boolean;
 }
 
 export interface Notice {
@@ -90,6 +115,10 @@ export interface GuestSnapshot {
 	commands: readonly CollabCommand[];
 	/** Texts of the host's queued follow-ups, oldest first. */
 	followUps: readonly string[];
+	/** Latest answer to a `rewind-preview` request; null until one arrives and after a reconnect. */
+	rewindPreview: RewindPreview | null;
+	/** The file restore the host last reported, while it can still be undone or just happened; cleared when a turn starts. */
+	fileRestore: FileRestoreInfo | null;
 }
 
 const MAX_NOTICES = 50;
@@ -218,6 +247,8 @@ export class GuestClient {
 	#models: readonly WireModel[] | null = null;
 	#features: Readonly<Partial<Record<CollabFeature, true>>> = NO_FEATURES;
 	#commands: readonly CollabCommand[] = NO_COMMANDS;
+	#rewindPreview: RewindPreview | null = null;
+	#fileRestore: FileRestoreInfo | null = null;
 	/** Room the offline prompt queue is persisted under. */
 	readonly #roomId: string;
 	#queue: QueuedPrompt[] = [];
@@ -258,7 +289,12 @@ export class GuestClient {
 		this.#store = store;
 		// A view link never queues: the host would drop every prompt.
 		if (this.#writeToken !== undefined) this.#queue = loadPromptQueue(parsed.roomId);
-		this.#socket = new CollabSocket({ wsUrl: parsed.wsUrl, role: "guest", key: importRoomKey(parsed.key) });
+		this.#socket = new CollabSocket({
+			wsUrl: parsed.wsUrl,
+			localWsUrl: parsed.localWsUrl,
+			role: "guest",
+			key: importRoomKey(parsed.key),
+		});
 		this.#socket.onOpen = () => this.#handleOpen();
 		this.#socket.onFrame = frame => this.#applyFrameSafe(frame);
 		this.#socket.onClose = (reason, willReconnect) => this.#handleClose(reason, willReconnect);
@@ -363,21 +399,47 @@ export class GuestClient {
 	/**
 	 * Sends a prompt, or, while the connection is not live, queues it (and
 	 * persists the queue) to go out in order once the next welcome completes.
-	 * View-link guests never queue and never send.
+	 * `model` runs this prompt alone on another model (and thinking level); it needs a host that
+	 * advertises `prompt-model`. View-link guests never queue and never send.
 	 */
-	sendPrompt(text: string, images?: ImageContent[], deliver?: "follow-up"): void {
+	sendPrompt(text: string, images?: ImageContent[], deliver?: "follow-up", model?: PromptModelChoice): void {
 		if (this.#isReadOnly()) return;
 		const attached = images && images.length > 0 ? images : undefined;
+		const queued: QueuedPrompt = {
+			id: `${Date.now().toString(36)}-${++this.#queueSeq}`,
+			text,
+			images: attached,
+			deliver,
+			model: model?.model,
+			thinking: model?.thinking,
+		};
 		if (this.#phase !== "live") {
-			this.#queue = [
-				...this.#queue,
-				{ id: `${Date.now().toString(36)}-${++this.#queueSeq}`, text, images: attached, deliver },
-			];
+			this.#queue = [...this.#queue, queued];
 			savePromptQueue(this.#roomId, this.#queue);
 			this.#commit();
 			return;
 		}
-		this.#socket.send({ t: "prompt", text, images: attached, deliver });
+		this.#sendQueued(queued);
+		this.#commit();
+	}
+
+	/**
+	 * Sends one prompt. A host without `prompt-model` would run a chosen model's prompt on the
+	 * session's model and drop the choice silently, so that prompt is refused instead.
+	 */
+	#sendQueued(prompt: QueuedPrompt): void {
+		if (prompt.model !== undefined && !Object.hasOwn(this.#features, "prompt-model")) {
+			this.#pushNotice("error", "prompt not sent: this host cannot run a prompt on another model");
+			return;
+		}
+		this.#socket.send({
+			t: "prompt",
+			text: prompt.text,
+			images: prompt.images,
+			deliver: prompt.deliver,
+			model: prompt.model,
+			thinking: prompt.thinking,
+		});
 	}
 
 	/** Drops a queued prompt before it is sent. */
@@ -387,9 +449,12 @@ export class GuestClient {
 		this.#commit();
 	}
 
-	/** Runs a host session control (compact / model / thinking); the host reports failures as `error` frames. */
-	sendSessionCommand(cmd: SessionCommand, arg?: string): void {
-		this.#socket.send({ t: "session-cmd", cmd, arg });
+	/**
+	 * Runs a host session control (compact / model / thinking / rewind); the host reports failures as `error`
+	 * frames. `restoreFiles` (only for `rewind`, on hosts with `rewind-files`) also puts the working tree back.
+	 */
+	sendSessionCommand(cmd: SessionCommand, arg?: string, restoreFiles?: boolean): void {
+		this.#socket.send({ t: "session-cmd", cmd, arg, restoreFiles });
 	}
 
 	sendUiResponse(reqId: number, value?: CollabUiResponseValue): void {
@@ -449,6 +514,8 @@ export class GuestClient {
 		// Capabilities are per host connection; none are assumed until it is welcomed.
 		this.#features = NO_FEATURES;
 		this.#commands = NO_COMMANDS;
+		this.#rewindPreview = null;
+		this.#fileRestore = null;
 		this.#socket.send({
 			t: "hello",
 			proto: COLLAB_PROTO,
@@ -704,6 +771,7 @@ export class GuestClient {
 				// This covers a connected guest that misses the discrete `agent_start`
 				// without receiving a new `welcome` (for example, mid-stream).
 				this.#working = frame.state.isStreaming;
+				if (frame.state.isStreaming) this.#fileRestore = null;
 				if (!frame.state.isStreaming) {
 					// Host idle implies no tool can be running, so clear any card
 					// pinned by a dropped `tool_execution_end` off this signal.
@@ -748,6 +816,12 @@ export class GuestClient {
 				}
 				break;
 			}
+			case "rewind-preview":
+				this.#rewindPreview = { entryId: frame.entryId, files: frame.files };
+				break;
+			case "files-restored":
+				this.#fileRestore = { kind: frame.kind, plan: frame.plan, skipped: frame.skipped, canRedo: frame.canRedo };
+				break;
 			case "bye":
 				this.#end(frame.reason);
 				return; // #end already committed
@@ -782,9 +856,7 @@ export class GuestClient {
 		this.#queue = [];
 		savePromptQueue(this.#roomId, this.#queue);
 		if (this.#readOnly) return;
-		for (const prompt of queued) {
-			this.#socket.send({ t: "prompt", text: prompt.text, images: prompt.images, deliver: prompt.deliver });
-		}
+		for (const prompt of queued) this.#sendQueued(prompt);
 	}
 
 	/**
@@ -885,6 +957,8 @@ export class GuestClient {
 			}
 			case "agent_start":
 				this.#working = true;
+				// Files change again: the restore can no longer be undone as one step.
+				this.#fileRestore = null;
 				break;
 			case "agent_end":
 				this.#working = false;
@@ -967,6 +1041,8 @@ export class GuestClient {
 			features: this.#features,
 			commands: this.#commands,
 			followUps: this.#state?.followUps ?? NO_FOLLOW_UPS,
+			rewindPreview: this.#rewindPreview,
+			fileRestore: this.#fileRestore,
 		};
 	}
 

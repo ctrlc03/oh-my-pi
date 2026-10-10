@@ -11,6 +11,7 @@ import type {
 	AgentSnapshot,
 	AssistantMessage,
 	CollabCommand,
+	CollabCommandChoice,
 	SessionEntry,
 	SessionHeader,
 	SubagentProgressPayload,
@@ -87,10 +88,30 @@ function todoSummary(done: number): string {
 	return `Todo list: ${done}/${TODO_TASKS.length} tasks done.`;
 }
 
-/** What the mock host lists in `welcome.commands`: two builtins, a skill and a file command. */
+/** Sessions of the mock host's folder `/resume` suggests, as the real host lists them: id, title and age. */
+export const fixtureResumeChoices: CollabCommandChoice[] = [
+	{ value: "5f3a9c1e", label: "migrate settings to the new store", description: "42 messages · 2026-07-19 16:20 UTC" },
+	{ value: "c07d44b2", label: "relay reconnect audit (earlier)", description: "18 messages · 2026-07-18 09:05 UTC" },
+	{ value: "91be0a57", label: "untitled session", description: "6 messages · 2026-07-15 21:47 UTC" },
+];
+
+/** What the mock host lists in `welcome.commands`: builtins, a skill and a file command. */
 export const fixtureCommands: CollabCommand[] = [
 	{ name: "plan", description: "Enter plan mode" },
+	{ name: "model", description: "Switch this session's model", args: "<provider/id>" },
+	{ name: "effort", description: "Set the thinking level for this session", args: "<level>" },
+	{ name: "compact", description: "Compact the conversation to free context", args: "[instructions]" },
 	{ name: "retry", description: "Retry the last turn" },
+	{ name: "rename", description: "Rename this session", args: "<title>" },
+	{ name: "new", description: "Start a new session; the room follows it", switchesSession: true },
+	{
+		name: "resume",
+		description: "Resume another session from this folder",
+		args: "<session>",
+		choices: fixtureResumeChoices,
+		switchesSession: true,
+	},
+	{ name: "fork", description: "Fork this session into a new one", switchesSession: true },
 	{ name: "skill:review", description: "Review the current changes", args: "[focus]" },
 	{ name: "fix-tests", description: "Make the failing tests pass", args: "[file]" },
 ];

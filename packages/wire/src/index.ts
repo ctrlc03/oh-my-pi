@@ -206,6 +206,8 @@ export interface WireModel {
 	name: string;
 	provider: string;
 	contextWindow: number | null;
+	/** Thinking selectors this model accepts, for a `prompt`'s `thinking`; sent by hosts that advertise `prompt-model`. */
+	thinkingLevels?: string[];
 }
 
 export interface ContextUsage {
@@ -362,8 +364,20 @@ export type GuestFrame =
 	 * agent is working, deliver after the current turn ends as its own turn;
 	 * idle, it is a normal prompt. Hosts that predate the field steer. Text
 	 * starting with `/<name>` for a `welcome.commands` entry runs that command.
+	 * `model` (`provider/id` of one of `welcome.models`) and `thinking` (one of
+	 * that model's `thinkingLevels`) run this prompt, and any turns it starts,
+	 * on that model without switching the session's; the session model and
+	 * thinking level are unchanged once the run settles. Sent only to hosts
+	 * that advertise `prompt-model`; others run the prompt on the session model.
 	 */
-	| { t: "prompt"; text: string; images?: ImageContent[]; deliver?: "follow-up" }
+	| {
+			t: "prompt";
+			text: string;
+			images?: ImageContent[];
+			deliver?: "follow-up";
+			model?: string;
+			thinking?: string;
+	  }
 	| { t: "ui-response"; reqId: number; value?: CollabUiResponseValue }
 	| { t: "abort" }
 	| { t: "agent-cmd"; cmd: "chat" | "kill" | "revive"; agentId: string; text?: string }
@@ -377,14 +391,16 @@ export type GuestFrame =
 	 * ignore it, so guests offer these controls only when `welcome.models` is
 	 * present; hosts that predate a command answer it with an `error`.
 	 */
-	| { t: "session-cmd"; cmd: SessionCommand; arg?: string };
+	| { t: "session-cmd"; cmd: SessionCommand; arg?: string; restoreFiles?: boolean };
 
 /**
  * Optional host capabilities advertised in `welcome.features`. `commands`: the
  * host lists the slash commands a writer may run in `welcome.commands` and
  * dispatches a `prompt` whose text starts with one of them as that command.
+ * `prompt-model`: a `prompt` may carry `model`/`thinking` to run on another
+ * model for that prompt only.
  */
-export type CollabFeature = "follow-up" | "rewind" | "commands";
+export type CollabFeature = "follow-up" | "rewind" | "commands" | "prompt-model" | "rewind-files";
 
 /** A slash command a writer may run by sending it as a `prompt` (`/name args`). */
 export interface CollabCommand {
@@ -393,6 +409,29 @@ export interface CollabCommand {
 	description?: string;
 	/** Argument hint to show after the name, e.g. `[prompt]`. */
 	args?: string;
+	/**
+	 * Values worth offering for the argument, most useful first (`/resume`: the
+	 * current folder's recent sessions, `value` being what the host resolves).
+	 * Suggestions only: the host validates whatever arrives. Absent when the host
+	 * has none, or lists the choices elsewhere (`/model` and `/effort` take
+	 * `welcome.models` and `state.thinkingLevels`).
+	 */
+	choices?: CollabCommandChoice[];
+	/**
+	 * Running it ends this room: the host's session changes identity, so it
+	 * retires the room and opens a successor under its auto-start policy. A guest
+	 * follows through its paired computer; without one the connection simply ends.
+	 */
+	switchesSession?: boolean;
+}
+
+/** One suggested argument for a {@link CollabCommand}. */
+export interface CollabCommandChoice {
+	/** Text that follows the command name when picked. */
+	value: string;
+	/** Short display text; the guest falls back to `value`. */
+	label?: string;
+	description?: string;
 }
 
 /**
@@ -402,9 +441,31 @@ export interface CollabCommand {
  * session leaf to just before it so the next prompt starts a sibling branch,
  * and refuses while streaming, compacting, or busy. `unqueue`: `arg` is the
  * text of a queued follow-up; the host removes the first queued follow-up
- * with that text.
+ * with that text. `rewind-preview` (feature `rewind-files`): `arg` is a
+ * prompt entry id; the host answers with a `rewind-preview` frame. `redo-files`
+ * (feature `rewind-files`): undo the last file restore, answered with a
+ * `files-restored` frame.
  */
-export type SessionCommand = "compact" | "model" | "thinking" | "rename" | "rewind" | "unqueue";
+export type SessionCommand =
+	| "compact"
+	| "model"
+	| "thinking"
+	| "rename"
+	| "rewind"
+	| "unqueue"
+	| "rewind-preview"
+	| "redo-files";
+
+/**
+ * What restoring the working tree to before a prompt does: files whose content
+ * goes back (`revert`), files created since that are deleted (`remove`), and
+ * files deleted since that come back (`recreate`).
+ */
+export interface RewindFilesPlan {
+	revert: number;
+	remove: number;
+	recreate: number;
+}
 
 /** EventBus channels mirrored to guests (task subagent traffic only). */
 export type BusChannel = "task:subagent:progress" | "task:subagent:lifecycle";
@@ -474,6 +535,20 @@ export type HostFrame =
 	| { t: "bus"; channel: BusChannel; data: unknown }
 	| { t: "agents"; agents: AgentSnapshot[] }
 	| { t: "ui-request"; request: CollabUiRequest }
+	/**
+	 * Targeted reply to `session-cmd` `rewind-preview`: what restoring the files
+	 * to before prompt `entryId` would change, or `null` when no file snapshot
+	 * was recorded for that prompt (the host can not restore its files).
+	 */
+	| { t: "rewind-preview"; entryId: string; files: RewindFilesPlan | null }
+	/**
+	 * Targeted reply once files were restored: by `session-cmd` `rewind` with
+	 * `restoreFiles` (`kind: "restore"`) or by `redo-files` (`kind: "redo"`).
+	 * `plan` is what changed, `skipped` counts files left alone because a path
+	 * the snapshot does not cover was in the way, and `canRedo` says whether
+	 * `redo-files` can undo it (it can until files change again).
+	 */
+	| { t: "files-restored"; kind: "restore" | "redo"; plan: RewindFilesPlan; skipped: number; canRedo: boolean }
 	| { t: "ui-request-end"; reqId: number }
 	/** Targeted reply to fetch-transcript; `text` is decoded JSONL from `fromByte`, `newSize` the next offset base. */
 	| { t: "transcript"; reqId: number; text: string; newSize: number; error?: string }
@@ -535,6 +610,34 @@ export const DEFAULT_RELAY_URL = "wss://my.omp.sh";
 /** Default share viewer/upload base; `/share` links resolve against `<base>/<id>#<key>`. */
 export const DEFAULT_SHARE_URL = "https://my.omp.sh/s";
 
+/**
+ * Query parameter of a collab link naming a second relay the host also serves the room on:
+ * `host:port` of a relay on the host's own machine. A viewer on that machine may reach it
+ * over loopback and skips the public relay; every other viewer ignores it.
+ */
+export const LOCAL_RELAY_LINK_PARAM = "local";
+
+const LOOPBACK_HOSTNAMES: Record<string, true> = { localhost: true, "127.0.0.1": true, "[::1]": true };
+
+/**
+ * Normalize a loopback relay address (`127.0.0.1:7467`, `ws://localhost:7467`, `http://[::1]:7467`)
+ * into `ws://<host>:<port>`. Null when it is not loopback, has no explicit port, or carries a
+ * path, query or fragment: a link must never steer a viewer's WebSocket at another machine.
+ */
+export function normalizeLocalRelayUrl(input: string): string | null {
+	const text = input.trim();
+	let url: URL;
+	try {
+		url = new URL(text.includes("://") ? text : `ws://${text}`);
+	} catch {
+		return null;
+	}
+	if (url.protocol !== "ws:" && url.protocol !== "http:") return null;
+	if (LOOPBACK_HOSTNAMES[url.hostname] !== true || !url.port) return null;
+	if (url.pathname !== "/" || url.search || url.hash || url.username || url.password) return null;
+	return `ws://${url.hostname}:${url.port}`;
+}
+
 export interface ParsedCollabLink {
 	/** wss://host[:port]/r/<roomId> — no query, no fragment. */
 	wsUrl: string;
@@ -542,6 +645,8 @@ export interface ParsedCollabLink {
 	key: Uint8Array;
 	/** Write token from a full link; absent for read-only (view) links. */
 	writeToken?: Uint8Array;
+	/** ws://<loopback>:<port>/r/<roomId>: the same room on the host machine's own relay; absent when the link names none. */
+	localWsUrl?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -177,4 +177,38 @@ describe("local collab relay", () => {
 		expect(JSON.parse(await closure)).toEqual({ t: "room-closed" });
 		expect((await guestClose).code).toBe(4001);
 	});
+
+	it("can refuse a guest for a missing room before upgrading, so a browser fails without opening", async () => {
+		relay = startLocalRelay(0, { refuseMissingRooms: true });
+		const missing = await fetch(`${relayHttpUrl()}/r/${ROOM}?role=guest`);
+		expect(missing.status).toBe(404);
+
+		const host = socket(`/r/${ROOM}?role=host`);
+		await waitOpen(host);
+		const present = await fetch(`${relayHttpUrl()}/r/${ROOM}?role=guest`);
+		expect(present.status).toBe(426);
+	});
+
+	it("only answers requests addressed to a loopback host name", async () => {
+		relay = startLocalRelay();
+		const rebound = await fetch(`${relayHttpUrl()}/r/${ROOM}?role=guest`, {
+			headers: { host: "attacker.example:80" },
+		});
+		expect(rebound.status).toBe(403);
+		const named = await fetch(`${relayHttpUrl()}/r/${ROOM}?role=guest`, {
+			headers: { host: `localhost:${new URL(relayHttpUrl()).port}` },
+		});
+		expect(named.status).not.toBe(403);
+	});
+
+	it("lets a browser join as a guest only from an allowed origin, and never host", async () => {
+		relay = startLocalRelay(0, { allowedOrigins: ["https://app.example"] });
+		const guestAt = (origin: string) => fetch(`${relayHttpUrl()}/r/${ROOM}?role=guest`, { headers: { origin } });
+		expect((await guestAt("https://app.example")).status).toBe(426);
+		expect((await guestAt("https://evil.example")).status).toBe(403);
+		const hostFromBrowser = await fetch(`${relayHttpUrl()}/r/${ROOM}?role=host`, {
+			headers: { origin: "https://app.example" },
+		});
+		expect(hostFromBrowser.status).toBe(403);
+	});
 });

@@ -16,6 +16,7 @@ import { logger } from "@oh-my-pi/pi-utils";
 import type {
 	BusChannel,
 	CollabCommand,
+	CollabCommandChoice,
 	CollabFeature,
 	CollabUiRequest,
 	CollabUiRequestDraft,
@@ -30,9 +31,10 @@ import type { InteractiveModeContext } from "../modes/types";
 import { cfgPlanEnabled } from "../plan-mode/settings";
 import { AgentLifecycleManager } from "../registry/agent-lifecycle";
 import { type AgentRef, AgentRegistry } from "../registry/agent-registry";
-import type { AgentSessionEvent } from "../session/agent-session";
+import type { AgentSessionEvent, PromptModelOverride } from "../session/agent-session";
 import { parseCompactArgs } from "../session/compact-modes";
 import { stripImagesFromMessage, USER_INTERRUPT_LABEL } from "../session/messages";
+import { describeFileRestore } from "../session/file-snapshots";
 import type { SessionEntry as StoredSessionEntry } from "../session/session-entries";
 import { executeBuiltinSlashCommand } from "../slash-commands/builtin-registry";
 import {
@@ -44,10 +46,13 @@ import { generateRoomKey, generateWriteToken, importRoomKey } from "./crypto";
 import { collabDisplayName } from "./display-name";
 import {
 	buildGuestCommands,
+	COLLAB_RUNNABLE_BUILTINS,
 	type GuestCommandRoute,
 	type GuestCommandSource,
 	routeGuestCommand,
 } from "./guest-commands";
+import { hostKeepsGuestsAcrossSwitch, recentSessionChoices, replaceSessionForGuest } from "./guest-session-commands";
+import { type PromptModelRequest, type PromptModelResolution, resolvePromptModel } from "./prompt-model";
 import {
 	type AgentSnapshot,
 	COLLAB_PROMPT_MESSAGE_TYPE,
@@ -73,7 +78,15 @@ import {
 	type CollabHostSnapshot,
 	publishCollabHost,
 } from "./registry";
-import { CollabSocket } from "./relay-client";
+import { FanoutSocket } from "./relay-fanout";
+import {
+	announceRestoredFiles,
+	previewRewindFiles,
+	redoRestoredFiles,
+	type RewindFilesChannel,
+	restoreFilesForRewind,
+	rollBackRestoredFiles,
+} from "./rewind-files";
 import {
 	COLLAB_ENTRY_OMITTED_CUSTOM_TYPE,
 	copyForReplication,
@@ -136,7 +149,7 @@ const COLLAB_BUS_CHANNELS = [
 ] as const satisfies readonly BusChannel[];
 
 /** Optional capabilities this host advertises in `welcome`. */
-const COLLAB_FEATURES: CollabFeature[] = ["follow-up", "rewind", "commands"];
+const COLLAB_FEATURES: CollabFeature[] = ["follow-up", "rewind", "commands", "prompt-model"];
 
 /** A prompt's message content: the text, plus any images the guest attached. */
 function withImages(text: string, images: ImageContent[] | undefined): string | (TextContent | ImageContent)[] {
@@ -153,6 +166,8 @@ function isWireSessionEntry(entry: StoredSessionEntry): entry is StoredSessionEn
 
 /** Models listed in a writer's welcome; the picker's order puts the likeliest choices first. */
 const MAX_WELCOME_MODELS = 200;
+/** A hello reloads the `/resume` suggestions at most this often. */
+const RESUME_CHOICES_TTL_MS = 15_000;
 const CONNECT_TIMEOUT_MS = 15_000;
 /** Max bytes served per fetch-transcript reply (guest re-requests from `newSize`). */
 export const TRANSCRIPT_READ_CAP = 4 * 1024 * 1024;
@@ -233,13 +248,19 @@ export class CollabRelayUnavailableError extends Error {
 
 export class CollabHost {
 	#ctx: InteractiveModeContext;
-	#socket: CollabSocket | null = null;
+	#socket: FanoutSocket | null = null;
 	#link = "";
 	#webLink = "";
 	#viewLink = "";
 	#webViewLink = "";
+	/** {@link webLink} / {@link webViewLink} plus the local relay; empty without one. Registry consumers only: the printed link stays shareable beyond this machine. */
+	#localWebLink = "";
+	#localWebViewLink = "";
 	#writeToken: Uint8Array | null = null;
 	#sessionId: string;
+	/** `/resume` suggestions for writers' welcomes; see {@link #refreshResumeChoices}. */
+	#resumeChoices: CollabCommandChoice[] = [];
+	#resumeChoicesAt = 0;
 	#startedAt = 0;
 	readonly #instanceId: string;
 	readonly #generation: number;
@@ -258,7 +279,7 @@ export class CollabHost {
 	/**
 	 * Guest identity and permission, keyed by relay peer id. Drives the
 	 * participant list, notices, the status segment and the writable-peer fan-out.
-	 * Deliverability is not its job: {@link CollabSocket.isServing} owns that, and
+	 * Deliverability is not its job: {@link FanoutSocket.isServing} owns that, and
 	 * the two disagree on purpose while a peer is connected but has not said hello
 	 * yet, and after a shed, when the peer leaves the participant list but is
 	 * still owed a resync error.
@@ -374,6 +395,15 @@ export class CollabHost {
 		return this.#webViewLink;
 	}
 
+	/**
+	 * Browser link for tools on this machine (the registry, the companion): the same room with the
+	 * local relay appended when one is configured, so a viewer on this computer can skip the public relay.
+	 */
+	registryLink(access: CollabAccess): string {
+		if (access === "view") return this.#localWebViewLink || this.#webViewLink;
+		return this.#localWebLink || this.#webLink;
+	}
+
 	get participants(): CollabParticipant[] {
 		const list: CollabParticipant[] = [{ name: collabDisplayName(this.#ctx), role: "host" }];
 		for (const peer of this.#peers.values()) {
@@ -423,7 +453,11 @@ export class CollabHost {
 		}
 	}
 
-	async start(relayUrl: string, webUrl = ""): Promise<void> {
+	/**
+	 * @param localRelayUrl A loopback relay (`ws://127.0.0.1:<port>`) that serves this room as well;
+	 * guests may join through either relay. It never ends or degrades the public session.
+	 */
+	async start(relayUrl: string, webUrl = "", localRelayUrl?: string): Promise<void> {
 		if (this.ending) throw new CollabHostStoppedError("collab host already stopped");
 		const rawKey = generateRoomKey();
 		const writeToken = generateWriteToken();
@@ -433,17 +467,22 @@ export class CollabHost {
 		this.#webLink = formatCollabWebLink(relayUrl, roomId, rawKey, writeToken, webUrl);
 		this.#viewLink = formatCollabLink(relayUrl, roomId, rawKey);
 		this.#webViewLink = formatCollabWebLink(relayUrl, roomId, rawKey, undefined, webUrl);
-		const parsed = parseCollabLink(this.#link);
+		if (localRelayUrl !== undefined) {
+			this.#localWebLink = formatCollabWebLink(relayUrl, roomId, rawKey, writeToken, webUrl, localRelayUrl);
+			this.#localWebViewLink = formatCollabWebLink(relayUrl, roomId, rawKey, undefined, webUrl, localRelayUrl);
+		}
+		const parsed = parseCollabLink(this.#localWebLink || this.#link);
 		if ("error" in parsed) throw new Error(parsed.error);
 		const firstOpen = Promise.withResolvers<void>();
 		// stop() may reject this before start() reaches its await (during key
 		// import); mark the rejection handled so it can only surface at the await.
 		firstOpen.promise.catch(() => {});
 		this.#abortStart = firstOpen.reject;
+		await this.#refreshResumeChoices();
 		const key = await importRoomKey(rawKey);
 		if (this.ending) throw new CollabHostStoppedError("collab host stopped before connecting");
 
-		const socket = new CollabSocket({ wsUrl: parsed.wsUrl, role: "host", key });
+		const socket = new FanoutSocket({ wsUrl: parsed.wsUrl, localWsUrl: parsed.localWsUrl, key });
 		this.#socket = socket;
 
 		let opened = false;
@@ -454,7 +493,7 @@ export class CollabHost {
 				firstOpen.resolve();
 			}
 		};
-		socket.onRoomRecreated = () => this.#handleRoomRecreated();
+		socket.onRoomRecreated = owns => this.#handleRoomRecreated(owns);
 		socket.onFrame = (frame, fromPeer) => this.#handleFrame(frame, fromPeer);
 		socket.onControl = msg => {
 			if (msg.t === "peer-left") this.#handlePeerLeft(msg.peer);
@@ -684,7 +723,7 @@ export class CollabHost {
 	#registrySource(): CollabHostRegistrySource {
 		return {
 			snapshot: () => this.#registrySnapshot(),
-			link: access => (access === "view" ? this.#webViewLink : this.#webLink),
+			link: access => this.registryLink(access),
 		};
 	}
 
@@ -865,6 +904,7 @@ export class CollabHost {
 					frame.images,
 					frame.deliver === "follow-up" ? "follow-up" : undefined,
 					fromPeer,
+					{ model: frame.model, thinking: frame.thinking },
 				);
 				break;
 			case "abort":
@@ -877,7 +917,15 @@ export class CollabHost {
 				break;
 			case "session-cmd":
 				if (this.#rejectWhileStarting("session control", fromPeer)) break;
-				void this.#handleSessionCmd(frame.cmd, typeof frame.arg === "string" ? frame.arg : undefined, fromPeer);
+				void this.#handleSessionCmd(
+					frame.cmd,
+					typeof frame.arg === "string" ? frame.arg : undefined,
+					fromPeer,
+					undefined,
+					{
+						restoreFiles: frame.restoreFiles === true,
+					},
+				);
 				break;
 			case "fetch-transcript":
 				void this.#handleFetchTranscript(frame.reqId, frame.agentId, frame.fromByte, fromPeer);
@@ -967,7 +1015,7 @@ export class CollabHost {
 				readOnly: canWrite ? undefined : true,
 				models: canWrite ? this.#welcomeModels() : undefined,
 				commands: canWrite ? this.#welcomeCommands() : undefined,
-				features: COLLAB_FEATURES,
+				features: this.#welcomeFeatures(),
 			},
 			fromPeer,
 		);
@@ -988,6 +1036,8 @@ export class CollabHost {
 		);
 		this.#updateStatusSegment();
 		this.#scheduleStateBroadcast();
+		// The welcome above used the last listing; the next writer's gets a fresher one.
+		if (canWrite) void this.#refreshResumeChoices();
 	}
 
 	/**
@@ -1156,21 +1206,28 @@ export class CollabHost {
 		images: ImageContent[] | undefined,
 		deliver: "follow-up" | undefined,
 		fromPeer: number,
+		promptModel: PromptModelRequest = {},
 	): void {
 		const peer = this.#peers.get(fromPeer);
 		if (!peer?.canWrite) {
 			this.#rejectReadOnly("prompting", fromPeer);
 			return;
 		}
+		const resolved = this.#resolvePromptModel(promptModel);
+		if ("error" in resolved) {
+			this.#send({ t: "error", message: `prompt not sent: ${resolved.error}` }, fromPeer);
+			return;
+		}
+		const modelOverride = resolved.override;
 		if (!text.startsWith("/") && this.#promptsQueued === 0) {
-			this.#submitPrompt(withImages(text, images), text, deliver, fromPeer, peer.name);
+			this.#submitPrompt(withImages(text, images), text, deliver, fromPeer, peer.name, modelOverride);
 			return;
 		}
 		// A slash prompt may load a skill file or run a builtin first; whatever the guest
 		// sends next must not overtake it.
 		this.#promptsQueued++;
 		this.#promptTail = this.#promptTail
-			.then(() => this.#dispatchSlashAware(text, images, deliver, fromPeer))
+			.then(() => this.#dispatchSlashAware(text, images, deliver, fromPeer, modelOverride))
 			.catch(err => {
 				logger.warn("collab guest prompt failed", { error: String(err) });
 				this.#send({ t: "error", message: `prompt failed: ${String(err)}` }, fromPeer);
@@ -1190,7 +1247,23 @@ export class CollabHost {
 			hasHostOnlyCommand: name =>
 				session.extensionRunner?.getCommand(name) !== undefined ||
 				session.customCommands.some(loaded => loaded.command.name === name),
+			keepsGuestsAcrossSwitch: hostKeepsGuestsAcrossSwitch(this.#ctx),
+			resumeChoices: this.#resumeChoices,
 		};
+	}
+
+	/**
+	 * Reload the `/resume` suggestions a writer's welcome carries. Welcomes are built
+	 * synchronously, so they read the last result: a hello triggers a reload for the next one,
+	 * at most every {@link RESUME_CHOICES_TTL_MS}. A room lives for one session, and a switch
+	 * opens a successor, so this only goes stale for sessions other processes create meanwhile.
+	 */
+	async #refreshResumeChoices(): Promise<void> {
+		const now = Date.now();
+		if (now - this.#resumeChoicesAt < RESUME_CHOICES_TTL_MS) return;
+		this.#resumeChoicesAt = now;
+		const choices = await recentSessionChoices(this.#ctx);
+		if (!this.ending) this.#resumeChoices = choices;
 	}
 
 	/** The command list a writer's welcome carries; absent when the catalog cannot be read. */
@@ -1213,6 +1286,7 @@ export class CollabHost {
 		images: ImageContent[] | undefined,
 		deliver: "follow-up" | undefined,
 		fromPeer: number,
+		modelOverride?: PromptModelOverride,
 	): Promise<void> {
 		const peer = this.#peers.get(fromPeer);
 		// The guest left or the room ended while this waited its turn.
@@ -1227,10 +1301,10 @@ export class CollabHost {
 		}
 		switch (route.kind) {
 			case "literal":
-				this.#submitPrompt(withImages(text, images), text, deliver, fromPeer, peer.name);
+				this.#submitPrompt(withImages(text, images), text, deliver, fromPeer, peer.name, modelOverride);
 				return;
 			case "expanded":
-				this.#submitPrompt(withImages(route.text, images), text, deliver, fromPeer, peer.name);
+				this.#submitPrompt(withImages(route.text, images), text, deliver, fromPeer, peer.name, modelOverride);
 				return;
 			case "refused":
 				this.#send({ t: "error", message: route.message }, fromPeer);
@@ -1247,11 +1321,11 @@ export class CollabHost {
 					return;
 				}
 				if (!this.#peers.get(fromPeer)?.canWrite || this.ending) return;
-				this.#submitPrompt(built.message.content, text, deliver, fromPeer, peer.name);
+				this.#submitPrompt(built.message.content, text, deliver, fromPeer, peer.name, modelOverride);
 				return;
 			}
 			case "builtin":
-				await this.#runBuiltinCommand(route, images, deliver, fromPeer, peer.name);
+				await this.#runBuiltinCommand(route, images, deliver, fromPeer, peer.name, modelOverride);
 				return;
 		}
 	}
@@ -1270,12 +1344,31 @@ export class CollabHost {
 		deliver: "follow-up" | undefined,
 		fromPeer: number,
 		peerName: string,
+		modelOverride?: PromptModelOverride,
 	): Promise<void> {
 		const { name, args } = route;
 		const refuse = (reason: string): void => this.#send({ t: "error", message: `/${name}: ${reason}` }, fromPeer);
 		const ctx = this.#ctx;
 		if (images && images.length > 0 && (name !== "plan" || !args)) {
 			refuse("images cannot be sent with this command");
+			return;
+		}
+		const runnable = Object.hasOwn(COLLAB_RUNNABLE_BUILTINS, name) ? COLLAB_RUNNABLE_BUILTINS[name] : undefined;
+		if (runnable?.sessionCmd) {
+			// The session sheet's controls: their path validates, refuses and announces.
+			const arg = name === "effort" ? args.toLowerCase() : args;
+			await this.#handleSessionCmd(runnable.sessionCmd, arg, fromPeer, name);
+			return;
+		}
+		if (runnable?.switchesSession) {
+			const outcome = await replaceSessionForGuest(ctx, name, args);
+			if (!outcome.ok) {
+				refuse(outcome.reason);
+				return;
+			}
+			// The room that carried the command ends with the old session, so the guest may never
+			// see this; the host terminal of the new session hears who asked.
+			ctx.session.emitNotice("info", `${peerName} ran /${name}`, "collab");
 			return;
 		}
 		if (name === "retry") {
@@ -1304,7 +1397,7 @@ export class CollabHost {
 			}
 		}
 		if (this.#guestTrafficAllowed()) ctx.session.emitNotice("info", `${peerName} ran /${name}`, "collab");
-		if (name === "plan" && args) await this.#dispatchSlashAware(args, images, deliver, fromPeer);
+		if (name === "plan" && args) await this.#dispatchSlashAware(args, images, deliver, fromPeer, modelOverride);
 	}
 
 	/** Hand a guest prompt to the session as a collab-prompt message authored by `name`. */
@@ -1314,6 +1407,7 @@ export class CollabHost {
 		deliver: "follow-up" | undefined,
 		fromPeer: number,
 		name: string,
+		modelOverride?: PromptModelOverride,
 	): void {
 		const details: CollabPromptDetails = { from: name };
 		if (this.#ctx.session.isStreaming) {
@@ -1330,7 +1424,11 @@ export class CollabHost {
 					details,
 					attribution: "user",
 				},
-				{ streamingBehavior: deliver === "follow-up" ? "followUp" : "steer", queueChipText: chipText },
+				{
+					streamingBehavior: deliver === "follow-up" ? "followUp" : "steer",
+					queueChipText: chipText,
+					modelOverride,
+				},
 			)
 			.then(dispatched => {
 				if (dispatched === false) return this.#notifyPromptDropped(fromPeer);
@@ -1375,8 +1473,9 @@ export class CollabHost {
 	}
 
 	/**
-	 * The relay recreated the room and will reissue peer ids from 1, so every id in
-	 * {@link #peers} is meaningless — and `#peers` is the permission registry, not
+	 * A relay recreated its room and will reissue peer ids from 1, so every id it issued in
+	 * {@link #peers} (`owns` selects them; guests on the other relay are untouched) is
+	 * meaningless — and `#peers` is the permission registry, not
 	 * just the roster. Leaving it populated lets whoever takes a reissued id inherit
 	 * the `canWrite` of the guest that held it, which a read-only link is enough to
 	 * exploit: `#handleFrame` admits a frame before its sender has said hello, so a
@@ -1384,20 +1483,29 @@ export class CollabHost {
 	 * the stale entry. Runs before the socket reports the open, so no frame from the
 	 * new room can be dispatched against the old identities.
 	 */
-	#handleRoomRecreated(): void {
+	#handleRoomRecreated(owns: (peerId: number) => boolean): void {
 		if (this.#stopped) return;
-		if (this.#peers.size === 0 && this.#pendingUi.size === 0) return;
+		const hadPending = this.#pendingUi.size > 0;
+		let removed = 0;
 		// Identities first: settle() fans `ui-request-end` out over #peers, and those
 		// ids belong to the room that just went away.
-		this.#peers.clear();
+		for (const peerId of this.#peers.keys()) {
+			if (!owns(peerId)) continue;
+			this.#peers.delete(peerId);
+			removed++;
+		}
+		if (removed === 0 && !hadPending) return;
 		// The relay closed everyone who could answer, so an outstanding ask has no
-		// recipient. Leaving it pending hangs callers that await it without racing a
+		// recipient — unless a writer on the other relay is still there to answer it.
+		// Leaving it pending hangs callers that await it without racing a
 		// local dialog, and #handleHello re-poses every pending request to the next
 		// writable guest — a different occupant of a different room. Matches the
 		// teardown path; settle() is guarded against a second resolve, so a teardown
 		// after this is a no-op.
-		for (const pending of this.#pendingUi.values()) pending.settle({ kind: "unavailable" });
-		this.#pendingUi.clear();
+		if (!Array.from(this.#peers.values()).some(peer => peer.canWrite)) {
+			for (const pending of this.#pendingUi.values()) pending.settle({ kind: "unavailable" });
+			this.#pendingUi.clear();
+		}
 		this.#updateStatusSegment();
 		this.#scheduleStateBroadcast();
 	}
@@ -1591,6 +1699,21 @@ export class CollabHost {
 		);
 	}
 
+	/** The optional capabilities this host advertises; `rewind-files` only while the session can snapshot and restore files. */
+	#welcomeFeatures(): CollabFeature[] {
+		return this.#ctx.session.canRestoreFiles === true ? [...COLLAB_FEATURES, "rewind-files"] : COLLAB_FEATURES;
+	}
+
+	/** A prompt frame's model choice, checked against what the welcome offers; `error` names why it was refused. */
+	#resolvePromptModel(request: PromptModelRequest): PromptModelResolution {
+		const session = this.#ctx.session;
+		return resolvePromptModel(
+			request,
+			() => this.#selectableModels(),
+			model => session.getAvailableEffortSelectors(model),
+		);
+	}
+
 	/** The model list a writer's welcome carries; its presence tells the guest `session-cmd` is supported. */
 	#welcomeModels(): WireModel[] | undefined {
 		try {
@@ -1601,6 +1724,7 @@ export class CollabHost {
 					name: model.name,
 					provider: model.provider,
 					contextWindow: model.contextWindow ?? null,
+					thinkingLevels: this.#ctx.session.getAvailableEffortSelectors(model),
 				}));
 		} catch (err) {
 			// A catalog failure must not block the join; the guest just gets no session controls.
@@ -1615,17 +1739,51 @@ export class CollabHost {
 	 * but never opens a selector or dialog on the host terminal. Failures return a
 	 * targeted `error`; success is announced to the room as a collab notice.
 	 */
-	async #handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer: number): Promise<void> {
+	async #handleSessionCmd(
+		cmd: SessionCommand,
+		arg: string | undefined,
+		fromPeer: number,
+		slash?: string,
+		options: { restoreFiles?: boolean } = {},
+	): Promise<boolean> {
 		const peer = this.#peers.get(fromPeer);
 		if (!peer?.canWrite) {
 			this.#rejectReadOnly("session control", fromPeer);
-			return;
+			return false;
 		}
-		const session = this.#ctx.session;
-		const fail = (message: string) => this.#send({ t: "error", message: `${cmd}: ${message}` }, fromPeer);
-		const announce = (what: string) => {
-			if (this.#guestTrafficAllowed()) session.emitNotice("info", `${peer.name} ${what}`, "collab");
+		// `slash` names the slash command that asked for this control: errors then read
+		// `/<slash>: ...` and the room hears `<guest> ran /<slash>` once, on success,
+		// instead of the control's own notice.
+		let failed = false;
+		const label = slash === undefined ? cmd : `/${slash}`;
+		const fail = (message: string): void => {
+			failed = true;
+			this.#send({ t: "error", message: `${label}: ${message}` }, fromPeer);
 		};
+		const announce = (what: string): void => {
+			if (slash === undefined && this.#guestTrafficAllowed()) {
+				this.#ctx.session.emitNotice("info", `${peer.name} ${what}`, "collab");
+			}
+		};
+		const files: RewindFilesChannel = {
+			restoreFiles: options.restoreFiles === true,
+			reply: frame => this.#send(frame, fromPeer),
+		};
+		await this.#performSessionCmd(cmd, arg, fail, announce, files);
+		if (!failed && slash !== undefined && this.#guestTrafficAllowed()) {
+			this.#ctx.session.emitNotice("info", `${peer.name} ran /${slash}`, "collab");
+		}
+		return !failed;
+	}
+
+	async #performSessionCmd(
+		cmd: SessionCommand,
+		arg: string | undefined,
+		fail: (message: string) => void,
+		announce: (what: string) => void,
+		files: RewindFilesChannel,
+	): Promise<void> {
+		const session = this.#ctx.session;
 		try {
 			switch (cmd) {
 				case "model": {
@@ -1743,23 +1901,51 @@ export class CollabHost {
 						fail("not a prompt on the active conversation");
 						return;
 					}
+					// Files first: a restore the host refuses leaves the conversation where it is, and a
+					// rewind that then fails puts the files back.
+					const restored = await restoreFilesForRewind(session, target.id, files, fail);
+					if (restored === "failed") return;
 					// The host's own rewind path: the leaf lands on the prompt's parent (null for a root
 					// prompt). `onLeafMoved` tells guests; the draft the TUI would restore stays unused.
 					const leafBefore = this.#ctx.sessionManager.getLeafId();
-					const result = await session.navigateTree(target.id, { summarize: false });
+					const result = await session
+						.navigateTree(target.id, { summarize: false })
+						.catch(async (err: unknown) => {
+							if (restored) await rollBackRestoredFiles(session);
+							throw err;
+						});
 					if (result.cancelled) {
+						if (restored) await rollBackRestoredFiles(session);
 						fail("an extension cancelled the rewind");
 						return;
 					}
 					// `navigateTree` treats some targets already at the leaf as a successful no-op.
 					if (this.#ctx.sessionManager.getLeafId() === leafBefore) {
+						if (restored) await rollBackRestoredFiles(session);
 						fail("the conversation did not move");
 						return;
 					}
+					if (restored) announceRestoredFiles(session, restored, files);
 					if (!this.#guestTrafficAllowed()) return;
 					await this.#ctx.renderInitialMessages({ clearTerminalHistory: true });
 					await this.#ctx.reloadTodos();
-					announce("rewound the conversation");
+					announce(
+						restored
+							? `rewound the conversation and restored ${describeFileRestore(restored.plan)}`
+							: "rewound the conversation",
+					);
+					return;
+				}
+				case "rewind-preview":
+					await previewRewindFiles(session, arg, files, fail);
+					return;
+				case "redo-files": {
+					if (session.isBusyForSnapshot || session.isSessionTransitioning) {
+						fail("wait for the current response, compaction, or command to finish");
+						return;
+					}
+					const undone = await redoRestoredFiles(session, files, fail);
+					if (undone !== undefined) announce(undone);
 					return;
 				}
 				default:

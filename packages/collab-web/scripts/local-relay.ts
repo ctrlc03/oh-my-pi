@@ -1,5 +1,6 @@
 /**
- * Offline stand-in for the public collab relay (`wss://my.omp.sh`).
+ * Offline stand-in for the public collab relay (`wss://my.omp.sh`), and the loopback
+ * relay the companion runs next to omp (see ./companion-local-relay).
  *
  * Speaks the exact relay contract the real clients expect:
  * - `GET /r/<roomId>?role=host|guest` upgrades to a WebSocket.
@@ -13,13 +14,32 @@
  * - Host disconnect: TEXT `{"t":"room-closed"}` to every guest, then close 4001
  *   and the room is garbage-collected.
  *
- * The relay never sees plaintext: payloads stay sealed end to end.
+ * The relay never sees plaintext: payloads stay sealed end to end. It listens on
+ * 127.0.0.1 only and answers only requests addressed to a loopback host name, so a
+ * rebound DNS name cannot reach it; a browser that opens it must come from an allowed
+ * origin, and a browser can never be a room's host.
  */
 import { rewriteEnvelopePeer, unpackEnvelope } from "../src/lib/link";
 
 const ROOM_PATH_RE = /^\/r\/([A-Za-z0-9_-]{10,64})$/;
+const LOOPBACK_HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
 const DEFAULT_PORT = 7466;
+
+export interface LocalRelayOptions {
+	/**
+	 * Origins a browser may connect from (`https://user.github.io`). Requests that carry an
+	 * `Origin` header from elsewhere are refused; requests without one (omp, the companion,
+	 * tests) are not browsers and pass. Unset: any origin may join as a guest.
+	 */
+	allowedOrigins?: readonly string[];
+	/**
+	 * Refuse a guest's upgrade (HTTP 404) when its room does not exist, instead of upgrading and
+	 * closing with 4004. A browser then sees the connection fail before it ever opens, so a
+	 * client that tries this relay first falls back to another relay without having said hello.
+	 */
+	refuseMissingRooms?: boolean;
+}
 
 interface SocketData {
 	roomId: string;
@@ -37,23 +57,32 @@ interface Room {
 }
 
 export interface LocalRelay {
-	/** ws://localhost:<port> — append `/r/<roomId>?role=…` to connect. */
+	/** ws://127.0.0.1:<port> — append `/r/<roomId>?role=…` to connect. */
 	url: string;
 	/** Closes every room and stops the server. Idempotent. */
 	stop(): void;
 }
 
-export function startLocalRelay(port = 0): LocalRelay {
+export function startLocalRelay(port = 0, options: LocalRelayOptions = {}): LocalRelay {
 	const rooms = new Map<string, Room>();
 
 	const server = Bun.serve({
 		port,
+		hostname: "127.0.0.1",
 		fetch(req, srv): Response | undefined {
+			if (!LOOPBACK_HOST_RE.test(req.headers.get("host") ?? "")) return new Response("forbidden", { status: 403 });
 			const url = new URL(req.url);
 			const match = ROOM_PATH_RE.exec(url.pathname);
 			const role = url.searchParams.get("role");
 			if (!match || (role !== "host" && role !== "guest")) {
 				return new Response("not found", { status: 404 });
+			}
+			const origin = req.headers.get("origin");
+			if (origin !== null && (role === "host" || options.allowedOrigins?.includes(origin) === false)) {
+				return new Response("forbidden", { status: 403 });
+			}
+			if (role === "guest" && options.refuseMissingRooms && !rooms.has(match[1]!)) {
+				return new Response("no such room", { status: 404 });
 			}
 			const data: SocketData = { roomId: match[1]!, role, peerId: 0 };
 			if (srv.upgrade(req, { data })) return undefined;
@@ -122,7 +151,7 @@ export function startLocalRelay(port = 0): LocalRelay {
 	});
 
 	return {
-		url: `ws://localhost:${server.port}`,
+		url: `ws://127.0.0.1:${server.port}`,
 		stop(): void {
 			for (const room of rooms.values()) {
 				const closure = JSON.stringify({ t: "room-closed" });

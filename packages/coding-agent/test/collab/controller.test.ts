@@ -95,7 +95,9 @@ interface ControllerContextState {
  * session identity, the session-change subscription, and the observable
  * seams (status messages, status-line collab segment).
  */
-function makeControllerContext(over: { autoStart?: "off" | "view" | "control"; relayUrl?: string } = {}): {
+function makeControllerContext(
+	over: { autoStart?: "off" | "view" | "control"; relayUrl?: string; localRelayUrl?: string } = {},
+): {
 	ctx: InteractiveModeContext;
 	state: ControllerContextState;
 } {
@@ -105,6 +107,7 @@ function makeControllerContext(over: { autoStart?: "off" | "view" | "control"; r
 			"collab.autoStart": over.autoStart ?? "off",
 			"collab.relayUrl": over.relayUrl ?? RELAY_URL,
 			"collab.webUrl": WEB_URL,
+			"collab.localRelayUrl": over.localRelayUrl ?? "",
 		}),
 		showStatus: [],
 		firstStatus: Promise.withResolvers<string>(),
@@ -994,6 +997,43 @@ describe("CollabController", () => {
 		expect(second!.webLink).not.toBe(first.webLink);
 	});
 
+	it("tells a guest who ran /new the room ended and lets it rejoin the successor on the new session", async () => {
+		const { ctx, state } = makeControllerContext({ autoStart: "control" });
+		controller = new CollabController(ctx);
+		Object.assign(ctx, {
+			collabController: controller,
+			skillCommands: new Map(),
+			handleClearCommand: () => {
+				switchSession(state, `sess-new-${crypto.randomUUID()}`);
+				return Promise.resolve();
+			},
+		});
+		Object.assign(ctx.session, { slashCommands: [], promptTemplates: [], customCommands: [] });
+		controller.autoStart();
+		await settled(publishSpy, 1);
+		const first = ctx.collabHost;
+		if (!first) throw new Error("first room missing");
+		const before = state.sessionId;
+		controller.startupComplete();
+		const goodbye = Promise.withResolvers<"bye">();
+		const writer = await joinAsWriter(first, frame => {
+			if (frame.t === "bye") goodbye.resolve(frame.t);
+		});
+
+		writer.send({ t: "prompt", text: "/new" });
+		await settled(publishSpy, 2);
+
+		expect(state.sessionId).not.toBe(before);
+		expect(await goodbye.promise).toBe("bye");
+		const second = ctx.collabHost;
+		if (!second || second === first) throw new Error("no successor room");
+		const welcomed = Promise.withResolvers<string>();
+		await joinAsWriter(second, frame => {
+			if (frame.t === "welcome") welcomed.resolve(frame.header.id);
+		});
+		expect(await welcomed.promise).toBe(state.sessionId);
+	});
+
 	it("stops a manually started room on session switch when auto-start is off", async () => {
 		const { ctx, state } = makeControllerContext({ autoStart: "off" });
 		controller = new CollabController(ctx);
@@ -1007,6 +1047,25 @@ describe("CollabController", () => {
 		expect(ctx.collabHost).toBeUndefined();
 		expect(publishSpy).toHaveBeenCalledTimes(1);
 		expect(await registry.listCollabHosts({ dir: tmp })).toEqual([]);
+	});
+
+	it("serves a room on collab.localRelayUrl for registry consumers only, and ignores an unusable value", async () => {
+		const withLocal = makeControllerContext({ autoStart: "off", localRelayUrl: "ws://127.0.0.1:7467" });
+		controller = new CollabController(withLocal.ctx);
+		const host = await controller.start({ access: "control" });
+		const registryLink = parseCollabLink(host.registryLink("control"));
+		if ("error" in registryLink) throw new Error(registryLink.error);
+		expect(registryLink.localWsUrl).toStartWith("ws://127.0.0.1:7467/r/");
+		expect(host.webLink).not.toContain("127.0.0.1");
+		await controller.shutdown("done");
+
+		for (const localRelayUrl of ["ws://evil.example.com:7467", "not a url", RELAY_URL]) {
+			const unusable = makeControllerContext({ autoStart: "off", localRelayUrl });
+			controller = new CollabController(unusable.ctx);
+			const plain = await controller.start({ access: "control" });
+			expect(plain.registryLink("control")).toBe(plain.webLink);
+			await controller.shutdown("done");
+		}
 	});
 
 	it("caps registry access at view for auto-start view until control is requested", async () => {

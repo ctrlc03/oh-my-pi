@@ -973,6 +973,11 @@ export function getBlobsDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "blobs", "data");
 }
 
+/** Get the per-repository working-tree snapshot store root (~/.omp/agent/snapshots; XDG default: $XDG_DATA_HOME/omp/snapshots). */
+export function getFileSnapshotsDir(agentDir?: string): string {
+	return dirs.agentSubdir(agentDir, "snapshots", "data");
+}
+
 /** Get the custom themes directory (~/.omp/agent/themes). */
 export function getCustomThemesDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "themes");

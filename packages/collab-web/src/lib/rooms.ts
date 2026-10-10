@@ -123,6 +123,10 @@ export interface QueuedPrompt {
 	images?: ImageContent[];
 	/** Absent = steer; `follow-up` waits for the agent's current turn to end. */
 	deliver?: "follow-up";
+	/** `provider/id` of the model this prompt alone runs on; absent = the session's model. */
+	model?: string;
+	/** Thinking level for that model; only with `model`. */
+	thinking?: string;
 }
 
 function isQueuedPrompt(value: unknown): value is QueuedPrompt {
@@ -132,7 +136,9 @@ function isQueuedPrompt(value: unknown): value is QueuedPrompt {
 		typeof q.id === "string" &&
 		typeof q.text === "string" &&
 		(q.images === undefined || Array.isArray(q.images)) &&
-		(q.deliver === undefined || q.deliver === "follow-up")
+		(q.deliver === undefined || q.deliver === "follow-up") &&
+		(q.model === undefined || typeof q.model === "string") &&
+		(q.thinking === undefined || (typeof q.thinking === "string" && typeof q.model === "string"))
 	);
 }
 

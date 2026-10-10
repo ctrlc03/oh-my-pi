@@ -6,6 +6,7 @@ import type { ActiveTool, ConnectionPhase } from "../../lib/client";
 import { replyText, turnMarkdown, type TurnRange, turnRanges } from "../../lib/export";
 import { fmtTokens } from "../../lib/format";
 import type { NewSince } from "../../lib/new-since";
+import { answeredByOtherModel } from "../../lib/prompt-model";
 import type { QueuedPrompt } from "../../lib/rooms";
 import type { ToolRenderHost } from "../../tool-render";
 import { buildChatItems, type ChatItem, type ChatToolCall } from "./chat-items";
@@ -45,6 +46,8 @@ export interface TranscriptProps {
 	 * transcript offers *Show all* instead of earlier rows.
 	 */
 	trimmed?: { from: number; hiddenTurns: number; onShowAll(): void };
+	/** Id of the session's model: replies from any other model since its last change carry a note. */
+	sessionModel?: string;
 }
 
 interface ScrollGeometry {
@@ -315,17 +318,31 @@ function TurnActions({ entries, turn }: { entries: readonly SessionEntry[]; turn
 	);
 }
 
+/** Which model gave a reply when it was not the session's (a per-prompt choice or a fallback). */
+function ModelNote({ model }: { model: string }): ReactNode {
+	return <div className="tr-model">answered by {model}</div>;
+}
+
 interface EntryRowProps {
 	entry: SessionEntry;
 	results: ReadonlyMap<string, ToolResultMessage>;
 	active: ReadonlyMap<string, ActiveTool>;
 	host?: ToolRenderHost;
 	onEdit?: (entryId: string) => void;
+	/** Model id of a reply a model other than the session's gave. */
+	answeredBy?: string;
 }
 
 /** Re-render only when the entry itself or one of its tool pairings changed. */
 function entryRowEqual(prev: EntryRowProps, next: EntryRowProps): boolean {
-	if (prev.entry !== next.entry || prev.host !== next.host || prev.onEdit !== next.onEdit) return false;
+	if (
+		prev.entry !== next.entry ||
+		prev.host !== next.host ||
+		prev.onEdit !== next.onEdit ||
+		prev.answeredBy !== next.answeredBy
+	) {
+		return false;
+	}
 	const e = next.entry;
 	if (e.type !== "message" || e.message.role !== "assistant") return true;
 	for (const block of e.message.content) {
@@ -336,7 +353,14 @@ function entryRowEqual(prev: EntryRowProps, next: EntryRowProps): boolean {
 	return true;
 }
 
-const EntryRow = memo(function EntryRow({ entry, results, active, host, onEdit }: EntryRowProps): ReactNode {
+const EntryRow = memo(function EntryRow({
+	entry,
+	results,
+	active,
+	host,
+	onEdit,
+	answeredBy,
+}: EntryRowProps): ReactNode {
 	switch (entry.type) {
 		case "message": {
 			const msg = entry.message;
@@ -357,6 +381,7 @@ const EntryRow = memo(function EntryRow({ entry, results, active, host, onEdit }
 					return (
 						<Row kind="assistant" gutter="agent" title={entry.timestamp} entryId={entry.id}>
 							<AssistantBody message={msg} results={results} active={active} pending={false} host={host} />
+							{answeredBy && <ModelNote model={answeredBy} />}
 						</Row>
 					);
 				default:
@@ -499,22 +524,37 @@ function ChatRow({
 	active,
 	host,
 	onEdit,
+	otherModels,
 }: {
 	item: ChatItem;
 	results: ReadonlyMap<string, ToolResultMessage>;
 	active: ReadonlyMap<string, ActiveTool>;
 	host?: ToolRenderHost;
 	onEdit?: (entryId: string) => void;
+	/** Assistant entries a model other than the session's answered. */
+	otherModels: ReadonlyMap<string, string>;
 }): ReactNode {
 	switch (item.kind) {
 		case "entry":
-			return <EntryRow entry={item.entry} results={results} active={active} host={host} onEdit={onEdit} />;
-		case "text":
+			return (
+				<EntryRow
+					entry={item.entry}
+					results={results}
+					active={active}
+					host={host}
+					onEdit={onEdit}
+					answeredBy={otherModels.get(item.entry.id)}
+				/>
+			);
+		case "text": {
+			const answeredBy = item.entryId === null ? undefined : otherModels.get(item.entryId);
 			return (
 				<Row kind="assistant" gutter={item.lead ? "agent" : ""} entryId={item.entryId ?? undefined}>
 					{item.pending ? <StreamingMarkdown text={item.text} /> : <Markdown text={item.text} />}
+					{answeredBy && <ModelNote model={answeredBy} />}
 				</Row>
 			);
+		}
 		case "tools":
 			return (
 				<Row
@@ -597,6 +637,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		onCancelQueued,
 		onEditPrompt,
 		trimmed,
+		sessionModel,
 	} = props;
 
 	// null follows the tail. A number pins the first mounted entry while the
@@ -608,6 +649,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	const tailStart = Math.max(floor, entries.length - WINDOW);
 	const start = pinnedStart === null ? tailStart : Math.max(floor, Math.min(pinnedStart, tailStart));
 	const visible = useMemo(() => entries.slice(start), [entries, start]);
+	const otherModels = useMemo(() => answeredByOtherModel(entries, sessionModel), [entries, sessionModel]);
 
 	// A tool result always follows its call, so visible rows only pair with visible results.
 	const results = useMemo(() => {
@@ -964,14 +1006,28 @@ export function Transcript(props: TranscriptProps): ReactNode {
 				? chatItems.map((item, i) => (
 						<Fragment key={item.key}>
 							{i === dividerAt && <NewDivider />}
-							<ChatRow item={item} results={results} active={activeTools} host={host} onEdit={onEdit} />
+							<ChatRow
+								item={item}
+								results={results}
+								active={activeTools}
+								host={host}
+								onEdit={onEdit}
+								otherModels={otherModels}
+							/>
 							{Object.hasOwn(chatTurnEnds, i) && turnActions(chatTurnEnds[i])}
 						</Fragment>
 					))
 				: visible.map((entry, i) => (
 						<Fragment key={entry.id}>
 							{i === dividerAt && <NewDivider />}
-							<EntryRow entry={entry} results={results} active={activeTools} host={host} onEdit={onEdit} />
+							<EntryRow
+								entry={entry}
+								results={results}
+								active={activeTools}
+								host={host}
+								onEdit={onEdit}
+								answeredBy={otherModels.get(entry.id)}
+							/>
 							{Object.hasOwn(turnPlan.endOf, entry.id) && turnActions(turnPlan.endOf[entry.id])}
 						</Fragment>
 					))}
@@ -1014,6 +1070,12 @@ export function Transcript(props: TranscriptProps): ReactNode {
 						{prompt.images !== undefined && prompt.images.length > 0 && (
 							<span className="tr-queued-meta">
 								{prompt.images.length} image{prompt.images.length === 1 ? "" : "s"}
+							</span>
+						)}
+						{prompt.model !== undefined && (
+							<span className="tr-queued-meta">
+								{prompt.model}
+								{prompt.thinking !== undefined && ` · ${prompt.thinking}`}
 							</span>
 						)}
 						<button

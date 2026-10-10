@@ -26,6 +26,8 @@ function props(uiRequest: ComposerProps["uiRequest"]): ComposerProps {
 		model: undefined,
 		thinkingLevel: undefined,
 		thinkingLevels: undefined,
+		followsRoom: false,
+		promptModel: false,
 		onSessionCommand: () => {},
 	};
 }

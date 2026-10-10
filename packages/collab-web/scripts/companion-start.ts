@@ -14,8 +14,13 @@ import { SAFE_ID_RE } from "./companion-sessions";
 
 const TMUX_FALLBACKS = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"];
 
-/** Config overlay (`omp --config`): host every session this companion starts with control access. */
-const OVERLAY_YAML = "collab:\n  autoStart: control\n";
+/**
+ * Config overlay (`omp --config`): host every session this companion starts with control access,
+ * and also serve it on the companion's local relay when it runs one.
+ */
+export function overlayYaml(localRelayUrl?: string): string {
+	return `collab:\n  autoStart: control\n${localRelayUrl ? `  localRelayUrl: ${JSON.stringify(localRelayUrl)}\n` : ""}`;
+}
 
 /** Path of tmux, or null when it is not installed. */
 export async function findTmux(): Promise<string | null> {
@@ -30,9 +35,9 @@ export async function canSandbox(): Promise<boolean> {
 	return process.platform === "darwin" && (await Bun.file(SANDBOX_EXEC).exists());
 }
 
-async function writeOverlay(overlayPath: string): Promise<void> {
+async function writeOverlay(overlayPath: string, localRelayUrl?: string): Promise<void> {
 	await fs.mkdir(path.dirname(overlayPath), { recursive: true });
-	await fs.writeFile(overlayPath, OVERLAY_YAML, { mode: 0o600 });
+	await fs.writeFile(overlayPath, overlayYaml(localRelayUrl), { mode: 0o600 });
 	await fs.chmod(overlayPath, 0o600);
 }
 
@@ -41,6 +46,8 @@ export interface TmuxLaunch {
 	ompBin: string;
 	/** Companion-owned overlay file, rewritten on every launch. */
 	overlayPath: string;
+	/** The companion's local relay (`ws://127.0.0.1:<port>`); sessions started also serve their room there. */
+	localRelayUrl?: string;
 	cwd: string;
 	/** Session id to resume; must match {@link SAFE_ID_RE}. */
 	resume?: string;
@@ -71,7 +78,7 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 			);
 		throw new Error("folder does not exist on this computer");
 	}
-	await writeOverlay(launch.overlayPath);
+	await writeOverlay(launch.overlayPath, launch.localRelayUrl);
 	const sandbox = launch.sandbox ? await prepareSandbox({ ...launch.sandbox, folder: cwd }) : null;
 
 	const name = `omp-${crypto.randomUUID().slice(0, 8)}`;

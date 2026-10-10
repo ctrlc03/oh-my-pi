@@ -430,6 +430,130 @@
 	color: var(--fg-faint);
 }
 
+/* Line numbers and commenting. The container lets notes span the visible width only, so a
+   long line scrolling the diff sideways does not stretch the comment box off screen. */
+.sh-udiff {
+	container-type: inline-size;
+}
+
+.sh-udiff-num {
+	display: inline-block;
+	min-width: 3.5ch;
+	padding-right: 6px;
+	font-size: 11px;
+	text-align: right;
+	color: var(--fg-faint);
+	user-select: none;
+}
+
+.sh-udiff-num + .sh-udiff-num {
+	margin-right: 8px;
+}
+
+.sh-udiff-pick {
+	cursor: pointer;
+}
+
+.sh-udiff-pick:hover {
+	background-image: linear-gradient(var(--hover), var(--hover));
+}
+
+.sh-udiff-pick:focus-visible {
+	outline: 1px solid var(--ring);
+	outline-offset: -1px;
+}
+
+.sh-udiff-commented {
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.sh-udiff-sel,
+.sh-udiff-sel:hover {
+	background-image: linear-gradient(
+		color-mix(in srgb, var(--accent) 20%, transparent),
+		color-mix(in srgb, var(--accent) 20%, transparent)
+	);
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.sh-udiff-note {
+	position: sticky;
+	left: 0;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	width: 100cqw;
+	padding: 8px 10px;
+	font: 400 13px / 1.45 var(--font-ui);
+	white-space: normal;
+	background: var(--bg-raised);
+	border-block: 1px solid var(--border);
+}
+
+.sh-udiff-note-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.sh-udiff-note-lines {
+	flex: 1;
+	min-width: 0;
+	font: 400 11.5px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+.sh-udiff-note-btn {
+	height: 24px;
+	padding: 0 8px;
+	font-size: 12px;
+}
+
+.sh-udiff-note-text {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.sh-udiff-textarea {
+	height: auto;
+	padding: 8px 11px;
+	font-family: inherit;
+	line-height: 1.45;
+	resize: vertical;
+}
+
+.sh-udiff-hint {
+	font-size: 12px;
+	color: var(--fg-faint);
+}
+
+.sh-udiff-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+/* ---- review bar: the comments waiting to go to the agent ---- */
+.sh-review-bar {
+	position: sticky;
+	bottom: env(safe-area-inset-bottom, 0px);
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 10px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow-card);
+}
+
+.sh-review-bar-text {
+	flex: 1;
+	min-width: 0;
+	font-size: 13px;
+}
+
 /* ---- phones: 44px touch targets ---- */
 @media (max-width: 640px) {
 	.sh-btn.sh-card-action,
@@ -440,6 +564,10 @@
 
 	.sh-tab {
 		min-height: 44px;
+	}
+
+	.sh-udiff-note-btn {
+		height: 36px;
 	}
 
 	.sh-file-actions .sh-btn-icon,

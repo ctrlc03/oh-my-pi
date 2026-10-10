@@ -87,6 +87,27 @@ describe("offline prompt queue", () => {
 		expect(loadPromptQueue(ROOM)).toEqual([]);
 	});
 
+	it("keeps a follow-up's delivery through the offline queue and an app kill", () => {
+		new GuestClient(WRITE_LINK, "tester").sendPrompt("later", undefined, "follow-up");
+		expect(loadPromptQueue(ROOM)).toMatchObject([{ text: "later", deliver: "follow-up" }]);
+
+		const reopened = new GuestClient(WRITE_LINK, "tester");
+		reopened.sendPrompt("steer");
+		reopened.applyFrameForTest(welcome());
+		expect(sent).toEqual([
+			{ t: "prompt", text: "later", images: undefined, deliver: "follow-up" },
+			{ t: "prompt", text: "steer", images: undefined, deliver: undefined },
+		]);
+	});
+
+	it("sends a live follow-up with its delivery and a plain prompt without one", () => {
+		const client = new GuestClient(WRITE_LINK, "tester");
+		client.applyFrameForTest(welcome());
+		client.sendPrompt("after this turn", undefined, "follow-up");
+		client.sendPrompt("now");
+		expect(sent.map(frame => (frame.t === "prompt" ? frame.deliver : "other"))).toEqual(["follow-up", undefined]);
+	});
+
 	it("drops a cancelled prompt before it can be sent", () => {
 		const client = new GuestClient(WRITE_LINK, "tester");
 		client.sendPrompt("oops");

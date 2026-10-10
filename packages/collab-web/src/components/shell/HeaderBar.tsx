@@ -66,6 +66,8 @@ export interface HeaderBarProps {
 	/** Models this writer may switch to; null when the host predates session controls. */
 	models: readonly WireModel[] | null;
 	onSessionCommand(cmd: SessionCommand, arg?: string): void;
+	/** The session as Markdown, built on demand from every entry (not the trimmed view). Stable across renders. */
+	exportMarkdown(title: string): string;
 	push: PushControl;
 }
 
@@ -104,6 +106,7 @@ export const HeaderBar = memo(function HeaderBar({
 	sessionUsage,
 	models,
 	onSessionCommand,
+	exportMarkdown,
 	push,
 }: HeaderBarProps): ReactNode {
 	// The live name first: `header.title` is the session file's title as of joining.
@@ -346,6 +349,7 @@ export const HeaderBar = memo(function HeaderBar({
 					usage={sessionUsage}
 					models={models}
 					onSessionCommand={onSessionCommand}
+					exportMarkdown={exportMarkdown}
 					push={push}
 					onLeave={onLeave}
 					onClose={closeSheet}

@@ -111,6 +111,7 @@ function makeStreamingHostContext(): StreamingHostHarness {
 			model: undefined,
 			thinkingLevel: undefined,
 			getAvailableEffortSelectors: () => [],
+			getQueuedMessages: () => ({ steering: [], followUp: [] }),
 			subscribe: () => () => {},
 			emitNotice: () => {},
 			promptCustomMessage: (message: CapturedPrompt, options?: CapturedPrompt["options"]) => {

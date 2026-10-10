@@ -17,6 +17,9 @@ function props(uiRequest: ComposerProps["uiRequest"]): ComposerProps {
 		uiRequest,
 		working: true,
 		queuedMessageCount: 0,
+		followUp: false,
+		followUps: [],
+		upload: null,
 		draftKey: null,
 		voice: null,
 		models: null,
@@ -73,6 +76,48 @@ describe("Composer host UI requests", () => {
 
 		expect(submit.found).toBe(true);
 		expect(submit.disabled).toBe(false);
+	});
+});
+
+describe("Composer follow-ups", () => {
+	const idle = props(null);
+
+	function buttons(html: string): string[] {
+		const found: string[] = [];
+		new HTMLRewriter()
+			.on("button[title]", {
+				element(el) {
+					found.push(el.getAttribute("title") ?? "");
+				},
+			})
+			.transform(html);
+		return found;
+	}
+
+	it("offers 'After turn' only while the agent works on a host that supports it", () => {
+		const after = "send when this turn ends (Alt+Enter)";
+		expect(buttons(renderToStaticMarkup(<Composer {...idle} followUp working />))).toContain(after);
+		expect(buttons(renderToStaticMarkup(<Composer {...idle} followUp working={false} />))).not.toContain(after);
+		expect(buttons(renderToStaticMarkup(<Composer {...idle} followUp={false} working />))).not.toContain(after);
+	});
+
+	it("lists queued follow-ups as chips and keeps them out of the queued badge", () => {
+		const html = renderToStaticMarkup(
+			<Composer {...idle} followUp followUps={["run the tests", "then commit"]} queuedMessageCount={3} />,
+		);
+		expect(html).toContain("run the tests");
+		expect(html).toContain("then commit");
+		expect(html).toContain("\u00d71</span>");
+		const all = renderToStaticMarkup(
+			<Composer {...idle} followUp followUps={["a", "b"]} queuedMessageCount={2} />,
+		);
+		expect(all).not.toContain("sh-queued");
+	});
+
+	it("hides the remove action from read-only guests", () => {
+		const html = renderToStaticMarkup(<Composer {...idle} readOnly followUps={["later"]} />);
+		expect(html).toContain("later");
+		expect(html).not.toContain("remove queued follow-up");
 	});
 });
 

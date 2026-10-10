@@ -16,6 +16,7 @@
 import type {
 	AgentSnapshot,
 	AssistantMessage,
+	CollabFeature,
 	CollabUiRequest,
 	CollabUiResponseValue,
 	HostFrame,
@@ -82,9 +83,15 @@ export interface GuestSnapshot {
 	queued: readonly QueuedPrompt[];
 	/** Models the host lets this writer switch to; null when the host predates `session-cmd`. */
 	models: readonly WireModel[] | null;
+	/** Optional host capabilities from the latest welcome; `{}` until welcomed and on hosts that predate the field. */
+	features: Readonly<Partial<Record<CollabFeature, true>>>;
+	/** Texts of the host's queued follow-ups, oldest first. */
+	followUps: readonly string[];
 }
 
 const MAX_NOTICES = 50;
+const NO_FEATURES: Readonly<Partial<Record<CollabFeature, true>>> = Object.freeze({});
+const NO_FOLLOW_UPS: readonly string[] = Object.freeze([]);
 const TRANSCRIPT_TIMEOUT_MS = 10_000;
 /** A connection the host has not welcomed within this window is dropped and retried. */
 const WELCOME_TIMEOUT_MS = 30_000;
@@ -126,6 +133,27 @@ interface PendingTranscript {
 	timer: Timer;
 }
 
+/** A frame buffered behind an in-flight snapshot, replayed in arrival order once it completes. */
+type LiveOp = { entry: SessionEntry } | { keep: string | null; entries: SessionEntry[] };
+
+/** The replica cut back to `keep` (null = nothing) with `added` appended; null when `keep` is not in it. */
+function branchEntries(
+	entries: readonly SessionEntry[],
+	keep: string | null,
+	added: readonly SessionEntry[],
+): SessionEntry[] | null {
+	const at = keep === null ? -1 : entries.findLastIndex(entry => entry.id === keep);
+	if (keep !== null && at < 0) return null;
+	return entries.slice(0, at + 1).concat(added);
+}
+
+function featureMap(features: readonly CollabFeature[] | undefined): Readonly<Partial<Record<CollabFeature, true>>> {
+	if (features === undefined || features.length === 0) return NO_FEATURES;
+	const map: Partial<Record<CollabFeature, true>> = {};
+	for (const feature of features) map[feature] = true;
+	return map;
+}
+
 export class GuestClient {
 	readonly #socket: CollabSocket;
 	readonly #name: string;
@@ -163,7 +191,7 @@ export class GuestClient {
 	 */
 	#pendingSnapshot: {
 		entries: SessionEntry[];
-		live: SessionEntry[];
+		live: LiveOp[];
 		total: number;
 		resumed: boolean;
 		sessionId: string;
@@ -184,6 +212,7 @@ export class GuestClient {
 	#working = false;
 	#readOnly = false;
 	#models: readonly WireModel[] | null = null;
+	#features: Readonly<Partial<Record<CollabFeature, true>>> = NO_FEATURES;
 	/** Room the offline prompt queue is persisted under. */
 	readonly #roomId: string;
 	#queue: QueuedPrompt[] = [];
@@ -331,19 +360,19 @@ export class GuestClient {
 	 * persists the queue) to go out in order once the next welcome completes.
 	 * View-link guests never queue and never send.
 	 */
-	sendPrompt(text: string, images?: ImageContent[]): void {
+	sendPrompt(text: string, images?: ImageContent[], deliver?: "follow-up"): void {
 		if (this.#isReadOnly()) return;
 		const attached = images && images.length > 0 ? images : undefined;
 		if (this.#phase !== "live") {
 			this.#queue = [
 				...this.#queue,
-				{ id: `${Date.now().toString(36)}-${++this.#queueSeq}`, text, images: attached },
+				{ id: `${Date.now().toString(36)}-${++this.#queueSeq}`, text, images: attached, deliver },
 			];
 			savePromptQueue(this.#roomId, this.#queue);
 			this.#commit();
 			return;
 		}
-		this.#socket.send({ t: "prompt", text, images: attached });
+		this.#socket.send({ t: "prompt", text, images: attached, deliver });
 	}
 
 	/** Drops a queued prompt before it is sent. */
@@ -412,6 +441,8 @@ export class GuestClient {
 				: undefined;
 		this.#resumeEntryId = resume?.entryId ?? null;
 		this.#connWelcomed = false;
+		// Capabilities are per host connection; none are assumed until it is welcomed.
+		this.#features = NO_FEATURES;
 		this.#socket.send({
 			t: "hello",
 			proto: COLLAB_PROTO,
@@ -564,6 +595,7 @@ export class GuestClient {
 				this.#working = frame.state.isStreaming;
 				this.#readOnly = frame.readOnly === true;
 				this.#models = frame.models ?? null;
+				this.#features = featureMap(frame.features);
 				this.#clearUiRequests();
 				this.#welcomed = true;
 				this.#clearWelcomeTimer();
@@ -590,15 +622,33 @@ export class GuestClient {
 					break;
 				}
 				// A resumed snapshot appends to the kept prefix; a full one replaces the replica.
-				this.#entries = pending.resumed
-					? this.#entries.concat(pending.entries, pending.live)
-					: pending.entries.concat(pending.live);
-				this.#replicaSessionId = pending.sessionId;
-				this.#publishedEntries = [...this.#entries];
-				this.#pendingSnapshot = null;
-				this.#clearSnapshotProgressTimer();
-				this.#phase = "live";
-				this.#replicaChanged(!pending.resumed);
+				// Frames buffered behind it replay in arrival order on top.
+				{
+					let entries = pending.resumed ? this.#entries.concat(pending.entries) : pending.entries;
+					let branched = false;
+					for (const op of pending.live) {
+						if ("entry" in op) {
+							entries.push(op.entry);
+							continue;
+						}
+						const next = branchEntries(entries, op.keep, op.entries);
+						if (next === null) {
+							this.#rejoinForFullSnapshot(
+								"a branch frame named an entry the replica lacks; rejoining for a full snapshot",
+							);
+							return;
+						}
+						entries = next;
+						branched = true;
+					}
+					this.#entries = entries;
+					this.#replicaSessionId = pending.sessionId;
+					this.#publishedEntries = [...this.#entries];
+					this.#pendingSnapshot = null;
+					this.#clearSnapshotProgressTimer();
+					this.#phase = "live";
+					this.#replicaChanged(!pending.resumed || branched);
+				}
 				break;
 			}
 			case "entry":
@@ -611,13 +661,32 @@ export class GuestClient {
 					this.#streamDone = false;
 				}
 				if (this.#pendingSnapshot !== null) {
-					this.#pendingSnapshot.live.push(frame.entry);
+					this.#pendingSnapshot.live.push({ entry: frame.entry });
 					break;
 				}
 				this.#entries.push(frame.entry);
 				this.#publishedEntries = [...this.#entries];
 				this.#replicaChanged(false);
 				break;
+			case "branch": {
+				// The relay can deliver this before our welcome; the snapshot already reflects it.
+				if (!this.#connWelcomed) break;
+				if (this.#pendingSnapshot !== null) {
+					this.#pendingSnapshot.live.push({ keep: frame.keep, entries: frame.entries });
+					break;
+				}
+				const next = branchEntries(this.#entries, frame.keep, frame.entries);
+				if (next === null) {
+					this.#rejoinForFullSnapshot(
+						"a branch frame named an entry the replica lacks; rejoining for a full snapshot",
+					);
+					return;
+				}
+				this.#entries = next;
+				this.#publishedEntries = [...next];
+				this.#replicaChanged(true);
+				break;
+			}
 			case "event":
 				this.#applyEvent(frame.event);
 				break;
@@ -706,7 +775,22 @@ export class GuestClient {
 		this.#queue = [];
 		savePromptQueue(this.#roomId, this.#queue);
 		if (this.#readOnly) return;
-		for (const prompt of queued) this.#socket.send({ t: "prompt", text: prompt.text, images: prompt.images });
+		for (const prompt of queued) {
+			this.#socket.send({ t: "prompt", text: prompt.text, images: prompt.images, deliver: prompt.deliver });
+		}
+	}
+
+	/**
+	 * The replica cannot be repaired from the frames at hand: forget it and rejoin without a
+	 * resume offer, so the host answers with a full snapshot. What is on screen stays until that
+	 * snapshot replaces it, and the connection ignores entry frames until its next welcome.
+	 */
+	#rejoinForFullSnapshot(reason: string): void {
+		this.#entries = [];
+		this.#replicaSessionId = null;
+		this.#pendingSnapshot = null;
+		this.#connWelcomed = false;
+		this.#socket.reconnect(reason);
 	}
 
 	/**
@@ -873,6 +957,8 @@ export class GuestClient {
 			},
 			queued: this.#queue,
 			models: this.#models,
+			features: this.#features,
+			followUps: this.#state?.followUps ?? NO_FOLLOW_UPS,
 		};
 	}
 

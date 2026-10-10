@@ -1,8 +1,9 @@
 import type { AssistantMessage, ImageContent, SessionEntry, TextContent, ToolResultMessage } from "@oh-my-pi/pi-wire";
-import { ArrowDown, ArrowUp, ChevronRight, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronRight, Copy, Pencil, Share2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ActiveTool, ConnectionPhase } from "../../lib/client";
+import { replyText, turnMarkdown, type TurnRange, turnRanges } from "../../lib/export";
 import { fmtTokens } from "../../lib/format";
 import type { NewSince } from "../../lib/new-since";
 import type { QueuedPrompt } from "../../lib/rooms";
@@ -37,6 +38,8 @@ export interface TranscriptProps {
 	/** Prompts waiting for the connection, shown as pending bubbles at the end. */
 	queued?: readonly QueuedPrompt[];
 	onCancelQueued?(id: string): void;
+	/** Rows of prompts offer an edit action that calls this with the prompt's entry id. */
+	onEditPrompt?: (entryId: string) => void;
 	/**
 	 * Kept latest turns: entries before `from` stay unmounted, and the top of the
 	 * transcript offers *Show all* instead of earlier rows.
@@ -89,6 +92,7 @@ function Row({
 	title,
 	entryId,
 	alsoEntries,
+	action,
 	children,
 }: {
 	kind: "user" | "assistant" | "custom" | "marker";
@@ -98,6 +102,8 @@ function Row({
 	entryId?: string;
 	/** Further entries this row also renders (a folded tool run spans several). */
 	alsoEntries?: readonly string[];
+	/** Hover action beside the body (outside the bubble's flow). */
+	action?: ReactNode;
 	children: ReactNode;
 }): ReactNode {
 	return (
@@ -109,7 +115,10 @@ function Row({
 			<div className="tr-gutter" title={title}>
 				{gutter}
 			</div>
-			<div className="tr-body">{children}</div>
+			<div className="tr-body">
+				{children}
+				{action}
+			</div>
 		</div>
 	);
 }
@@ -222,16 +231,101 @@ function AssistantBody({
 	);
 }
 
+function EditPrompt({ entryId, onEdit }: { entryId: string; onEdit: (entryId: string) => void }): ReactNode {
+	return (
+		<button
+			type="button"
+			className="tr-edit"
+			onClick={() => onEdit(entryId)}
+			aria-label="edit and resend"
+			title="edit and resend"
+		>
+			<Pencil size={13} />
+		</button>
+	);
+}
+
+/** How long a copy button reads "Copied" before it goes back. */
+const COPIED_MS = 1500;
+
+/** What the agent did in one turn, tallied for its action row. */
+interface PlannedTurn extends TurnRange {
+	/** The turn has an assistant message. */
+	agent: boolean;
+	/** Some assistant message carries reply text. */
+	reply: boolean;
+	/** The turn's last assistant message: the action row follows it in the full view. */
+	endId: string | null;
+}
+
+/** Copy the reply or share the turn: quiet actions at the end of a finished agent turn. */
+function TurnActions({ entries, turn }: { entries: readonly SessionEntry[]; turn: PlannedTurn }): ReactNode {
+	const [done, setDone] = useState<"reply" | "share" | null>(null);
+	const timer = useRef<number | undefined>(undefined);
+	useEffect(() => () => window.clearTimeout(timer.current), []);
+	const flash = (what: "reply" | "share"): void => {
+		setDone(what);
+		window.clearTimeout(timer.current);
+		timer.current = window.setTimeout(() => setDone(null), COPIED_MS);
+	};
+	const copy = async (text: string, what: "reply" | "share"): Promise<void> => {
+		try {
+			await navigator.clipboard.writeText(text);
+			flash(what);
+		} catch {
+			// Clipboard blocked (insecure origin, permission): nothing to confirm.
+		}
+	};
+	const slice = (): readonly SessionEntry[] => entries.slice(turn.from, turn.to);
+	const share = async (): Promise<void> => {
+		const turnEntries = slice();
+		const text = turnMarkdown(turnEntries);
+		if (typeof navigator.share !== "function") return copy(text, "share");
+		const title = replyText(turnEntries).split("\n", 1)[0]?.slice(0, 80) || "omp reply";
+		try {
+			await navigator.share({ title, text });
+		} catch (error) {
+			// Dismissing the sheet is a choice, not a failure.
+			if (!(error instanceof DOMException && error.name === "AbortError")) await copy(text, "share");
+		}
+	};
+	return (
+		<div className="tr-turn-actions">
+			{turn.reply && (
+				<button
+					type="button"
+					className="tr-turn-btn"
+					data-copied={done === "reply" ? "" : undefined}
+					onClick={() => void copy(replyText(slice()), "reply")}
+				>
+					{done === "reply" ? <Check size={12} /> : <Copy size={12} />}
+					{done === "reply" ? "Copied" : "Copy reply"}
+				</button>
+			)}
+			<button
+				type="button"
+				className="tr-turn-btn"
+				data-copied={done === "share" ? "" : undefined}
+				onClick={() => void share()}
+			>
+				{done === "share" ? <Check size={12} /> : <Share2 size={12} />}
+				{done === "share" ? "Copied" : "Share"}
+			</button>
+		</div>
+	);
+}
+
 interface EntryRowProps {
 	entry: SessionEntry;
 	results: ReadonlyMap<string, ToolResultMessage>;
 	active: ReadonlyMap<string, ActiveTool>;
 	host?: ToolRenderHost;
+	onEdit?: (entryId: string) => void;
 }
 
 /** Re-render only when the entry itself or one of its tool pairings changed. */
 function entryRowEqual(prev: EntryRowProps, next: EntryRowProps): boolean {
-	if (prev.entry !== next.entry || prev.host !== next.host) return false;
+	if (prev.entry !== next.entry || prev.host !== next.host || prev.onEdit !== next.onEdit) return false;
 	const e = next.entry;
 	if (e.type !== "message" || e.message.role !== "assistant") return true;
 	for (const block of e.message.content) {
@@ -242,14 +336,20 @@ function entryRowEqual(prev: EntryRowProps, next: EntryRowProps): boolean {
 	return true;
 }
 
-const EntryRow = memo(function EntryRow({ entry, results, active, host }: EntryRowProps): ReactNode {
+const EntryRow = memo(function EntryRow({ entry, results, active, host, onEdit }: EntryRowProps): ReactNode {
 	switch (entry.type) {
 		case "message": {
 			const msg = entry.message;
 			switch (msg.role) {
 				case "user":
 					return (
-						<Row kind="user" gutter="host" title={entry.timestamp} entryId={entry.id}>
+						<Row
+							kind="user"
+							gutter="host"
+							title={entry.timestamp}
+							entryId={entry.id}
+							action={onEdit && !msg.synthetic && <EditPrompt entryId={entry.id} onEdit={onEdit} />}
+						>
 							<MsgContent content={msg.content} />
 						</Row>
 					);
@@ -279,6 +379,7 @@ const EntryRow = memo(function EntryRow({ entry, results, active, host }: EntryR
 						gutter={<span className="tr-badge">{from}</span>}
 						title={entry.timestamp}
 						entryId={entry.id}
+						action={onEdit && <EditPrompt entryId={entry.id} onEdit={onEdit} />}
 					>
 						<MsgContent content={entry.content} />
 					</Row>
@@ -397,15 +498,17 @@ function ChatRow({
 	results,
 	active,
 	host,
+	onEdit,
 }: {
 	item: ChatItem;
 	results: ReadonlyMap<string, ToolResultMessage>;
 	active: ReadonlyMap<string, ActiveTool>;
 	host?: ToolRenderHost;
+	onEdit?: (entryId: string) => void;
 }): ReactNode {
 	switch (item.kind) {
 		case "entry":
-			return <EntryRow entry={item.entry} results={results} active={active} host={host} />;
+			return <EntryRow entry={item.entry} results={results} active={active} host={host} onEdit={onEdit} />;
 		case "text":
 			return (
 				<Row kind="assistant" gutter={item.lead ? "agent" : ""} entryId={item.entryId ?? undefined}>
@@ -492,6 +595,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		onTail,
 		queued,
 		onCancelQueued,
+		onEditPrompt,
 		trimmed,
 	} = props;
 
@@ -631,6 +735,55 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		() => (chat ? buildChatItems(visible, stream, streamDone, tailTools) : null),
 		[chat, visible, stream, streamDone, tailTools],
 	);
+
+	// Edit action: a stable callback so memoized rows re-render only when editing turns on or off.
+	const editRef = useRef(onEditPrompt);
+	editRef.current = onEditPrompt;
+	const canEdit = onEditPrompt !== undefined && compact !== true;
+	const onEdit = useMemo(() => (canEdit ? (entryId: string) => editRef.current?.(entryId) : undefined), [canEdit]);
+
+	// Where each turn's agent work ends, for the copy/share row. Computed over all
+	// entries, so a turn whose start is above the mounted window still copies whole.
+	const turnPlan = useMemo(() => {
+		const turns: PlannedTurn[] =
+			compact === true
+				? []
+				: turnRanges(entries).map(range => ({ ...range, agent: false, reply: false, endId: null }));
+		const byEntry: Record<string, number> = {};
+		const endOf: Record<string, number> = {};
+		turns.forEach((turn, t) => {
+			for (let i = turn.from; i < turn.to; i++) {
+				const entry = entries[i]!;
+				byEntry[entry.id] = t;
+				if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+				turn.agent = true;
+				turn.endId = entry.id;
+				if (entry.message.content.some(block => block.type === "text" && block.text.trim())) turn.reply = true;
+			}
+			if (turn.endId !== null) endOf[turn.endId] = t;
+		});
+		return { turns, byEntry, endOf };
+	}, [entries, compact]);
+	/** In the chat view, the last agent item of each turn (item index → turn). */
+	const chatTurnEnds = useMemo(() => {
+		const lastItem: Record<number, number> = {};
+		chatItems?.forEach((item, i) => {
+			if (item.kind === "entry") return;
+			const id = item.kind === "tools" ? (item.entryIds.at(-1) ?? item.entryId) : item.entryId;
+			if (id !== null && Object.hasOwn(turnPlan.byEntry, id)) lastItem[turnPlan.byEntry[id]!] = i;
+		});
+		const ends: Record<number, number> = {};
+		for (const [turn, i] of Object.entries(lastItem)) ends[i] = Number(turn);
+		return ends;
+	}, [chatItems, turnPlan]);
+	const finished = !working && stream === null;
+	/** The action row for turn `t`, once its agent work is done. */
+	const turnActions = (t: number | undefined): ReactNode => {
+		const turn = t === undefined ? undefined : turnPlan.turns[t];
+		if (turn === undefined || !turn.agent) return null;
+		if (t === turnPlan.turns.length - 1 && !finished) return null;
+		return <TurnActions entries={entries} turn={turn} />;
+	};
 
 	// Find-in-session: mount the target's window if it is above it, then center it
 	// once per target (new entries repaint the highlights but never re-scroll).
@@ -811,13 +964,15 @@ export function Transcript(props: TranscriptProps): ReactNode {
 				? chatItems.map((item, i) => (
 						<Fragment key={item.key}>
 							{i === dividerAt && <NewDivider />}
-							<ChatRow item={item} results={results} active={activeTools} host={host} />
+							<ChatRow item={item} results={results} active={activeTools} host={host} onEdit={onEdit} />
+							{Object.hasOwn(chatTurnEnds, i) && turnActions(chatTurnEnds[i])}
 						</Fragment>
 					))
 				: visible.map((entry, i) => (
 						<Fragment key={entry.id}>
 							{i === dividerAt && <NewDivider />}
-							<EntryRow entry={entry} results={results} active={activeTools} host={host} />
+							<EntryRow entry={entry} results={results} active={activeTools} host={host} onEdit={onEdit} />
+							{Object.hasOwn(turnPlan.endOf, entry.id) && turnActions(turnPlan.endOf[entry.id])}
 						</Fragment>
 					))}
 			{chatItems === null && stream !== null && (

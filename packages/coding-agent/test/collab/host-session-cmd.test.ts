@@ -82,6 +82,7 @@ function makeHost(): HostHarness {
 			scopedModels: [],
 			modelRegistry: { getError: () => undefined, getAvailable: () => CATALOG, getAll: () => CATALOG },
 			getAvailableEffortSelectors: () => state.selectors,
+			getQueuedMessages: () => ({ steering: [], followUp: [] }),
 			getContextUsage: () => ({ tokens: state.contextTokens }),
 			resolveTemporaryModelThinkingLevel: () => undefined,
 			setModelTemporary: (model: Model) => {

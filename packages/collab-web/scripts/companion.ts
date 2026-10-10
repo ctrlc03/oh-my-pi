@@ -88,7 +88,7 @@ import { checkFlow, checkFocus, checkSearch, codemapSearch, codemapView, loadCod
 import { collectDiag, recordRelayEvent, recordRequestError } from "./companion-diag";
 import { findFileSessions, repoRelativeFocus } from "./companion-file-sessions";
 import { fileVersions, listTree, writeRepoFile } from "./companion-files";
-import { gitDiff, gitSnapshot, isInside, readRepoFile } from "./companion-git";
+import { gitDiff, gitSnapshot, isInside, readRepoFile, repoRoot } from "./companion-git";
 import {
 	canCreatePr,
 	createPullRequest,
@@ -118,9 +118,11 @@ import { findSessionHolders } from "./companion-open";
 import { capturePane } from "./companion-pane";
 import { holdAwake, powerNotice, readPower } from "./companion-power";
 import { capturePreview, closePreviewBrowser, findChrome, isViewport, previewTargets } from "./companion-preview";
+import { createPrWatch, ghReadPrs, loadPrWatchFile, parsePrAlertSettings, savePrWatchFile } from "./companion-prwatch";
 import { createSpendMonitor, parseSpendLimits, parseSpendState, type SpendState, withLimits } from "./companion-spend";
 import { canSandbox, findTmux, killTmuxSession, launchInTmux } from "./companion-start";
 import { fileSessionOverviews, isUsageRange, readSpend, sessionOverview, usageReport } from "./companion-stats";
+import { storeUpload } from "./companion-upload";
 import { createVoice } from "./companion-voice";
 import { generateVapidKeys, isPushSubscription, sendPush, type VapidKeys } from "./web-push";
 
@@ -317,8 +319,13 @@ function hostTitle(host: CompanionHost): string {
 	return host.sessionName || path.basename(host.cwd) || "session";
 }
 
-function push(subscription: PushSubscriptionJson, payload: { title: string; body: string; instanceId?: string }): void {
-	sendPush(subscription, payload, state.vapid, pushSubject, payload.instanceId).then(
+/** `topic` defaults to the session: a newer notice for it replaces one still undelivered. `tag` and `url` reach the service worker (notification replacement, tap target). */
+function push(
+	subscription: PushSubscriptionJson,
+	payload: { title: string; body: string; instanceId?: string; url?: string; tag?: string },
+	topic = payload.instanceId,
+): void {
+	sendPush(subscription, payload, state.vapid, pushSubject, topic).then(
 		status => {
 			// 404/410: the browser dropped the subscription (unsubscribed, app removed).
 			if (status === 404 || status === 410)
@@ -368,6 +375,33 @@ const spendMonitor = createSpendMonitor({
 		for (const subscription of registry.subscriptions()) push(subscription, alert);
 	},
 	onError: err => console.error(`companion: spend check failed: ${errorText(err)}`),
+});
+
+const prWatchPath = path.join(path.dirname(statePath), "collab-companion-prwatch.json");
+let prAlertState = await loadPrWatchFile(prWatchPath);
+
+/** Pushes when checks finish or someone reviews or comments on the user's open pull requests in the repositories of known sessions. */
+const prWatch = createPrWatch({
+	now: Date.now,
+	state: () => prAlertState.prs,
+	settings: () => prAlertState.settings,
+	save: async prs => {
+		prAlertState = { settings: prAlertState.settings, prs };
+		await savePrWatchFile(prWatchPath, prAlertState);
+	},
+	wanted: async () => registry.subscriptions().length > 0 && (await canCreatePr()),
+	listRepos: async () => {
+		const roots = await Promise.all(
+			[...knownHosts, ...knownIdle].map(session => repoRoot(session.cwd).catch(() => null)),
+		);
+		return [...new Set(roots.filter((root): root is string => root !== null))];
+	},
+	readPrs: ghReadPrs,
+	alert: alert => {
+		const { topic, ...payload } = alert;
+		for (const subscription of registry.subscriptions()) push(subscription, payload, topic);
+	},
+	onError: err => console.error(`companion: pull request check failed: ${errorText(err)}`),
 });
 
 /**
@@ -433,6 +467,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 	if (!listed) return;
 	detectEdges(listed.hosts);
 	void spendMonitor.tick();
+	void prWatch.tick();
 	detectPowerEdges(power);
 	if (!extras || peers.size === 0) return;
 	const frame: CompanionReply = {
@@ -449,6 +484,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canPreview: previewChrome !== null,
 		// Reading issues and pull requests needs the same signed-in gh as opening one.
 		canGithub: extras.canPr,
+		canUpload: true,
 		transcribe: extras.transcribe ?? undefined,
 		power: power ?? undefined,
 	};
@@ -820,6 +856,18 @@ socket.onFrame = (frame, fromPeer) => {
 				};
 			});
 			return;
+		case "pr-alerts":
+			respond(frame.reqId, async () => {
+				if (frame.settings !== undefined) {
+					const settings = parsePrAlertSettings(frame.settings);
+					// Turned off entirely: what was seen goes stale, so a later enable starts from a fresh sighting.
+					prAlertState = { settings, prs: settings.checks || settings.reviews ? prAlertState.prs : {} };
+					await savePrWatchFile(prWatchPath, prAlertState);
+					void prWatch.tick(true);
+				}
+				return { t: "pr-alerts", reqId: frame.reqId, settings: prAlertState.settings };
+			});
+			return;
 		case "usage":
 			respond(frame.reqId, async () => {
 				if (!isUsageRange(frame.range)) throw new Error("unknown usage range");
@@ -945,6 +993,13 @@ socket.onFrame = (frame, fromPeer) => {
 					reqId: frame.reqId,
 					shot: await capturePreview(previewChrome, frame.url, frame.viewport, frame.fullPage === true),
 				};
+			});
+			return;
+		case "upload":
+			respond(frame.reqId, async () => {
+				// Only a session this computer knows may receive files.
+				await sessionCwd(frame.instanceId);
+				return { t: "uploaded", reqId: frame.reqId, path: await storeUpload(frame.name, frame.data) };
 			});
 			return;
 		case "transcribe":

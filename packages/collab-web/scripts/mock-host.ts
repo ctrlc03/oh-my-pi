@@ -92,6 +92,8 @@ let thinkingLevel = "medium";
 let lastEntryId: string | null = entries[entries.length - 1]?.id ?? null;
 let streaming = false;
 let queuedPrompts = 0;
+/** Follow-up prompts held until the running replay ends, oldest first. */
+let followUps: { text: string; images: ImageContent[] | undefined; from: string }[] = [];
 let turnSeq = 0;
 let liveEntrySeq = 0;
 let replayQueue: ScriptedStep[] = [];
@@ -127,7 +129,8 @@ function buildState(): SessionState {
 	const tokens = 51_000 + entries.length * 120;
 	return {
 		isStreaming: streaming,
-		queuedMessageCount: queuedPrompts,
+		queuedMessageCount: queuedPrompts + followUps.length,
+		followUps: followUps.map(followUp => followUp.text),
 		sessionName,
 		cwd: fixtureHeader.cwd,
 		model: currentModel,
@@ -178,6 +181,12 @@ function scheduleStep(): void {
 		}
 		if (queuedPrompts > 0) {
 			queuedPrompts--;
+			startReplay();
+			return;
+		}
+		const next = followUps.shift();
+		if (next !== undefined) {
+			appendPromptEntry(next.text, next.images, next.from);
 			startReplay();
 		}
 	}, STEP_INTERVAL_MS);
@@ -235,6 +244,7 @@ function handleHello(name: string, proto: number, token: string | undefined, fro
 			entryCount: entries.length,
 			readOnly: writer ? undefined : true,
 			models: writer ? fixtureModels : undefined,
+			features: ["follow-up", "rewind"],
 		},
 		fromPeer,
 	);
@@ -311,11 +321,43 @@ function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer
 			broadcastState();
 			break;
 		}
+		case "unqueue": {
+			const at = followUps.findIndex(followUp => followUp.text === arg);
+			if (at < 0) {
+				sendFrame({ t: "error", message: "unqueue: no queued follow-up with that text" }, fromPeer);
+				return;
+			}
+			followUps.splice(at, 1);
+			broadcastState();
+			break;
+		}
+		case "rewind": {
+			if (streaming || isReplaying()) {
+				sendFrame({ t: "error", message: "rewind: wait for the agent to finish its turn" }, fromPeer);
+				return;
+			}
+			const at = entries.findIndex(entry => entry.id === arg);
+			const target = entries[at];
+			const isPrompt =
+				target !== undefined &&
+				((target.type === "message" && target.message.role === "user") ||
+					(target.type === "custom_message" && target.customType === "collab-prompt"));
+			if (!isPrompt) {
+				sendFrame({ t: "error", message: "rewind: that entry is not a prompt on the active path" }, fromPeer);
+				return;
+			}
+			// The mock keeps only the active path, so the abandoned turns are simply dropped.
+			entries.length = at;
+			lastEntryId = entries[at - 1]?.id ?? null;
+			sendFrame({ t: "branch", keep: lastEntryId, entries: [] });
+			notice("info", `${who} rewound the session to before a prompt`);
+			broadcastState();
+			break;
+		}
 	}
 }
 
-function handlePrompt(text: string, images: ImageContent[] | undefined, fromPeer: number): void {
-	if (refuseReadOnly(fromPeer)) return;
+function appendPromptEntry(text: string, images: ImageContent[] | undefined, from: string): void {
 	liveEntrySeq++;
 	appendEntry({
 		id: `live-${liveEntrySeq}`,
@@ -324,10 +366,30 @@ function handlePrompt(text: string, images: ImageContent[] | undefined, fromPeer
 		type: "custom_message",
 		customType: "collab-prompt",
 		content: images && images.length > 0 ? [{ type: "text", text }, ...images] : text,
-		details: { from: peerName(fromPeer) },
+		details: { from },
 		display: true,
 	});
-	if (replayTimer !== null || replayQueue.length > 0) {
+}
+
+function isReplaying(): boolean {
+	return replayTimer !== null || replayQueue.length > 0;
+}
+
+function handlePrompt(
+	text: string,
+	images: ImageContent[] | undefined,
+	deliver: "follow-up" | undefined,
+	fromPeer: number,
+): void {
+	if (refuseReadOnly(fromPeer)) return;
+	if (deliver === "follow-up" && isReplaying()) {
+		// Like the real host: no transcript entry until the turn that carries it starts.
+		followUps.push({ text, images, from: peerName(fromPeer) });
+		broadcastState();
+		return;
+	}
+	appendPromptEntry(text, images, peerName(fromPeer));
+	if (isReplaying()) {
 		queuedPrompts++;
 		broadcastState();
 		return;
@@ -340,6 +402,7 @@ function handleAbort(fromPeer: number): void {
 	const wasReplaying = replayTimer !== null || replayQueue.length > 0;
 	cancelReplay();
 	queuedPrompts = 0;
+	followUps = [];
 	notice("info", `${peerName(fromPeer)} interrupted`);
 	if (wasReplaying) sendFrame({ t: "event", event: { type: "agent_end" } });
 	streaming = false;
@@ -364,7 +427,7 @@ function handleFrame(frame: WireFrame, fromPeer: number): void {
 			handleHello(frame.name, frame.proto, frame.writeToken, fromPeer);
 			break;
 		case "prompt":
-			handlePrompt(frame.text, frame.images, fromPeer);
+			handlePrompt(frame.text, frame.images, frame.deliver, fromPeer);
 			break;
 		case "abort":
 			handleAbort(fromPeer);

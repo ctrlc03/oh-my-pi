@@ -41,6 +41,7 @@ function makeHostContext(manager: SessionManager): InteractiveModeContext {
 			model: undefined,
 			thinkingLevel: undefined,
 			getAvailableEffortSelectors: () => [],
+			getQueuedMessages: () => ({ steering: [], followUp: [] }),
 			subscribe: () => () => {},
 			emitNotice: () => {},
 			promptCustomMessage: () => Promise.resolve(),
@@ -257,5 +258,37 @@ describe("collab guest replica identity", () => {
 		await settleFrames(() => harness.session.messages[0]?.role === "compactionSummary");
 		expect(harness.session.sessionManager.getSessionId()).toBe(replicaId);
 		expect(leaseFree()).toBe(false);
+	});
+});
+
+describe("collab guest follows host branch changes", () => {
+	it("drops the abandoned branch from its model context when the host rewinds, and builds on the new one", async () => {
+		const hostManager = SessionManager.inMemory();
+		hostManager.appendMessage({ role: "user", content: "first", timestamp: Date.now() });
+		const keptId = hostManager.appendMessage(createAssistantMessage("reply"));
+		hostManager.appendMessage({ role: "user", content: "second", timestamp: Date.now() });
+		hostManager.appendMessage(createAssistantMessage("second reply"));
+		const host = new CollabHost(makeHostContext(hostManager));
+		await host.start("ws://localhost:8788");
+		cleanups.push(() => host.stop("test done"));
+		const harness = makeGuestHarness(model, modelRegistry);
+		cleanups.push(harness.dispose);
+		await harness.guest.join(host.link);
+		await settleFrames(() => harness.session.messages.length === 4);
+
+		// Rewind to before "second": the guest keeps through the first reply and drops the rest.
+		hostManager.branch(keptId);
+		await settleFrames(() => harness.session.messages.length === 2);
+
+		// The next prompt is a sibling of the abandoned one and extends the guest's new leaf.
+		hostManager.appendMessage({ role: "user", content: "second, reworded", timestamp: Date.now() });
+		await settleFrames(() => harness.session.messages.length === 3);
+		const contents = harness.session.messages.map(m =>
+			"content" in m && typeof m.content === "string" ? m.content : m.role,
+		);
+		expect(contents).toEqual(["first", "assistant", "second, reworded"]);
+		expect(harness.session.sessionManager.getBranch().map(entry => entry.id)).toEqual(
+			hostManager.getBranch().map(entry => entry.id),
+		);
 	});
 });

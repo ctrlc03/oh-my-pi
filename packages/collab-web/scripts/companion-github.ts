@@ -66,7 +66,7 @@ interface RawItem {
 }
 
 /** A check run (GitHub Actions and apps: `status`, `conclusion`) or a commit status context (`state`). */
-interface RawCheck {
+export interface RawCheck {
 	name?: string;
 	workflowName?: string;
 	detailsUrl?: string;
@@ -97,7 +97,7 @@ function checkState(check: RawCheck): GithubCheckState {
 }
 
 /** All checks combined: any failure fails, else any pending is pending; null when there are none. */
-function rollup(checks: RawCheck[] | undefined): GithubItem["checks"] {
+export function rollup(checks: RawCheck[] | undefined): GithubItem["checks"] {
 	if (!checks?.length) return null;
 	let pending = false;
 	for (const check of checks) {
@@ -108,7 +108,7 @@ function rollup(checks: RawCheck[] | undefined): GithubItem["checks"] {
 	return pending ? "pending" : "pass";
 }
 
-function toCheck(check: RawCheck): GithubCheck {
+export function toCheck(check: RawCheck): GithubCheck {
 	const job = check.name ?? check.context ?? "check";
 	return {
 		name: check.workflowName ? `${check.workflowName} / ${job}` : job,

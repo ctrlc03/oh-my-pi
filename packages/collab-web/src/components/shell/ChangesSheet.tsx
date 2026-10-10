@@ -4,6 +4,14 @@ import { useState } from "react";
 import type { FileChange } from "../../lib/changes";
 import type { CompanionClient } from "../../lib/companion";
 import { splitPath } from "../../lib/format";
+import {
+	buildReviewPrompt,
+	commentId,
+	type DiffReview,
+	loadReviewComments,
+	type ReviewComment,
+	saveReviewComments,
+} from "../../lib/review-comments";
 import { type ToolRenderHost, ToolView } from "../../tool-render";
 import { Sheet } from "./Sheet";
 import { ReviewPanel } from "./ReviewPanel";
@@ -26,6 +34,10 @@ export interface ChangesSheetProps {
 	host: ToolRenderHost;
 	/** null: no companion host for this session, so only the agent's own edits are known. */
 	tree: ChangesTree | null;
+	/** Keys the unsent review in storage; null: nothing is remembered. */
+	sessionId: string | null;
+	/** Puts the review prompt into the composer. null (read-only viewer): no commenting. */
+	onSendToAgent: ((text: string) => void) | null;
 	onClose(): void;
 }
 
@@ -35,8 +47,31 @@ type Tab = "agent" | "tree" | "branch";
  * What changed: the agent's edit-tool calls from the transcript, and, when the
  * session's computer is paired, the repository's working tree.
  */
-export function ChangesSheet({ changes, host, tree, onClose }: ChangesSheetProps): ReactNode {
+export function ChangesSheet({ changes, host, tree, sessionId, onSendToAgent, onClose }: ChangesSheetProps): ReactNode {
 	const [tab, setTab] = useState<Tab>(changes.length === 0 && tree !== null ? "tree" : "agent");
+	const [comments, setComments] = useState<Record<string, ReviewComment>>(() =>
+		onSendToAgent === null || sessionId === null || tree === null ? {} : loadReviewComments(sessionId),
+	);
+	const [discarding, setDiscarding] = useState(false);
+	const change = (next: Record<string, ReviewComment>): void => {
+		setComments(next);
+		if (sessionId !== null) saveReviewComments(sessionId, next);
+	};
+	// Comments live here, not in the diff views, so they outlive switching files and tabs.
+	const review: DiffReview | null =
+		onSendToAgent === null || tree === null
+			? null
+			: {
+					comments,
+					save: comment => change({ ...comments, [commentId(comment)]: comment }),
+					remove: id => change(Object.fromEntries(Object.entries(comments).filter(([key]) => key !== id))),
+				};
+	const count = Object.keys(comments).length;
+	const send = (): void => {
+		if (onSendToAgent === null) return;
+		onSendToAgent(buildReviewPrompt(Object.values(comments)));
+		change({});
+	};
 	return (
 		<Sheet label="changes" size="wide" onClose={onClose}>
 			<div className="sh-sheet-head">
@@ -85,7 +120,7 @@ export function ChangesSheet({ changes, host, tree, onClose }: ChangesSheetProps
 				</div>
 			)}
 			{tab === "tree" && tree !== null ? (
-				<WorkingTree client={tree.client} instanceId={tree.instanceId} host={host} />
+				<WorkingTree client={tree.client} instanceId={tree.instanceId} host={host} review={review} />
 			) : tab === "branch" && tree !== null ? (
 				<ReviewPanel
 					client={tree.client}
@@ -94,9 +129,46 @@ export function ChangesSheet({ changes, host, tree, onClose }: ChangesSheetProps
 					canPr={tree.canPr}
 					busy={tree.busy}
 					title={tree.title}
+					diffReview={review}
 				/>
 			) : (
 				<AgentEdits changes={changes} host={host} />
+			)}
+			{review !== null && count > 0 && (
+				<div className="sh-review-bar" role="group" aria-label="review">
+					{discarding ? (
+						<>
+							<span className="sh-review-bar-text">
+								Discard {count === 1 ? "the comment" : `all ${count} comments`}?
+							</span>
+							<button type="button" className="sh-btn" onClick={() => setDiscarding(false)}>
+								Keep
+							</button>
+							<button
+								type="button"
+								className="sh-btn sh-btn-stop"
+								onClick={() => {
+									change({});
+									setDiscarding(false);
+								}}
+							>
+								Discard
+							</button>
+						</>
+					) : (
+						<>
+							<span className="sh-review-bar-text">
+								{count} comment{count === 1 ? "" : "s"}
+							</span>
+							<button type="button" className="sh-btn" onClick={() => setDiscarding(true)}>
+								Discard
+							</button>
+							<button type="button" className="sh-btn sh-btn-primary" onClick={send}>
+								Send to agent
+							</button>
+						</>
+					)}
+				</div>
 			)}
 		</Sheet>
 	);

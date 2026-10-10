@@ -64,6 +64,7 @@ export function makeHostContext(snapshot: Snapshot, seen: HostObservations): Int
 			model: undefined,
 			thinkingLevel: undefined,
 			getAvailableEffortSelectors: () => [],
+			getQueuedMessages: () => ({ steering: [], followUp: [] }),
 			subscribe: (listener: (event: unknown) => void) => {
 				listeners.push(listener);
 				return () => {

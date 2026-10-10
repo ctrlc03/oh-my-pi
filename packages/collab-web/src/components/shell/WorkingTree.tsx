@@ -1,19 +1,23 @@
 import { ChevronRight, FileText, GitBranch, LoaderCircle, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import type { CompanionClient, GitFileChange, GitSnapshot } from "../../lib/companion";
 import { relTime, splitPath } from "../../lib/format";
+import type { DiffReview, ReviewScope } from "../../lib/review-comments";
 import { useRequest } from "../../lib/use-request";
 import type { ToolRenderHost } from "../../tool-render";
+import { UnifiedDiff } from "./ReviewDiff";
 
 export interface WorkingTreeProps {
 	client: CompanionClient;
 	instanceId: string;
 	host: ToolRenderHost;
+	/** null: commenting on diffs is off. */
+	review: DiffReview | null;
 }
 
 /** Git state of the repository around the session's cwd, read through the companion. */
-export function WorkingTree({ client, instanceId, host }: WorkingTreeProps): ReactNode {
+export function WorkingTree({ client, instanceId, host, review }: WorkingTreeProps): ReactNode {
 	const load = useCallback(() => client.requestGit(instanceId), [client, instanceId]);
 	const { state, reload } = useRequest(load);
 
@@ -34,7 +38,16 @@ export function WorkingTree({ client, instanceId, host }: WorkingTreeProps): Rea
 			</div>
 		);
 	}
-	return <GitView git={state.value} client={client} instanceId={instanceId} host={host} onRefresh={reload} />;
+	return (
+		<GitView
+			git={state.value}
+			client={client}
+			instanceId={instanceId}
+			host={host}
+			review={review}
+			onRefresh={reload}
+		/>
+	);
 }
 
 interface GitViewProps {
@@ -42,10 +55,11 @@ interface GitViewProps {
 	client: CompanionClient;
 	instanceId: string;
 	host: ToolRenderHost;
+	review: DiffReview | null;
 	onRefresh(): void;
 }
 
-function GitView({ git, client, instanceId, host, onRefresh }: GitViewProps): ReactNode {
+function GitView({ git, client, instanceId, host, review, onRefresh }: GitViewProps): ReactNode {
 	const [open, setOpen] = useState<string | null>(git.files.length === 1 ? (git.files[0]?.path ?? null) : null);
 	const loadDiff = useCallback((file: string) => client.requestDiff(instanceId, file), [client, instanceId]);
 	return (
@@ -92,6 +106,8 @@ function GitView({ git, client, instanceId, host, onRefresh }: GitViewProps): Re
 							host={host}
 							expanded={open === file.path}
 							onToggle={() => setOpen(open === file.path ? null : file.path)}
+							scope="tree"
+							review={review}
 						/>
 					))}
 				</ul>
@@ -146,10 +162,13 @@ export interface TreeFileProps {
 	host: ToolRenderHost;
 	expanded: boolean;
 	onToggle(): void;
+	scope: ReviewScope;
+	/** null: commenting on the diff is off. */
+	review: DiffReview | null;
 }
 
 /** One changed path: status, counts and, expanded, its lazily loaded diff. */
-export function TreeFile({ file, root, loadDiff, host, expanded, onToggle }: TreeFileProps): ReactNode {
+export function TreeFile({ file, root, loadDiff, host, expanded, onToggle, scope, review }: TreeFileProps): ReactNode {
 	const { dir, base } = splitPath(file.path);
 	const badge = statusBadge(file.status);
 	const deleted = badge.tone === "del" && badge.letter === "D";
@@ -181,7 +200,7 @@ export function TreeFile({ file, root, loadDiff, host, expanded, onToggle }: Tre
 			</button>
 			{expanded && (
 				<div className="sh-change-body">
-					<FileDiff loadDiff={loadDiff} path={file.path} />
+					<FileDiff loadDiff={loadDiff} scope={scope} path={file.path} review={review} />
 					{!deleted && host.openFile !== undefined && (
 						<button
 							type="button"
@@ -199,10 +218,14 @@ export function TreeFile({ file, root, loadDiff, host, expanded, onToggle }: Tre
 
 function FileDiff({
 	loadDiff,
+	scope,
 	path,
+	review,
 }: {
 	loadDiff(path: string): Promise<{ diff: string; truncated: boolean }>;
+	scope: ReviewScope;
 	path: string;
+	review: DiffReview | null;
 }): ReactNode {
 	const load = useCallback(() => loadDiff(path), [loadDiff, path]);
 	const { state } = useRequest(load);
@@ -216,39 +239,8 @@ function FileDiff({
 	if (state.status === "error") return <div className="sh-connect-error">{state.message}</div>;
 	return (
 		<>
-			<UnifiedDiff diff={state.value.diff} />
+			<UnifiedDiff diff={state.value.diff} scope={scope} path={path} review={review} />
 			{state.value.truncated && <div className="sh-file-note">The diff is longer than the viewer reads.</div>}
 		</>
 	);
-}
-
-/**
- * Colored unified diff. `DiffBlock` (agent edits) reads blank rows as elided gaps
- * and `---`/`+++` as changes, which misrenders a real `git diff`.
- */
-function UnifiedDiff({ diff }: { diff: string }): ReactNode {
-	const lines = useMemo(() => {
-		const all = diff.replace(/\n$/, "").split("\n");
-		// Drop the `diff --git` / `index` / `---` / `+++` preamble: the path is already the row header.
-		const firstHunk = all.findIndex(line => line.startsWith("@@"));
-		return firstHunk > 0 ? all.slice(firstHunk) : all;
-	}, [diff]);
-	if (diff.trim().length === 0) return <div className="sh-companion-empty">No textual changes.</div>;
-	return (
-		<div className="sh-udiff">
-			{lines.map((line, i) => (
-				<div key={i} className={`sh-udiff-row${diffRowClass(line)}`}>
-					{line === "" ? " " : line}
-				</div>
-			))}
-		</div>
-	);
-}
-
-function diffRowClass(line: string): string {
-	if (line.startsWith("@@")) return " sh-udiff-hunk";
-	if (line.startsWith("+")) return " sh-udiff-add";
-	if (line.startsWith("-")) return " sh-udiff-del";
-	if (line.startsWith("\\")) return " sh-udiff-hunk";
-	return "";
 }

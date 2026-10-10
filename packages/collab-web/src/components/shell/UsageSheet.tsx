@@ -5,6 +5,7 @@ import type { CompanionClient, UsageRange, UsageReport } from "../../lib/compani
 import { fmtCost, fmtTokens, relTime, shortenPath } from "../../lib/format";
 import { readJson, writeJson } from "../../lib/storage";
 import { useRequest } from "../../lib/use-request";
+import { PrAlerts } from "./PrAlerts";
 import { Sheet } from "./Sheet";
 import { SpendAlerts } from "./SpendAlerts";
 import "./stats.css";
@@ -27,6 +28,8 @@ const METRICS: { value: Metric; label: string }[] = [
 
 export interface UsageSheetProps {
 	client: CompanionClient;
+	/** The companion reads GitHub (`gh` signed in), so pull request alerts can work. */
+	canGithub: boolean;
 	onClose(): void;
 }
 
@@ -36,7 +39,7 @@ function storedRange(): UsageRange {
 }
 
 /** Spend and token totals across every omp session on the paired computer. */
-export function UsageSheet({ client, onClose }: UsageSheetProps): ReactNode {
+export function UsageSheet({ client, canGithub, onClose }: UsageSheetProps): ReactNode {
 	const [range, setRange] = useState(storedRange);
 	const [metric, setMetric] = useState<Metric>("cost");
 	const load = useCallback(() => client.requestUsage(range), [client, range]);
@@ -155,6 +158,7 @@ export function UsageSheet({ client, onClose }: UsageSheetProps): ReactNode {
 				</div>
 			)}
 			<SpendAlerts client={client} />
+			{canGithub && <PrAlerts client={client} />}
 		</Sheet>
 	);
 }

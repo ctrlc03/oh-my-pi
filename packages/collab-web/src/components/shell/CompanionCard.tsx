@@ -226,7 +226,9 @@ export function CompanionCard({ companion, push, onJoin, onPair, onUnpair }: Com
 					onClose={() => setScanning(false)}
 				/>
 			)}
-			{statsSheet === "usage" && client && <UsageSheet client={client} onClose={() => setStatsSheet(null)} />}
+			{statsSheet === "usage" && client && (
+				<UsageSheet client={client} canGithub={snap.canGithub} onClose={() => setStatsSheet(null)} />
+			)}
 			{diagnosing && client && <DiagnosticsSheet client={client} onClose={() => setDiagnosing(false)} />}
 			{statsSheet === "sessions" && client && (
 				<SessionsSheet

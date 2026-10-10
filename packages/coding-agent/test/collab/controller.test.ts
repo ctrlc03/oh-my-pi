@@ -143,6 +143,7 @@ function makeControllerContext(over: { autoStart?: "off" | "view" | "control"; r
 			model: { provider: "test-provider", id: "test-model" },
 			thinkingLevel: undefined,
 			getAvailableEffortSelectors: () => [],
+			getQueuedMessages: () => ({ steering: [], followUp: [] }),
 			subscribe: () => () => {},
 			emitNotice: () => {},
 			promptCustomMessage: (message: { content: unknown }) => {

@@ -1,8 +1,19 @@
 import type { CollabUiRequest, ImageContent, SessionCommand, WireModel } from "@oh-my-pi/pi-wire";
-import { ImagePlus, SendHorizontal, Square, X } from "lucide-react";
+import { File as FileIcon, FileText, ListEnd, LoaderCircle, Paperclip, SendHorizontal, Square, X } from "lucide-react";
 import type { ClipboardEvent, KeyboardEvent, ReactNode, Ref, RefObject } from "react";
 import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import type { ConnectionPhase, GuestClient } from "../../lib/client";
+import {
+	type AttachedFile,
+	composePrompt,
+	decodeText,
+	formatSize,
+	isImageFile,
+	MAX_FILES,
+	NEEDS_COMPANION,
+	planFile,
+	planUpload,
+} from "../../lib/files";
 import { MAX_ATTACHMENTS, toImageContent } from "../../lib/images";
 import { loadDraft, saveDraft } from "../../lib/rooms";
 import { insertAtCaret } from "../../lib/voice";
@@ -20,6 +31,12 @@ export interface ComposerProps {
 	working: boolean;
 	/** Prompts queued behind the running turn. */
 	queuedMessageCount: number;
+	/** The host delivers a prompt after the running turn ends, and this guest may prompt: offers "After turn". */
+	followUp: boolean;
+	/** Texts of the host's queued follow-ups, oldest first. */
+	followUps: readonly string[];
+	/** Saves a file on the paired computer and resolves with its absolute path; null without a companion for this session. */
+	upload: ((file: File) => Promise<string>) | null;
 	/** Room the unsent draft is saved under; null keeps it in memory only. */
 	draftKey: string | null;
 	/** Voice input through the paired computer; null when it is unavailable. */
@@ -37,6 +54,8 @@ export interface ComposerProps {
 export interface ComposerHandle {
 	/** Add `prompt` to the draft (after a blank line when there is one) and focus it; nothing is sent. */
 	insert(prompt: string): void;
+	/** Replace the draft text and attachments (an edited earlier prompt), put the caret at the end and focus. */
+	replace(text: string, images?: readonly ImageContent[]): void;
 }
 
 /** Textarea metrics: line-height 20px + 8px vertical padding × 2 (kept in sync with shell.css). */
@@ -152,6 +171,9 @@ export const Composer = memo(function Composer({
 	uiRequest,
 	working,
 	queuedMessageCount,
+	followUp,
+	followUps,
+	upload,
 	draftKey,
 	voice,
 	models,
@@ -163,11 +185,15 @@ export const Composer = memo(function Composer({
 }: ComposerProps): ReactNode {
 	const [text, setText] = useState(() => (draftKey ? loadDraft(draftKey) : ""));
 	const [images, setImages] = useState<ImageContent[]>([]);
+	const [files, setFiles] = useState<AttachedFile[]>([]);
+	const fileIdRef = useRef(0);
 	const [attachError, setAttachError] = useState<string | null>(null);
 	const taRef = useRef<HTMLTextAreaElement | null>(null);
 	// Where the caret last was in the textarea; null until the user places it.
 	const caretRef = useRef<{ start: number; end: number } | null>(null);
 	const pendingCaretRef = useRef<number | null>(null);
+	// Bumped by `replace` so the caret/focus effect also runs when the new text equals the old.
+	const [caretTick, setCaretTick] = useState(0);
 	const fileRef = useRef<HTMLInputElement | null>(null);
 	const { composingRef, onCompositionStart, onCompositionEnd } = useCompositionGuard();
 
@@ -177,8 +203,11 @@ export const Composer = memo(function Composer({
 	const canPrompt = live && !readOnly;
 	const canType = !readOnly && phase !== "ended";
 	const busy = working;
-	const queued = queuedMessageCount;
-	const canSend = canType && text.trim().length > 0;
+	// The host counts steers and follow-ups together; follow-ups have their own chips, so the badge counts steers only.
+	const queued = Math.max(0, queuedMessageCount - followUps.length);
+	const uploading = files.some(f => f.kind === "upload" && f.path === null);
+	const canFollowUp = followUp && busy && canPrompt;
+	const canSend = canType && !uploading && (text.trim().length > 0 || files.length > 0);
 
 	useLayoutEffect(() => {
 		autosize(taRef.current);
@@ -197,7 +226,7 @@ export const Composer = memo(function Composer({
 		ta.focus();
 		ta.setSelectionRange(caret, caret);
 		caretRef.current = { start: caret, end: caret };
-	}, [text]);
+	}, [text, caretTick]);
 
 	/** Transcribed speech goes into the draft at the caret (or the end) for the user to review; it is never sent. */
 	const insertVoice = (spoken: string): void => {
@@ -214,47 +243,99 @@ export const Composer = memo(function Composer({
 				pendingCaretRef.current = next.length;
 				setText(next);
 			},
+			replace(next: string, nextImages: readonly ImageContent[] = []): void {
+				pendingCaretRef.current = next.length;
+				setText(next);
+				setImages([...nextImages]);
+				setFiles([]);
+				setAttachError(null);
+				setCaretTick(tick => tick + 1);
+			},
 		}),
 		[text],
 	);
 	const voiceInput = useVoiceInput(voice, insertVoice);
 	const showVoice = voice !== null && (canType || voiceInput.step !== "idle");
 
-	/** Sends `override` (a quick reply) or the typed text, with any attached images. */
+	/** Sends `override` (a quick reply) or the typed text with its attachments; `deliver` queues it behind the running turn. */
 	const send = useCallback(
-		(override?: string): void => {
-			const trimmed = (override ?? text).trim();
-			if (!trimmed || !canType) return;
-			client.sendPrompt(trimmed, images);
+		(override?: string, deliver?: "follow-up"): void => {
+			const prompt = override === undefined ? composePrompt(text, files) : override.trim();
+			if (!prompt || !canType || uploading) return;
+			client.sendPrompt(prompt, images, deliver);
 			setImages([]);
+			setFiles([]);
 			setAttachError(null);
 			if (override === undefined) {
 				setText("");
 				caretRef.current = null;
 			}
 		},
-		[canType, client, images, text],
+		[canType, client, files, images, text, uploading],
 	);
 
-	const attach = async (files: readonly File[]): Promise<void> => {
-		const picked = files.filter(f => f.type.startsWith("image/"));
-		if (picked.length === 0) return;
-		const room = MAX_ATTACHMENTS - images.length;
-		setAttachError(picked.length > room ? `Up to ${MAX_ATTACHMENTS} images per prompt.` : null);
+	/** Reads or uploads one non-image file into a chip; resolves with the message to show when it is refused or fails. */
+	const attachFile = async (file: File): Promise<string | null> => {
+		let plan = planFile(file, upload !== null);
+		let inlined: string | null = null;
+		if (plan === "inline") {
+			inlined = decodeText(new Uint8Array(await file.arrayBuffer()));
+			// Binary despite its name or type.
+			if (inlined === null) plan = planUpload(file, upload !== null);
+		}
+		if (typeof plan === "object") return plan.refuse;
+		const id = fileIdRef.current++;
+		const { name, size } = file;
+		if (inlined !== null) {
+			const text = inlined;
+			setFiles(prev => [...prev, { id, kind: "inline", name, size, text }]);
+			return null;
+		}
+		if (!upload) return NEEDS_COMPANION;
+		setFiles(prev => [...prev, { id, kind: "upload", name, size, path: null }]);
 		try {
-			const converted = await Promise.all(picked.slice(0, Math.max(0, room)).map(toImageContent));
-			setImages(prev => [...prev, ...converted].slice(0, MAX_ATTACHMENTS));
+			const path = await upload(file);
+			setFiles(prev => prev.map(f => (f.id === id && f.kind === "upload" ? { ...f, path } : f)));
+			return null;
 		} catch (err) {
-			setAttachError(`Could not attach the image: ${err instanceof Error ? err.message : String(err)}`);
+			setFiles(prev => prev.filter(f => f.id !== id));
+			return `Could not upload ${name}: ${err instanceof Error ? err.message : String(err)}`;
 		}
 	};
 
-	// Screenshots pasted from the clipboard attach; plain text pastes as usual.
+	const attach = async (picked: readonly File[]): Promise<void> => {
+		const pickedImages = picked.filter(isImageFile);
+		const pickedFiles = picked.filter(f => !isImageFile(f));
+		if (pickedImages.length === 0 && pickedFiles.length === 0) return;
+		const imageRoom = Math.max(0, MAX_ATTACHMENTS - images.length);
+		const fileRoom = Math.max(0, MAX_FILES - files.length);
+		const errors: string[] = [];
+		if (pickedImages.length > imageRoom) errors.push(`Up to ${MAX_ATTACHMENTS} images per prompt.`);
+		if (pickedFiles.length > fileRoom) errors.push(`Up to ${MAX_FILES} files per prompt.`);
+		setAttachError(errors.length > 0 ? errors.join(" ") : null);
+		const results = await Promise.all([
+			(async (): Promise<string | null> => {
+				if (pickedImages.length === 0) return null;
+				try {
+					const converted = await Promise.all(pickedImages.slice(0, imageRoom).map(toImageContent));
+					setImages(prev => [...prev, ...converted].slice(0, MAX_ATTACHMENTS));
+					return null;
+				} catch (err) {
+					return `Could not attach the image: ${err instanceof Error ? err.message : String(err)}`;
+				}
+			})(),
+			...pickedFiles.slice(0, fileRoom).map(attachFile),
+		]);
+		const failed = results.filter((message): message is string => message !== null);
+		if (failed.length > 0) setAttachError([...errors, ...failed].join(" "));
+	};
+
+	// Screenshots and files pasted from the clipboard attach; plain text pastes as usual.
 	const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>): void => {
-		const files = Array.from(e.clipboardData.files).filter(f => f.type.startsWith("image/"));
-		if (files.length === 0) return;
+		const pasted = Array.from(e.clipboardData.files);
+		if (pasted.length === 0) return;
 		e.preventDefault();
-		void attach(files);
+		void attach(pasted);
 	};
 
 	const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -266,7 +347,7 @@ export const Composer = memo(function Composer({
 		}
 		if (shouldSubmitOnEnter(e, composingRef.current, isTouch())) {
 			e.preventDefault();
-			send();
+			send(undefined, e.altKey && canFollowUp ? "follow-up" : undefined);
 		}
 	};
 
@@ -328,8 +409,31 @@ export const Composer = memo(function Composer({
 
 	return (
 		<div className="sh-composer">
-			{canPrompt && !text && <QuickReplies disabled={!live} onPick={send} />}
-			{(images.length > 0 || attachError) && (
+			{canPrompt && !text && <QuickReplies disabled={!live} onPick={reply => send(reply)} />}
+			{followUps.length > 0 && (
+				<div className="sh-followups">
+					{followUps.map((queuedText, i) => (
+						<div key={`${i}-${queuedText}`} className="sh-followup" title={queuedText}>
+							<ListEnd size={14} />
+							<span className="sh-followup-label">After this turn:</span>
+							<span className="sh-followup-text">{queuedText.replace(/\s+/g, " ").trim()}</span>
+							{!readOnly && (
+								<button
+									type="button"
+									className="sh-followup-remove"
+									onClick={() => client.sendSessionCommand("unqueue", queuedText)}
+									disabled={!live}
+									aria-label="remove queued follow-up"
+									title="remove from the queue"
+								>
+									<X size={12} />
+								</button>
+							)}
+						</div>
+					))}
+				</div>
+			)}
+			{(images.length > 0 || files.length > 0 || attachError) && (
 				<div className="sh-attachments">
 					{images.map((image, i) => (
 						<div key={`${i}-${image.data.length}`} className="sh-attachment">
@@ -339,6 +443,27 @@ export const Composer = memo(function Composer({
 								className="sh-attachment-remove"
 								onClick={() => setImages(prev => prev.filter((_, j) => j !== i))}
 								aria-label={`remove attachment ${i + 1}`}
+							>
+								<X size={12} />
+							</button>
+						</div>
+					))}
+					{files.map(file => (
+						<div key={file.id} className="sh-file-chip" title={file.name}>
+							{file.kind === "upload" && file.path === null ? (
+								<LoaderCircle size={14} className="sh-spin" />
+							) : file.kind === "inline" ? (
+								<FileText size={14} />
+							) : (
+								<FileIcon size={14} />
+							)}
+							<span className="sh-file-name">{file.name}</span>
+							<span className="sh-file-size">{formatSize(file.size)}</span>
+							<button
+								type="button"
+								className="sh-file-remove"
+								onClick={() => setFiles(prev => prev.filter(f => f.id !== file.id))}
+								aria-label={`remove ${file.name}`}
 							>
 								<X size={12} />
 							</button>
@@ -354,7 +479,6 @@ export const Composer = memo(function Composer({
 						<input
 							ref={fileRef}
 							type="file"
-							accept="image/*"
 							multiple
 							hidden
 							onChange={e => {
@@ -366,11 +490,11 @@ export const Composer = memo(function Composer({
 							type="button"
 							className="sh-btn sh-btn-icon sh-attach"
 							onClick={() => fileRef.current?.click()}
-							disabled={!canType || images.length >= MAX_ATTACHMENTS}
-							aria-label="attach images"
-							title="attach images"
+							disabled={!canType || (images.length >= MAX_ATTACHMENTS && files.length >= MAX_FILES)}
+							aria-label="attach images or files"
+							title="attach images or files"
 						>
-							<ImagePlus size={16} />
+							<Paperclip size={16} />
 						</button>
 						{models !== null && (
 							<ModelControls
@@ -402,7 +526,7 @@ export const Composer = memo(function Composer({
 							? "Watching only"
 							: !live
 								? "Offline — sends when back"
-								: images.length > 0
+								: images.length > 0 || files.length > 0
 									? "Add a message…"
 									: "Message the agent…"
 					}
@@ -429,12 +553,30 @@ export const Composer = memo(function Composer({
 							<Square size={11} /> <span className="sh-btn-label">Stop</span>
 						</button>
 					)}
+					{canFollowUp && (
+						<button
+							type="button"
+							className="sh-btn sh-btn-after"
+							onClick={() => send(undefined, "follow-up")}
+							disabled={!canSend}
+							aria-label="send after this turn"
+							title="send when this turn ends (Alt+Enter)"
+						>
+							<ListEnd size={15} /> <span className="sh-btn-label">After turn</span>
+						</button>
+					)}
 					<button
 						type="button"
 						className="sh-btn sh-btn-primary"
 						onClick={() => send()}
 						disabled={!canSend}
-						title={live ? "send (Enter)" : "queue until reconnected (Enter)"}
+						title={
+							!live
+								? "queue until reconnected (Enter)"
+								: canFollowUp
+									? "send now, steering the running turn (Enter)"
+									: "send (Enter)"
+						}
 					>
 						<SendHorizontal size={16} /> <span className="sh-btn-label">Send</span>
 					</button>

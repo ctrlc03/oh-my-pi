@@ -15,6 +15,7 @@ import type { ImageContent, Model, TextContent } from "@oh-my-pi/pi-ai";
 import { logger } from "@oh-my-pi/pi-utils";
 import type {
 	BusChannel,
+	CollabFeature,
 	CollabUiRequest,
 	CollabUiRequestDraft,
 	CollabUiResponseValue,
@@ -41,6 +42,7 @@ import {
 	type CollabParticipant,
 	type CollabPromptDetails,
 	type CollabSessionState,
+	encodeBranchFrame,
 	encodeEntryFrame,
 	encodeEventFrame,
 	encodeSnapshotChunk,
@@ -78,6 +80,7 @@ const STATE_TRIGGER_EVENTS: Record<string, true> = {
 	model_changed: true,
 	advisor_cost_changed: true,
 	auto_compaction_end: true,
+	queue_update: true,
 };
 
 const STATE_DEBOUNCE_MS = 100;
@@ -115,6 +118,9 @@ const COLLAB_BUS_CHANNELS = [
 	TASK_SUBAGENT_LIFECYCLE_CHANNEL,
 	TASK_SUBAGENT_PROGRESS_CHANNEL,
 ] as const satisfies readonly BusChannel[];
+
+/** Optional capabilities this host advertises in `welcome`. */
+const COLLAB_FEATURES: CollabFeature[] = ["follow-up", "rewind"];
 
 function isWireAgentEvent(event: AgentSessionEvent): event is AgentSessionEvent & WireAgentEvent {
 	return event.type in WIRE_AGENT_EVENT_TYPES;
@@ -245,6 +251,8 @@ export class CollabHost {
 	#uiReqSeq = 0;
 	#pendingUi = new Map<number, PendingCollabUiRequest>();
 	#lastStateJson = "";
+	/** Ids of the wire-visible path (root → leaf) guests currently replicate; the baseline for `branch` frames. */
+	#sentPath: string[] = [];
 	#stateDebounce: Timer | null = null;
 	#streamingInterval: Timer | null = null;
 	#agentsDebounce: Timer | null = null;
@@ -480,21 +488,16 @@ export class CollabHost {
 			}
 		}
 		this.#registryUnsubscribe = AgentRegistry.global().onChange(() => this.#scheduleAgentsBroadcast());
+		this.#sentPath = this.#activeWirePath().map(entry => entry.id);
 		this.#ctx.sessionManager.onEntryAppended = entry => {
-			if (isWireSessionEntry(entry) && this.#broadcastAllowed()) {
-				const bounded = serializeReplicatedEntry(entry);
-				const shrunk = bounded.value;
-				if (shrunk.type === "custom_message" && shrunk.customType === COLLAB_ENTRY_OMITTED_CUSTOM_TYPE) {
-					// The live path also emits a guest-visible notice: guests only
-					// apply `message` entries to their agent context, so without
-					// this the substitution would be silently invisible there
-					// (PR #11999 review). Notices never enter agent state.
-					this.#send({ t: "event", event: oversizedEntryNotice(entry.type) });
-				}
-				this.#socket?.send(encodeEntryFrame(bounded.json));
-			}
+			if (isWireSessionEntry(entry)) this.#replicateAppended(entry);
 			// Model/thinking/title changes land as entries while idle; refresh
 			// guest state promptly (debounce + JSON diff dedupe).
+			this.#scheduleStateBroadcast();
+		};
+		this.#ctx.sessionManager.onLeafMoved = () => {
+			if (!this.#sessionStillCurrent()) return;
+			this.#syncActivePath(this.#activeWirePath());
 			this.#scheduleStateBroadcast();
 		};
 		this.#updateStatusSegment();
@@ -584,6 +587,7 @@ export class CollabHost {
 				.catch(err => logger.warn("Collab host registry withdrawal failed", { error: String(err) }));
 		}
 		this.#ctx.sessionManager.onEntryAppended = undefined;
+		this.#ctx.sessionManager.onLeafMoved = undefined;
 		this.#unsubscribe?.();
 		this.#unsubscribe = undefined;
 		for (const unsubscribe of this.#busUnsubscribers) unsubscribe();
@@ -706,6 +710,73 @@ export class CollabHost {
 		this.#socket?.send(encodeEventFrame(serializeReplicatedEvent(event).json));
 	}
 
+	/** The wire-visible entries of root → leaf: what a joining guest replicates. */
+	#activeWirePath(): (StoredSessionEntry & WireSessionEntry)[] {
+		return this.#ctx.sessionManager.snapshotForReplication().entries.filter(isWireSessionEntry);
+	}
+
+	/** Nearest wire-visible ancestor of `entry`, as guests see its parent. */
+	#wireParentId(entry: StoredSessionEntry): string | null {
+		const sessionManager = this.#ctx.sessionManager;
+		let parent = entry.parentId ? sessionManager.getEntry(entry.parentId) : undefined;
+		while (parent && !isWireSessionEntry(parent)) {
+			parent = parent.parentId ? sessionManager.getEntry(parent.parentId) : undefined;
+		}
+		return parent?.id ?? null;
+	}
+
+	/**
+	 * Mirror one appended entry. An entry that does not extend the path guests
+	 * hold is announced as the path change it is — unless it is not the active
+	 * leaf, as with work finishing on an abandoned branch: guests stay put.
+	 */
+	#replicateAppended(entry: StoredSessionEntry & WireSessionEntry): void {
+		if (!this.#sessionStillCurrent()) return;
+		const tail = this.#sentPath.at(-1) ?? null;
+		if (entry.parentId !== tail && this.#wireParentId(entry) !== tail) {
+			const path = this.#activeWirePath();
+			if (path.at(-1)?.id === entry.id) this.#syncActivePath(path);
+			return;
+		}
+		this.#sentPath.push(entry.id);
+		if (!this.#broadcastAllowed()) return;
+		const bounded = serializeReplicatedEntry(entry);
+		const shrunk = bounded.value;
+		if (shrunk.type === "custom_message" && shrunk.customType === COLLAB_ENTRY_OMITTED_CUSTOM_TYPE) {
+			// The live path also emits a guest-visible notice: guests only
+			// apply `message` entries to their agent context, so without
+			// this the substitution would be silently invisible there
+			// (PR #11999 review). Notices never enter agent state.
+			this.#send({ t: "event", event: oversizedEntryNotice(entry.type) });
+		}
+		this.#socket?.send(encodeEntryFrame(bounded.json));
+	}
+
+	/**
+	 * Tell guests the active path is now `path`: they keep what it shares with
+	 * the path they hold and replace the rest. The tail beyond one snapshot
+	 * chunk follows as ordinary `entry` frames, so a navigation onto a long
+	 * sibling branch never forms a frame the relay may stall on.
+	 */
+	#syncActivePath(path: readonly (StoredSessionEntry & WireSessionEntry)[]): void {
+		const sent = this.#sentPath;
+		let shared = 0;
+		while (shared < path.length && shared < sent.length && path[shared]?.id === sent[shared]) shared++;
+		if (shared === path.length && shared === sent.length) return;
+		this.#sentPath = path.map(entry => entry.id);
+		if (!this.#broadcastAllowed()) return;
+		const keep = path[shared - 1]?.id ?? null;
+		const fresh = this.#serializeSnapshotEntries(path.slice(shared));
+		let inBranchFrame = 0;
+		let bytes = 0;
+		while (inBranchFrame < fresh.json.length && bytes + (fresh.bytes[inBranchFrame] ?? 0) <= SNAPSHOT_CHUNK_BYTES) {
+			bytes += fresh.bytes[inBranchFrame] ?? 0;
+			inBranchFrame++;
+		}
+		this.#socket?.send(encodeBranchFrame(keep, fresh.json.slice(0, inBranchFrame)));
+		for (const json of fresh.json.slice(inBranchFrame)) this.#socket?.send(encodeEntryFrame(json));
+	}
+
 	#handleFrame(frame: CollabFrame, fromPeer: number): void {
 		// Controls are dispatched synchronously while frames finish decrypting, so
 		// a hello can land after its sender's `peer-left`. The socket settled the
@@ -731,7 +802,13 @@ export class CollabHost {
 				break;
 			case "prompt":
 				if (this.#rejectWhileStarting("prompting", fromPeer)) break;
-				this.#handlePrompt(frame.text, frame.images, fromPeer);
+				// Only the literal "follow-up" opts out of steering; anything else a guest sends steers.
+				this.#handlePrompt(
+					frame.text,
+					frame.images,
+					frame.deliver === "follow-up" ? "follow-up" : undefined,
+					fromPeer,
+				);
 				break;
 			case "abort":
 				if (this.#rejectWhileStarting("interrupting", fromPeer)) break;
@@ -805,15 +882,15 @@ export class CollabHost {
 		// into it later, so the live entries are read without a defensive deep
 		// copy. Chunk frames are assembled from these strings only as the
 		// transport drains.
-		const snapshot = this.#ctx.sessionManager.snapshotForReplication();
-		const entries = snapshot.entries.filter(isWireSessionEntry);
+		const { header } = this.#ctx.sessionManager.snapshotForReplication();
+		const entries = this.#activeWirePath();
 		// Delta resume: a guest that still holds this session up to `resume.entryId`
 		// gets only what follows it. A different session or an entry the host no
-		// longer has (rewritten history) falls back to the full snapshot. Ids are
-		// unique, so the last match is the match; searching from the tail is O(1)
-		// for the common case of a guest that is nearly current.
-		const resumeAt =
-			resume?.sessionId === snapshot.header.id ? entries.findLastIndex(e => e.id === resume.entryId) : -1;
+		// longer holds on the active path (rewritten history, abandoned branch) falls
+		// back to the full snapshot. Ids are unique, so the last match is the match;
+		// searching from the tail is O(1) for the common case of a guest that is
+		// nearly current.
+		const resumeAt = resume?.sessionId === header.id ? entries.findLastIndex(e => e.id === resume.entryId) : -1;
 		const resumed = resumeAt >= 0;
 		const snapshotEntries = this.#serializeSnapshotEntries(resumed ? entries.slice(resumeAt + 1) : entries);
 		const state = this.#buildState();
@@ -825,13 +902,14 @@ export class CollabHost {
 			{
 				t: "welcome",
 				proto: COLLAB_PROTO,
-				header: snapshot.header,
+				header,
 				state,
 				agents: this.#snapshotAgents(),
 				entryCount: snapshotEntries.json.length,
 				resumed: resumed ? true : undefined,
 				readOnly: canWrite ? undefined : true,
 				models: canWrite ? this.#welcomeModels() : undefined,
+				features: COLLAB_FEATURES,
 			},
 			fromPeer,
 		);
@@ -1010,7 +1088,12 @@ export class CollabHost {
 		}
 	}
 
-	#handlePrompt(text: string, images: ImageContent[] | undefined, fromPeer: number): void {
+	#handlePrompt(
+		text: string,
+		images: ImageContent[] | undefined,
+		deliver: "follow-up" | undefined,
+		fromPeer: number,
+	): void {
 		const peer = this.#peers.get(fromPeer);
 		if (!peer?.canWrite) {
 			this.#rejectReadOnly("prompting", fromPeer);
@@ -1034,7 +1117,7 @@ export class CollabHost {
 					details,
 					attribution: "user",
 				},
-				{ streamingBehavior: "steer", queueChipText: text },
+				{ streamingBehavior: deliver === "follow-up" ? "followUp" : "steer", queueChipText: text },
 			)
 			.then(dispatched => {
 				if (dispatched === false) return this.#notifyPromptDropped(fromPeer);
@@ -1128,6 +1211,8 @@ export class CollabHost {
 			isStreaming: session.isStreaming,
 			isAborting: session.isAborting,
 			queuedMessageCount: session.queuedMessageCount,
+			// Chip texts, oldest first: what `session-cmd` `unqueue` removes.
+			followUps: [...session.getQueuedMessages().followUp],
 			sessionName: session.sessionName,
 			cwd: this.#ctx.sessionManager.getCwd(),
 			model: session.model,
@@ -1376,6 +1461,54 @@ export class CollabHost {
 						return;
 					}
 					announce(`renamed the session to "${this.#ctx.sessionManager.getSessionName() ?? name}"`);
+					return;
+				}
+				case "unqueue": {
+					// `state.followUps` carries chip text, which `removeQueuedMessage` matches; steers stay
+					// with the host, as in the TUI where only the follow-up queue is editable.
+					if (arg === undefined || !session.removeQueuedMessage(arg, "followUp")) {
+						fail("that follow-up is no longer queued");
+						return;
+					}
+					this.#ctx.updatePendingMessagesDisplay();
+					this.#ctx.ui.requestRender();
+					announce("removed a queued follow-up");
+					return;
+				}
+				case "rewind": {
+					// The leaf move rewrites the agent's context, so nothing may be writing to it; a guest
+					// cannot queue a rewind past a turn, so it waits for the host to go idle instead. A
+					// `/tree` summary in flight sets no busy flag, only the transition.
+					if (session.isBusyForSnapshot || session.isSessionTransitioning) {
+						fail("wait for the current response, compaction, or command to finish");
+						return;
+					}
+					const target = this.#ctx.sessionManager.getBranchView().find(entry => entry.id === arg);
+					// A user's own prompt or a guest's, the two entries the web client offers to edit.
+					const isPrompt =
+						(target?.type === "message" && target.message.role === "user") ||
+						(target?.type === "custom_message" && target.customType === COLLAB_PROMPT_MESSAGE_TYPE);
+					if (!target || !isPrompt) {
+						fail("not a prompt on the active conversation");
+						return;
+					}
+					// The host's own rewind path: the leaf lands on the prompt's parent (null for a root
+					// prompt). `onLeafMoved` tells guests; the draft the TUI would restore stays unused.
+					const leafBefore = this.#ctx.sessionManager.getLeafId();
+					const result = await session.navigateTree(target.id, { summarize: false });
+					if (result.cancelled) {
+						fail("an extension cancelled the rewind");
+						return;
+					}
+					// `navigateTree` treats some targets already at the leaf as a successful no-op.
+					if (this.#ctx.sessionManager.getLeafId() === leafBefore) {
+						fail("the conversation did not move");
+						return;
+					}
+					if (!this.#guestTrafficAllowed()) return;
+					await this.#ctx.renderInitialMessages({ clearTerminalHistory: true });
+					await this.#ctx.reloadTodos();
+					announce("rewound the conversation");
 					return;
 				}
 				default:

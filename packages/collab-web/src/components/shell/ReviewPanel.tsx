@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useCallback, useRef, useState } from "react";
 import type { CompanionClient, GitReview } from "../../lib/companion";
 import { relTime } from "../../lib/format";
+import type { DiffReview } from "../../lib/review-comments";
 import { useRequest } from "../../lib/use-request";
 import type { ToolRenderHost } from "../../tool-render";
 import { TreeFile } from "./WorkingTree";
@@ -18,6 +19,8 @@ export interface ReviewPanelProps {
 	busy: boolean | null;
 	/** Session title: the suggested commit message and pull request title. */
 	title: string | null;
+	/** null: commenting on diffs is off. */
+	diffReview: DiffReview | null;
 }
 
 type Step = "commit" | "push" | "pr";
@@ -110,7 +113,7 @@ interface ReviewViewProps extends ReviewPanelProps {
 }
 
 function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: ReviewViewProps): ReactNode {
-	const { client, instanceId, host, canPr, busy, title } = props;
+	const { client, instanceId, host, canPr, busy, title, diffReview } = props;
 	const [plan, setPlan] = useState<Step[] | null>(null);
 	const [running, setRunning] = useState<Step | null>(null);
 	const [message, setMessage] = useState(title ?? review.commits[0]?.subject ?? "");
@@ -350,6 +353,8 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 							host={host}
 							expanded={openFile === file.path}
 							onToggle={() => setOpenFile(openFile === file.path ? null : file.path)}
+							scope="branch"
+							review={diffReview}
 						/>
 					))}
 				</ul>

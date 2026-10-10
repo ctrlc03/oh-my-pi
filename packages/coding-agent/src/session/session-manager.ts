@@ -898,6 +898,13 @@ export class SessionManager {
 	 */
 	onEntryAppended?: (entry: SessionEntry) => void;
 
+	/**
+	 * Collab replication tap: invoked after the active leaf moves without an
+	 * append (branch, reset, or the leaf move of a branch summary), so the
+	 * room can tell guests the active path changed.
+	 */
+	onLeafMoved?: () => void;
+
 	#turnBudgetTotal: number | null = null;
 	#turnBudgetHard = false;
 	#turnOutputBaseline = 0;
@@ -2024,9 +2031,22 @@ export class SessionManager {
 			batch.externalLeafChanged = true;
 			batch.externalLeafId = id;
 		}
+		// Mid-batch moves stay silent: the batch's entries are not yet durable or announced.
+		if (!batch) this.#notifyLeafMoved();
 	}
 
-	#recordEntry(entry: SessionEntry): void {
+	#notifyLeafMoved(): void {
+		const callback = this.onLeafMoved;
+		if (!callback) return;
+		try {
+			callback();
+		} catch (err) {
+			logger.warn("collab leaf hook failed", { error: String(err) });
+		}
+	}
+
+	/** `restoreLeaf`: the entry joins the tree off the active branch, so the leaf returns there before observers run. */
+	#recordEntry(entry: SessionEntry, options?: { restoreLeaf: string | null }): void {
 		if (this.#released) {
 			logger.warn("Dropped session entry appended after terminal release", { type: entry.type });
 			return;
@@ -2036,11 +2056,12 @@ export class SessionManager {
 		}
 		this.#entries.push(entry);
 		this.#index.insert(entry);
+		if (options) this.#index.setLeaf(options.restoreLeaf);
 		const batch = this.#atomicEntryBatch;
 		if (batch?.collecting) batch.entryIds.add(entry.id);
 		if (batch && !batch.collecting) {
 			batch.externalLeafChanged = true;
-			batch.externalLeafId = entry.id;
+			batch.externalLeafId = options ? options.restoreLeaf : entry.id;
 		}
 		this.#appendToSessionFile(entry);
 		if (batch) batch.deferredNotifications.push(entry);
@@ -2706,6 +2727,7 @@ export class SessionManager {
 			}
 			this.#atomicEntryBatch = undefined;
 			this.#notifyDurableEntries(batch.deferredNotifications);
+			if (batch.externalLeafChanged) this.#notifyLeafMoved();
 			return result;
 		} catch (error) {
 			batch.collecting = false;
@@ -2725,6 +2747,7 @@ export class SessionManager {
 			const retainedNotifications = batch.deferredNotifications.filter(entry => !batch.entryIds.has(entry.id));
 			this.#atomicEntryBatch = undefined;
 			this.#notifyDurableEntries(retainedNotifications);
+			if (batch.externalLeafChanged) this.#notifyLeafMoved();
 			throw error;
 		}
 	}
@@ -3316,13 +3339,14 @@ export class SessionManager {
 	}
 
 	/**
-	 * The live header and entries, for collab replication. Nothing is copied:
-	 * the host mutates entries in place on rewrite paths, so callers must not
-	 * mutate what this returns and must serialize it synchronously, before any
-	 * such rewrite can run.
+	 * The live header and the active path (root → leaf), for collab replication:
+	 * abandoned branches stay on the host. Nothing is copied: the host mutates
+	 * entries in place on rewrite paths, and the path is a live view that grows
+	 * with appends, so callers must not mutate what this returns and must
+	 * serialize it synchronously, before any such change can run.
 	 */
 	snapshotForReplication(): { header: SessionHeader; entries: readonly SessionEntry[] } {
-		return { header: this.#header, entries: this.#entries };
+		return { header: this.#header, entries: this.#index.branchView() };
 	}
 
 	/**
@@ -3370,8 +3394,7 @@ export class SessionManager {
 		// The leaf is restored below, so the entry never joins the active branch;
 		// keep it out of any branch view already handed out.
 		this.#index.detachBranchView();
-		this.#recordEntry(entry);
-		this.#index.setLeaf(activeLeafId);
+		this.#recordEntry(entry, { restoreLeaf: activeLeafId });
 		return entry.id;
 	}
 
@@ -3394,8 +3417,8 @@ export class SessionManager {
 			timestamp: nowIso(),
 			...usage,
 		};
-		this.#recordEntry(entry);
-		if (activeLeafId !== owner.parentId) this.#index.setLeaf(activeLeafId);
+		// Off the active branch the leaf is restored before observers run, so none sees it on this entry.
+		this.#recordEntry(entry, activeLeafId !== owner.parentId ? { restoreLeaf: activeLeafId } : undefined);
 		return entry.id;
 	}
 

@@ -9,6 +9,7 @@ import { Banners } from "./components/shell/Banners";
 import { ChangesSheet } from "./components/shell/ChangesSheet";
 import { Composer, type ComposerHandle } from "./components/shell/Composer";
 import { ConnectScreen } from "./components/shell/ConnectScreen";
+import { useEditPrompt } from "./components/shell/EditPromptSheet";
 import { FileSheet } from "./components/shell/FileSheet";
 import { HeaderBar } from "./components/shell/HeaderBar";
 import { PaneSheet } from "./components/shell/PaneSheet";
@@ -19,6 +20,7 @@ import { SearchBar } from "./components/shell/SearchBar";
 import { SessionAlert } from "./components/shell/SessionAlert";
 import { SessionsSheet } from "./components/shell/SessionsSheet";
 import { SessionsSidebar } from "./components/shell/SessionsSidebar";
+import { TaskProgress } from "./components/shell/TaskProgress";
 import { Toasts } from "./components/shell/Toasts";
 import { UpdateBar } from "./components/shell/UpdateBar";
 import { UsageSheet } from "./components/shell/UsageSheet";
@@ -26,6 +28,8 @@ import { Transcript } from "./components/transcript/Transcript";
 import { collectChanges } from "./lib/changes";
 import { GuestClient } from "./lib/client";
 import { extractPairing, loadPairing, type Pairing, savePairing } from "./lib/companion";
+import { sessionMarkdown } from "./lib/export";
+import { blobToBase64 } from "./lib/images";
 import { applyOpenIntent, claimPendingAnswer } from "./lib/inbox";
 import { useNewSince } from "./lib/new-since";
 import { type PushControl, usePush } from "./lib/push";
@@ -44,6 +48,7 @@ import {
 import { collectScreens } from "./lib/screens";
 import { suspendsHiddenPages } from "./lib/socket";
 import { readJson, writeJson } from "./lib/storage";
+import { currentTodos } from "./lib/todos";
 import { loadTrim, saveTrim, trimEntries } from "./lib/trim";
 import { sumUsage } from "./lib/usage";
 import { type CompanionHandle, useCompanion } from "./lib/use-companion";
@@ -442,12 +447,27 @@ function Session({
 				: null,
 		[companionClient, transcribe, machine, companionPhase],
 	);
+	// Attachments the composer cannot inline are saved on the computer, which the agent reads them from.
+	const canUpload = companion?.snap.canUpload === true;
+	const upload = useMemo(
+		() =>
+			companionClient !== null &&
+			hostId !== null &&
+			canUpload &&
+			!snap.readOnly &&
+			(companionPhase === "live" || companionPhase === "connecting")
+				? async (file: File): Promise<string> =>
+						companionClient.uploadFile(hostId, file.name, await blobToBase64(file))
+				: null,
+		[companionClient, hostId, canUpload, snap.readOnly, companionPhase],
+	);
 	const [previewOpen, setPreviewOpen] = useState(false);
 	const openPreview = useCallback(() => setPreviewOpen(true), []);
 	const canGithub = companionClient !== null && hostId !== null && companion?.snap.canGithub === true;
 	const [githubOpen, setGithubOpen] = useState(false);
 	const openGithub = useCallback(() => setGithubOpen(true), []);
 	const composerRef = useRef<ComposerHandle>(null);
+	const editPrompt = useEditPrompt(client, snap, composerRef);
 	const sendToAgent = useCallback((prompt: string) => {
 		setGithubOpen(false);
 		composerRef.current?.insert(prompt);
@@ -580,6 +600,8 @@ function Session({
 	// Every completed edit or write adds a call: the preview re-captures when this grows.
 	const editCount = useMemo(() => changes.reduce((n, file) => n + file.calls.length, 0), [changes]);
 	const screens = useMemo(() => collectScreens(snap.entries), [snap.entries]);
+	// From the full entry list: the per-device trim must not hide the agent's task list.
+	const todos = useMemo(() => currentTodos(snap.entries, snap.activeTools), [snap.entries, snap.activeTools]);
 	const [screensOpen, setScreensOpen] = useState(false);
 	const openScreens = useCallback(() => {
 		setJumpTarget(null);
@@ -588,6 +610,10 @@ function Session({
 	const closeScreens = useCallback(() => setScreensOpen(false), []);
 	const [changesOpen, setChangesOpen] = useState(false);
 	const openChanges = useCallback(() => setChangesOpen(true), []);
+	const sendReviewToAgent = useCallback((prompt: string) => {
+		setChangesOpen(false);
+		composerRef.current?.insert(prompt);
+	}, []);
 
 	const [sidebarOpen, setSidebarOpen] = useState(initialSidebar);
 	const otherHosts = companion?.snap.hosts.filter(host => host.sessionId !== sessionId) ?? [];
@@ -611,6 +637,10 @@ function Session({
 		[client],
 	);
 	const cancelQueued = useCallback((id: string) => client.cancelQueued(id), [client]);
+	// Built on click from every entry, not the trimmed view; the ref keeps the callback stable for the memoized header.
+	const entriesRef = useRef(snap.entries);
+	entriesRef.current = snap.entries;
+	const exportMarkdown = useCallback((title: string) => sessionMarkdown(entriesRef.current, { title }), []);
 
 	// Desktop shortcuts. Typing in a field suppresses everything but Esc; an open sheet or
 	// drawer owns Esc itself, and the composer aborts a running turn on its own Esc.
@@ -678,6 +708,7 @@ function Session({
 				sessionUsage={sessionUsage}
 				models={snap.models}
 				onSessionCommand={sendSessionCommand}
+				exportMarkdown={exportMarkdown}
 				onOpenChanges={openChanges}
 				onOpenUsage={companion ? openUsage : null}
 				onOpenSessions={companion ? openSessions : null}
@@ -729,8 +760,11 @@ function Session({
 							queued={snap.queued}
 							onCancelQueued={cancelQueued}
 							trimmed={trimmed}
+							onEditPrompt={editPrompt.onEditPrompt}
 						/>
 					</div>
+					{editPrompt.sheet}
+					<TaskProgress todos={todos} />
 					<Composer
 						ref={composerRef}
 						key={roomId}
@@ -740,6 +774,9 @@ function Session({
 						uiRequest={snap.uiRequest}
 						working={snap.working}
 						queuedMessageCount={snap.state?.queuedMessageCount ?? 0}
+						followUp={Object.hasOwn(snap.features, "follow-up") && !snap.readOnly}
+						followUps={snap.followUps}
+						upload={upload}
 						voice={voice}
 						draftKey={roomId}
 						models={snap.models}
@@ -790,7 +827,11 @@ function Session({
 			<Toasts notices={snap.notices} />
 			{companion && <SessionAlert hosts={companion.snap.hosts} currentSessionId={sessionId} onOpen={onOpenHost} />}
 			{statsSheet === "usage" && companionClient !== null && (
-				<UsageSheet client={companionClient} onClose={() => setStatsSheet(null)} />
+				<UsageSheet
+					client={companionClient}
+					canGithub={companion?.snap.canGithub === true}
+					onClose={() => setStatsSheet(null)}
+				/>
 			)}
 			{statsSheet === "sessions" && companionClient !== null && companion !== null && (
 				<SessionsSheet
@@ -817,6 +858,8 @@ function Session({
 								}
 							: null
 					}
+					sessionId={sessionId}
+					onSendToAgent={snap.readOnly ? null : sendReviewToAgent}
 					onClose={() => setChangesOpen(false)}
 				/>
 			)}

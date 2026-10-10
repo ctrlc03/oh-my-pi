@@ -108,8 +108,11 @@ self.addEventListener("push", event => {
 		self.registration.showNotification(title, {
 			body: typeof data.body === "string" ? data.body : "",
 			icon: "./favicon-192x192.png",
-			tag: typeof data.instanceId === "string" ? data.instanceId : "omp-collab",
-			data: { instanceId: typeof data.instanceId === "string" ? data.instanceId : null },
+			tag: typeof data.tag === "string" ? data.tag : typeof data.instanceId === "string" ? data.instanceId : "omp-collab",
+			data: {
+				instanceId: typeof data.instanceId === "string" ? data.instanceId : null,
+				url: typeof data.url === "string" && /^https:\\/\\//.test(data.url) ? data.url : null,
+			},
 		}),
 	);
 });
@@ -117,6 +120,11 @@ self.addEventListener("push", event => {
 self.addEventListener("notificationclick", event => {
 	event.notification.close();
 	const instanceId = event.notification.data && event.notification.data.instanceId;
+	const url = event.notification.data && event.notification.data.url;
+	if (url) {
+		event.waitUntil(self.clients.openWindow(url));
+		return;
+	}
 	event.waitUntil(
 		self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(windows => {
 			const win = windows[0];

@@ -43,7 +43,7 @@ export function saveTrim(sessionId: string, keep: number | null): void {
 }
 
 /** A prompt opens a turn: the user's own, or one a collab guest sent. */
-function isPrompt(entry: SessionEntry): boolean {
+export function isPrompt(entry: SessionEntry): boolean {
 	if (entry.type === "message") return entry.message.role === "user";
 	return entry.type === "custom_message" && entry.customType === "collab-prompt";
 }

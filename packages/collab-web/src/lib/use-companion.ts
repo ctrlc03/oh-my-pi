@@ -22,6 +22,7 @@ const UNPAIRED: CompanionSnapshot = {
 	canEdit: false,
 	canPreview: false,
 	canGithub: false,
+	canUpload: false,
 	transcribe: null,
 	power: null,
 	vapidKey: null,

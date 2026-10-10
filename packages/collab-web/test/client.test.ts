@@ -804,6 +804,26 @@ describe("GuestClient saved transcript", () => {
 		});
 	});
 
+	it("saves a rewound transcript, not the abandoned branch", async () => {
+		await withSocket(async () => {
+			const store = memoryStore();
+			const client = new GuestClient(LINK, "tester", store);
+			client.connect();
+			await settle();
+			client.applyFrameForTest(welcome(3));
+			client.applyFrameForTest(snapshotChunk([e1, e2, e3]));
+			client.persist();
+			await settle();
+			client.applyFrameForTest({ t: "branch", keep: "e1", entries: [e4] });
+			client.close();
+			await settle();
+
+			const reopened = await reopen(store);
+			expect(reopened.getSnapshot().entries).toEqual([e1, e4]);
+			reopened.close();
+		});
+	});
+
 	it("does not connect a client closed while the saved transcript was being read", async () => {
 		await withSocket(async sent => {
 			const client = new GuestClient(LINK, "tester", memoryStore());
@@ -812,5 +832,122 @@ describe("GuestClient saved transcript", () => {
 			await settle();
 			expect(sent.some(frame => frame.t === "hello")).toBe(false);
 		});
+	});
+});
+
+describe("GuestClient capabilities and branches", () => {
+	const e1 = messageEntry("e1", { role: "user", content: "one", timestamp: 1 });
+	const e2 = messageEntry("e2", { role: "user", content: "two", timestamp: 2 });
+	const e3 = messageEntry("e3", { role: "user", content: "three", timestamp: 3 });
+	const e4 = messageEntry("e4", { role: "user", content: "four", timestamp: 4 });
+
+	const ids = (client: GuestClient): string[] => client.getSnapshot().entries.map(entry => entry.id);
+
+	it("offers no features or follow-ups until a host says so", () => {
+		const client = new GuestClient(WRITE_LINK, "tester");
+		expect(client.getSnapshot().features).toEqual({});
+		expect(client.getSnapshot().followUps).toEqual([]);
+		client.applyFrameForTest(welcomeFrame());
+		expect(client.getSnapshot().features).toEqual({});
+	});
+
+	it("takes features from the welcome and follow-ups from state, oldest first", () => {
+		const client = new GuestClient(WRITE_LINK, "tester");
+		client.applyFrameForTest({
+			...(welcomeFrame() as Extract<HostFrame, { t: "welcome" }>),
+			features: ["rewind", "follow-up"],
+		});
+		expect(client.getSnapshot().features).toEqual({ rewind: true, "follow-up": true });
+		client.applyFrameForTest({ t: "state", state: { ...STATE, followUps: ["first", "second"] } });
+		expect(client.getSnapshot().followUps).toEqual(["first", "second"]);
+		client.applyFrameForTest({ t: "state", state: STATE });
+		expect(client.getSnapshot().followUps).toEqual([]);
+	});
+
+	it("forgets the features while reconnecting, until the new host welcomes", () => {
+		const connectSpy = vi.spyOn(CollabSocket.prototype, "connect").mockImplementation(function (this: CollabSocket) {
+			this.onOpen?.();
+		});
+		const sendSpy = vi.spyOn(CollabSocket.prototype, "send").mockImplementation(() => {});
+		try {
+			const client = new GuestClient(WRITE_LINK, "tester");
+			client.applyFrameForTest({
+				...(welcomeFrame() as Extract<HostFrame, { t: "welcome" }>),
+				features: ["rewind"],
+			});
+			client.connect();
+			expect(client.getSnapshot().features).toEqual({});
+		} finally {
+			connectSpy.mockRestore();
+			sendSpy.mockRestore();
+		}
+	});
+
+	it("a branch frame cuts the replica back to the kept entry and appends the new path", () => {
+		const client = liveClient([e1, e2, e3]);
+		client.applyFrameForTest({ t: "branch", keep: "e1", entries: [e4] });
+		expect(ids(client)).toEqual(["e1", "e4"]);
+		// Entries that follow continue from the new leaf.
+		client.applyFrameForTest({ t: "entry", entry: e2 });
+		expect(ids(client)).toEqual(["e1", "e4", "e2"]);
+	});
+
+	it("a branch frame with keep null empties the replica before appending", () => {
+		const client = liveClient([e1, e2]);
+		client.applyFrameForTest({ t: "branch", keep: null, entries: [] });
+		expect(ids(client)).toEqual([]);
+		client.applyFrameForTest({ t: "branch", keep: null, entries: [e3] });
+		expect(ids(client)).toEqual(["e3"]);
+	});
+
+	it("applies a branch that arrives mid-snapshot on top of the finished snapshot", () => {
+		const client = new GuestClient(LINK, "tester");
+		client.applyFrameForTest(welcomeFrame(2));
+		client.applyFrameForTest(snapshotChunk([e1], false));
+		client.applyFrameForTest({ t: "branch", keep: "e1", entries: [e3] });
+		client.applyFrameForTest({ t: "entry", entry: e4 });
+		client.applyFrameForTest(snapshotChunk([e2]));
+		expect(ids(client)).toEqual(["e1", "e3", "e4"]);
+		expect(client.getSnapshot().phase).toBe("live");
+	});
+
+	it("ignores a branch the relay delivered before this connection's welcome", () => {
+		const client = new GuestClient(LINK, "tester");
+		client.applyFrameForTest({ t: "branch", keep: null, entries: [e1] });
+		expect(ids(client)).toEqual([]);
+	});
+
+	it("rejoins for a full snapshot, without a resume offer, when a branch names an unknown entry", () => {
+		const sent: GuestFrame[] = [];
+		const sendSpy = vi.spyOn(CollabSocket.prototype, "send").mockImplementation((frame: GuestFrame) => {
+			sent.push(frame);
+		});
+		const reconnectSpy = vi.spyOn(CollabSocket.prototype, "reconnect").mockImplementation(() => {});
+		try {
+			const client = liveClient([e1, e2]);
+			client.applyFrameForTest({ t: "branch", keep: "nope", entries: [e3] });
+			expect(reconnectSpy).toHaveBeenCalledTimes(1);
+			// What is on screen stays until the fresh snapshot replaces it.
+			expect(ids(client)).toEqual(["e1", "e2"]);
+			// Frames of the dying connection no longer reach the replica.
+			client.applyFrameForTest({ t: "entry", entry: e4 });
+			expect(ids(client)).toEqual(["e1", "e2"]);
+
+			const connectSpy = vi
+				.spyOn(CollabSocket.prototype, "connect")
+				.mockImplementation(function (this: CollabSocket) {
+					this.onOpen?.();
+				});
+			try {
+				client.connect();
+			} finally {
+				connectSpy.mockRestore();
+			}
+			const hello = sent.findLast(frame => frame.t === "hello");
+			expect(hello?.t === "hello" ? hello.resume : "no hello").toBeUndefined();
+		} finally {
+			sendSpy.mockRestore();
+			reconnectSpy.mockRestore();
+		}
 	});
 });

@@ -46,6 +46,8 @@ export interface TmuxLaunch {
 	resume?: string;
 	/** Run omp sandboxed to `cwd` with file tools only; `folder` is filled in with the resolved cwd. */
 	sandbox?: Omit<SandboxLaunch, "folder">;
+	/** First message omp works on as soon as it is up (`omp … -- <prompt>`); handed over through a file, because tmux refuses commands over ~16 KB. */
+	prompt?: string;
 }
 
 /**
@@ -76,14 +78,7 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 	// A tmux server that is already running does not pass our environment on to new sessions.
 	const env = [`PATH=${process.env.PATH ?? ""}`, `HOME=${os.homedir()}`];
 	if (process.env.PI_CONFIG_DIR) env.push(`PI_CONFIG_DIR=${process.env.PI_CONFIG_DIR}`);
-	const args = [
-		"new-session",
-		"-d",
-		"-s",
-		name,
-		"-c",
-		cwd,
-		...env.flatMap(entry => ["-e", entry]),
+	const command = [
 		...(sandbox?.prefix ?? []),
 		launch.ompBin,
 		"--config",
@@ -91,9 +86,31 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 		...(sandbox?.ompArgs ?? []),
 		...(launch.resume ? ["-r", launch.resume] : []),
 	];
+	let promptFile: string | null = null;
+	// tmux format-expands `-c` (`#(cmd)` would run in the tmux server, outside any sandbox), so the folder is never a
+	// tmux argument: the shell enters it from a positional parameter, which tmux passes on untouched.
+	let argv = ["sh", "-c", 'cd -- "$1" || exit 1; shift; exec "$@"', "sh", cwd, ...command];
+	if (launch.prompt !== undefined) {
+		promptFile = path.join(os.tmpdir(), `omp-collab-prompt-${crypto.randomUUID()}.txt`);
+		await fs.writeFile(promptFile, launch.prompt, { mode: 0o600 });
+		// The shell reads and deletes the file, then becomes omp; `--` keeps a prompt that starts with `-` or `@` literal.
+		argv = [
+			"sh",
+			"-c",
+			'cd -- "$1" || exit 1; f=$2; shift 2; p=$(cat "$f") && rm -f "$f" && exec "$@" -- "$p"',
+			"sh",
+			cwd,
+			promptFile,
+			...command,
+		];
+	}
+	const args = ["new-session", "-d", "-s", name, ...env.flatMap(entry => ["-e", entry]), ...argv];
 	const proc = Bun.spawn([launch.tmux, ...args], { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
 	const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-	if (code !== 0) throw new Error(err.trim() || `tmux exited with ${code}`);
+	if (code !== 0) {
+		if (promptFile !== null) await fs.rm(promptFile, { force: true });
+		throw new Error(err.trim() || `tmux exited with ${code}`);
+	}
 	return { name, cwd };
 }
 

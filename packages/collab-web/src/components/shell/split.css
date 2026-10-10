@@ -1,0 +1,68 @@
+/* Split view: a second session, or the docked editor, beside the transcript.
+ * Panes reuse the `.sh-panel` surface; the selectors below carry `.sh-main >`
+ * so they win over shell.css whichever stylesheet loads first. */
+
+/* Width: a share of the window within a readable range. Panes give way before the
+ * conversation does: it keeps 360px, and both panes shrink toward their minimum. */
+.sh-main > .sh-split-pane {
+	flex: 0 1 clamp(360px, 36%, 640px);
+	min-width: 320px;
+	margin-left: 8px;
+	align-items: stretch;
+}
+
+.sh-main[data-split] > .sh-panel:not(.sh-split-pane) {
+	min-width: 360px;
+}
+
+/* The focused pane is outlined, so it is clear which one the keyboard acts on. */
+.sh-main[data-split] > .sh-panel:focus-within {
+	border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.sh-split-pane .sh-transcript,
+.sh-split-pane .sh-composer {
+	margin-inline: auto;
+}
+
+.sh-split-head {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 8px 8px 14px;
+	border-bottom: 1px solid var(--border);
+}
+
+.sh-split-title {
+	flex: 1 1 auto;
+}
+
+.sh-split-actions {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 2px;
+	margin-left: auto;
+}
+
+.sh-split-ended {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 8px 14px;
+	font-size: 13px;
+	color: var(--err);
+	background: color-mix(in srgb, var(--err) 10%, transparent);
+}
+
+/* The docked editor: the sheet's content without the sheet's frame. */
+.sh-split-dock {
+	padding: 10px;
+}
+
+.sh-split-dock > .sh-ide {
+	min-height: 0;
+}

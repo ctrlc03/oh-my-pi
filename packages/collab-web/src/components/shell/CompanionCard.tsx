@@ -9,6 +9,7 @@ import {
 	LayoutList,
 	LoaderCircle,
 	Moon,
+	PanelRight,
 	Plus,
 	RefreshCw,
 	ScanLine,
@@ -37,6 +38,7 @@ import { DiagnosticsSheet } from "./DiagnosticsSheet";
 import { DevicesSheet } from "./DevicesSheet";
 import { InboxEntry } from "./InboxSheet";
 import { QrScanner } from "./QrScanner";
+import { SchedulesEntry } from "./SchedulesSheet";
 import { SessionsSheet } from "./SessionsSheet";
 import { StartSessionSheet } from "./StartSessionSheet";
 import { UsageSheet } from "./UsageSheet";
@@ -200,6 +202,14 @@ export function CompanionCard({ companion, push, onJoin, onPair, onUnpair }: Com
 									<button type="button" className="sh-btn sh-card-action" onClick={() => setDevicesOpen(true)}>
 										<Smartphone size={15} /> Devices
 									</button>
+									{snap.canSchedule && (
+										<SchedulesEntry
+											client={client}
+											canSandbox={snap.canSandbox}
+											onOpenHost={open}
+											variant="card"
+										/>
+									)}
 								</>
 							)}
 						</div>
@@ -234,6 +244,7 @@ export function CompanionCard({ companion, push, onJoin, onPair, onUnpair }: Com
 				<SessionsSheet
 					client={client}
 					canStart={snap.canStart}
+					canSearch={snap.canSearch}
 					onOpenHost={open}
 					onOpenLink={onJoin}
 					onClose={() => setStatsSheet(null)}
@@ -282,9 +293,18 @@ export interface HostListProps {
 	/** The session on screen: marked and not joinable. */
 	currentSessionId?: string | null;
 	onJoin(host: CompanionHost): void;
+	/** Split view is available: each row offers a second button that opens the session in the pane beside the transcript. */
+	onOpenBeside?: (host: CompanionHost) => void;
 }
 
-export function HostList({ hosts, joining, disabled, currentSessionId, onJoin }: HostListProps): ReactNode {
+export function HostList({
+	hosts,
+	joining,
+	disabled,
+	currentSessionId,
+	onJoin,
+	onOpenBeside,
+}: HostListProps): ReactNode {
 	return (
 		<ul className="sh-recents-list">
 			{hosts.map(host => {
@@ -316,6 +336,18 @@ export function HostList({ hosts, joining, disabled, currentSessionId, onJoin }:
 								<span>{relTime(host.startedAt)}</span>
 							</span>
 						</button>
+						{onOpenBeside !== undefined && (
+							<button
+								type="button"
+								className="sh-btn sh-btn-icon"
+								onClick={() => onOpenBeside(host)}
+								disabled={joining !== null || disabled || current}
+								aria-label={`open ${hostTitle(host)} beside`}
+								title="open beside"
+							>
+								<PanelRight size={15} />
+							</button>
+						)}
 					</li>
 				);
 			})}

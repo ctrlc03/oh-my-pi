@@ -10,6 +10,7 @@ import type {
 	AgentEvent,
 	AgentSnapshot,
 	AssistantMessage,
+	CollabCommand,
 	SessionEntry,
 	SessionHeader,
 	SubagentProgressPayload,
@@ -85,6 +86,17 @@ function todoPhases(done: number): { name: string; tasks: { content: string; sta
 function todoSummary(done: number): string {
 	return `Todo list: ${done}/${TODO_TASKS.length} tasks done.`;
 }
+
+/** What the mock host lists in `welcome.commands`: two builtins, a skill and a file command. */
+export const fixtureCommands: CollabCommand[] = [
+	{ name: "plan", description: "Enter plan mode" },
+	{ name: "retry", description: "Retry the last turn" },
+	{ name: "skill:review", description: "Review the current changes", args: "[focus]" },
+	{ name: "fix-tests", description: "Make the failing tests pass", args: "[file]" },
+];
+
+/** Builtins a real host refuses from guests; the mock does the same so the refusal path can be tried. */
+export const fixtureHostOnlyCommands: Record<string, true> = { exit: true, quit: true, login: true, settings: true };
 
 export const fixtureHeader: SessionHeader = {
 	type: "session",

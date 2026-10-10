@@ -15,6 +15,7 @@ import type { ImageContent, Model, TextContent } from "@oh-my-pi/pi-ai";
 import { logger } from "@oh-my-pi/pi-utils";
 import type {
 	BusChannel,
+	CollabCommand,
 	CollabFeature,
 	CollabUiRequest,
 	CollabUiRequestDraft,
@@ -24,13 +25,16 @@ import type {
 	WireModel,
 	SessionEntry as WireSessionEntry,
 } from "@oh-my-pi/pi-wire";
+import { buildSkillCommandPrompt } from "../modes/skill-command";
 import type { InteractiveModeContext } from "../modes/types";
+import { cfgPlanEnabled } from "../plan-mode/settings";
 import { AgentLifecycleManager } from "../registry/agent-lifecycle";
 import { type AgentRef, AgentRegistry } from "../registry/agent-registry";
 import type { AgentSessionEvent } from "../session/agent-session";
 import { parseCompactArgs } from "../session/compact-modes";
 import { stripImagesFromMessage, USER_INTERRUPT_LABEL } from "../session/messages";
 import type { SessionEntry as StoredSessionEntry } from "../session/session-entries";
+import { executeBuiltinSlashCommand } from "../slash-commands/builtin-registry";
 import {
 	type SubagentProgressPayload,
 	TASK_SUBAGENT_LIFECYCLE_CHANNEL,
@@ -38,6 +42,12 @@ import {
 } from "../task/types";
 import { generateRoomKey, generateWriteToken, importRoomKey } from "./crypto";
 import { collabDisplayName } from "./display-name";
+import {
+	buildGuestCommands,
+	type GuestCommandRoute,
+	type GuestCommandSource,
+	routeGuestCommand,
+} from "./guest-commands";
 import {
 	type AgentSnapshot,
 	COLLAB_PROMPT_MESSAGE_TYPE,
@@ -126,7 +136,12 @@ const COLLAB_BUS_CHANNELS = [
 ] as const satisfies readonly BusChannel[];
 
 /** Optional capabilities this host advertises in `welcome`. */
-const COLLAB_FEATURES: CollabFeature[] = ["follow-up", "rewind"];
+const COLLAB_FEATURES: CollabFeature[] = ["follow-up", "rewind", "commands"];
+
+/** A prompt's message content: the text, plus any images the guest attached. */
+function withImages(text: string, images: ImageContent[] | undefined): string | (TextContent | ImageContent)[] {
+	return images && images.length > 0 ? [{ type: "text", text }, ...images] : text;
+}
 
 function isWireAgentEvent(event: AgentSessionEvent): event is AgentSessionEvent & WireAgentEvent {
 	return event.type in WIRE_AGENT_EVENT_TYPES;
@@ -951,6 +966,7 @@ export class CollabHost {
 				resumed: resumed ? true : undefined,
 				readOnly: canWrite ? undefined : true,
 				models: canWrite ? this.#welcomeModels() : undefined,
+				commands: canWrite ? this.#welcomeCommands() : undefined,
 				features: COLLAB_FEATURES,
 			},
 			fromPeer,
@@ -1130,6 +1146,11 @@ export class CollabHost {
 		}
 	}
 
+	/** Tail of the prompts that needed async command routing; later prompts queue behind it to keep their order. */
+	#promptTail: Promise<void> = Promise.resolve();
+	/** Prompts queued on or running through {@link #promptTail}. */
+	#promptsQueued = 0;
+
 	#handlePrompt(
 		text: string,
 		images: ImageContent[] | undefined,
@@ -1141,9 +1162,159 @@ export class CollabHost {
 			this.#rejectReadOnly("prompting", fromPeer);
 			return;
 		}
-		const name = peer.name;
-		const content: string | (TextContent | ImageContent)[] =
-			images && images.length > 0 ? [{ type: "text", text }, ...images] : text;
+		if (!text.startsWith("/") && this.#promptsQueued === 0) {
+			this.#submitPrompt(withImages(text, images), text, deliver, fromPeer, peer.name);
+			return;
+		}
+		// A slash prompt may load a skill file or run a builtin first; whatever the guest
+		// sends next must not overtake it.
+		this.#promptsQueued++;
+		this.#promptTail = this.#promptTail
+			.then(() => this.#dispatchSlashAware(text, images, deliver, fromPeer))
+			.catch(err => {
+				logger.warn("collab guest prompt failed", { error: String(err) });
+				this.#send({ t: "error", message: `prompt failed: ${String(err)}` }, fromPeer);
+			})
+			.finally(() => {
+				this.#promptsQueued--;
+			});
+	}
+
+	/** What the host knows about slash commands right now, in the shape routing and the welcome list read. */
+	#commandSource(): GuestCommandSource {
+		const { session, skillCommands } = this.#ctx;
+		return {
+			skills: skillCommands,
+			fileCommands: session.slashCommands,
+			promptTemplates: session.promptTemplates,
+			hasHostOnlyCommand: name =>
+				session.extensionRunner?.getCommand(name) !== undefined ||
+				session.customCommands.some(loaded => loaded.command.name === name),
+		};
+	}
+
+	/** The command list a writer's welcome carries; absent when the catalog cannot be read. */
+	#welcomeCommands(): CollabCommand[] | undefined {
+		try {
+			return buildGuestCommands(this.#commandSource());
+		} catch (err) {
+			logger.warn("collab welcome could not list slash commands", { error: String(err) });
+			return undefined;
+		}
+	}
+
+	/**
+	 * Run a guest prompt that may name a slash command: allowed commands go through the
+	 * TUI's own command machinery with the guest as author, host-only ones are refused, and
+	 * anything else is an ordinary prompt.
+	 */
+	async #dispatchSlashAware(
+		text: string,
+		images: ImageContent[] | undefined,
+		deliver: "follow-up" | undefined,
+		fromPeer: number,
+	): Promise<void> {
+		const peer = this.#peers.get(fromPeer);
+		// The guest left or the room ended while this waited its turn.
+		if (!peer?.canWrite || this.ending) return;
+		let route: GuestCommandRoute = { kind: "literal" };
+		if (text.startsWith("/")) {
+			try {
+				route = routeGuestCommand(text, this.#commandSource());
+			} catch (err) {
+				logger.warn("collab slash command routing failed; sending the text as a prompt", { error: String(err) });
+			}
+		}
+		switch (route.kind) {
+			case "literal":
+				this.#submitPrompt(withImages(text, images), text, deliver, fromPeer, peer.name);
+				return;
+			case "expanded":
+				this.#submitPrompt(withImages(route.text, images), text, deliver, fromPeer, peer.name);
+				return;
+			case "refused":
+				this.#send({ t: "error", message: route.message }, fromPeer);
+				return;
+			case "skill": {
+				const built = await buildSkillCommandPrompt(
+					this.#ctx,
+					text,
+					deliver === "follow-up" ? "followUp" : "steer",
+					images,
+				);
+				if (!built) {
+					this.#send({ t: "error", message: "that skill is no longer available" }, fromPeer);
+					return;
+				}
+				if (!this.#peers.get(fromPeer)?.canWrite || this.ending) return;
+				this.#submitPrompt(built.message.content, text, deliver, fromPeer, peer.name);
+				return;
+			}
+			case "builtin":
+				await this.#runBuiltinCommand(route, images, deliver, fromPeer, peer.name);
+				return;
+		}
+	}
+
+	/**
+	 * Run an allowlisted builtin for a guest. The builtins never receive the guest's text:
+	 * `/plan` runs without arguments (the TUI would submit them as the host's own input,
+	 * which executes extension commands), and what followed it is dispatched afterwards as
+	 * the guest's prompt. Preconditions are checked here because the builtin handlers only
+	 * show a warning on the host terminal when they refuse. Failures go to the guest alone;
+	 * the room is told only about a command that ran.
+	 */
+	async #runBuiltinCommand(
+		route: Extract<GuestCommandRoute, { kind: "builtin" }>,
+		images: ImageContent[] | undefined,
+		deliver: "follow-up" | undefined,
+		fromPeer: number,
+		peerName: string,
+	): Promise<void> {
+		const { name, args } = route;
+		const refuse = (reason: string): void => this.#send({ t: "error", message: `/${name}: ${reason}` }, fromPeer);
+		const ctx = this.#ctx;
+		if (images && images.length > 0 && (name !== "plan" || !args)) {
+			refuse("images cannot be sent with this command");
+			return;
+		}
+		if (name === "retry") {
+			if (!(await ctx.session.retry())) {
+				refuse("nothing to retry");
+				return;
+			}
+		} else {
+			if (ctx.planModeEnabled || ctx.planModePaused) {
+				// Leaving or resuming plan mode can ask for confirmation on the host terminal.
+				refuse("plan mode is already on or paused; change it from the host terminal");
+				return;
+			}
+			if (ctx.goalModeEnabled || ctx.goalModePaused || ctx.vibeModeEnabled) {
+				refuse("exit goal or vibe mode on the host first");
+				return;
+			}
+			if (!cfgPlanEnabled.get(ctx.settings)) {
+				refuse("plan mode is disabled in the host's settings");
+				return;
+			}
+			await executeBuiltinSlashCommand("/plan", { ctx, draftDetached: true });
+			if (!ctx.planModeEnabled) {
+				refuse("plan mode could not be started");
+				return;
+			}
+		}
+		if (this.#guestTrafficAllowed()) ctx.session.emitNotice("info", `${peerName} ran /${name}`, "collab");
+		if (name === "plan" && args) await this.#dispatchSlashAware(args, images, deliver, fromPeer);
+	}
+
+	/** Hand a guest prompt to the session as a collab-prompt message authored by `name`. */
+	#submitPrompt(
+		content: string | (TextContent | ImageContent)[],
+		chipText: string,
+		deliver: "follow-up" | undefined,
+		fromPeer: number,
+		name: string,
+	): void {
 		const details: CollabPromptDetails = { from: name };
 		if (this.#ctx.session.isStreaming) {
 			this.#ctx.updatePendingMessagesDisplay();
@@ -1159,7 +1330,7 @@ export class CollabHost {
 					details,
 					attribution: "user",
 				},
-				{ streamingBehavior: deliver === "follow-up" ? "followUp" : "steer", queueChipText: text },
+				{ streamingBehavior: deliver === "follow-up" ? "followUp" : "steer", queueChipText: chipText },
 			)
 			.then(dispatched => {
 				if (dispatched === false) return this.#notifyPromptDropped(fromPeer);

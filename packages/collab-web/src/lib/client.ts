@@ -16,6 +16,7 @@
 import type {
 	AgentSnapshot,
 	AssistantMessage,
+	CollabCommand,
 	CollabFeature,
 	CollabUiRequest,
 	CollabUiResponseValue,
@@ -85,6 +86,8 @@ export interface GuestSnapshot {
 	models: readonly WireModel[] | null;
 	/** Optional host capabilities from the latest welcome; `{}` until welcomed and on hosts that predate the field. */
 	features: Readonly<Partial<Record<CollabFeature, true>>>;
+	/** Slash commands the host lets this writer run (`/name args` as a prompt); `[]` for read-only links and hosts that predate `commands`. */
+	commands: readonly CollabCommand[];
 	/** Texts of the host's queued follow-ups, oldest first. */
 	followUps: readonly string[];
 }
@@ -92,6 +95,7 @@ export interface GuestSnapshot {
 const MAX_NOTICES = 50;
 const NO_FEATURES: Readonly<Partial<Record<CollabFeature, true>>> = Object.freeze({});
 const NO_FOLLOW_UPS: readonly string[] = Object.freeze([]);
+const NO_COMMANDS: readonly CollabCommand[] = Object.freeze([]);
 const TRANSCRIPT_TIMEOUT_MS = 10_000;
 /** A connection the host has not welcomed within this window is dropped and retried. */
 const WELCOME_TIMEOUT_MS = 30_000;
@@ -213,6 +217,7 @@ export class GuestClient {
 	#readOnly = false;
 	#models: readonly WireModel[] | null = null;
 	#features: Readonly<Partial<Record<CollabFeature, true>>> = NO_FEATURES;
+	#commands: readonly CollabCommand[] = NO_COMMANDS;
 	/** Room the offline prompt queue is persisted under. */
 	readonly #roomId: string;
 	#queue: QueuedPrompt[] = [];
@@ -443,6 +448,7 @@ export class GuestClient {
 		this.#connWelcomed = false;
 		// Capabilities are per host connection; none are assumed until it is welcomed.
 		this.#features = NO_FEATURES;
+		this.#commands = NO_COMMANDS;
 		this.#socket.send({
 			t: "hello",
 			proto: COLLAB_PROTO,
@@ -596,6 +602,7 @@ export class GuestClient {
 				this.#readOnly = frame.readOnly === true;
 				this.#models = frame.models ?? null;
 				this.#features = featureMap(frame.features);
+				this.#commands = frame.commands ?? NO_COMMANDS;
 				this.#clearUiRequests();
 				this.#welcomed = true;
 				this.#clearWelcomeTimer();
@@ -958,6 +965,7 @@ export class GuestClient {
 			queued: this.#queue,
 			models: this.#models,
 			features: this.#features,
+			commands: this.#commands,
 			followUps: this.#state?.followUps ?? NO_FOLLOW_UPS,
 		};
 	}

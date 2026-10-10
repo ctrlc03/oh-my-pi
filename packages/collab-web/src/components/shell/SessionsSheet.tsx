@@ -1,10 +1,13 @@
 import { LoaderCircle, Play, RefreshCw, Search, Share2, Trash2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CompanionClient, SessionOverview } from "../../lib/companion";
+import type { CompanionClient, SessionOverview, SessionSearchHit } from "../../lib/companion";
 import { fmtCost, fmtTokens, relTime, shortenPath } from "../../lib/format";
+import { setJumpIntent } from "../../lib/jump-intent";
 import { extractLink } from "../../lib/rooms";
+import { MIN_QUERY_CHARS, searchable } from "../../lib/search-terms";
 import { useRequest } from "../../lib/use-request";
+import { MessageSearch } from "./MessageSearch";
 import { useOpenElsewhere } from "./OpenElsewhere";
 import { Sheet } from "./Sheet";
 import "./review.css";
@@ -17,6 +20,8 @@ export interface SessionsSheetProps {
 	client: CompanionClient;
 	/** The companion can start omp, so ended sessions can be resumed. */
 	canStart: boolean;
+	/** The companion answers message searches (`canSearch`); without it only the title and folder search is offered. */
+	canSearch?: boolean;
 	/** Session on screen: marked and not openable. */
 	currentSessionId?: string | null;
 	/** Fetch a link for a hosting session and join it; rejects with a readable message. */
@@ -29,6 +34,7 @@ export interface SessionsSheetProps {
 export function SessionsSheet({
 	client,
 	canStart,
+	canSearch,
 	currentSessionId,
 	onOpenHost,
 	onOpenLink,
@@ -40,6 +46,14 @@ export function SessionsSheet({
 		const timer = setTimeout(() => setQ(query.trim()), SEARCH_DEBOUNCE_MS);
 		return () => clearTimeout(timer);
 	}, [query]);
+	const [mode, setMode] = useState<"sessions" | "messages">("sessions");
+	const messages = canSearch === true && mode === "messages";
+	const [msgQuery, setMsgQuery] = useState("");
+	const [mq, setMq] = useState("");
+	useEffect(() => {
+		const timer = setTimeout(() => setMq(msgQuery.trim()), SEARCH_DEBOUNCE_MS);
+		return () => clearTimeout(timer);
+	}, [msgQuery]);
 	const load = useCallback(() => client.requestSessions({ limit: SESSION_LIMIT, q: q || undefined }), [client, q]);
 	const { state, reload } = useRequest(load);
 	// Keep the previous list on screen (dimmed) while a new search loads.
@@ -86,9 +100,42 @@ export function SessionsSheet({
 		onOpenLink(link);
 	};
 
-	const resume = async (session: SessionOverview, force: boolean): Promise<void> => {
+	const resume = async (session: { sessionId: string; folder: string }, force: boolean): Promise<void> => {
 		await onOpenHost(
 			await client.startSession(session.folder, { resume: session.sessionId, force: force || undefined }),
+		);
+	};
+
+	/**
+	 * Remember where to scroll, run `action` (which opens the session), and forget it again when that
+	 * fails. The session screen applies it once the session is joined.
+	 */
+	const withJump = async (hit: SessionSearchHit, action: () => Promise<void>): Promise<void> => {
+		setJumpIntent({ sessionId: hit.sessionId, entryId: hit.entryId });
+		try {
+			await action();
+		} catch (err) {
+			setJumpIntent(null);
+			throw err;
+		}
+	};
+
+	const openHit = (hit: SessionSearchHit): void => {
+		if (hit.sessionId === currentSessionId) {
+			setJumpIntent({ sessionId: hit.sessionId, entryId: hit.entryId });
+			onClose();
+			return;
+		}
+		const { instanceId } = hit;
+		if (instanceId !== undefined) void run(hit.sessionId, () => withJump(hit, () => onOpenHost(instanceId)));
+	};
+	const shareHit = (hit: SessionSearchHit): void => {
+		const { instanceId } = hit;
+		if (instanceId !== undefined) void run(hit.sessionId, () => withJump(hit, () => share(instanceId)));
+	};
+	const resumeHit = (hit: SessionSearchHit): void => {
+		void run(hit.sessionId, force =>
+			withJump(hit, () => resume({ sessionId: hit.sessionId, folder: hit.cwd }, force)),
 		);
 	};
 
@@ -130,21 +177,43 @@ export function SessionsSheet({
 			</div>
 			{openElsewhere.notice}
 			{error && <div className="sh-connect-error">{error}</div>}
+			{canSearch === true && (
+				<div className="sh-segmented" role="radiogroup" aria-label="search in">
+					<button
+						type="button"
+						role="radio"
+						aria-checked={!messages}
+						className={messages ? "sh-segment" : "sh-segment sh-segment-on"}
+						onClick={() => setMode("sessions")}
+					>
+						Sessions
+					</button>
+					<button
+						type="button"
+						role="radio"
+						aria-checked={messages}
+						className={messages ? "sh-segment sh-segment-on" : "sh-segment"}
+						onClick={() => setMode("messages")}
+					>
+						Messages
+					</button>
+				</div>
+			)}
 			<label className="sh-stats-search">
 				<Search size={14} />
 				<input
 					className="sh-input"
 					type="search"
-					value={query}
-					onChange={e => setQuery(e.currentTarget.value)}
-					placeholder="Search title or folder"
-					aria-label="search sessions"
+					value={messages ? msgQuery : query}
+					onChange={e => (messages ? setMsgQuery : setQuery)(e.currentTarget.value)}
+					placeholder={messages ? "Search what was said" : "Search title or folder"}
+					aria-label={messages ? "search messages" : "search sessions"}
 					autoCapitalize="off"
 					autoCorrect="off"
 					spellCheck={false}
 				/>
 			</label>
-			{state.status === "error" && (
+			{!messages && state.status === "error" && (
 				<div className="sh-tree-error">
 					<div className="sh-connect-error">{state.message}</div>
 					<button type="button" className="sh-btn" onClick={reload}>
@@ -152,7 +221,24 @@ export function SessionsSheet({
 					</button>
 				</div>
 			)}
-			{sessions === null ? (
+			{messages ? (
+				searchable(mq) ? (
+					<MessageSearch
+						client={client}
+						query={mq}
+						canStart={canStart}
+						currentSessionId={currentSessionId}
+						busy={busy}
+						onOpen={openHit}
+						onShare={shareHit}
+						onResume={resumeHit}
+					/>
+				) : (
+					<div className="sh-companion-empty">
+						Type at least {MIN_QUERY_CHARS} characters to search what was said in your sessions.
+					</div>
+				)
+			) : sessions === null ? (
 				state.status === "loading" && (
 					<div className="sh-companion-empty sh-file-status">
 						<LoaderCircle size={14} className="sh-spin" /> Loading sessions… the first read can take a while.

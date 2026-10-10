@@ -7,12 +7,15 @@
 
 import type { CollabUiRequest } from "@oh-my-pi/pi-wire";
 import type { InboxItem } from "./companion";
+import { deliverDraft } from "./draft-bus";
 import { enqueuePrompt, roomIdOf } from "./rooms";
 import { readJson, writeJson } from "./storage";
 
 export interface OpenIntent {
 	/** Sent as a prompt once the session is live (through the room's prompt queue). */
 	prompt?: string;
+	/** Put into the room's message box once it opens, for the user to edit and send; nothing is sent. */
+	draft?: string;
 	/** Answers the session's pending select ask with `option`, but only while it still asks `question`. */
 	answer?: { question: string; option: string };
 }
@@ -46,6 +49,7 @@ export function applyOpenIntent(instanceId: string, link: string, now = Date.now
 	const roomId = roomIdOf(link);
 	if (roomId === null || now - intent.at > INTENT_TTL_MS) return;
 	if (intent.prompt) enqueuePrompt(roomId, intent.prompt);
+	if (intent.draft) deliverDraft(roomId, intent.draft);
 	if (intent.answer) pendingAnswers.set(roomId, { ...intent.answer, at: now });
 }
 

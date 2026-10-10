@@ -16,9 +16,11 @@
  * `max-age=600`, and a stale copy would pin the previous bundle into the new shell.
  * Requests made with `cache: "no-store"` (the app's own update check) pass through.
  *
- * It also shows the companion's Web Push notifications (see scripts/companion.ts)
- * and routes a tap to the session: an open window gets an `open-session` message,
- * otherwise the app launches with `#open:<instanceId>`.
+ * It also shows the companion's Web Push notifications (see scripts/companion.ts):
+ * a payload's `badge` sets the app icon badge, `reply` adds an inline text-reply action,
+ * and a tap routes to the session or to the payload's `open` route. An open window gets
+ * an `open-session`, `open-route` or `notification-reply` message, otherwise the app
+ * launches with `#open:<instanceId>[&reply=<text>]` or `#<route>`.
  */
 import * as path from "node:path";
 
@@ -98,41 +100,71 @@ self.addEventListener("fetch", event => {
 	event.respondWith(caches.open(CACHE).then(cache => cache.match(req, { ignoreSearch: true })).then(hit => hit || fetch(req)));
 });
 
+/** Set the app icon badge to the pushed count, clearing it at 0; a no-op where the Badging API is missing. */
+function setBadge(count) {
+	const nav = self.navigator;
+	try {
+		if (count > 0 && nav.setAppBadge) return nav.setAppBadge(count).catch(() => {});
+		if (count === 0 && nav.clearAppBadge) return nav.clearAppBadge().catch(() => {});
+	} catch {}
+	return Promise.resolve();
+}
+
 self.addEventListener("push", event => {
 	let data = {};
 	try {
 		data = event.data ? event.data.json() : {};
 	} catch {}
 	const title = typeof data.title === "string" ? data.title : "omp collab";
+	const instanceId = typeof data.instanceId === "string" ? data.instanceId : null;
+	const options = {
+		body: typeof data.body === "string" ? data.body : "",
+		icon: "./favicon-192x192.png",
+		tag: typeof data.tag === "string" ? data.tag : instanceId || "omp-collab",
+		data: {
+			instanceId,
+			url: typeof data.url === "string" && /^https:\\/\\//.test(data.url) ? data.url : null,
+			open: typeof data.open === "string" && /^[a-z][a-z0-9-]*:./.test(data.open) ? data.open : null,
+		},
+	};
+	// An inline text reply where the platform supports it (Chrome on Android and desktop);
+	// elsewhere the action shows as a plain button, and iOS shows no actions at all.
+	if (data.reply === true && instanceId) {
+		options.actions = [
+			{ action: "reply", type: "text", title: "Reply", placeholder: "Message the agent\\u2026" },
+			{ action: "open", title: "Open" },
+		];
+	}
+	const badge = typeof data.badge === "number" && data.badge >= 0 ? Math.floor(data.badge) : null;
 	event.waitUntil(
-		self.registration.showNotification(title, {
-			body: typeof data.body === "string" ? data.body : "",
-			icon: "./favicon-192x192.png",
-			tag: typeof data.tag === "string" ? data.tag : typeof data.instanceId === "string" ? data.instanceId : "omp-collab",
-			data: {
-				instanceId: typeof data.instanceId === "string" ? data.instanceId : null,
-				url: typeof data.url === "string" && /^https:\\/\\//.test(data.url) ? data.url : null,
-			},
-		}),
+		Promise.all([self.registration.showNotification(title, options), badge === null ? null : setBadge(badge)]),
 	);
 });
 
 self.addEventListener("notificationclick", event => {
 	event.notification.close();
-	const instanceId = event.notification.data && event.notification.data.instanceId;
-	const url = event.notification.data && event.notification.data.url;
-	if (url) {
-		event.waitUntil(self.clients.openWindow(url));
+	const info = event.notification.data || {};
+	const instanceId = info.instanceId;
+	if (info.url) {
+		event.waitUntil(self.clients.openWindow(info.url));
 		return;
 	}
+	const text = event.action === "reply" && typeof event.reply === "string" ? event.reply.trim() : "";
+	// A typed reply goes to its session; otherwise the route the notice names, else its session.
+	const replying = text !== "" && !!instanceId;
+	const route = replying
+		? "open:" + instanceId + "&reply=" + encodeURIComponent(text)
+		: info.open || (instanceId ? "open:" + instanceId : null);
 	event.waitUntil(
 		self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(windows => {
 			const win = windows[0];
 			if (win) {
-				if (instanceId) win.postMessage({ t: "open-session", instanceId });
+				if (replying) win.postMessage({ t: "notification-reply", instanceId, text });
+				else if (info.open) win.postMessage({ t: "open-route", route: info.open });
+				else if (instanceId) win.postMessage({ t: "open-session", instanceId });
 				return win.focus();
 			}
-			return self.clients.openWindow(instanceId ? "./#open:" + instanceId : "./");
+			return self.clients.openWindow(route ? "./#" + route : "./");
 		}),
 	);
 });

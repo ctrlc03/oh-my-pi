@@ -17,6 +17,7 @@
 import { CAN_INFLATE, importRoomKey } from "./codec";
 import { recordEvent } from "./diag-log";
 import { parseCollabLink } from "./link";
+import type { Schedule, ScheduleInput } from "./schedules";
 import { CollabSocket } from "./socket";
 import { readJson, writeJson } from "./storage";
 
@@ -51,10 +52,16 @@ const TRANSCRIBE_TIMEOUT_MS = 120_000;
 const TRANSCRIBE_SETUP_TIMEOUT_MS = 30 * 60_000;
 /** GitHub listings go through `gh` to the GitHub API (the companion allows it 20s). */
 const GITHUB_TIMEOUT_MS = 30_000;
+/** A pull request's diff is fetched whole by `gh pr diff` (up to 60s), and a review or merge is one slow API write. */
+const PR_REVIEW_TIMEOUT_MS = 90_000;
+/** Failing-check logs: one `gh pr view`, then the log reads (each up to 25s on the computer). */
+const CI_LOG_TIMEOUT_MS = 60_000;
 /** Listing a huge repository can take git a while. */
 const TREE_TIMEOUT_MS = 60_000;
 /** An attachment is one frame of up to ~13 MB, sent over a phone connection. */
 const UPLOAD_TIMEOUT_MS = 120_000;
+/** One download chunk is up to ~5.3 MB of base64, read from disk and sent over a phone connection. */
+const DOWNLOAD_CHUNK_TIMEOUT_MS = 120_000;
 /** Pings sent per round-trip measurement; the median is reported. */
 const PING_SAMPLES = 3;
 
@@ -206,6 +213,56 @@ export interface GithubComment {
 	createdAt: number;
 }
 
+/** The pull request a `ci-log` answer is about. */
+export interface CiLogPr {
+	title: string;
+	url: string;
+	/** Head branch. */
+	branch: string;
+}
+
+/** One failing check. */
+export interface CiLogFailure {
+	/** `workflow / job` for Actions runs. */
+	check: string;
+	/** The check's details page; empty when GitHub gives none. */
+	url: string;
+	/** Tail of the GitHub Actions log of what failed, trimmed (a first line says how much was cut); empty for other checks. */
+	log: string;
+}
+
+/** A session on the computer in the pull request's repository. */
+export interface CiLogSession {
+	instanceId: string;
+	title: string;
+	cwd: string;
+	/** Checked-out branch; null when detached. */
+	branch: string | null;
+	/** Hosting collab: opens at once. Otherwise it must be shared first. */
+	host: boolean;
+	busy: boolean;
+	/** Started sandboxed: cannot run the tests the Fix-it prompt asks for. */
+	sandboxed: boolean;
+}
+
+/** A recent folder of the pull request's repository without a running session. */
+export interface CiLogFolder {
+	cwd: string;
+	branch: string | null;
+}
+
+/** What the Fix-it flow shows: the pull request, its failing checks, and where to work on them. */
+export interface CiLogReport {
+	pr: CiLogPr;
+	failures: CiLogFailure[];
+	/** Failing checks left out after the first few. */
+	moreFailures: number;
+	/** Sessions of the repository, best match first. */
+	sessions: CiLogSession[];
+	/** Folders to start a session in when there is no session. */
+	folders: CiLogFolder[];
+}
+
 /** One item opened: its description, checks and latest comments, plus a pull request's branch and size. */
 export interface GithubItemDetail extends GithubItem {
 	body: string;
@@ -217,9 +274,50 @@ export interface GithubItemDetail extends GithubItem {
 	olderComments: number;
 	/** Pull requests: `head` merges into `base`; null for issues. */
 	branch: { head: string; base: string } | null;
+	/** Pull requests: the head commit this detail was read at (absent from companions that predate it). */
+	head?: string;
 	/** Pull requests: lines and files changed; null for issues. */
 	size: { additions: number; deletions: number; files: number } | null;
 }
+
+export type PrFileStatus = "added" | "removed" | "modified" | "renamed" | "copied" | "changed";
+
+/** One file of a pull request's diff. */
+export interface PrFile {
+	path: string;
+	status: PrFileStatus;
+	additions: number;
+	deletions: number;
+	/** Renamed and copied files: the path they came from. */
+	from?: string;
+}
+
+/** The changed files of a pull request and the head commit they were read at. */
+export interface PrFiles {
+	head: string;
+	files: PrFile[];
+}
+
+export type PrReviewEvent = "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
+
+/** An inline review comment: `line` (and `startLine` for a range) of `path` on the old (`LEFT`) or new (`RIGHT`) side of the diff. */
+export interface PrReviewComment {
+	path: string;
+	line: number;
+	side: "LEFT" | "RIGHT";
+	startLine?: number;
+	body: string;
+}
+
+/** A review as posted: its verdict, summary, inline comments, and the commit they were written against. */
+export interface PrReviewInput {
+	event: PrReviewEvent;
+	body: string;
+	comments: PrReviewComment[];
+	commit?: string;
+}
+
+export type PrMergeMethod = "squash" | "merge" | "rebase";
 
 /** A file inside a session's repository (or cwd outside a repository); read-only unless `writable`. */
 export interface FileContent {
@@ -306,6 +404,23 @@ export interface SessionOverview {
 	worktree?: boolean;
 }
 
+/** One prompt or reply of a session that matches a message search. */
+export interface SessionSearchHit {
+	sessionId: string;
+	title: string | null;
+	cwd: string;
+	/** The session entry (the id the transcript rows carry) holding the text. */
+	entryId: string;
+	role: "user" | "assistant";
+	/** About 160 characters around the first match. */
+	snippet: string;
+	/** Unix ms. */
+	time: number;
+	/** Present when the session is hosting collab or listed as idle right now. */
+	instanceId?: string;
+	live?: "host" | "idle";
+}
+
 /** A session's tmux pane as the terminal showed it, with ANSI escape sequences kept. */
 export interface PaneCapture {
 	/** `session:window.pane`; null when the session does not run inside tmux (then `text` says why). */
@@ -343,6 +458,54 @@ export interface PreviewTarget {
 	port: number;
 	/** Name of the listening process, e.g. `node` or `bun`. */
 	command: string;
+}
+
+/** Where a runnable target comes from; the app groups its list by it. */
+export type RunSource = "package" | "make" | "just" | "cargo";
+
+/** A command the companion can run in a session's repository root; the app cannot name any other. */
+export interface RunTarget {
+	/** `<source>:<name>`; what `run-start` names. */
+	id: string;
+	source: RunSource;
+	name: string;
+	/** The exact command line that runs, e.g. `bun run test`. */
+	command: string;
+	/**
+	 * What the command executes, read from the repository's files: the script body, the recipe lines (about the
+	 * first 20). Absent for Cargo, whose commands are fixed. Shown in the confirmation, since a name says little.
+	 */
+	detail?: string;
+}
+
+/** `stopped`: ended after a Stop; `failed`: the command could not start. */
+export type RunState = "running" | "exited" | "stopped" | "failed";
+
+export interface RunInfo {
+	runId: string;
+	instanceId: string;
+	targetId: string;
+	command: string;
+	/** Unix ms. */
+	startedAt: number;
+	/** Unix ms; null while running. */
+	endedAt: number | null;
+	state: RunState;
+	/** Null while running, after a signal, and when the command could not start. */
+	exitCode: number | null;
+	/** Signal that ended it, e.g. `SIGTERM`. */
+	signal: string | null;
+}
+
+/** A slice of a run's output (ANSI colors kept). Positions count characters since the run began. */
+export interface RunOutput {
+	run: RunInfo;
+	text: string;
+	/** Where `text` starts: later than asked when the oldest output was already dropped (`truncated`). */
+	from: number;
+	/** Ask from here next; less than the output's end while more is waiting. */
+	next: number;
+	truncated: boolean;
 }
 
 /** Voice input on the computer: the local speech model it transcribes with. */
@@ -562,6 +725,20 @@ export class SessionOpenElsewhereError extends Error {
 	}
 }
 
+/** One piece of a file served for download; `size` is the whole file's, `data` is at most 4 MB of it, base64. */
+export interface FileChunk {
+	/** Base name of the file. */
+	name: string;
+	size: number;
+	/** Content type from the extension. */
+	mime: string;
+	/** Where in the file `data` starts. */
+	offset: number;
+	data: string;
+	/** `data` reaches the end of the file. */
+	done: boolean;
+}
+
 export type CompanionRequest =
 	/** `zip`: this device opens compressed frames; the companion compresses larger replies to it. */
 	| { t: "list"; zip?: boolean }
@@ -593,6 +770,13 @@ export type CompanionRequest =
 	/** `path` is absolute or relative to the session cwd; it must resolve inside the repository (or cwd). */
 	| { t: "file"; reqId: number; instanceId: string; path: string }
 	| { t: "folders"; reqId: number }
+	/** Scheduled runs (needs `canSchedule`): the whole list. */
+	| { t: "schedules"; reqId: number }
+	/** Create (no `schedule.id`) or replace a scheduled run; answered with `schedule`. */
+	| { t: "schedule-save"; reqId: number; schedule: ScheduleInput }
+	| { t: "schedule-delete"; reqId: number; id: string }
+	/** Start a scheduled run now, whatever its timetable says; answered with `schedule` once it hosts (an error when it did not start). */
+	| { t: "schedule-run-now"; reqId: number; id: string }
 	/**
 	 * Start omp in `cwd` (resuming session `resume` when given), hosting with control access;
 	 * `sandboxed`: file read/search/edit tools only, with writes confined to `cwd` (needs `canSandbox`);
@@ -633,6 +817,8 @@ export type CompanionRequest =
 	| { t: "pr-alerts"; reqId: number; settings?: PrAlertSettings }
 	/** Past and live sessions across projects, newest activity first; `q` filters by title or folder. */
 	| { t: "sessions"; reqId: number; limit?: number; q?: string }
+	/** Prompts and replies of every session containing all words of `query` (at least 2 characters), newest first; answered with `session-search` (needs `canSearch`). */
+	| { t: "session-search"; reqId: number; query: string; limit?: number }
 	/** The session's terminal: the screen of the tmux pane running it, plus recent scrollback. */
 	| { t: "pane"; reqId: number; instanceId: string }
 	/** Sessions that changed `path` (absolute, or relative to the repository root) in the session's repository; answered with `sessions`. */
@@ -653,6 +839,31 @@ export type CompanionRequest =
 	| { t: "github"; reqId: number; instanceId: string; kind: GithubKind; filter: GithubFilter }
 	/** One issue or pull request with its description, comments and checks (needs `canGithub`). */
 	| { t: "github-item"; reqId: number; instanceId: string; kind: GithubKind; number: number }
+	/** The changed files of a pull request, with the head commit they were read at (needs `canPrReview`). */
+	| { t: "pr-files"; reqId: number; instanceId: string; number: number }
+	/** One file's diff of a pull request at `head`, answered with a `diff` (needs `canPrReview`). */
+	| { t: "pr-diff"; reqId: number; instanceId: string; number: number; head: string; path: string }
+	/** Post a review with inline comments; answered with a `link` to it. Refused for sandboxed sessions (needs `canPrReview`). */
+	| { t: "pr-review"; reqId: number; instanceId: string; number: number; review: PrReviewInput }
+	/**
+	 * Merge a pull request at `head`, the commit the user saw: refused if it has moved. Refused unless it is open,
+	 * and while it is a draft or its checks fail or run unless `allowDraft` / `allowFailing` / `allowPending`
+	 * (then a draft is marked ready first); sandboxed sessions are refused (needs `canPrReview`).
+	 */
+	| {
+			t: "pr-merge";
+			reqId: number;
+			instanceId: string;
+			number: number;
+			method: PrMergeMethod;
+			deleteBranch: boolean;
+			head: string;
+			allowDraft?: boolean;
+			allowFailing?: boolean;
+			allowPending?: boolean;
+	  }
+	/** The failing checks of a pull request with log tails, and the repository's sessions (needs `canFixIt`). */
+	| { t: "ci-log"; reqId: number; repo: string; number: number }
 	/** The files of the session's repository (needs `canEdit`). */
 	| { t: "tree"; reqId: number; instanceId: string }
 	/**
@@ -663,7 +874,23 @@ export type CompanionRequest =
 	/** Current versions of up to 20 files, to notice edits made behind an open editor. */
 	| { t: "file-versions"; reqId: number; instanceId: string; paths: string[] }
 	/** Save a prompt attachment on the computer (needs `canUpload`); `data` is the file's base64. */
-	| { t: "upload"; reqId: number; instanceId: string; name: string; data: string };
+	| { t: "upload"; reqId: number; instanceId: string; name: string; data: string }
+	/** Targets the companion can run in the session's repository root (needs `canRun`). */
+	| { t: "run-targets"; reqId: number; instanceId: string }
+	/**
+	 * Run one listed target (`RunTarget.id`) there; refused for repositories sandboxed sessions work in, past three runs
+	 * at once, and when the target's `detail` no longer equals the `detail` sent (the one the person confirmed; omit it for
+	 * a target without one). Answered with `run`.
+	 */
+	| { t: "run-start"; reqId: number; instanceId: string; target: string; detail?: string }
+	/** Output of a run from position `from`; answered with `run-output`. */
+	| { t: "run-output"; reqId: number; runId: string; from: number }
+	/** SIGTERM the run's process group, SIGKILL after three seconds; answered with `run`. */
+	| { t: "run-stop"; reqId: number; runId: string }
+	/** The session's last ten runs, newest first. */
+	| { t: "runs"; reqId: number; instanceId: string }
+	/** One chunk of a file of the session's repository from `offset`, at most 4 MB raw (needs `canDownload`). */
+	| { t: "file-download"; reqId: number; instanceId: string; path: string; offset: number };
 
 export type CompanionReply =
 	/**
@@ -689,8 +916,20 @@ export type CompanionReply =
 			canPreview?: boolean;
 			/** The companion can list the session repository's issues and pull requests (`gh` signed in). */
 			canGithub?: boolean;
+			/** The companion answers `pr-files`, `pr-diff`, `pr-review` and `pr-merge`. */
+			canPrReview?: boolean;
+			/** The companion answers `ci-log` (the Fix-it flow). */
+			canFixIt?: boolean;
 			/** The companion can save prompt attachments on the computer. */
 			canUpload?: boolean;
+			/** The companion can run scheduled prompts. */
+			canSchedule?: boolean;
+			/** The companion can serve files of a session's repository for download. */
+			canDownload?: boolean;
+			/** The companion can run listed scripts and build targets of a session's repository. */
+			canRun?: boolean;
+			/** The companion answers `session-search`. */
+			canSearch?: boolean;
 			/** The companion can transcribe voice recordings, and with which model; absent when it cannot. */
 			transcribe?: TranscribeInfo;
 			/** Power of the computer; absent off macOS and from companions that predate it. */
@@ -722,6 +961,9 @@ export type CompanionReply =
 	/** In the order of the request's paths; null for a file that is missing or unreadable. */
 	| { t: "file-versions"; reqId: number; versions: (string | null)[] }
 	| { t: "folders"; reqId: number; folders: RecentFolder[] }
+	| { t: "schedules"; reqId: number; schedules: Schedule[] }
+	/** One schedule as stored: answers `schedule-save` and `schedule-run-now`. */
+	| { t: "schedule"; reqId: number; schedule: Schedule }
 	| { t: "review"; reqId: number; review: GitReview }
 	/** The started session is hosting and listed under `instanceId`. */
 	| { t: "started"; reqId: number; instanceId: string }
@@ -730,6 +972,7 @@ export type CompanionReply =
 	| { t: "spend-limits"; reqId: number; limits: SpendLimits }
 	| { t: "pr-alerts"; reqId: number; settings: PrAlertSettings }
 	| { t: "sessions"; reqId: number; sessions: SessionOverview[] }
+	| { t: "session-search"; reqId: number; results: SessionSearchHit[]; truncated: boolean }
 	| { t: "pane"; reqId: number; pane: PaneCapture }
 	| { t: "codemap"; reqId: number; view: CodemapView }
 	| { t: "codemap-search"; reqId: number; hits: CodemapNode[] }
@@ -740,8 +983,17 @@ export type CompanionReply =
 	/** `repo`: `owner/name` of the listed repository. */
 	| { t: "github"; reqId: number; repo: string; items: GithubItem[] }
 	| { t: "github-item"; reqId: number; item: GithubItemDetail }
+	| { t: "pr-files"; reqId: number; head: string; files: PrFile[] }
+	| ({ t: "ci-log"; reqId: number } & CiLogReport)
 	/** Where the uploaded file was saved: an absolute path on the computer. */
-	| { t: "uploaded"; reqId: number; path: string };
+	| { t: "uploaded"; reqId: number; path: string }
+	| { t: "run-targets"; reqId: number; targets: RunTarget[] }
+	/** One run: answers `run-start` and `run-stop`. */
+	| { t: "run"; reqId: number; run: RunInfo }
+	| { t: "run-output"; reqId: number; output: RunOutput }
+	| { t: "runs"; reqId: number; runs: RunInfo[] }
+	/** The chunk of a `file-download` that starts at its `offset`. */
+	| ({ t: "file-chunk"; reqId: number } & FileChunk);
 
 /** Credentials the companion issued to a paired device. */
 export interface DeviceCreds {
@@ -866,8 +1118,20 @@ export interface CompanionSnapshot {
 	canPreview: boolean;
 	/** The companion can list the session repository's issues and pull requests. */
 	canGithub: boolean;
+	/** The companion can show a pull request's files and post reviews and merges. */
+	canPrReview: boolean;
+	/** The companion answers `ci-log` (the Fix-it flow). */
+	canFixIt: boolean;
 	/** The companion can save prompt attachments on the computer. */
 	canUpload: boolean;
+	/** The companion can run scheduled prompts. */
+	canSchedule: boolean;
+	/** The companion can serve files of a session's repository for download. */
+	canDownload: boolean;
+	/** The companion can run the session repository's scripts and build targets. */
+	canRun: boolean;
+	/** The companion answers `session-search` (message search across sessions). */
+	canSearch: boolean;
 	/** Voice input on the computer; null when the companion cannot transcribe. */
 	transcribe: TranscribeInfo | null;
 	/** Power of the computer, while the companion reports it. */
@@ -922,7 +1186,13 @@ export class CompanionClient {
 		canEdit: false,
 		canPreview: false,
 		canGithub: false,
+		canPrReview: false,
+		canFixIt: false,
 		canUpload: false,
+		canSchedule: false,
+		canDownload: false,
+		canRun: false,
+		canSearch: false,
 		transcribe: null,
 		power: null,
 		vapidKey: null,
@@ -1040,12 +1310,73 @@ export class CompanionClient {
 		return (await this.#call({ t: "upload", instanceId, name, data }, "uploaded", UPLOAD_TIMEOUT_MS)).path;
 	}
 
+	/** Scripts and build targets the companion can run in the session's repository root, grouped by source. */
+	async requestRunTargets(instanceId: string): Promise<RunTarget[]> {
+		return (await this.#call({ t: "run-targets", instanceId }, "run-targets")).targets;
+	}
+
+	/** Run one listed target, pinned to the `detail` the person confirmed; resolves once it has started (it keeps running on the computer). */
+	async startRun(instanceId: string, target: RunTarget): Promise<RunInfo> {
+		return (await this.#call({ t: "run-start", instanceId, target: target.id, detail: target.detail }, "run")).run;
+	}
+
+	/** A run's output from position `from` (the previous `next`; 0 for all that is kept). */
+	async requestRunOutput(runId: string, from: number): Promise<RunOutput> {
+		return (await this.#call({ t: "run-output", runId, from }, "run-output")).output;
+	}
+
+	/** Ask a run to stop: its process group gets SIGTERM, then SIGKILL after three seconds. */
+	async stopRun(runId: string): Promise<RunInfo> {
+		return (await this.#call({ t: "run-stop", runId }, "run")).run;
+	}
+
+	/** The session's last ten runs, newest first. */
+	async requestRuns(instanceId: string): Promise<RunInfo[]> {
+		return (await this.#call({ t: "runs", instanceId }, "runs")).runs;
+	}
+
+	/** The chunk of a file on the computer that starts at `offset`; `path` is absolute or relative to the session's cwd. */
+	async requestFileChunk(instanceId: string, path: string, offset: number): Promise<FileChunk> {
+		const reply = await this.#call(
+			{ t: "file-download", instanceId, path, offset },
+			"file-chunk",
+			DOWNLOAD_CHUNK_TIMEOUT_MS,
+		);
+		return {
+			name: reply.name,
+			size: reply.size,
+			mime: reply.mime,
+			offset: reply.offset,
+			data: reply.data,
+			done: reply.done,
+		};
+	}
+
 	async requestFileVersions(instanceId: string, paths: string[]): Promise<(string | null)[]> {
 		return (await this.#call({ t: "file-versions", instanceId, paths }, "file-versions")).versions;
 	}
 
 	async requestFolders(): Promise<RecentFolder[]> {
 		return (await this.#call({ t: "folders" }, "folders")).folders;
+	}
+
+	/** Scheduled runs on the computer (needs `canSchedule`). */
+	async requestSchedules(): Promise<Schedule[]> {
+		return (await this.#call({ t: "schedules" }, "schedules")).schedules;
+	}
+
+	/** Create (no `schedule.id`) or replace a scheduled run; resolves with it as stored. */
+	async saveSchedule(schedule: ScheduleInput): Promise<Schedule> {
+		return (await this.#call({ t: "schedule-save", schedule }, "schedule")).schedule;
+	}
+
+	async deleteSchedule(id: string): Promise<void> {
+		await this.#call({ t: "schedule-delete", id }, "ok");
+	}
+
+	/** Start the run now; resolves once its session hosts (it may take a worktree checkout and omp's boot). */
+	async runScheduleNow(id: string): Promise<Schedule> {
+		return (await this.#call({ t: "schedule-run-now", id }, "schedule", WORKTREE_START_TIMEOUT_MS)).schedule;
 	}
 
 	/** Branch of the session's repository against its base branch: files, commits, push and pull request state. */
@@ -1104,6 +1435,12 @@ export class CompanionClient {
 		return (await this.#call({ t: "sessions", limit: opts.limit, q: opts.q }, "sessions", USAGE_TIMEOUT_MS)).sessions;
 	}
 
+	/** Prompts and replies across every session that contain all the words of `query` (needs `canSearch`), newest first. */
+	async searchSessions(query: string, limit?: number): Promise<{ results: SessionSearchHit[]; truncated: boolean }> {
+		const reply = await this.#call({ t: "session-search", query, limit }, "session-search", USAGE_TIMEOUT_MS);
+		return { results: reply.results, truncated: reply.truncated };
+	}
+
 	/** Code map around `focus`; the first request for a repository indexes it, so allow it time. */
 	async requestCodemap(instanceId: string, focus: CodemapFocus, flow?: CodemapFlowDirection): Promise<CodemapView> {
 		return (await this.#call({ t: "codemap", instanceId, focus, flow }, "codemap", CODEMAP_TIMEOUT_MS)).view;
@@ -1157,6 +1494,58 @@ export class CompanionClient {
 	/** One issue or pull request with its description, latest comments and checks. */
 	async requestGithubItem(instanceId: string, kind: GithubKind, number: number): Promise<GithubItemDetail> {
 		return (await this.#call({ t: "github-item", instanceId, kind, number }, "github-item", GITHUB_TIMEOUT_MS)).item;
+	}
+
+	/** The changed files of a pull request and the head commit they were read at. */
+	async requestPrFiles(instanceId: string, number: number): Promise<PrFiles> {
+		const { head, files } = await this.#call({ t: "pr-files", instanceId, number }, "pr-files", PR_REVIEW_TIMEOUT_MS);
+		return { head, files };
+	}
+
+	/** One file's diff of a pull request at `head` (the commit `requestPrFiles` returned). */
+	async requestPrDiff(
+		instanceId: string,
+		number: number,
+		head: string,
+		path: string,
+	): Promise<{ diff: string; truncated: boolean }> {
+		const { diff, truncated } = await this.#call(
+			{ t: "pr-diff", instanceId, number, head, path },
+			"diff",
+			PR_REVIEW_TIMEOUT_MS,
+		);
+		return { diff, truncated };
+	}
+
+	/** Post a review on GitHub; resolves with its URL. */
+	async submitPrReview(instanceId: string, number: number, review: PrReviewInput): Promise<string> {
+		return (await this.#call({ t: "pr-review", instanceId, number, review }, "link", PR_REVIEW_TIMEOUT_MS)).url;
+	}
+
+	/** Merge a pull request at `head`; `allowDraft` / `allowFailing` / `allowPending` are the user's explicit choice to merge anyway. */
+	async mergePr(
+		instanceId: string,
+		number: number,
+		options: {
+			method: PrMergeMethod;
+			deleteBranch: boolean;
+			head: string;
+			allowDraft?: boolean;
+			allowFailing?: boolean;
+			allowPending?: boolean;
+		},
+	): Promise<void> {
+		await this.#call({ t: "pr-merge", instanceId, number, ...options }, "ok", PR_REVIEW_TIMEOUT_MS);
+	}
+
+	/** Failing checks of pull request `number` in `repo` (`owner/name`) with log tails, and where to work on them. */
+	async requestCiLog(repo: string, number: number): Promise<CiLogReport> {
+		const { pr, failures, moreFailures, sessions, folders } = await this.#call(
+			{ t: "ci-log", repo, number },
+			"ci-log",
+			CI_LOG_TIMEOUT_MS,
+		);
+		return { pr, failures, moreFailures, sessions, folders };
 	}
 
 	/** Sessions that changed `path` in the session's repository, newest first; the scan is bounded to recent sessions. */
@@ -1319,7 +1708,13 @@ export class CompanionClient {
 				canEdit: frame.canEdit ?? false,
 				canPreview: frame.canPreview ?? false,
 				canGithub: frame.canGithub ?? false,
+				canPrReview: frame.canPrReview ?? false,
+				canFixIt: frame.canFixIt ?? false,
 				canUpload: frame.canUpload ?? false,
+				canSchedule: frame.canSchedule ?? false,
+				canDownload: frame.canDownload ?? false,
+				canRun: frame.canRun ?? false,
+				canSearch: frame.canSearch ?? false,
 				transcribe: frame.transcribe ?? null,
 				power: frame.power ?? null,
 				vapidKey: frame.vapidKey,

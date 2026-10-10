@@ -17,6 +17,8 @@ export const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
 const MIME_TYPES = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"] as const;
 
 export interface Recording {
+	/** The live microphone stream, for level metering (hands-free silence detection). */
+	readonly stream: MediaStream;
 	/** Ends the recording and resolves with it; every call returns the same result. Rejects after `cancel` or a recorder failure. */
 	stop(): Promise<Blob>;
 	/** Discards the recording and releases the microphone. */
@@ -103,6 +105,7 @@ export async function startRecording({ onEnd }: RecordingOptions): Promise<Recor
 	recorder.start();
 
 	return {
+		stream,
 		stop() {
 			if (cancelled) return Promise.reject(new Error("Recording was cancelled."));
 			requested = true;

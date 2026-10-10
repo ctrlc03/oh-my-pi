@@ -9,6 +9,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { GithubItem, PrAlertSettings } from "../src/lib/companion";
+import { fixRoute } from "../src/lib/fix-route";
 import { gh } from "./companion-gitflow";
 import { type RawCheck, rollup, toCheck } from "./companion-github";
 
@@ -64,6 +65,8 @@ export interface PrAlert {
 	body: string;
 	/** The pull request page, opened by tapping the notification. */
 	url: string;
+	/** App route opened on tap instead of {@link url} (`fix:` for failed checks). */
+	open?: string;
 	/** Notifications with the same tag replace each other on the device. */
 	tag: string;
 	/** Web Push `Topic`: a newer undelivered alert of the same tag replaces an older one. */
@@ -213,12 +216,13 @@ export function pushTopic(tag: string): string {
 	return `pr-${new Bun.CryptoHasher("sha256").update(tag).digest("base64url").slice(0, TOPIC_HASH_CHARS)}`;
 }
 
-function alertFor(pr: SnapshotLike, kind: "checks" | "review" | "comment", body: string): PrAlert {
+function alertFor(pr: SnapshotLike, kind: "checks" | "review" | "comment", body: string, open?: string): PrAlert {
 	const tag = `pr:${prKey(pr)}:${kind}`;
 	return {
 		title: clip(`${prKey(pr)} ${pr.title}`, MAX_TITLE_CHARS),
 		body,
 		url: pr.url,
+		...(open === undefined ? {} : { open }),
 		tag,
 		topic: pushTopic(tag),
 	};
@@ -252,7 +256,9 @@ export function detectPrEvents(
 	const alerts: PrAlert[] = [];
 	if (settings.checks && prev.checks === "pending" && (pr.checks === "pass" || pr.checks === "fail"))
 		alerts.push(
-			alertFor(pr, "checks", pr.checks === "pass" ? "Checks passed" : `Checks failed: ${pr.failing ?? "a check"}`),
+			pr.checks === "pass"
+				? alertFor(pr, "checks", "Checks passed")
+				: alertFor(pr, "checks", `Checks failed: ${pr.failing ?? "a check"}`, fixRoute(pr.repo, pr.number)),
 		);
 	if (settings.reviews) {
 		const fresh = <T extends { at: number }>(items: T[], after: number): T[] =>

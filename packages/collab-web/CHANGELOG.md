@@ -63,6 +63,16 @@
 - Added model and thinking-level pills to the composer toolbar, each opening a picker above it (a bottom sheet on phones), so switching models no longer needs the session sheet
 - Added *GitHub* (⋯ → *GitHub*) through the companion: the session repository's open issues and pull requests, read with the computer's signed-in `gh`, filtered to open, mine, or (pull requests) review requested, with labels, checks, and review state. Opening one shows its description, every check, and the latest comments; *Send to agent* puts a prompt about it into the message box to edit and send
 - Added an *Editor* through the companion (header button, or ⋯ → *Editor*): the session repository's files in a tree with *Go to file*, tabs, and a CodeMirror editor that saves in place. A save is refused when the file changed on disk since it was read, with reload or keep-mine choices; agent edits reload clean tabs live with the changed lines marked; go to definition through the code map; send the selected lines to the message box. Tool-card paths, the working tree and the code map open files there. View-only links and sandboxed sessions stay read-only. Restart the companion to enable it
+- Added slash commands to the message box: `/` lists the host's skills, prompt templates, `/plan`, `/retry`, and your saved prompts, and sending one runs it on the host with you as the author; other host commands are refused (needs the omp hosting the session to include this change)
+- Added split view on wide screens: open a second session beside the current one, both live, and dock the editor next to the transcript
+- Added hands-free voice mode: replies are read aloud, then the mic listens again, stops on silence, and sends what you said after a short countdown you can cancel
+- Added an app icon badge counting sessions that wait for input, and *Reply* on needs-input and finished-turn notifications (Android and desktop Chrome)
+- Added *Fix it* for pull requests with failing checks, from the GitHub sheet or the *Checks failed* notification: the failing logs go into a prompt for a session on that repository, ready to send
+- Added a *Files* tab to pull requests in the GitHub sheet: per-file diffs with line comments, sent to the agent or submitted as a GitHub review (comment, approve, request changes), and a confirm-first *Merge…* pinned to the head commit you reviewed
+- Added *Run* (⋯ → *Run*) through the companion: run the repository's package scripts, Makefile targets, `just` recipes, or `cargo test`/`cargo build` on the computer after a confirm that shows the script body, with live output, Stop, and *Send output to agent*
+- Added downloads through the companion: save a file from the session's repository to the device from the editor, file viewer, working tree, or screens viewer
+- Added *Schedules* through the companion: run a prompt once or daily on chosen weekdays in a new or resumed session, respecting the daily spend limit, with a notification when it starts
+- Added message search to *All sessions*: find a prompt or reply across every session and open the session at that message
 
 ### Changed
 

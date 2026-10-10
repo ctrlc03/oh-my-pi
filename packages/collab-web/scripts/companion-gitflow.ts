@@ -50,7 +50,7 @@ function writeFailure(result: GitResult, what: string): Error {
 // ── gh ───────────────────────────────────────────────────────────────────────
 
 /** `gh`: GH_BIN when set, else the one on PATH; null when neither exists. */
-function ghBin(): string | null {
+export function ghBin(): string | null {
 	return process.env.GH_BIN || Bun.which("gh");
 }
 

@@ -12,6 +12,7 @@ import {
 	LoaderCircle,
 	RefreshCw,
 	SendHorizontal,
+	Wrench,
 	X,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -25,17 +26,28 @@ import type {
 	GithubKind,
 } from "../../lib/companion";
 import { relTime } from "../../lib/format";
+import { fixRoute, prRepo } from "../../lib/fix-route";
+import { emitRoute } from "../../lib/notify-route";
 import { useRequest } from "../../lib/use-request";
 import { Markdown } from "../transcript/Markdown";
+import { PrFiles } from "./PrFiles";
+import { PrMergeSheet } from "./PrMergeSheet";
 import { Sheet } from "./Sheet";
 import "./stats.css";
 import "./github.css";
+import "./pr-review.css";
 
 export interface GithubSheetProps {
 	client: CompanionClient;
 	instanceId: string;
 	/** Put a prompt about an issue or pull request into the composer; null when this device cannot prompt. */
 	onSendToAgent: ((prompt: string) => void) | null;
+	/** The companion answers the pull request review requests (`canPrReview`): pull requests get a Files tab and Merge. */
+	canReview?: boolean;
+	/** The session is sandboxed: reviews and merges are not posted from it. */
+	sandboxed?: boolean;
+	/** The companion answers `ci-log` (`canFixIt`): a pull request with failing checks gets a Fix it button. */
+	canFixIt?: boolean;
 	onClose(): void;
 }
 
@@ -70,7 +82,15 @@ const PROMPT_BODY_CHARS = 4000;
  * computer's signed-in `gh`. Read-only; an item can be handed to the agent as a
  * prompt in the composer, for the user to edit and send.
  */
-export function GithubSheet({ client, instanceId, onSendToAgent, onClose }: GithubSheetProps): ReactNode {
+export function GithubSheet({
+	client,
+	instanceId,
+	onSendToAgent,
+	canReview,
+	sandboxed,
+	canFixIt,
+	onClose,
+}: GithubSheetProps): ReactNode {
 	const [kind, setKind] = useState<GithubKind>("issue");
 	const [filter, setFilter] = useState<GithubFilter>("open");
 	const [opened, setOpened] = useState<GithubItem | null>(null);
@@ -103,6 +123,9 @@ export function GithubSheet({ client, instanceId, onSendToAgent, onClose }: Gith
 					item={opened}
 					onBack={() => setOpened(null)}
 					onSendToAgent={onSendToAgent}
+					canReview={canReview === true}
+					sandboxed={sandboxed === true}
+					canFixIt={canFixIt === true}
 					onClose={onClose}
 				/>
 			)}
@@ -222,10 +245,23 @@ interface ItemDetailProps {
 	item: GithubItem;
 	onBack(): void;
 	onSendToAgent: ((prompt: string) => void) | null;
+	canReview: boolean;
+	sandboxed: boolean;
+	canFixIt: boolean;
 	onClose(): void;
 }
 
-function ItemDetail({ client, instanceId, item, onBack, onSendToAgent, onClose }: ItemDetailProps): ReactNode {
+function ItemDetail({
+	client,
+	instanceId,
+	item,
+	onBack,
+	onSendToAgent,
+	canReview,
+	sandboxed,
+	canFixIt,
+	onClose,
+}: ItemDetailProps): ReactNode {
 	const load = useCallback(
 		() => client.requestGithubItem(instanceId, item.kind, item.number),
 		[client, instanceId, item.kind, item.number],
@@ -236,6 +272,16 @@ function ItemDetail({ client, instanceId, item, onBack, onSendToAgent, onClose }
 	const detail = shown.current;
 	const loading = state.status === "loading";
 	const head = detail ?? item;
+	const reviewable = item.kind === "pr" && canReview;
+	const [tab, setTab] = useState<"overview" | "files">("overview");
+	// Files stays mounted once opened, so its expanded diffs and half-written comments survive a look at the overview.
+	const [filesOpened, setFilesOpened] = useState(false);
+	const [merging, setMerging] = useState(false);
+	// Merging and posting reviews act on GitHub as the user: not from a view-only link, not from a sandboxed session.
+	const canWrite = onSendToAgent !== null && !sandboxed;
+	// Fix it opens another session with a draft; not offered on a view-only link, and `checks` is the rollup of the head commit.
+	const fixRepo =
+		canFixIt && onSendToAgent !== null && item.kind === "pr" && head.checks === "fail" ? prRepo(head.url) : null;
 
 	return (
 		<div className="sh-gh-pane">
@@ -282,6 +328,21 @@ function ItemDetail({ client, instanceId, item, onBack, onSendToAgent, onClose }
 							<SendHorizontal size={15} /> Send to agent
 						</button>
 					)}
+					{fixRepo !== null && (
+						<button
+							type="button"
+							className="sh-btn"
+							onClick={() => emitRoute(fixRoute(fixRepo, head.number))}
+							title="read the failing checks' logs and open a session with a prompt to fix them"
+						>
+							<Wrench size={14} /> Fix it
+						</button>
+					)}
+					{reviewable && canWrite && tab === "overview" && detail !== null && detail.state === "open" && (
+						<button type="button" className="sh-btn" onClick={() => setMerging(true)}>
+							<GitMerge size={14} /> Merge…
+						</button>
+					)}
 					{head.url && (
 						<a className="sh-btn" href={head.url} target="_blank" rel="noopener noreferrer">
 							<ExternalLink size={14} /> Open on GitHub
@@ -289,6 +350,37 @@ function ItemDetail({ client, instanceId, item, onBack, onSendToAgent, onClose }
 					)}
 				</div>
 			</div>
+			{reviewable && (
+				<div className="sh-segmented sh-prr-tabs" role="radiogroup" aria-label="pull request view">
+					{(["overview", "files"] as const).map(value => (
+						<button
+							key={value}
+							type="button"
+							role="radio"
+							aria-checked={tab === value}
+							className={tab === value ? "sh-segment sh-segment-on" : "sh-segment"}
+							onClick={() => {
+								setTab(value);
+								if (value === "files") setFilesOpened(true);
+							}}
+						>
+							{value === "files" ? "Files" : "Overview"}
+						</button>
+					))}
+				</div>
+			)}
+			{reviewable && filesOpened && (
+				<div hidden={tab !== "files"}>
+					<PrFiles
+						client={client}
+						instanceId={instanceId}
+						number={item.number}
+						url={item.url}
+						onSendToAgent={onSendToAgent}
+						canSubmit={canWrite}
+					/>
+				</div>
+			)}
 			{state.status === "error" && (
 				<div className="sh-tree-error">
 					<div className="sh-connect-error">{state.message}</div>
@@ -304,7 +396,7 @@ function ItemDetail({ client, instanceId, item, onBack, onSendToAgent, onClose }
 					</div>
 				)
 			) : (
-				<div className={loading ? "sh-gh-body sh-stats-stale" : "sh-gh-body"}>
+				<div className={loading ? "sh-gh-body sh-stats-stale" : "sh-gh-body"} hidden={tab === "files"}>
 					{detail.checkList.length > 0 && (
 						<section aria-label="checks">
 							<h3 className="sh-recents-title">Checks</h3>
@@ -354,6 +446,18 @@ function ItemDetail({ client, instanceId, item, onBack, onSendToAgent, onClose }
 						</section>
 					)}
 				</div>
+			)}
+			{merging && detail !== null && (
+				<PrMergeSheet
+					client={client}
+					instanceId={instanceId}
+					pr={detail}
+					onMerged={() => {
+						setMerging(false);
+						reload();
+					}}
+					onClose={() => setMerging(false)}
+				/>
 			)}
 		</div>
 	);

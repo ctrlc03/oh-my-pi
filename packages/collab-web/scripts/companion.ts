@@ -86,6 +86,7 @@ import {
 import { CollabSocket } from "../src/lib/socket";
 import { checkFlow, checkFocus, checkSearch, codemapSearch, codemapView, loadCodemap } from "./companion-codemap";
 import { collectDiag, recordRelayEvent, recordRequestError } from "./companion-diag";
+import { readFileChunk } from "./companion-download";
 import { findFileSessions, repoRelativeFocus } from "./companion-file-sessions";
 import { fileVersions, listTree, writeRepoFile } from "./companion-files";
 import { gitDiff, gitSnapshot, isInside, readRepoFile, repoRoot } from "./companion-git";
@@ -100,7 +101,9 @@ import {
 	removeWorktree,
 	reviewDiff,
 } from "./companion-gitflow";
+import { checkNumber, checkRepo, ciFailures, repoFolders, repoSessions } from "./companion-cilog";
 import { githubItem, githubList } from "./companion-github";
+import { createPrReview } from "./companion-prreview";
 import { buildInbox } from "./companion-inbox";
 import { consumeInvite, type DeviceRecord, DeviceRegistry, issueInvite, parseDevices } from "./companion-devices";
 import { installLaunchAgent, launchLogPath, uninstallLaunchAgent } from "./companion-launchd";
@@ -119,6 +122,15 @@ import { capturePane } from "./companion-pane";
 import { holdAwake, powerNotice, readPower } from "./companion-power";
 import { capturePreview, closePreviewBrowser, findChrome, isViewport, previewTargets } from "./companion-preview";
 import { createPrWatch, ghReadPrs, loadPrWatchFile, parsePrAlertSettings, savePrWatchFile } from "./companion-prwatch";
+import { createSessionSearch, withLiveness } from "./companion-search";
+import { checkRunnableRoot, createRunManager } from "./companion-run";
+import {
+	checkDirectory,
+	createScheduler,
+	loadSchedules,
+	parseScheduleInput,
+	saveSchedules,
+} from "./companion-schedule";
 import { createSpendMonitor, parseSpendLimits, parseSpendState, type SpendState, withLimits } from "./companion-spend";
 import { canSandbox, findTmux, killTmuxSession, launchInTmux } from "./companion-start";
 import { fileSessionOverviews, isUsageRange, readSpend, sessionOverview, usageReport } from "./companion-stats";
@@ -139,12 +151,16 @@ const statePath = path.join(configDir, "agent", "collab-companion.json");
 /** One file per outstanding pairing invite (hashed); `--pair` runs in another process than the companion. */
 const invitesDir = path.join(configDir, "agent", "collab-companion-invites");
 const sessionsDir = path.join(configDir, "agent", "sessions");
+/** Message search over the session files; keeps the searchable text of recent files in memory. */
+const sessionSearch = createSessionSearch({ sessionsDir });
 const overlayPath = path.join(configDir, "agent", "collab-companion-overlay.yml");
 const sandboxOverlayPath = path.join(configDir, "agent", "collab-companion-sandbox.yml");
 const ompBin = process.env.OMP_BIN || Bun.which("omp") || path.join(os.homedir(), ".bun", "bin", "omp");
 /** How long `start` waits for the new omp to appear in `omp collab list`. */
 const START_WAIT_MS = 45_000;
 const START_POLL_MS = 1_000;
+/** How often schedules are checked for being due, independent of the host poll. */
+const SCHEDULE_TICK_MS = 15_000;
 
 interface CompanionState {
 	relayUrl: string;
@@ -225,6 +241,9 @@ async function loadState(relayUrl: string, rotate: boolean): Promise<CompanionSt
 
 const lister = createSessionLister({ runOmp: omp, sandboxOverlayPath });
 const voice = createVoice(path.join(configDir, "agent", "config.yml"));
+/** Scripts and build targets started from the app; their output stays until the companion restarts. */
+const runs = createRunManager();
+const prReview = createPrReview();
 
 // ── startup ──────────────────────────────────────────────────────────────────
 
@@ -322,7 +341,16 @@ function hostTitle(host: CompanionHost): string {
 /** `topic` defaults to the session: a newer notice for it replaces one still undelivered. `tag` and `url` reach the service worker (notification replacement, tap target). */
 function push(
 	subscription: PushSubscriptionJson,
-	payload: { title: string; body: string; instanceId?: string; url?: string; tag?: string },
+	payload: {
+		title: string;
+		body: string;
+		instanceId?: string;
+		url?: string;
+		tag?: string;
+		open?: string;
+		badge?: number;
+		reply?: true;
+	},
 	topic = payload.instanceId,
 ): void {
 	sendPush(subscription, payload, state.vapid, pushSubject, topic).then(
@@ -339,13 +367,14 @@ function push(
 	);
 }
 
-/** Push to every subscribed device except those showing the app right now. */
+/** Push to every subscribed device except those showing the app right now; carries the badge count (sessions waiting on an answer) and offers an inline reply. */
 function notify(host: CompanionHost, body: string): void {
 	const showing = new Set<string>();
 	for (const p of presence.values()) if (p.visible && p.endpoint) showing.add(p.endpoint);
+	const badge = knownHosts.filter(h => h.inputRequired).length;
 	for (const subscription of registry.subscriptions()) {
 		if (showing.has(subscription.endpoint)) continue;
-		push(subscription, { title: hostTitle(host), body, instanceId: host.instanceId });
+		push(subscription, { title: hostTitle(host), body, instanceId: host.instanceId, badge, reply: true });
 	}
 }
 
@@ -404,6 +433,40 @@ const prWatch = createPrWatch({
 	onError: err => console.error(`companion: pull request check failed: ${errorText(err)}`),
 });
 
+const schedulesPath = path.join(path.dirname(statePath), "collab-companion-schedules.json");
+
+/** Starts the prompts the user scheduled in the app, pushing when one starts or fails to; see ./companion-schedule. */
+const scheduler = createScheduler({
+	now: Date.now,
+	initial: await loadSchedules(schedulesPath, Date.now()),
+	save: schedules => saveSchedules(schedulesPath, schedules),
+	start: schedule =>
+		startSession(
+			schedule.cwd,
+			schedule.mode === "resume" ? schedule.sessionId : undefined,
+			schedule.sandboxed,
+			schedule.worktree ? {} : undefined,
+			undefined,
+			schedule.prompt,
+		),
+	spendLimitReached: async () => {
+		const limit = state.spend?.limits.dailyUsd ?? null;
+		if (limit === null) return false;
+		return (await readSpend({ dailyUsd: limit, sessionUsd: null }, Date.now(), knownHosts)).dailyUsd >= limit;
+	},
+	refreshSessions: async () => {
+		await loadSessions();
+	},
+	isWorking: instanceId =>
+		knownHosts.some(host => host.instanceId === instanceId && (host.busy === true || host.inputRequired)),
+	notify: notice => {
+		for (const subscription of registry.subscriptions()) push(subscription, notice);
+	},
+	onError: err => console.error(`companion: scheduled run failed: ${errorText(err)}`),
+});
+/** Schedules fire with no device connected and no push subscription too, so they have their own clock besides the poll. */
+setInterval(() => void scheduler.tick(), SCHEDULE_TICK_MS).unref();
+
 /**
  * Push the session's pending question or the start of its last reply, falling
  * back to a fixed text when its file cannot be read. The session file may lag
@@ -442,7 +505,26 @@ async function loadSessions(): Promise<{ hosts: CompanionHost[]; idle: Companion
 	knownHosts = listed.hosts;
 	knownIdle = listed.idle;
 	knownPids = listed.pids;
+	// A listing that came back empty is more likely a glitch than every session gone: keep the history then.
+	if (listed.hosts.length + listed.idle.length > 0)
+		runs.retain(new Set([...listed.hosts, ...listed.idle].map(session => session.instanceId)));
 	return listed;
+}
+
+/**
+ * Repository root a session's runs happen in, from a fresh listing. Refused when any listed sandboxed
+ * session works in it: that agent can write the files that define the targets.
+ */
+async function runRoot(instanceId: unknown): Promise<{ instanceId: string; root: string }> {
+	const id = checkInstanceId(instanceId);
+	await loadSessions();
+	const sessions = [...knownHosts, ...knownIdle];
+	const session = sessions.find(s => s.instanceId === id);
+	if (!session) throw new Error("unknown session");
+	const rootOf = async (cwd: string): Promise<string> => (await repoRoot(cwd)) ?? fs.realpath(cwd);
+	const root = await rootOf(session.cwd);
+	await checkRunnableRoot(root, sessions, rootOf);
+	return { instanceId: id, root };
 }
 
 /** Broadcast the host list when it changed; otherwise answer only `targetPeer`, if any. */
@@ -467,6 +549,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 	if (!listed) return;
 	detectEdges(listed.hosts);
 	void spendMonitor.tick();
+	void scheduler.tick();
 	void prWatch.tick();
 	detectPowerEdges(power);
 	if (!extras || peers.size === 0) return;
@@ -484,7 +567,13 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canPreview: previewChrome !== null,
 		// Reading issues and pull requests needs the same signed-in gh as opening one.
 		canGithub: extras.canPr,
+		canPrReview: extras.canPr,
+		canFixIt: extras.canPr,
 		canUpload: true,
+		canSchedule: extras.canStart,
+		canRun: process.platform !== "win32",
+		canDownload: true,
+		canSearch: true,
 		transcribe: extras.transcribe ?? undefined,
 		power: power ?? undefined,
 	};
@@ -517,6 +606,13 @@ async function sessionCwd(instanceId: unknown): Promise<string> {
 	return (await listedSession(instanceId)).cwd;
 }
 
+/** Working directory of a session for a write to GitHub as the user: sandboxed sessions are limited to reading and editing files. */
+async function reviewWriteCwd(instanceId: unknown): Promise<string> {
+	const session = await listedSession(instanceId);
+	if (session.sandboxed === true) throw new Error("Reviews and merges are not available from a sandboxed session.");
+	return session.cwd;
+}
+
 /** Working directory of a listed session whose repository the app may change: refused while its agent works. */
 async function idleSessionCwd(instanceId: unknown): Promise<string> {
 	const id = checkInstanceId(instanceId);
@@ -542,6 +638,8 @@ async function startSession(
 	sandboxed: unknown,
 	worktree: { branch?: unknown } | undefined,
 	force: unknown,
+	/** Delivered to omp at launch (scheduled runs); a session that already hosts cannot take it, so that is refused. */
+	prompt?: string,
 ): Promise<string> {
 	if (
 		typeof cwd !== "string" ||
@@ -562,7 +660,10 @@ async function startSession(
 		if (!SAFE_ID_RE.test(resume)) throw new Error("invalid session id");
 		const listed = await loadSessions();
 		const live = listed.hosts.find(host => host.sessionId.startsWith(resume));
-		if (live) return live.instanceId;
+		if (live) {
+			if (prompt !== undefined) throw new Error("that session is already open; the scheduled prompt was not sent");
+			return live.instanceId;
+		}
 		if (force !== true) {
 			const listedPids = listed.idle
 				.filter(session => session.sessionId.startsWith(resume))
@@ -588,7 +689,15 @@ async function startSession(
 	try {
 		const before = new Set((await loadSessions()).hosts.map(h => h.instanceId));
 		const spawnedAt = Date.now();
-		const launched = await launchInTmux({ tmux, ompBin, overlayPath, cwd: created?.path ?? cwd, resume, sandbox });
+		const launched = await launchInTmux({
+			tmux,
+			ompBin,
+			overlayPath,
+			cwd: created?.path ?? cwd,
+			resume,
+			sandbox,
+			prompt,
+		});
 		while (Date.now() < spawnedAt + START_WAIT_MS) {
 			await Bun.sleep(START_POLL_MS);
 			let hosts: CompanionHost[];
@@ -808,6 +917,17 @@ socket.onFrame = (frame, fromPeer) => {
 				return { t: "file-saved", reqId: frame.reqId, version };
 			});
 			return;
+		case "file-download":
+			respond(frame.reqId, async () => {
+				if (typeof frame.path !== "string") throw new Error("invalid path");
+				const session = await listedSession(frame.instanceId);
+				return {
+					t: "file-chunk",
+					reqId: frame.reqId,
+					...(await readFileChunk(session.cwd, frame.path, frame.offset)),
+				};
+			});
+			return;
 		case "file-versions":
 			respond(frame.reqId, async () => ({
 				t: "file-versions",
@@ -821,6 +941,32 @@ socket.onFrame = (frame, fromPeer) => {
 				reqId: frame.reqId,
 				folders: await recentFolders(sessionsDir),
 			}));
+			return;
+		case "schedules":
+			respond(frame.reqId, async () => ({ t: "schedules", reqId: frame.reqId, schedules: scheduler.list() }));
+			return;
+		case "schedule-save":
+			respond(frame.reqId, async () => {
+				const input = await parseScheduleInput(frame.schedule, {
+					now: Date.now,
+					sandboxAvailable,
+					checkDirectory,
+				});
+				return { t: "schedule", reqId: frame.reqId, schedule: await scheduler.save(input) };
+			});
+			return;
+		case "schedule-delete":
+			respond(frame.reqId, async () => {
+				if (typeof frame.id !== "string") throw new Error("invalid schedule id");
+				await scheduler.remove(frame.id);
+				return { t: "ok", reqId: frame.reqId };
+			});
+			return;
+		case "schedule-run-now":
+			respond(frame.reqId, async () => {
+				if (typeof frame.id !== "string") throw new Error("invalid schedule id");
+				return { t: "schedule", reqId: frame.reqId, schedule: await scheduler.runNow(frame.id) };
+			});
 			return;
 		case "start":
 			respond(frame.reqId, async () => ({
@@ -872,6 +1018,17 @@ socket.onFrame = (frame, fromPeer) => {
 			respond(frame.reqId, async () => {
 				if (!isUsageRange(frame.range)) throw new Error("unknown usage range");
 				return { t: "usage", reqId: frame.reqId, usage: await usageReport(frame.range) };
+			});
+			return;
+		case "session-search":
+			respond(frame.reqId, async () => {
+				const { results, truncated } = await sessionSearch.search(frame.query, frame.limit);
+				return {
+					t: "session-search",
+					reqId: frame.reqId,
+					results: withLiveness(results, { hosts: knownHosts, idle: knownIdle }),
+					truncated,
+				};
 			});
 			return;
 		case "sessions":
@@ -995,6 +1152,37 @@ socket.onFrame = (frame, fromPeer) => {
 				};
 			});
 			return;
+		case "run-targets":
+			respond(frame.reqId, async () => {
+				const { root } = await runRoot(frame.instanceId);
+				return { t: "run-targets", reqId: frame.reqId, targets: await runs.targets(root) };
+			});
+			return;
+		case "run-start":
+			respond(frame.reqId, async () => {
+				const { instanceId, root } = await runRoot(frame.instanceId);
+				const run = await runs.start(instanceId, root, frame.target, frame.detail);
+				console.log(`companion: ${new Date().toISOString()} running ${run.command} for ${instanceId}`);
+				return { t: "run", reqId: frame.reqId, run };
+			});
+			return;
+		case "run-output":
+			respond(frame.reqId, async () => ({
+				t: "run-output",
+				reqId: frame.reqId,
+				output: runs.output(frame.runId, frame.from),
+			}));
+			return;
+		case "run-stop":
+			respond(frame.reqId, async () => ({ t: "run", reqId: frame.reqId, run: runs.stop(frame.runId) }));
+			return;
+		case "runs":
+			respond(frame.reqId, async () => ({
+				t: "runs",
+				reqId: frame.reqId,
+				runs: runs.list(checkInstanceId(frame.instanceId)),
+			}));
+			return;
 		case "upload":
 			respond(frame.reqId, async () => {
 				// Only a session this computer knows may receive files.
@@ -1040,6 +1228,63 @@ socket.onFrame = (frame, fromPeer) => {
 				reqId: frame.reqId,
 				item: await githubItem(await sessionCwd(frame.instanceId), frame.kind, frame.number),
 			}));
+			return;
+		case "pr-files":
+			respond(frame.reqId, async () => {
+				const { head, files } = await prReview.files(await sessionCwd(frame.instanceId), frame.number);
+				return { t: "pr-files", reqId: frame.reqId, head, files };
+			});
+			return;
+		case "pr-diff":
+			respond(frame.reqId, async () => {
+				const { diff, truncated } = await prReview.diff(
+					await sessionCwd(frame.instanceId),
+					frame.number,
+					frame.head,
+					frame.path,
+				);
+				return { t: "diff", reqId: frame.reqId, diff, truncated };
+			});
+			return;
+		case "pr-review":
+			respond(frame.reqId, async () => ({
+				t: "link",
+				reqId: frame.reqId,
+				url: await prReview.review(await reviewWriteCwd(frame.instanceId), frame.number, frame.review),
+			}));
+			return;
+		case "pr-merge":
+			respond(frame.reqId, async () => {
+				await prReview.merge(await reviewWriteCwd(frame.instanceId), frame.number, {
+					method: frame.method,
+					deleteBranch: frame.deleteBranch,
+					head: frame.head,
+					allowDraft: frame.allowDraft,
+					allowFailing: frame.allowFailing,
+					allowPending: frame.allowPending,
+				});
+				return { t: "ok", reqId: frame.reqId };
+			});
+			return;
+		case "ci-log":
+			respond(frame.reqId, async () => {
+				const repo = checkRepo(frame.repo);
+				const number = checkNumber(frame.number);
+				// A fresh list: the sessions offered must be running now.
+				const [{ pr, failures, moreFailures }, { hosts, idle }] = await Promise.all([
+					ciFailures(repo, number),
+					loadSessions(),
+				]);
+				const [sessions, folders] = await Promise.all([
+					repoSessions(repo, pr.branch, hosts, idle),
+					repoFolders(
+						repo,
+						await recentFolders(sessionsDir),
+						[...hosts, ...idle].map(session => session.cwd),
+					),
+				]);
+				return { t: "ci-log", reqId: frame.reqId, pr, failures, moreFailures, sessions, folders };
+			});
 			return;
 		case "worktree-remove":
 			respond(frame.reqId, async () => {
@@ -1153,6 +1398,8 @@ void findChrome().then(found => {
 });
 
 function shutdown(): void {
+	// Runs are detached process groups: they would outlive the companion.
+	runs.stopAll();
 	clearTimeout(pollTimer);
 	awake.release();
 	socket.close();

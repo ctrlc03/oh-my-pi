@@ -6,6 +6,7 @@ import { relTime, splitPath } from "../../lib/format";
 import type { DiffReview, ReviewScope } from "../../lib/review-comments";
 import { useRequest } from "../../lib/use-request";
 import type { ToolRenderHost } from "../../tool-render";
+import { DownloadButton } from "./DownloadButton";
 import { UnifiedDiff } from "./ReviewDiff";
 
 export interface WorkingTreeProps {
@@ -104,6 +105,7 @@ function GitView({ git, client, instanceId, host, review, onRefresh }: GitViewPr
 							root={git.root}
 							loadDiff={loadDiff}
 							host={host}
+							download={{ client, instanceId }}
 							expanded={open === file.path}
 							onToggle={() => setOpen(open === file.path ? null : file.path)}
 							scope="tree"
@@ -160,6 +162,8 @@ export interface TreeFileProps {
 	/** Unified diff of one path; must be stable across renders. */
 	loadDiff(path: string): Promise<{ diff: string; truncated: boolean }>;
 	host: ToolRenderHost;
+	/** Adds a download button to the expanded file; absent where the companion is out of reach. */
+	download?: { client: CompanionClient; instanceId: string };
 	expanded: boolean;
 	onToggle(): void;
 	scope: ReviewScope;
@@ -168,7 +172,17 @@ export interface TreeFileProps {
 }
 
 /** One changed path: status, counts and, expanded, its lazily loaded diff. */
-export function TreeFile({ file, root, loadDiff, host, expanded, onToggle, scope, review }: TreeFileProps): ReactNode {
+export function TreeFile({
+	file,
+	root,
+	loadDiff,
+	host,
+	download,
+	expanded,
+	onToggle,
+	scope,
+	review,
+}: TreeFileProps): ReactNode {
 	const { dir, base } = splitPath(file.path);
 	const badge = statusBadge(file.status);
 	const deleted = badge.tone === "del" && badge.letter === "D";
@@ -209,6 +223,14 @@ export function TreeFile({ file, root, loadDiff, host, expanded, onToggle, scope
 						>
 							<FileText size={14} /> View file
 						</button>
+					)}
+					{!deleted && download !== undefined && (
+						<DownloadButton
+							client={download.client}
+							instanceId={download.instanceId}
+							path={`${root}/${file.path}`}
+							label="Download"
+						/>
 					)}
 				</div>
 			)}

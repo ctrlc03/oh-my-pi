@@ -2,6 +2,7 @@ import { LoaderCircle, RefreshCw, X } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { Sheet } from "../shell/Sheet";
+import { DockPane } from "../shell/SplitPane";
 import type { IdeSheetProps } from "./IdeSheet";
 
 type IdeSheetComponent = ComponentType<IdeSheetProps>;
@@ -44,8 +45,8 @@ export function LazyIdeSheet(props: IdeSheetProps): ReactNode {
 	}, [attempt]);
 
 	if (loadedSheet !== null) return <loadedSheet.Sheet {...props} />;
-	return (
-		<Sheet label="editor" size="full" onClose={props.onClose}>
+	const placeholder = (
+		<>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Editor</div>
 				<button type="button" className="sh-btn sh-btn-icon" onClick={props.onClose} aria-label="close">
@@ -64,6 +65,12 @@ export function LazyIdeSheet(props: IdeSheetProps): ReactNode {
 					</button>
 				</div>
 			)}
+		</>
+	);
+	if (props.dock?.docked === true) return <DockPane label="editor">{placeholder}</DockPane>;
+	return (
+		<Sheet label="editor" size="full" onClose={props.onClose}>
+			{placeholder}
 		</Sheet>
 	);
 }

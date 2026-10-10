@@ -1,0 +1,56 @@
+/* ---- hands-free mode (headphones toggle in the composer actions, status line above it) ---- */
+.sh-handsfree-btn-on {
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft);
+}
+
+.sh-handsfree {
+	position: relative;
+	flex-wrap: wrap;
+	row-gap: 6px;
+}
+
+.sh-handsfree-icon {
+	flex: none;
+	color: var(--accent);
+}
+
+.sh-handsfree .sh-voice-actions {
+	align-items: center;
+	margin-left: auto;
+}
+
+.sh-handsfree-rate {
+	height: 28px;
+	padding: 0 8px;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Fills over the send countdown, so the pause before sending is visible without a ticking number. */
+.sh-handsfree-bar {
+	position: absolute;
+	left: 4px;
+	right: 4px;
+	bottom: 2px;
+	height: 2px;
+	border-radius: 1px;
+	background: var(--accent);
+	transform-origin: left;
+	animation: sh-handsfree-fill 1.5s linear forwards;
+}
+
+@keyframes sh-handsfree-fill {
+	from {
+		transform: scaleX(0);
+	}
+	to {
+		transform: scaleX(1);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sh-handsfree-bar {
+		animation: none;
+	}
+}

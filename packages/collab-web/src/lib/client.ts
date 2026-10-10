@@ -304,9 +304,14 @@ export class GuestClient {
 		}, PERSIST_DELAY_MS);
 	}
 
-	/** Reconnect now instead of waiting out a pending backoff (foreground / online). */
-	resume(): void {
-		this.#socket.resume();
+	/** The page is hidden on a device that suspends hidden pages; see {@link CollabSocket.suspend}. */
+	suspend(): void {
+		this.#socket.suspend();
+	}
+
+	/** Back in the foreground or online again: reconnect now, replacing a connection the background may have killed. */
+	resume(cause: "foreground" | "online" = "foreground"): void {
+		this.#socket.resume(cause);
 	}
 
 	subscribe(listener: () => void): () => void {

@@ -70,6 +70,7 @@ import {
 	formatPairingUrl,
 	LOW_BATTERY_PCT,
 	type PushSubscriptionJson,
+	SessionOpenElsewhereError,
 } from "../src/lib/companion";
 import {
 	DEFAULT_RELAY_URL,
@@ -100,6 +101,7 @@ import { buildInbox } from "./companion-inbox";
 import { consumeInvite, type DeviceRecord, DeviceRegistry, issueInvite, parseDevices } from "./companion-devices";
 import { installLaunchAgent, launchLogPath, uninstallLaunchAgent } from "./companion-launchd";
 import {
+	findSessionFile,
 	lastAssistantSummary,
 	pendingQuestion,
 	readSessionTail,
@@ -108,6 +110,7 @@ import {
 } from "./companion-sessions";
 import { createSessionLister } from "./companion-list";
 import { restartCompanion, updateOmp } from "./companion-maintain";
+import { findSessionHolders } from "./companion-open";
 import { capturePane } from "./companion-pane";
 import { holdAwake, powerNotice, readPower } from "./companion-power";
 import { capturePreview, closePreviewBrowser, findChrome, isViewport, previewTargets } from "./companion-preview";
@@ -216,19 +219,6 @@ async function loadState(relayUrl: string, rotate: boolean): Promise<CompanionSt
 
 const lister = createSessionLister({ runOmp: omp, sandboxOverlayPath });
 const voice = createVoice(path.join(configDir, "agent", "config.yml"));
-
-async function resolveLink(instanceId: string): Promise<string> {
-	const parsed = JSON.parse(await omp(["collab", "link", instanceId, "--json"])) as { url?: unknown };
-	if (typeof parsed.url !== "string" || !parsed.url) throw new Error("omp returned no link");
-	return parsed.url;
-}
-
-/** Make an idle session host collab (`omp collab start`); resolves with its control link. */
-async function shareSession(instanceId: string): Promise<string> {
-	const parsed = JSON.parse(await omp(["collab", "start", instanceId, "--json"])) as { url?: unknown };
-	if (typeof parsed.url !== "string" || !parsed.url) throw new Error("omp returned no link");
-	return parsed.url;
-}
 
 // ── startup ──────────────────────────────────────────────────────────────────
 
@@ -419,32 +409,40 @@ async function loadSessions(): Promise<{ hosts: CompanionHost[]; idle: Companion
 
 /** Broadcast the host list when it changed; otherwise answer only `targetPeer`, if any. */
 async function refresh(targetPeer?: number): Promise<void> {
-	let listed: { hosts: CompanionHost[]; idle: CompanionIdleSession[] };
-	try {
-		listed = await loadSessions();
-	} catch (err) {
-		console.error(`companion: listing sessions failed: ${errorText(err)}`);
-		return;
-	}
+	// Nobody to tell while push-only polling: a device's `list` on joining gets a fresh answer.
+	const framed = peers.size > 0;
+	// Everything the frame needs is independent of the listing, so the reply waits only for the slowest of them.
+	const [listed, power, extras] = await Promise.all([
+		loadSessions().catch((err: unknown) => {
+			console.error(`companion: listing sessions failed: ${errorText(err)}`);
+			return null;
+		}),
+		readPower(awake.held),
+		framed
+			? Promise.all([findTmux(), canCreatePr(), voice.info()]).then(([tmux, canPr, transcribe]) => ({
+					canStart: tmux !== null,
+					canPr,
+					transcribe,
+				}))
+			: null,
+	]);
+	if (!listed) return;
 	detectEdges(listed.hosts);
 	void spendMonitor.tick();
-	const power = await readPower(awake.held);
 	detectPowerEdges(power);
-	// Push-only polling: nobody to tell; a device's `list` on joining gets a fresh answer.
-	if (peers.size === 0) return;
-	const [canStart, canPr] = await Promise.all([findTmux().then(found => found !== null), canCreatePr()]);
+	if (!extras || peers.size === 0) return;
 	const frame: CompanionReply = {
 		t: "hosts",
 		machine,
 		hosts: listed.hosts,
 		vapidKey: state.vapid.publicKey,
 		idle: listed.idle,
-		canStart,
-		canSandbox: canStart && sandboxAvailable,
-		canPr,
+		canStart: extras.canStart,
+		canSandbox: extras.canStart && sandboxAvailable,
+		canPr: extras.canPr,
 		canCodemap: codemapReady,
 		canPreview: previewChrome !== null,
-		transcribe: (await voice.info()) ?? undefined,
+		transcribe: extras.transcribe ?? undefined,
 		power: power ?? undefined,
 	};
 	const json = JSON.stringify(frame);
@@ -487,17 +485,21 @@ async function idleSessionCwd(instanceId: unknown): Promise<string> {
 /**
  * Start omp in a detached tmux session — sandboxed to `cwd` with file tools
  * only when `sandboxed` — and wait until it hosts collab; resolves with its instance id.
+ * Resuming a session that already hosts answers with that host; one another omp has open is
+ * refused (`SessionOpenElsewhereError`) unless `force`.
  */
 async function startSession(
 	cwd: unknown,
 	resume: unknown,
 	sandboxed: unknown,
 	worktree: { branch?: unknown } | undefined,
+	force: unknown,
 ): Promise<string> {
 	if (
 		typeof cwd !== "string" ||
 		(resume !== undefined && typeof resume !== "string") ||
 		(sandboxed !== undefined && typeof sandboxed !== "boolean") ||
+		(force !== undefined && typeof force !== "boolean") ||
 		(worktree !== undefined && (typeof worktree !== "object" || worktree === null)) ||
 		(worktree?.branch !== undefined && typeof worktree.branch !== "string")
 	) {
@@ -508,6 +510,19 @@ async function startSession(
 	);
 	if (worktree !== undefined && resume !== undefined)
 		throw new Error("a worktree needs a new session, not a resumed one");
+	if (resume !== undefined) {
+		if (!SAFE_ID_RE.test(resume)) throw new Error("invalid session id");
+		const listed = await loadSessions();
+		const live = listed.hosts.find(host => host.sessionId.startsWith(resume));
+		if (live) return live.instanceId;
+		if (force !== true) {
+			const listedPids = listed.idle
+				.filter(session => session.sessionId.startsWith(resume))
+				.flatMap(session => knownPids.get(session.instanceId) ?? []);
+			const holders = await findSessionHolders(resume, await findSessionFile(sessionsDir, resume), listedPids);
+			if (holders.length > 0) throw new SessionOpenElsewhereError(holders);
+		}
+	}
 	const tmux = await findTmux();
 	if (!tmux) throw new Error("tmux is not installed on this computer");
 	if (sandboxed && !sandboxAvailable) throw new Error("sandboxed sessions need macOS sandbox-exec");
@@ -672,7 +687,8 @@ socket.onFrame = (frame, fromPeer) => {
 			err => {
 				recordRequestError(frame.t, errorText(err));
 				console.error(`companion: ${new Date().toISOString()} ${frame.t} failed: ${errorText(err)}`);
-				socket.send({ t: "error", reqId, message: errorText(err) }, fromPeer);
+				const openElsewhere = err instanceof SessionOpenElsewhereError ? err.holders : undefined;
+				socket.send({ t: "error", reqId, message: errorText(err), openElsewhere }, fromPeer);
 			},
 		);
 	};
@@ -684,7 +700,7 @@ socket.onFrame = (frame, fromPeer) => {
 			return;
 		case "link":
 			respond(frame.reqId, async () => {
-				return { t: "link", reqId: frame.reqId, url: await resolveLink(checkInstanceId(frame.instanceId)) };
+				return { t: "link", reqId: frame.reqId, url: await lister.link(checkInstanceId(frame.instanceId)) };
 			});
 			return;
 		case "push":
@@ -731,12 +747,12 @@ socket.onFrame = (frame, fromPeer) => {
 			respond(frame.reqId, async () => ({
 				t: "started",
 				reqId: frame.reqId,
-				instanceId: await startSession(frame.cwd, frame.resume, frame.sandboxed, frame.worktree),
+				instanceId: await startSession(frame.cwd, frame.resume, frame.sandboxed, frame.worktree, frame.force),
 			}));
 			return;
 		case "share":
 			respond(frame.reqId, async () => {
-				return { t: "link", reqId: frame.reqId, url: await shareSession(checkInstanceId(frame.instanceId)) };
+				return { t: "link", reqId: frame.reqId, url: await lister.share(checkInstanceId(frame.instanceId)) };
 			});
 			return;
 		case "inbox":

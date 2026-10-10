@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "bun:test";
+import { afterEach, describe, expect, it, setSystemTime, vi } from "bun:test";
 import { GuestClient } from "../src/lib/client";
 import { encodeBase64Url } from "../src/lib/link";
 
@@ -66,6 +66,7 @@ afterEach(() => {
 	restoreNativeWebSocket();
 	vi.restoreAllMocks();
 	vi.useRealTimers();
+	setSystemTime();
 });
 
 describe("browser guest room recovery", () => {
@@ -131,6 +132,70 @@ describe("browser guest room recovery", () => {
 			instance(1).open();
 			vi.advanceTimersByTime(29_999);
 			expect(client.getSnapshot().phase).toBe("reconnecting");
+			expect(ScriptedWebSocket.instances).toHaveLength(2);
+		} finally {
+			client.close();
+		}
+	});
+
+	it("replaces a connection that stayed open through a long background, but not through a short one", () => {
+		vi.useFakeTimers();
+		setSystemTime(0);
+		installScriptedWebSocket();
+		const client = new GuestClient(LINK, "tester");
+
+		try {
+			client.connect();
+			instance(0).open();
+
+			client.suspend();
+			setSystemTime(2_000);
+			client.resume();
+			expect(ScriptedWebSocket.instances).toHaveLength(1);
+			expect(instance(0).readyState).toBe(ScriptedWebSocket.OPEN);
+
+			client.suspend();
+			setSystemTime(60_000);
+			client.resume();
+			expect(instance(0).readyState).toBe(ScriptedWebSocket.CLOSED);
+			expect(ScriptedWebSocket.instances).toHaveLength(2);
+		} finally {
+			client.close();
+		}
+	});
+
+	it("replaces an open connection when the network comes back", () => {
+		vi.useFakeTimers();
+		installScriptedWebSocket();
+		const client = new GuestClient(LINK, "tester");
+
+		try {
+			client.connect();
+			instance(0).open();
+			client.resume("online");
+			expect(instance(0).readyState).toBe(ScriptedWebSocket.CLOSED);
+			expect(ScriptedWebSocket.instances).toHaveLength(2);
+		} finally {
+			client.close();
+		}
+	});
+
+	it("skips a pending backoff on foreground without opening a second socket", () => {
+		vi.useFakeTimers();
+		setSystemTime(0);
+		vi.spyOn(Math, "random").mockReturnValue(0.5);
+		installScriptedWebSocket();
+		const client = new GuestClient(LINK, "tester");
+
+		try {
+			client.connect();
+			instance(0).open();
+			instance(0).relayClose(1006, "");
+			client.suspend();
+			setSystemTime(60_000);
+			client.resume();
+			expect(ScriptedWebSocket.instances).toHaveLength(2);
+			vi.advanceTimersByTime(30_000);
 			expect(ScriptedWebSocket.instances).toHaveLength(2);
 		} finally {
 			client.close();

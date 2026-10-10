@@ -49,6 +49,8 @@
 - Starting a session in a folder macOS keeps the LaunchAgent out of (`~/Documents` and the like until bun is allowed under Files and Folders) says so instead of "folder does not exist"; start and resume errors show at the top of the sheet instead of below the session list
 - Transcripts are saved on the device: reopening the app shows the session at once and fetches only what is new instead of the whole session
 - Added *All sessions* through the companion: past and live sessions across projects, grouped by folder with spend, searchable, with *Open*, *Share*, or *Resume* on each row
+- Resuming a session that is open in another omp on the computer (for example a Terminal omp that predates collab hosting) now warns first, naming where it runs, instead of starting a second copy that writes to the same session file; *Resume anyway* overrides. A session that already hosts opens that host
+- Made the host list and opening a session faster: the companion gathers a `hosts` reply's inputs concurrently (a cold first reply halves, about 600 ms to 300 ms), and opening or sharing a session asks omp's registry in-process instead of spawning `omp collab link` (about 315 ms to 1 ms)
 
 ### Changed
 
@@ -64,6 +66,7 @@
 - Fixed the transcript losing its bottom position when the on-screen keyboard opens or the composer grows
 - Fixed the composer floating above the keyboard by the home-indicator inset, and the connection banner sliding under the status bar in standalone mode
 - Fixed slow reconnects after the phone wakes: returning to the foreground or coming back online now retries immediately instead of waiting out a backoff of up to 30 seconds
+- Fixed the app staying on a dead connection after a long stay in the background: iOS can suspend the page and leave its sockets open but dead, so on phones and tablets, after 10 s or more hidden (or on any device when the network returns), the session and companion connections are replaced at once, with a delta resume, instead of waiting out the 30 s timers. A short glance away leaves them alone
 
 ## [18.8.0] - 2026-10-07
 

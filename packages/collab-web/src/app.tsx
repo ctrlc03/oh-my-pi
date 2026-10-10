@@ -40,6 +40,7 @@ import {
 	setActiveLink,
 } from "./lib/rooms";
 import { collectScreens } from "./lib/screens";
+import { suspendsHiddenPages } from "./lib/socket";
 import { readJson, writeJson } from "./lib/storage";
 import { sumUsage } from "./lib/usage";
 import { type CompanionHandle, useCompanion } from "./lib/use-companion";
@@ -275,20 +276,26 @@ export function App(): ReactNode {
 		resumedRef.current = explicit === null;
 	}, [connect, pair]);
 
-	// Back from the background or offline: reconnect now, not when the backoff expires.
+	// Back from the background: reconnect now, not when the backoff expires; on phones and tablets,
+	// whose OS suspends hidden pages, also replace a connection it may have killed silently.
+	// Network back: replace the connection on every device.
 	// Going to the background: save the transcript now, as the OS may kill the app there.
 	useEffect(() => {
 		if (!client) return;
 		const wake = (): void => {
 			if (document.visibilityState === "visible") client.resume();
-			else client.persist();
+			else {
+				client.persist();
+				if (suspendsHiddenPages()) client.suspend();
+			}
 		};
+		const online = (): void => client.resume("online");
 		document.addEventListener("visibilitychange", wake);
-		window.addEventListener("online", wake);
+		window.addEventListener("online", online);
 		window.addEventListener("pageshow", wake);
 		return () => {
 			document.removeEventListener("visibilitychange", wake);
-			window.removeEventListener("online", wake);
+			window.removeEventListener("online", online);
 			window.removeEventListener("pageshow", wake);
 		};
 	}, [client]);

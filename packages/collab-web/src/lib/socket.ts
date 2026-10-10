@@ -21,6 +21,20 @@ const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 /** Max enveloped frames buffered while a reconnect is pending; overflow is dropped. */
 const MAX_PENDING_SENDS = 256;
+/**
+ * A page hidden this long is presumed suspended, and its sockets dead. Longer than an
+ * app-switcher glance or a notification pull-down, shorter than the OS's typical suspend.
+ */
+const STALE_AFTER_HIDDEN_MS = 10_000;
+
+/**
+ * Whether the OS suspends this page's sockets while it is hidden: true on touch devices
+ * (phones and tablets). Desktop browsers keep a hidden tab's sockets alive, so replacing
+ * them there would only flash a reconnect on every tab return. Gate {@link CollabSocket.suspend} on it.
+ */
+export function suspendsHiddenPages(): boolean {
+	return matchMedia("(pointer: coarse)").matches;
+}
 
 export interface CollabSocketOptions {
 	/** wss://host[:port]/r/<roomId> — no query string. */
@@ -53,6 +67,8 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 	#recvChain: Promise<void> = Promise.resolve();
 	/** Envelopes sealed while disconnected, flushed on the next open. */
 	#pendingSends: Uint8Array<ArrayBuffer>[] = [];
+	/** When the page last went to the background; null while foregrounded. */
+	#hiddenAt: number | null = null;
 
 	constructor(opts: CollabSocketOptions) {
 		this.#opts = opts;
@@ -65,19 +81,43 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 	connect(): void {
 		if (this.#ws || this.#retryTimer) return;
 		this.#closed = false;
+		this.#hiddenAt = null;
 		this.#retryMissingRoom = false;
 		this.#attempt = 0;
 		this.#openSocket();
 	}
 
 	/**
-	 * Skip the backoff wait when the page comes back to the foreground or the network
-	 * returns. Mobile browsers suspend sockets in the background, so a retry
-	 * scheduled while hidden may be up to {@link BACKOFF_MAX_MS} out. No-op while
-	 * connected, connecting, or terminally closed.
+	 * The page went to the background on a device that suspends hidden pages
+	 * ({@link suspendsHiddenPages}). Recorded so {@link resume} can tell a glance at the app
+	 * switcher from a stretch long enough for the OS to have suspended the page.
 	 */
-	resume(): void {
-		if (this.#closed || this.#retryTimer === undefined) return;
+	suspend(): void {
+		this.#hiddenAt = Date.now();
+	}
+
+	/**
+	 * The page is back in the foreground (`foreground`) or the network came back (`online`).
+	 *
+	 * A suspended page can hold a socket that still reads OPEN while the connection died
+	 * under it: no `close` ever fires, the relay's protocol pings go unseen from script, and
+	 * the host answers no guest frame cheaply, so a probe has nothing to listen for. Instead
+	 * a connection that is not provably fresh is replaced: after `online` always (the
+	 * network under it changed), and after a recorded stay in the background of at least
+	 * {@link STALE_AFTER_HIDDEN_MS}. Without {@link suspend} (desktop) only `online` replaces. A delta resume makes the replacement cheap, a short
+	 * hide leaves the connection alone, and recovery takes one round trip instead of
+	 * waiting for the caller's welcome/snapshot timers.
+	 *
+	 * A pending backoff is skipped in either case, since a retry scheduled while hidden may be
+	 * up to {@link BACKOFF_MAX_MS} out. No-op while terminally closed.
+	 */
+	resume(cause: "foreground" | "online" = "foreground"): void {
+		const hiddenAt = this.#hiddenAt;
+		this.#hiddenAt = null;
+		if (this.#closed) return;
+		const stale = cause === "online" || (hiddenAt !== null && Date.now() - hiddenAt >= STALE_AFTER_HIDDEN_MS);
+		if (stale && this.#ws) this.reconnect(cause === "online" ? "network changed" : "page was in the background");
+		if (this.#retryTimer === undefined) return;
 		this.#clearRetry();
 		this.#openSocket();
 	}

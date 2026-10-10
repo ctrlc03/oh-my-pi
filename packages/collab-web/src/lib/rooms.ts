@@ -121,12 +121,19 @@ export interface QueuedPrompt {
 	id: string;
 	text: string;
 	images?: ImageContent[];
+	/** Absent = steer; `follow-up` waits for the agent's current turn to end. */
+	deliver?: "follow-up";
 }
 
 function isQueuedPrompt(value: unknown): value is QueuedPrompt {
 	if (typeof value !== "object" || value === null) return false;
 	const q = value as Record<string, unknown>;
-	return typeof q.id === "string" && typeof q.text === "string" && (q.images === undefined || Array.isArray(q.images));
+	return (
+		typeof q.id === "string" &&
+		typeof q.text === "string" &&
+		(q.images === undefined || Array.isArray(q.images)) &&
+		(q.deliver === undefined || q.deliver === "follow-up")
+	);
 }
 
 /** Prompts queued offline for a room; persisted so an app kill keeps them. */

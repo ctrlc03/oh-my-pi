@@ -27,6 +27,7 @@ function makeHostContext(eventBus: EventBus): InteractiveModeContext {
 			model: undefined,
 			thinkingLevel: undefined,
 			getAvailableEffortSelectors: () => [],
+			getQueuedMessages: () => ({ steering: [], followUp: [] }),
 			subscribe: () => () => {},
 			emitNotice: () => {},
 			promptCustomMessage: () => Promise.resolve(),

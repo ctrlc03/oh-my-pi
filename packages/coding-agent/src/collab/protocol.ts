@@ -10,6 +10,7 @@
 import type { ImageContent } from "@oh-my-pi/pi-ai";
 import type {
 	BusChannel,
+	CollabFeature,
 	CollabUiRequest,
 	GuestFrame,
 	ParsedCollabLink,
@@ -55,7 +56,7 @@ export type { CollabSessionState };
 export type CollabFrame =
 	// guest -> host (hello/abort/agent-cmd/fetch-transcript/ui-response are taken verbatim from the wire grammar)
 	| Exclude<GuestFrame, { t: "prompt" }>
-	| { t: "prompt"; text: string; images?: ImageContent[] }
+	| { t: "prompt"; text: string; images?: ImageContent[]; deliver?: "follow-up" }
 	// host -> guest
 	| {
 			t: "welcome";
@@ -76,6 +77,8 @@ export type CollabFrame =
 			models?: WireModel[];
 			/** True when the host honoured `hello.resume`: the snapshot chunks carry only the entries after `resume.entryId`. */
 			resumed?: boolean;
+			/** Optional host capabilities; absent on hosts that predate the field (none). */
+			features?: CollabFeature[];
 	  }
 	/**
 	 * Targeted snapshot fragment delivered after `welcome`. Splits a large
@@ -87,6 +90,8 @@ export type CollabFrame =
 	 */
 	| { t: "snapshot-chunk"; entries: SessionEntry[]; final: boolean }
 	| { t: "entry"; entry: SessionEntry }
+	/** Active path changed (rewind / tree navigation): guests keep their entries through `keep` (null = none), drop the rest, and append `entries`. */
+	| { t: "branch"; keep: string | null; entries: SessionEntry[] }
 	| { t: "event"; event: AgentSessionEvent }
 	| { t: "state"; state: CollabSessionState }
 	/** Mirrored EventBus traffic (task subagent lifecycle/progress channels only). */
@@ -133,6 +138,9 @@ const EVENT_FRAME_HEAD = `{"t":"${EVENT_FIELDS.t}","${EVENT_FIELDS.event}":`;
 const SNAPSHOT_CHUNK_HEAD = `{"t":"${SNAPSHOT_CHUNK_FIELDS.t}","${SNAPSHOT_CHUNK_FIELDS.entries}":[`;
 const SNAPSHOT_CHUNK_FINAL = `],"${SNAPSHOT_CHUNK_FIELDS.final}":`;
 
+const BRANCH_FIELDS: FrameFields<"branch"> = { t: "branch", keep: "keep", entries: "entries" };
+const BRANCH_FRAME_HEAD = `{"t":"${BRANCH_FIELDS.t}","${BRANCH_FIELDS.keep}":`;
+
 /** The single construction point of {@link EncodedFrame}. */
 function encodedFrame(json: string): EncodedFrame {
 	return json as EncodedFrame;
@@ -151,6 +159,13 @@ export function encodeEventFrame(eventJson: string): EncodedFrame {
 /** `{ t: "snapshot-chunk", entries, final }` from each entry's JSON. */
 export function encodeSnapshotChunk(entryJsons: readonly string[], final: boolean): EncodedFrame {
 	return encodedFrame(`${SNAPSHOT_CHUNK_HEAD}${entryJsons.join(",")}${SNAPSHOT_CHUNK_FINAL}${final}}`);
+}
+
+/** `{ t: "branch", keep, entries }` from `keep` and each entry's JSON. */
+export function encodeBranchFrame(keep: string | null, entryJsons: readonly string[]): EncodedFrame {
+	return encodedFrame(
+		`${BRANCH_FRAME_HEAD}${JSON.stringify(keep)},"${BRANCH_FIELDS.entries}":[${entryJsons.join(",")}]}`,
+	);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

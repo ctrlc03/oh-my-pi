@@ -57,6 +57,7 @@ function makeHostContext(): HostHarness {
 			model: undefined,
 			thinkingLevel: undefined,
 			getAvailableEffortSelectors: () => [],
+			getQueuedMessages: () => ({ steering: [], followUp: [] }),
 			subscribe: () => () => {},
 			emitNotice: () => {},
 			promptCustomMessage: (message: { details?: { from?: string } }) => {

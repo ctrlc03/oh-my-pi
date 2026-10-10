@@ -101,6 +101,7 @@ function makeHostContext(): { ctx: InteractiveModeContext; state: HostContextSta
 			model: undefined,
 			thinkingLevel: undefined,
 			getAvailableEffortSelectors: () => [],
+			getQueuedMessages: () => ({ steering: [], followUp: [] }),
 			subscribe: (cb: HostContextState["subscribed"]) => {
 				state.subscribed = cb;
 				return () => {};

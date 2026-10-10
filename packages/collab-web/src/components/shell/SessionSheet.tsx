@@ -1,7 +1,10 @@
 import type { SessionCommand, SessionState, WireModel } from "@oh-my-pi/pi-wire";
 import {
+	Check,
 	ChevronDown,
 	ChevronRight,
+	Copy,
+	Download,
 	type LucideIcon,
 	LogOut,
 	MessageSquare,
@@ -9,12 +12,14 @@ import {
 	Moon,
 	Pencil,
 	Rows3,
+	Share2,
 	Sun,
 	X,
 } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ConnectionPhase } from "../../lib/client";
+import { exportFilename } from "../../lib/export";
 import { TRIM_CHOICES } from "../../lib/trim";
 import { fmtPercent, fmtTokens } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
@@ -93,6 +98,8 @@ export interface SessionSheetProps {
 	/** Models this writer may switch to; null when the host predates session controls. */
 	models: readonly WireModel[] | null;
 	onSessionCommand(cmd: SessionCommand, arg?: string): void;
+	/** The session as Markdown, built on demand from every entry (not the trimmed view). */
+	exportMarkdown(title: string): string;
 }
 
 /**
@@ -127,6 +134,7 @@ export function SessionSheet({
 	usage,
 	models,
 	onSessionCommand,
+	exportMarkdown,
 	push,
 	onLeave,
 	onClose,
@@ -135,6 +143,9 @@ export function SessionSheet({
 	const [pickerOpen, setPickerOpen] = useState(false);
 	const [compacting, setCompacting] = useState(false);
 	const [instructions, setInstructions] = useState("");
+	const [copied, setCopied] = useState(false);
+	const copiedTimer = useRef<number | undefined>(undefined);
+	useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
 	// The draft name while renaming; null when the title shows.
 	const [renaming, setRenaming] = useState<string | null>(null);
 	const canControl = models !== null && !readOnly && phase === "live";
@@ -145,6 +156,35 @@ export function SessionSheet({
 		const name = renaming?.trim();
 		if (name && name !== title) onSessionCommand("rename", name);
 		setRenaming(null);
+	};
+
+	const filename = exportFilename(title);
+	const shareExport = async (): Promise<void> => {
+		const text = exportMarkdown(title);
+		const file = new File([text], filename, { type: "text/markdown" });
+		try {
+			await navigator.share(navigator.canShare?.({ files: [file] }) ? { title, files: [file] } : { title, text });
+		} catch {
+			// Dismissing the share sheet is a choice, and a platform that refuses has Download and Copy.
+		}
+	};
+	const downloadExport = (): void => {
+		const url = URL.createObjectURL(new Blob([exportMarkdown(title)], { type: "text/markdown" }));
+		const link = document.createElement("a");
+		link.href = url;
+		link.download = filename;
+		link.click();
+		URL.revokeObjectURL(url);
+	};
+	const copyExport = async (): Promise<void> => {
+		try {
+			await navigator.clipboard.writeText(exportMarkdown(title));
+		} catch {
+			return;
+		}
+		setCopied(true);
+		window.clearTimeout(copiedTimer.current);
+		copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
 	};
 
 	return (
@@ -475,6 +515,22 @@ export function SessionSheet({
 						<button type="button" className="sh-sheet-link" onClick={onOpenScreens}>
 							{screenCount > 0 ? `${screenCount} image${screenCount === 1 ? "" : "s"}` : "None yet"}
 							<ChevronRight size={14} />
+						</button>
+					</dd>
+				</div>
+				<div className="sh-sheet-row">
+					<dt>Export</dt>
+					<dd>
+						{typeof navigator.share === "function" && (
+							<button type="button" className="sh-btn" onClick={() => void shareExport()}>
+								<Share2 size={14} /> Share
+							</button>
+						)}
+						<button type="button" className="sh-btn" onClick={downloadExport}>
+							<Download size={14} /> Download
+						</button>
+						<button type="button" className="sh-btn" onClick={() => void copyExport()}>
+							{copied ? <Check size={14} /> : <Copy size={14} />} {copied ? "Copied" : "Copy"}
 						</button>
 					</dd>
 				</div>

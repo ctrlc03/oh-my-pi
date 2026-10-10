@@ -12146,11 +12146,12 @@ export class AgentSession implements SettingsScope {
 			targetEntry.type === "message" &&
 			targetEntry.message.role === "toolResult" &&
 			targetEntry.message.toolName === "ask";
-		const targetIsUserMessage = targetEntry.type === "message" && targetEntry.message.role === "user";
+		const targetIsUserRequest = isTranscriptEntry(targetEntry) && isUserRequestEntry(targetEntry);
 
-		// No-op if already at target — except for a user message, which always
-		// rewinds PAST itself (leaf → parent, text → editor), so a leaf user
-		// prompt (turn aborted before any assistant reply) is still a real move
+		// No-op if already at target — except for a user request (a prompt, or a
+		// user-invoked skill/collab prompt), which always rewinds PAST itself
+		// (leaf → parent, text → editor), so a leaf prompt (turn aborted before
+		// any assistant reply) is still a real move
 		// — and except mid-flight through the `ask` re-answer protocol (issue
 		// #5642): a probe or completion call can legitimately target the
 		// *current* leaf (e.g. the user interrupted right after answering
@@ -12158,7 +12159,7 @@ export class AgentSession implements SettingsScope {
 		// navigated straight onto the ask result), and must still return
 		// `reopenAsk` / branch the new answer instead of silently reporting a
 		// no-op (chatgpt-codex review on #5895).
-		if (targetId === oldLeafId && !targetIsUserMessage && !(options.allowAskReopen && targetIsAskResult)) {
+		if (targetId === oldLeafId && !targetIsUserRequest && !(options.allowAskReopen && targetIsAskResult)) {
 			return { cancelled: false };
 		}
 

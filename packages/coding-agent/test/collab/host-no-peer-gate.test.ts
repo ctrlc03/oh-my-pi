@@ -52,6 +52,7 @@ function makeFixture(): Fixture {
 			model: undefined,
 			thinkingLevel: undefined,
 			getAvailableEffortSelectors: () => [],
+			getQueuedMessages: () => ({ steering: [], followUp: [] }),
 			subscribe: (cb: Fixture["emit"]) => {
 				fixture.emit = cb;
 				return () => {};
@@ -73,11 +74,11 @@ function makeFixture(): Fixture {
 	return fixture;
 }
 
-const textEntry = (id: string): SessionEntry =>
+const textEntry = (id: string, parentId: string | null = null): SessionEntry =>
 	({
 		type: "custom_message",
 		id,
-		parentId: null,
+		parentId,
 		timestamp: "2026-07-20T00:00:00Z",
 		customType: "note",
 		content: id,
@@ -134,7 +135,7 @@ describe("collab host with no joined guest", () => {
 
 		transport.onFrame!({ t: "hello", proto: COLLAB_PROTO, name: "guest" }, 1);
 		fixture.emit({ type: "agent_start" });
-		fixture.append(textEntry("after-join"));
+		fixture.append(textEntry("after-join", "before-join"));
 
 		const types = send.mock.calls.map(([frame]) => frameType(frame));
 		expect(types[0]).toBe("welcome");

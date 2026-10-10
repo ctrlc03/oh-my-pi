@@ -871,6 +871,98 @@
 	color: var(--err);
 }
 
+/* File attachments are chips beside the image thumbnails; queued follow-ups stack above them, one line each. */
+.sh-file-chip,
+.sh-followup {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	max-width: 100%;
+	height: 30px;
+	padding: 0 4px 0 10px;
+	font-size: 12.5px;
+	color: var(--fg-muted);
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: 999px;
+}
+
+.sh-file-chip svg:first-child,
+.sh-followup svg:first-child {
+	flex: none;
+}
+
+.sh-file-name,
+.sh-followup-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-file-name {
+	max-width: 220px;
+	color: var(--fg);
+}
+
+.sh-file-size {
+	flex: none;
+	font: 400 11px / 1 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+.sh-followup-label {
+	flex: none;
+	white-space: nowrap;
+	color: var(--fg-faint);
+}
+
+.sh-followup-text {
+	flex: 0 1 auto;
+	color: var(--fg);
+}
+
+.sh-file-remove,
+.sh-followup-remove {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	color: var(--fg-muted);
+	background: transparent;
+	border-radius: 999px;
+}
+
+.sh-file-remove:hover,
+.sh-followup-remove:hover {
+	color: var(--fg);
+	background: var(--hover);
+}
+
+.sh-followups {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	padding-bottom: 8px;
+}
+
+/* "After turn" keeps its label on wide screens; on phones it collapses to a round icon like the send button. */
+.sh-composer-actions .sh-btn-after {
+	padding: 0 12px;
+}
+
+@media (max-width: 640px) {
+	.sh-composer-actions .sh-btn-after {
+		width: 36px;
+		padding: 0;
+	}
+}
+
 .sh-composer-ask {
 	display: grid;
 	gap: 10px;
@@ -1576,6 +1668,19 @@
 	display: inline-flex;
 	flex: none;
 	gap: 4px;
+}
+
+.sh-edit-prompt-note {
+	margin: 0;
+	font-size: 13.5px;
+	line-height: 1.5;
+	color: var(--fg-muted);
+}
+
+.sh-edit-prompt-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
 }
 
 .sh-sheet-rename {

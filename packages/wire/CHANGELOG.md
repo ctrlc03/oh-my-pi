@@ -17,6 +17,7 @@
 
 - `hello.resume` and `hello.zip` guest fields, `welcome.resumed`, and the `ZIP_MARKER` / `ZIP_MIN_BYTES` constants for resuming from a known entry and compressed frames (protocol version unchanged).
 - `rename` session command: `session-cmd` with the new session name as `arg`.
+- `CollabFeature` and `welcome.features`; `prompt.deliver: "follow-up"`; `rewind` and `unqueue` session commands; `SessionState.followUps`; the `branch` host frame for active-path changes (protocol version unchanged).
 
 ## [18.8.0] - 2026-10-07
 

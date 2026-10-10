@@ -53,6 +53,8 @@ const TRANSCRIBE_SETUP_TIMEOUT_MS = 30 * 60_000;
 const GITHUB_TIMEOUT_MS = 30_000;
 /** Listing a huge repository can take git a while. */
 const TREE_TIMEOUT_MS = 60_000;
+/** An attachment is one frame of up to ~13 MB, sent over a phone connection. */
+const UPLOAD_TIMEOUT_MS = 120_000;
 /** Pings sent per round-trip measurement; the median is reported. */
 const PING_SAMPLES = 3;
 
@@ -375,6 +377,14 @@ export interface SpendLimits {
 	sessionUsd: number | null;
 }
 
+/** Which GitHub events on the user's own open pull requests the companion pushes a notification for. */
+export interface PrAlertSettings {
+	/** Checks finished (passed or failed). */
+	checks: boolean;
+	/** New reviews and comments from others. */
+	reviews: boolean;
+}
+
 /** What a code map view centres on. Paths are repository-relative; `""` is the repository root. */
 export type CodemapFocus =
 	| { kind: "dir"; path: string }
@@ -619,6 +629,8 @@ export type CompanionRequest =
 	| { t: "inbox"; reqId: number }
 	/** Read (no `limits`) or replace the spend alert limits. */
 	| { t: "spend-limits"; reqId: number; limits?: SpendLimits }
+	/** Read (no `settings`) or replace the GitHub alert settings. */
+	| { t: "pr-alerts"; reqId: number; settings?: PrAlertSettings }
 	/** Past and live sessions across projects, newest activity first; `q` filters by title or folder. */
 	| { t: "sessions"; reqId: number; limit?: number; q?: string }
 	/** The session's terminal: the screen of the tmux pane running it, plus recent scrollback. */
@@ -649,7 +661,9 @@ export type CompanionRequest =
 	 */
 	| { t: "file-write"; reqId: number; instanceId: string; path: string; text: string; base: string }
 	/** Current versions of up to 20 files, to notice edits made behind an open editor. */
-	| { t: "file-versions"; reqId: number; instanceId: string; paths: string[] };
+	| { t: "file-versions"; reqId: number; instanceId: string; paths: string[] }
+	/** Save a prompt attachment on the computer (needs `canUpload`); `data` is the file's base64. */
+	| { t: "upload"; reqId: number; instanceId: string; name: string; data: string };
 
 export type CompanionReply =
 	/**
@@ -675,6 +689,8 @@ export type CompanionReply =
 			canPreview?: boolean;
 			/** The companion can list the session repository's issues and pull requests (`gh` signed in). */
 			canGithub?: boolean;
+			/** The companion can save prompt attachments on the computer. */
+			canUpload?: boolean;
 			/** The companion can transcribe voice recordings, and with which model; absent when it cannot. */
 			transcribe?: TranscribeInfo;
 			/** Power of the computer; absent off macOS and from companions that predate it. */
@@ -712,6 +728,7 @@ export type CompanionReply =
 	| { t: "usage"; reqId: number; usage: UsageReport }
 	| { t: "inbox"; reqId: number; items: InboxItem[] }
 	| { t: "spend-limits"; reqId: number; limits: SpendLimits }
+	| { t: "pr-alerts"; reqId: number; settings: PrAlertSettings }
 	| { t: "sessions"; reqId: number; sessions: SessionOverview[] }
 	| { t: "pane"; reqId: number; pane: PaneCapture }
 	| { t: "codemap"; reqId: number; view: CodemapView }
@@ -722,7 +739,9 @@ export type CompanionReply =
 	| { t: "transcribe-setup"; reqId: number }
 	/** `repo`: `owner/name` of the listed repository. */
 	| { t: "github"; reqId: number; repo: string; items: GithubItem[] }
-	| { t: "github-item"; reqId: number; item: GithubItemDetail };
+	| { t: "github-item"; reqId: number; item: GithubItemDetail }
+	/** Where the uploaded file was saved: an absolute path on the computer. */
+	| { t: "uploaded"; reqId: number; path: string };
 
 /** Credentials the companion issued to a paired device. */
 export interface DeviceCreds {
@@ -847,6 +866,8 @@ export interface CompanionSnapshot {
 	canPreview: boolean;
 	/** The companion can list the session repository's issues and pull requests. */
 	canGithub: boolean;
+	/** The companion can save prompt attachments on the computer. */
+	canUpload: boolean;
 	/** Voice input on the computer; null when the companion cannot transcribe. */
 	transcribe: TranscribeInfo | null;
 	/** Power of the computer, while the companion reports it. */
@@ -901,6 +922,7 @@ export class CompanionClient {
 		canEdit: false,
 		canPreview: false,
 		canGithub: false,
+		canUpload: false,
 		transcribe: null,
 		power: null,
 		vapidKey: null,
@@ -1013,6 +1035,11 @@ export class CompanionClient {
 		return (await this.#call({ t: "file-write", instanceId, path, text, base }, "file-saved")).version;
 	}
 
+	/** Save `data` (the file's base64) on the computer as `name`; resolves with the absolute path it was saved under. */
+	async uploadFile(instanceId: string, name: string, data: string): Promise<string> {
+		return (await this.#call({ t: "upload", instanceId, name, data }, "uploaded", UPLOAD_TIMEOUT_MS)).path;
+	}
+
 	async requestFileVersions(instanceId: string, paths: string[]): Promise<(string | null)[]> {
 		return (await this.#call({ t: "file-versions", instanceId, paths }, "file-versions")).versions;
 	}
@@ -1065,6 +1092,11 @@ export class CompanionClient {
 	/** The spend limits the companion alerts at; `limits` replaces them first when given. */
 	async spendLimits(limits?: SpendLimits): Promise<SpendLimits> {
 		return (await this.#call({ t: "spend-limits", limits }, "spend-limits")).limits;
+	}
+
+	/** The GitHub alert settings the companion uses; `settings` replaces them first when given. */
+	async prAlerts(settings?: PrAlertSettings): Promise<PrAlertSettings> {
+		return (await this.#call({ t: "pr-alerts", settings }, "pr-alerts")).settings;
 	}
 
 	/** Sessions across every project, live and ended, newest activity first. */
@@ -1287,6 +1319,7 @@ export class CompanionClient {
 				canEdit: frame.canEdit ?? false,
 				canPreview: frame.canPreview ?? false,
 				canGithub: frame.canGithub ?? false,
+				canUpload: frame.canUpload ?? false,
 				transcribe: frame.transcribe ?? null,
 				power: frame.power ?? null,
 				vapidKey: frame.vapidKey,

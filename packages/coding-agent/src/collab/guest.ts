@@ -613,6 +613,31 @@ export class CollabGuestLink {
 				}
 				break;
 			}
+			case "branch": {
+				// The host's active path changed (guest or host rewind, /tree). Replicas keep
+				// what the new path shares with the old one and replay the rest.
+				const manager = this.#ctx.sessionManager;
+				if (frame.keep !== null && !manager.getEntry(frame.keep)) {
+					// The kept entry never reached this replica: it cannot be repaired by deltas.
+					this.#ctx.showStatus("Collab replica out of sync with the host; leaving");
+					this.#restoreAfterDisconnect();
+					break;
+				}
+				if (frame.keep === null) manager.resetLeaf();
+				else manager.branch(frame.keep);
+				for (const entry of frame.entries) manager.ingestReplicatedEntry(entry);
+				this.#ctx.session.agent.replaceMessages(this.#ctx.session.buildDisplaySessionContext().messages);
+				// Rendering is events-only for live traffic; a path change replaces the transcript,
+				// so rebuild it in arrival order like a snapshot does.
+				this.#applyChain = this.#applyChain
+					.then(async () => {
+						if (this.#left) return;
+						await this.#ctx.renderInitialMessages({ clearTerminalHistory: true });
+						await this.#ctx.reloadTodos();
+					})
+					.catch(err => logger.warn("collab guest branch render failed", { error: String(err) }));
+				break;
+			}
 			case "event":
 				this.#applyEvent(frame.event);
 				break;

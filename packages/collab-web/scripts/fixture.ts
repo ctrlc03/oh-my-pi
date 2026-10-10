@@ -58,6 +58,34 @@ function mkUsage(input: number, output: number, cacheRead: number, cost: number)
 	return { input, output, cacheRead, cacheWrite: 0, totalTokens: input + output + cacheRead, cost: { total: cost } };
 }
 
+/** The mock session's task list. Task statuses derive from how many are done, so the scripted turns can advance it. */
+const TODO_PLAN = [
+	{
+		name: "Audit",
+		tasks: ["Read the backoff loop", "Map the fatal close codes", "Check half-open socket handling"],
+	},
+	{ name: "Verify", tasks: ["Run the reconnect suite", "Summarize the findings"] },
+];
+const TODO_TASKS: string[] = TODO_PLAN.flatMap(phase => phase.tasks);
+/** Tasks already finished when the fixture transcript ends. */
+const TODO_INITIAL_DONE = 2;
+
+/** The todo tool's `details.phases` with the first `done` tasks completed and the next one in progress. */
+function todoPhases(done: number): { name: string; tasks: { content: string; status: string }[] }[] {
+	let index = 0;
+	return TODO_PLAN.map(phase => ({
+		name: phase.name,
+		tasks: phase.tasks.map(content => {
+			const at = index++;
+			return { content, status: at < done ? "completed" : at === done ? "in_progress" : "pending" };
+		}),
+	}));
+}
+
+function todoSummary(done: number): string {
+	return `Todo list: ${done}/${TODO_TASKS.length} tasks done.`;
+}
+
 export const fixtureHeader: SessionHeader = {
 	type: "session",
 	id: "mock-collab-session",
@@ -187,8 +215,48 @@ export const fixtureEntries: SessionEntry[] = [
 		},
 	},
 	{
-		id: "e06",
+		id: "e05a",
 		parentId: "e05",
+		timestamp: iso(NOW - 28 * MIN),
+		type: "message",
+		message: {
+			role: "assistant",
+			content: [
+				{
+					type: "toolCall",
+					id: "call-todo-01",
+					name: "todo",
+					arguments: {
+						op: "init",
+						list: TODO_PLAN.map(phase => ({ phase: phase.name, items: phase.tasks })),
+					},
+					intent: "Planning the audit",
+				},
+			],
+			model: fixtureModel.id,
+			usage: mkUsage(3_150, 118, 20_900, 0.0127),
+			stopReason: "toolUse",
+			timestamp: NOW - 28 * MIN,
+		},
+	},
+	{
+		id: "e05b",
+		parentId: "e05a",
+		timestamp: iso(NOW - 28 * MIN + 1_000),
+		type: "message",
+		message: {
+			role: "toolResult",
+			toolCallId: "call-todo-01",
+			toolName: "todo",
+			content: [{ type: "text", text: todoSummary(TODO_INITIAL_DONE) }],
+			details: { phases: todoPhases(TODO_INITIAL_DONE) },
+			isError: false,
+			timestamp: NOW - 28 * MIN + 1_000,
+		},
+	},
+	{
+		id: "e06",
+		parentId: "e05b",
 		timestamp: iso(NOW - 26 * MIN),
 		type: "message",
 		message: {
@@ -624,6 +692,7 @@ const TURN_THINKING_1 = "Guest wants a live check. ";
 const TURN_THINKING_2 = "Guest wants a live check. I'll run the reconnect suite once and summarize the result.";
 const TURN_TEXT_1 = "Kicking off a live reconnect probe ";
 const TURN_TEXT_2 = "Kicking off a live reconnect probe — one suite run, then a verdict.";
+const TURN_LEAD = "Probe finished — ticking it off the task list.";
 const TURN_CLOSE_1 = "Probe passed: 3 reconnects, ";
 const TURN_CLOSE_2 = "Probe passed: 3 reconnects, 0 duplicate entries after resync. The reconnect path holds.";
 
@@ -639,6 +708,9 @@ export function makeScriptedTurn(seq: number, parentId: string | null): Scripted
 	const callId = `turn${seq}-call1`;
 	const r1Id = `turn${seq}-r1`;
 	const a2Id = `turn${seq}-a2`;
+	const r2Id = `turn${seq}-r2`;
+	const a3Id = `turn${seq}-a3`;
+	const todoCallId = `turn${seq}-call2`;
 	const command = "bun test packages/coding-agent/test/collab --filter reconnect";
 	const toolResultText =
 		"3 tests passed (reconnect.test.ts)\n3 sockets reconnected in 1.2s\n0 duplicate entries after resync";
@@ -678,11 +750,42 @@ export function makeScriptedTurn(seq: number, parentId: string | null): Scripted
 		timestamp: ts,
 	};
 
+	// Each scripted turn finishes the task in progress; once the list is complete it only re-reads it.
+	const done = Math.min(TODO_INITIAL_DONE + seq, TODO_TASKS.length);
+	const finished = TODO_TASKS[TODO_INITIAL_DONE + seq - 1];
+	const todoArgs = finished === undefined ? { op: "view" } : { op: "done", task: finished };
+	const todoCall: ToolCallContent = {
+		type: "toolCall",
+		id: todoCallId,
+		name: "todo",
+		arguments: todoArgs,
+		intent: "Updating the task list",
+	};
+
 	const a2Final: AssistantMessage = {
+		role: "assistant",
+		content: [{ type: "text", text: TURN_LEAD }, todoCall],
+		model: fixtureModel.id,
+		usage: mkUsage(4_690, 52, 25_400, 0.0153),
+		stopReason: "toolUse",
+		timestamp: ts,
+	};
+
+	const r2Message: ToolResultMessage = {
+		role: "toolResult",
+		toolCallId: todoCallId,
+		toolName: "todo",
+		content: [{ type: "text", text: todoSummary(done) }],
+		details: { phases: todoPhases(done) },
+		isError: false,
+		timestamp: ts,
+	};
+
+	const a3Final: AssistantMessage = {
 		role: "assistant",
 		content: [{ type: "text", text: TURN_CLOSE_2 }],
 		model: fixtureModel.id,
-		usage: mkUsage(4_690, 52, 25_400, 0.0153),
+		usage: mkUsage(4_760, 52, 25_900, 0.0156),
 		stopReason: "stop",
 		timestamp: ts,
 	};
@@ -765,10 +868,35 @@ export function makeScriptedTurn(seq: number, parentId: string | null): Scripted
 		},
 		{ kind: "entry", entry: { id: r1Id, parentId: a1Id, timestamp: iso(ts), type: "message", message: r1Message } },
 		{ kind: "event", event: { type: "message_start", message: partial([]) } },
-		{ kind: "event", event: { type: "message_update", message: partial([{ type: "text", text: TURN_CLOSE_1 }]) } },
-		{ kind: "event", event: { type: "message_update", message: partial([{ type: "text", text: TURN_CLOSE_2 }]) } },
+		{ kind: "event", event: { type: "message_update", message: partial([{ type: "text", text: TURN_LEAD }]) } },
 		{ kind: "event", event: { type: "message_end", message: a2Final } },
 		{ kind: "entry", entry: { id: a2Id, parentId: r1Id, timestamp: iso(ts), type: "message", message: a2Final } },
+		{
+			kind: "event",
+			event: {
+				type: "tool_execution_start",
+				toolCallId: todoCallId,
+				toolName: "todo",
+				args: todoArgs,
+				intent: "Updating the task list",
+			},
+		},
+		{
+			kind: "event",
+			event: {
+				type: "tool_execution_end",
+				toolCallId: todoCallId,
+				toolName: "todo",
+				result: todoSummary(done),
+				isError: false,
+			},
+		},
+		{ kind: "entry", entry: { id: r2Id, parentId: a2Id, timestamp: iso(ts), type: "message", message: r2Message } },
+		{ kind: "event", event: { type: "message_start", message: partial([]) } },
+		{ kind: "event", event: { type: "message_update", message: partial([{ type: "text", text: TURN_CLOSE_1 }]) } },
+		{ kind: "event", event: { type: "message_update", message: partial([{ type: "text", text: TURN_CLOSE_2 }]) } },
+		{ kind: "event", event: { type: "message_end", message: a3Final } },
+		{ kind: "entry", entry: { id: a3Id, parentId: r2Id, timestamp: iso(ts), type: "message", message: a3Final } },
 		{ kind: "event", event: { type: "turn_end" } },
 		{ kind: "event", event: { type: "agent_end" } },
 		{ kind: "state", streaming: false },

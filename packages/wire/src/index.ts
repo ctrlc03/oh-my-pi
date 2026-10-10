@@ -235,6 +235,8 @@ export interface SessionState {
 	isAborting?: boolean;
 	/** Thinking levels the current model accepts, for a `session-cmd` `thinking`; absent on hosts without `session-cmd`. */
 	thinkingLevels?: string[];
+	/** Texts of the host's queued follow-ups, oldest first; present only on hosts with feature `follow-up`. */
+	followUps?: string[];
 }
 
 export interface AgentSnapshot {
@@ -355,7 +357,12 @@ export type GuestFrame =
 			 */
 			zip?: boolean;
 	  }
-	| { t: "prompt"; text: string; images?: ImageContent[] }
+	/**
+	 * `deliver` absent = steer into the running turn. `follow-up`: when the
+	 * agent is working, deliver after the current turn ends as its own turn;
+	 * idle, it is a normal prompt. Hosts that predate the field steer.
+	 */
+	| { t: "prompt"; text: string; images?: ImageContent[]; deliver?: "follow-up" }
 	| { t: "ui-response"; reqId: number; value?: CollabUiResponseValue }
 	| { t: "abort" }
 	| { t: "agent-cmd"; cmd: "chat" | "kill" | "revive"; agentId: string; text?: string }
@@ -371,8 +378,19 @@ export type GuestFrame =
 	 */
 	| { t: "session-cmd"; cmd: SessionCommand; arg?: string };
 
-/** Host session controls a writer may run through `session-cmd`. */
-export type SessionCommand = "compact" | "model" | "thinking" | "rename";
+/** Optional host capabilities advertised in `welcome.features`. */
+export type CollabFeature = "follow-up" | "rewind";
+
+/**
+ * Host session controls a writer may run through `session-cmd`. `rewind`:
+ * `arg` is the id of a prompt entry (a user `message`, or a `custom_message`
+ * with customType `collab-prompt`) on the active path; the host moves the
+ * session leaf to just before it so the next prompt starts a sibling branch,
+ * and refuses while streaming, compacting, or busy. `unqueue`: `arg` is the
+ * text of a queued follow-up; the host removes the first queued follow-up
+ * with that text.
+ */
+export type SessionCommand = "compact" | "model" | "thinking" | "rename" | "rewind" | "unqueue";
 
 /** EventBus channels mirrored to guests (task subagent traffic only). */
 export type BusChannel = "task:subagent:progress" | "task:subagent:lifecycle";
@@ -408,6 +426,8 @@ export type HostFrame =
 			 * snapshot and replace the replica.
 			 */
 			resumed?: boolean;
+			/** Optional host capabilities; absent on hosts that predate the field (none). */
+			features?: CollabFeature[];
 	  }
 	/**
 	 * Targeted snapshot fragment delivered after `welcome`. Hosts split the
@@ -419,6 +439,14 @@ export type HostFrame =
 	| { t: "entry"; entry: SessionEntry }
 	| { t: "event"; event: AgentEvent }
 	| { t: "state"; state: SessionState }
+	/**
+	 * The active path changed other than by appending (a guest `rewind`, or
+	 * the host user's own rewind / tree navigation). Guests keep their
+	 * replicated entries up to and including entry `keep` (`null` = none),
+	 * drop everything after it, then append `entries` — the rest of the new
+	 * active path. Entries appended later continue from the new leaf.
+	 */
+	| { t: "branch"; keep: string | null; entries: SessionEntry[] }
 	/** Mirrored EventBus traffic (task subagent lifecycle/progress channels only). */
 	| { t: "bus"; channel: BusChannel; data: unknown }
 	| { t: "agents"; agents: AgentSnapshot[] }

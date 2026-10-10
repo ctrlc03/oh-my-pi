@@ -13,6 +13,13 @@
 - Added the collab companion (`bun run companion`): pair the app with a computer once, then pick any session hosting `/collab` on it from the connect screen, with live working / needs-input state
 - Added a chat view, chosen per device from the session sheet (default on phones): prompts and replies only, each run of tool calls folded into one expandable line, and one live status line while the agent works
 - Added *Keep* to the session sheet: show only the last 1, 3, or 10 turns of a session on this device, with *Show all* to reveal the rest. The session and its transcript are untouched
+- Added *After turn* (Alt+Enter) to the composer while the agent works: the prompt runs as its own turn once the current one ends instead of steering it. Queued follow-ups show as chips that can be taken back (needs the omp hosting the session to include this change)
+- Added *Edit & resend* on prompts: rewinds the conversation to just before the prompt and puts it back into the message box; the later turns stay in the session file as a branch (needs the omp hosting the session to include this change)
+- Added a task bar above the composer showing the agent's todo progress and current task, with the full list on tap
+- Added *Copy reply* and *Share* under each finished turn, and ⋯ → *Export* to share, download or copy the session as Markdown
+- Added file attachments: text files are pasted into the prompt as fenced blocks; PDFs and other files up to 10 MB are uploaded to the computer through the companion and the prompt names their path
+- Added line comments on the working tree and branch diffs, sent to the agent as one review prompt
+- Added GitHub alerts through the companion: pushes when checks finish on your open pull requests or someone reviews or comments on them, with per-kind toggles under *Usage*
 - Added find in session over prompts and replies, a jump-to-latest button, and copy buttons on code blocks
 - Added a *Changes* sheet listing every file the agent changed through its edit tools, with diffs
 - Added a sessions sidebar for switching sessions: docked beside the transcript on wide screens (open state remembered), a slide-over drawer on tablets and phones. It lists every session on the paired computer with working / needs-input state, sessions not sharing yet, and recent rooms, with Start session, Usage and All sessions at the bottom. A banner also appears when another session on the paired computer starts waiting for input

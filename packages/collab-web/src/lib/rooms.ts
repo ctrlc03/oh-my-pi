@@ -10,6 +10,7 @@
 
 import type { ImageContent } from "@oh-my-pi/pi-wire";
 import { parseCollabLink } from "./link";
+import { replicaStore } from "./replica-cache";
 import { readJson, writeJson } from "./storage";
 
 const ROOMS_KEY = "omp.collab.rooms";
@@ -79,20 +80,26 @@ export function forgetRoom(roomId: string): RecentRoom[] {
 		loadSeenMap().filter(seen => seen.roomId !== roomId),
 	);
 	if (roomIdOf(activeLink() ?? "") === roomId) setActiveLink(null);
+	replicaStore()
+		?.forget(roomId)
+		.catch(err => console.warn("collab: forgetting the saved transcript failed", err));
 	return next;
 }
 
 /**
  * The host replaced room `from` with `to` for the same omp process (session switch,
- * relaunch after a relay drop, access upgrade): carry the unsent draft and queued
- * prompts over, then forget `from`. Call before the client for `to` is created,
- * which loads its queue on construction.
+ * relaunch after a relay drop, access upgrade): carry the unsent draft, queued
+ * prompts and saved transcript over, then forget `from`. Call before the client for
+ * `to` is created, which loads its queue on construction and its transcript on connect.
  */
 export function moveRoom(from: string, to: string): RecentRoom[] {
 	const draft = loadDraft(from);
 	if (draft && !loadDraft(to)) saveDraft(to, draft);
 	const queue = loadPromptQueue(from);
 	if (queue.length > 0) savePromptQueue(to, [...loadPromptQueue(to), ...queue]);
+	replicaStore()
+		?.move(from, to)
+		.catch(err => console.warn("collab: moving the saved transcript failed", err));
 	return forgetRoom(from);
 }
 

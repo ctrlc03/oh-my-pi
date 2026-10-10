@@ -1610,7 +1610,9 @@
 	background: var(--selected);
 }
 
+/* `flex: none`: a tall sheet scrolls, and a shrinkable fixed-height child is squeezed to its text. */
 .sh-sheet-leave {
+	flex: none;
 	height: 44px;
 	font-size: 14px;
 	color: var(--err);

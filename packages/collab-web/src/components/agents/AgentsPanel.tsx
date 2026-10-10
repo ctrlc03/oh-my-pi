@@ -8,6 +8,7 @@ import { ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useEffect, useMemo, useState } from "react";
 import { fmtCost, fmtDuration, fmtTokens, relTime } from "../../lib/format";
+import { readJson, writeJson } from "../../lib/storage";
 import "./agents.css";
 
 /** Re-render tick so running-tool durations and relative times stay live. */
@@ -84,26 +85,45 @@ const AgentRow = memo(function AgentRow(props: {
 	);
 });
 
-/** Memoized: the client replaces `progress`/`lifecycle` only when they change. */
+/** Per session: ids of inactive subagents this device cleared from the rail. */
+const CLEARED_KEY_PREFIX = "omp.collab.clearedAgents.";
+
+function loadCleared(sessionId: string | null): Record<string, true> {
+	const stored = sessionId === null ? null : readJson(CLEARED_KEY_PREFIX + sessionId);
+	const cleared: Record<string, true> = {};
+	if (Array.isArray(stored)) for (const id of stored) if (typeof id === "string") cleared[id] = true;
+	return cleared;
+}
+
+/**
+ * Memoized: the client replaces `progress`/`lifecycle` only when they change. Mount it keyed by
+ * `sessionId`: the cleared list is read once per session.
+ */
 export const AgentsPanel = memo(function AgentsPanel(props: {
 	agents: readonly AgentSnapshot[];
 	progress: ReadonlyMap<string, SubagentProgressPayload>;
 	lifecycle: ReadonlyMap<string, SubagentLifecyclePayload>;
 	selectedId: string | null;
 	onSelect(id: string | null): void;
+	/** Session the cleared list is saved under; null keeps it in memory only. */
+	sessionId: string | null;
 }): ReactNode {
-	const { agents, progress, lifecycle, selectedId, onSelect } = props;
+	const { agents, progress, lifecycle, selectedId, onSelect, sessionId } = props;
 	const now = useNow(1000);
 	const [showInactive, setShowInactive] = useState(false);
+	// Cleared only hides an agent while it stays inactive: a revived one shows again.
+	const [cleared, setCleared] = useState(() => loadCleared(sessionId));
 
 	const sorted = useMemo(() => {
 		const mains: AgentSnapshot[] = [];
 		const active: AgentSnapshot[] = [];
 		const inactive: AgentSnapshot[] = [];
+		let hidden = 0;
 		for (const agent of agents) {
 			if (agent.kind === "main") mains.push(agent);
-			else if (isInactive(agent)) inactive.push(agent);
-			else active.push(agent);
+			else if (!isInactive(agent)) active.push(agent);
+			else if (cleared[agent.id]) hidden++;
+			else inactive.push(agent);
 		}
 		const newest = (a: AgentSnapshot, b: AgentSnapshot): number => b.lastActivity - a.lastActivity;
 		active.sort((a, b) => {
@@ -112,8 +132,22 @@ export const AgentsPanel = memo(function AgentsPanel(props: {
 			return ar !== br ? ar - br : newest(a, b);
 		});
 		inactive.sort(newest);
-		return { mains, active, inactive };
-	}, [agents]);
+		return { mains, active, inactive, hidden };
+	}, [agents, cleared]);
+
+	const save = (next: Record<string, true>): void => {
+		setCleared(next);
+		if (sessionId === null) return;
+		const ids = Object.keys(next);
+		writeJson(CLEARED_KEY_PREFIX + sessionId, ids.length > 0 ? ids : null);
+	};
+	const clearInactive = (): void => {
+		// Keep only ids the host still lists, so the stored list stays bounded by the session's agents.
+		const next: Record<string, true> = {};
+		for (const agent of agents) if (cleared[agent.id] || isInactive(agent)) next[agent.id] = true;
+		setShowInactive(false);
+		save(next);
+	};
 
 	const row = (agent: AgentSnapshot): ReactNode => (
 		<AgentRow
@@ -139,17 +173,46 @@ export const AgentsPanel = memo(function AgentsPanel(props: {
 			</div>
 			{sorted.active.map(row)}
 			{sorted.active.length === 0 && <div className="ag-empty">None running</div>}
-			{sorted.inactive.length > 0 && (
-				<button
-					type="button"
-					className="ag-fold"
-					onClick={() => setShowInactive(open => !open)}
-					aria-expanded={showInactive}
-				>
-					<ChevronRight size={13} className={showInactive ? "ag-fold-chev ag-fold-chev--open" : "ag-fold-chev"} />
-					Inactive
-					<span className="ag-heading-count">{sorted.inactive.length}</span>
-				</button>
+			{(sorted.inactive.length > 0 || sorted.hidden > 0) && (
+				<div className="ag-fold-row">
+					{sorted.inactive.length > 0 ? (
+						<button
+							type="button"
+							className="ag-fold"
+							onClick={() => setShowInactive(open => !open)}
+							aria-expanded={showInactive}
+						>
+							<ChevronRight
+								size={13}
+								className={showInactive ? "ag-fold-chev ag-fold-chev--open" : "ag-fold-chev"}
+							/>
+							Inactive
+							<span className="ag-heading-count">{sorted.inactive.length}</span>
+						</button>
+					) : (
+						<span className="ag-fold ag-fold--static">Inactive</span>
+					)}
+					{sorted.inactive.length > 0 && (
+						<button
+							type="button"
+							className="ag-fold-action"
+							onClick={clearInactive}
+							title="hide parked and aborted subagents on this device"
+						>
+							Clear
+						</button>
+					)}
+					{sorted.hidden > 0 && (
+						<button
+							type="button"
+							className="ag-fold-action"
+							onClick={() => save({})}
+							title="show cleared subagents again"
+						>
+							{sorted.hidden} cleared · Show
+						</button>
+					)}
+				</div>
 			)}
 			{inactiveShown.map(row)}
 		</div>

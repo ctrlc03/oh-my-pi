@@ -7,11 +7,12 @@ import {
 	MessageSquare,
 	Monitor,
 	Moon,
+	Pencil,
 	Rows3,
 	Sun,
 	X,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import type { ConnectionPhase } from "../../lib/client";
 import { fmtPercent, fmtTokens } from "../../lib/format";
@@ -125,17 +126,69 @@ export function SessionSheet({
 	const [pickerOpen, setPickerOpen] = useState(false);
 	const [compacting, setCompacting] = useState(false);
 	const [instructions, setInstructions] = useState("");
+	// The draft name while renaming; null when the title shows.
+	const [renaming, setRenaming] = useState<string | null>(null);
 	const canControl = models !== null && !readOnly && phase === "live";
 	const levels = state?.thinkingLevels ?? [];
 
+	const rename = (e: FormEvent<HTMLFormElement>): void => {
+		e.preventDefault();
+		const name = renaming?.trim();
+		if (name && name !== title) onSessionCommand("rename", name);
+		setRenaming(null);
+	};
+
 	return (
 		<Sheet label="session details" onClose={onClose}>
-			<div className="sh-sheet-head">
-				<div className="sh-sheet-title">{title}</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
-					<X size={16} />
-				</button>
-			</div>
+			{renaming === null ? (
+				<div className="sh-sheet-head">
+					<div className="sh-sheet-title">{title}</div>
+					<span className="sh-sheet-head-actions">
+						{canControl && (
+							<button
+								type="button"
+								className="sh-btn sh-btn-icon"
+								onClick={() => setRenaming(title)}
+								aria-label="rename session"
+								title="rename session"
+							>
+								<Pencil size={15} />
+							</button>
+						)}
+						<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+							<X size={16} />
+						</button>
+					</span>
+				</div>
+			) : (
+				<form className="sh-sheet-rename" onSubmit={rename}>
+					<input
+						className="sh-sheet-input"
+						value={renaming}
+						onChange={e => setRenaming(e.currentTarget.value)}
+						onKeyDown={e => {
+							if (e.key === "Escape") {
+								// Leave the sheet open: Escape only abandons the rename.
+								e.stopPropagation();
+								setRenaming(null);
+							}
+						}}
+						aria-label="session name"
+						placeholder="Session name"
+						enterKeyHint="done"
+						maxLength={200}
+						autoFocus
+					/>
+					<span className="sh-sheet-actions">
+						<button type="button" className="sh-btn" onClick={() => setRenaming(null)}>
+							Cancel
+						</button>
+						<button type="submit" className="sh-btn sh-btn-primary" disabled={!renaming.trim()}>
+							Rename
+						</button>
+					</span>
+				</form>
+			)}
 			{state?.cwd && <div className="sh-sheet-cwd">{state.cwd}</div>}
 
 			<dl className="sh-sheet-rows">

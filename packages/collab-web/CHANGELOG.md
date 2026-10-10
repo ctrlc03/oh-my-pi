@@ -51,6 +51,7 @@
 - Added *All sessions* through the companion: past and live sessions across projects, grouped by folder with spend, searchable, with *Open*, *Share*, or *Resume* on each row
 - Resuming a session that is open in another omp on the computer (for example a Terminal omp that predates collab hosting) now warns first, naming where it runs, instead of starting a second copy that writes to the same session file; *Resume anyway* overrides. A session that already hosts opens that host
 - Made the host list and opening a session faster: the companion gathers a `hosts` reply's inputs concurrently (a cold first reply halves, about 600 ms to 300 ms), and opening or sharing a session asks omp's registry in-process instead of spawning `omp collab link` (about 315 ms to 1 ms)
+- Rename the session from the session sheet (pencil next to its name); hosts that predate it answer with an error
 - Added model and thinking-level pills to the composer toolbar, each opening a picker above it (a bottom sheet on phones), so switching models no longer needs the session sheet
 - Added *GitHub* (⋯ → *GitHub*) through the companion: the session repository's open issues and pull requests, read with the computer's signed-in `gh`, filtered to open, mine, or (pull requests) review requested, with labels, checks, and review state. Opening one shows its description, every check, and the latest comments; *Send to agent* puts a prompt about it into the message box to edit and send
 
@@ -58,13 +59,16 @@
 
 - Reworked the phone layout: a compact two-line header whose title opens a session sheet (connection, model, context, participants, theme, leave), an edge-to-edge transcript, 40–44px touch targets, and a full-screen agent drawer whose header wraps instead of truncating the agent name
 - Stopped the agents rail from opening on its own on narrow screens, where it covered the transcript
-- Folded parked and aborted subagents under *Inactive* in the agents rail, closed by default; the header badge and opening the rail on wide screens count only running and idle subagents
+- Folded parked and aborted subagents under *Inactive* in the agents rail, closed by default; the header badge and opening the rail on wide screens count only running and idle subagents. *Clear* hides the inactive ones on this device (per session, until *Show*); a cleared subagent that comes back to life shows again
+- The header and window title follow the session's live name instead of the name it had when you joined
 - Wrapped code blocks, tool output, and diffs on phones instead of scrolling them sideways, and let wide Markdown tables scroll as one block
 - Made the return key insert a newline on touch keyboards; the send button submits
 - Restyled the client around a warm plum palette, in dark and light: a conversation panel with a lit edge and accent glow, a centred reading column with larger type, prompts as tinted bubbles on the right under the sender's name (the agent's prose runs without a label), a glass composer with the field above a toolbar and a round send button (one row on phones), pill quick replies, and solid pink lead buttons
 
 ### Fixed
 
+- Live output under a running tool shows its newest 10 lines and stays pinned to the latest one. Before, it showed the start of the last 2 KB, often mid-line, so a download or install progress meter (one line per redraw) hid the current line and jumped on every update
+- Progress bars and other long unbroken runs in displayed custom messages (such as a background job's result) wrap inside the transcript instead of running off its right edge
 - A session no longer ends when the host is slow to answer: a connection the host does not welcome, or a snapshot that stops arriving, within 30 s is dropped and retried instead of showing *Session ended* (common when a phone returns from the background)
 - With a paired computer, a session follows its omp process to a new room instead of ending: when the host switches sessions, upgrades the room to control, or relaunches its room after losing the relay (a laptop that slept), the app asks the companion for the current link and rejoins, carrying the unsent draft and queued prompts. This also applies on a cold launch of the home-screen app. *Session ended* shows only once the computer no longer lists the process or still reports the ended room after 10 s
 - Fixed the transcript losing its bottom position when the on-screen keyboard opens or the composer grows

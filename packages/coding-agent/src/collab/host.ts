@@ -1275,8 +1275,8 @@ export class CollabHost {
 
 	/**
 	 * Guest session controls. Each command runs the same session API the host's
-	 * own TUI uses (`/model` session pick, thinking selector, `/compact`) but
-	 * never opens a selector or dialog on the host terminal. Failures return a
+	 * own TUI uses (`/model` session pick, thinking selector, `/compact`, `/rename`)
+	 * but never opens a selector or dialog on the host terminal. Failures return a
 	 * targeted `error`; success is announced to the room as a collab notice.
 	 */
 	async #handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer: number): Promise<void> {
@@ -1361,6 +1361,21 @@ export class CollabHost {
 							outcome === "cancelled" ? "compaction was cancelled" : "compaction failed; see the host terminal",
 						);
 					}
+					return;
+				}
+				case "rename": {
+					const name = arg?.trim() ?? "";
+					if (!name) {
+						fail("session name cannot be empty");
+						return;
+					}
+					// The host's `/rename` path: a user-sourced title the auto-titler never overwrites.
+					// The appended entry refreshes guest state, and the host terminal title follows.
+					if (!(await this.#ctx.sessionManager.setSessionName(name, "user"))) {
+						fail("session name cannot be empty");
+						return;
+					}
+					announce(`renamed the session to "${this.#ctx.sessionManager.getSessionName() ?? name}"`);
 					return;
 				}
 				default:

@@ -474,7 +474,8 @@ function Session({
 		}
 	}, [subCount]);
 
-	const title = snap.header?.title ?? snap.state?.sessionName ?? "session";
+	// The live name first: the header carries the session file's title as of joining, so a rename would not show.
+	const title = snap.state?.sessionName ?? snap.header?.title ?? "session";
 	useEffect(() => {
 		document.title = `${title} · omp collab`;
 	}, [title]);
@@ -711,6 +712,8 @@ function Session({
 						<div className="sh-rail-backdrop" onClick={() => setRailOpen(false)} />
 						<aside className="sh-rail">
 							<AgentsPanel
+								key={sessionId}
+								sessionId={sessionId}
 								agents={snap.agents}
 								progress={snap.progress}
 								lifecycle={snap.lifecycle}

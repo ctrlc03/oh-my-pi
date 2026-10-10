@@ -363,14 +363,16 @@ export type GuestFrame =
 	/**
 	 * Run a host session control. `compact`: `arg` is optional custom
 	 * instructions. `model`: `arg` is `provider/id` of one of `welcome.models`.
-	 * `thinking`: `arg` is one of `state.thinkingLevels`. Write access required.
-	 * Hosts that predate the frame ignore it, so guests offer these controls
-	 * only when `welcome.models` is present.
+	 * `thinking`: `arg` is one of `state.thinkingLevels`. `rename`: `arg` is the
+	 * new session name, as the host's `/rename`; it reaches guests as
+	 * `state.sessionName`. Write access required. Hosts that predate the frame
+	 * ignore it, so guests offer these controls only when `welcome.models` is
+	 * present; hosts that predate a command answer it with an `error`.
 	 */
 	| { t: "session-cmd"; cmd: SessionCommand; arg?: string };
 
 /** Host session controls a writer may run through `session-cmd`. */
-export type SessionCommand = "compact" | "model" | "thinking";
+export type SessionCommand = "compact" | "model" | "thinking" | "rename";
 
 /** EventBus channels mirrored to guests (task subagent traffic only). */
 export type BusChannel = "task:subagent:progress" | "task:subagent:lifecycle";

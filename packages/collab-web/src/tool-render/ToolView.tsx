@@ -4,7 +4,7 @@
  */
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { resolveToolRenderer } from "./registry";
 import type { ToolRenderHost, ToolRenderProps, ToolResultLike } from "./types";
 import { isRecord, replaceTabs, stripAnsi } from "./util";
@@ -50,6 +50,25 @@ export function executeXdevDispatch(name: string, result: ToolResultLike | undef
 	return { tool: xdev.tool, args: isRecord(xdev.args) ? xdev.args : {}, inner: xdev.inner };
 }
 
+/** Lines of live output shown under a running tool. */
+const PARTIAL_LINES = 10;
+/** Character cap on those lines, for output without line breaks. */
+const PARTIAL_CHARS = 2048;
+
+/**
+ * The newest lines of a running tool's output. Hosts send the whole rolling
+ * buffer on every update, and progress meters (downloads, installs) arrive as a
+ * new line per redraw, so only the tail is worth rendering.
+ */
+function partialTail(text: string): string {
+	const end = text.trimEnd();
+	let start = end.length;
+	for (let i = 0; i < PARTIAL_LINES && start > 0; i++) start = end.lastIndexOf("\n", start - 1);
+	const tail = start < 0 ? end : end.slice(start + 1);
+	const clean = stripAnsi(replaceTabs(tail));
+	return clean.length > PARTIAL_CHARS ? `…${clean.slice(-PARTIAL_CHARS)}` : clean;
+}
+
 export function ToolView(props: ToolViewProps): ReactNode {
 	const [open, setOpen] = useState(props.defaultOpen ?? false);
 	const xdev = executeXdevDispatch(props.name, props.result);
@@ -70,7 +89,13 @@ export function ToolView(props: ToolViewProps): ReactNode {
 
 	const isError = props.result?.isError === true;
 	const status = props.running ? "run" : isError ? "err" : props.result ? "ok" : "pending";
-	const partial = props.running && !props.result && props.partial ? stripAnsi(replaceTabs(props.partial)) : "";
+	const partial = props.running && !props.result && props.partial ? partialTail(props.partial) : "";
+	const partialView = useRef<HTMLPreElement>(null);
+	// Keep the newest line in view as output streams; wrapped lines can still overflow the box.
+	useLayoutEffect(() => {
+		const view = partialView.current;
+		if (view) view.scrollTop = view.scrollHeight;
+	}, [partial]);
 
 	return (
 		<div className={`tv-card${isError ? " tv-card--error" : ""}`}>
@@ -98,7 +123,11 @@ export function ToolView(props: ToolViewProps): ReactNode {
 					{renderer.Body ? <renderer.Body {...renderProps} /> : null}
 				</div>
 			)}
-			{partial && <pre className="tv-partial">{partial.length > 2048 ? `…${partial.slice(-2048)}` : partial}</pre>}
+			{partial && (
+				<pre ref={partialView} className="tv-partial">
+					{partial}
+				</pre>
+			)}
 		</div>
 	);
 }

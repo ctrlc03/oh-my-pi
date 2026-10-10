@@ -26,6 +26,7 @@ interface SessionCalls {
 	models: Model[];
 	thinking: string[];
 	compactions: { instructions?: string }[];
+	renames: { name: string; source: string }[];
 	notices: string[];
 	noticeWaiters: ((message: string) => void)[];
 }
@@ -38,7 +39,15 @@ interface HostHarness {
 }
 
 function makeHost(): HostHarness {
-	const calls: SessionCalls = { models: [], thinking: [], compactions: [], notices: [], noticeWaiters: [] };
+	const calls: SessionCalls = {
+		models: [],
+		thinking: [],
+		compactions: [],
+		renames: [],
+		notices: [],
+		noticeWaiters: [],
+	};
+	let sessionName: string | undefined = "test";
 	const state = { isCompacting: false, selectors: ["off", "auto", "low", "high"], contextTokens: 10 };
 	const ctx = {
 		settings: Settings.isolated(),
@@ -51,6 +60,15 @@ function makeHost(): HostHarness {
 				entries: [],
 			}),
 			onEntryAppended: undefined,
+			getSessionName: () => sessionName,
+			// Mirrors SessionManager: a blank name is refused, anything else is stored trimmed.
+			setSessionName: (name: string, source: string) => {
+				const trimmed = name.trim();
+				if (!trimmed) return Promise.resolve(false);
+				calls.renames.push({ name: trimmed, source });
+				sessionName = trimmed;
+				return Promise.resolve(true);
+			},
 		},
 		session: {
 			isStreaming: false,
@@ -171,6 +189,7 @@ afterEach(() => {
 	harness.calls.models.length = 0;
 	harness.calls.thinking.length = 0;
 	harness.calls.compactions.length = 0;
+	harness.calls.renames.length = 0;
 	harness.calls.notices.length = 0;
 	harness.state.isCompacting = false;
 });
@@ -219,6 +238,7 @@ describe("collab guest session controls", () => {
 			["model", "acme/big"],
 			["thinking", "high"],
 			["compact", undefined],
+			["rename", "stolen"],
 		] as const) {
 			viewer.socket.send({ t: "session-cmd", cmd, arg });
 			expect(await expectError(viewer)).toContain("read-only");
@@ -227,6 +247,7 @@ describe("collab guest session controls", () => {
 		expect(calls.models).toHaveLength(0);
 		expect(calls.thinking).toHaveLength(0);
 		expect(calls.compactions).toHaveLength(0);
+		expect(calls.renames).toHaveLength(0);
 	});
 
 	it("rejects a model outside the picker's set", async () => {
@@ -279,5 +300,17 @@ describe("collab guest session controls", () => {
 		writer.socket.send({ t: "session-cmd", cmd: "compact" });
 		expect(await expectError(writer)).toContain("already in progress");
 		expect(harness.calls.compactions).toHaveLength(1);
+	});
+
+	it("renames the session as the user, like /rename, and refuses a blank name", async () => {
+		const writer = await joinWriter("writer-rename");
+		const notice = harness.nextNotice();
+		writer.socket.send({ t: "session-cmd", cmd: "rename", arg: "  Fix the relay  " });
+		expect(await notice).toBe('writer-rename renamed the session to "Fix the relay"');
+		expect(harness.calls.renames).toEqual([{ name: "Fix the relay", source: "user" }]);
+
+		writer.socket.send({ t: "session-cmd", cmd: "rename", arg: "   " });
+		expect(await expectError(writer)).toContain("cannot be empty");
+		expect(harness.calls.renames).toHaveLength(1);
 	});
 });

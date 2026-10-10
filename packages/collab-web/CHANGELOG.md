@@ -52,11 +52,13 @@
 - Resuming a session that is open in another omp on the computer (for example a Terminal omp that predates collab hosting) now warns first, naming where it runs, instead of starting a second copy that writes to the same session file; *Resume anyway* overrides. A session that already hosts opens that host
 - Made the host list and opening a session faster: the companion gathers a `hosts` reply's inputs concurrently (a cold first reply halves, about 600 ms to 300 ms), and opening or sharing a session asks omp's registry in-process instead of spawning `omp collab link` (about 315 ms to 1 ms)
 - Added model and thinking-level pills to the composer toolbar, each opening a picker above it (a bottom sheet on phones), so switching models no longer needs the session sheet
+- Added *GitHub* (⋯ → *GitHub*) through the companion: the session repository's open issues and pull requests, read with the computer's signed-in `gh`, filtered to open, mine, or (pull requests) review requested, with labels, checks, and review state. Opening one shows its description, every check, and the latest comments; *Send to agent* puts a prompt about it into the message box to edit and send
 
 ### Changed
 
 - Reworked the phone layout: a compact two-line header whose title opens a session sheet (connection, model, context, participants, theme, leave), an edge-to-edge transcript, 40–44px touch targets, and a full-screen agent drawer whose header wraps instead of truncating the agent name
-- Stopped the agents rail from opening on its own on narrow screens, where it covered the transcript. The header badge still counts subagents
+- Stopped the agents rail from opening on its own on narrow screens, where it covered the transcript
+- Folded parked and aborted subagents under *Inactive* in the agents rail, closed by default; the header badge and opening the rail on wide screens count only running and idle subagents
 - Wrapped code blocks, tool output, and diffs on phones instead of scrolling them sideways, and let wide Markdown tables scroll as one block
 - Made the return key insert a newline on touch keyboards; the send button submits
 - Restyled the client around a warm plum palette, in dark and light: a conversation panel with a lit edge and accent glow, a centred reading column with larger type, prompts as tinted bubbles on the right under the sender's name (the agent's prose runs without a label), a glass composer with the field above a toolbar and a round send button (one row on phones), pill quick replies, and solid pink lead buttons

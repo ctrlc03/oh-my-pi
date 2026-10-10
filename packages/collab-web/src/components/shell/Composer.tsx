@@ -1,7 +1,7 @@
 import type { CollabUiRequest, ImageContent, SessionCommand, WireModel } from "@oh-my-pi/pi-wire";
 import { ImagePlus, SendHorizontal, Square, X } from "lucide-react";
-import type { ClipboardEvent, KeyboardEvent, ReactNode, RefObject } from "react";
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ClipboardEvent, KeyboardEvent, ReactNode, Ref, RefObject } from "react";
+import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import type { ConnectionPhase, GuestClient } from "../../lib/client";
 import { MAX_ATTACHMENTS, toImageContent } from "../../lib/images";
 import { loadDraft, saveDraft } from "../../lib/rooms";
@@ -31,6 +31,12 @@ export interface ComposerProps {
 	/** Levels the current model accepts; absent on hosts without session controls. */
 	thinkingLevels: readonly string[] | undefined;
 	onSessionCommand(cmd: SessionCommand, arg?: string): void;
+	ref?: Ref<ComposerHandle>;
+}
+
+export interface ComposerHandle {
+	/** Add `prompt` to the draft (after a blank line when there is one) and focus it; nothing is sent. */
+	insert(prompt: string): void;
 }
 
 /** Textarea metrics: line-height 20px + 8px vertical padding × 2 (kept in sync with shell.css). */
@@ -153,6 +159,7 @@ export const Composer = memo(function Composer({
 	thinkingLevel,
 	thinkingLevels,
 	onSessionCommand,
+	ref,
 }: ComposerProps): ReactNode {
 	const [text, setText] = useState(() => (draftKey ? loadDraft(draftKey) : ""));
 	const [images, setImages] = useState<ImageContent[]>([]);
@@ -199,6 +206,17 @@ export const Composer = memo(function Composer({
 		pendingCaretRef.current = next.caret;
 		setText(next.text);
 	};
+	useImperativeHandle(
+		ref,
+		() => ({
+			insert(prompt: string): void {
+				const next = text.trim() ? `${text.trimEnd()}\n\n${prompt}` : prompt;
+				pendingCaretRef.current = next.length;
+				setText(next);
+			},
+		}),
+		[text],
+	);
 	const voiceInput = useVoiceInput(voice, insertVoice);
 	const showVoice = voice !== null && (canType || voiceInput.step !== "idle");
 

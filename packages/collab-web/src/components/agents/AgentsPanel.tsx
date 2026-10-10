@@ -4,6 +4,7 @@ import type {
 	SubagentLifecyclePayload,
 	SubagentProgressPayload,
 } from "@oh-my-pi/pi-wire";
+import { ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useEffect, useMemo, useState } from "react";
 import { fmtCost, fmtDuration, fmtTokens, relTime } from "../../lib/format";
@@ -47,6 +48,11 @@ function activityLine(
 	return agent.status;
 }
 
+/** Parked (released, resumable on demand) and aborted subagents: folded away under *Inactive*. */
+export function isInactive(agent: AgentSnapshot): boolean {
+	return agent.status === "parked" || agent.status === "aborted";
+}
+
 const AgentRow = memo(function AgentRow(props: {
 	agent: AgentSnapshot;
 	payload: SubagentProgressPayload | undefined;
@@ -88,50 +94,64 @@ export const AgentsPanel = memo(function AgentsPanel(props: {
 }): ReactNode {
 	const { agents, progress, lifecycle, selectedId, onSelect } = props;
 	const now = useNow(1000);
+	const [showInactive, setShowInactive] = useState(false);
 
 	const sorted = useMemo(() => {
 		const mains: AgentSnapshot[] = [];
-		const subs: AgentSnapshot[] = [];
-		for (const agent of agents) (agent.kind === "main" ? mains : subs).push(agent);
-		subs.sort((a, b) => {
+		const active: AgentSnapshot[] = [];
+		const inactive: AgentSnapshot[] = [];
+		for (const agent of agents) {
+			if (agent.kind === "main") mains.push(agent);
+			else if (isInactive(agent)) inactive.push(agent);
+			else active.push(agent);
+		}
+		const newest = (a: AgentSnapshot, b: AgentSnapshot): number => b.lastActivity - a.lastActivity;
+		active.sort((a, b) => {
 			const ar = a.status === "running" ? 0 : 1;
 			const br = b.status === "running" ? 0 : 1;
-			if (ar !== br) return ar - br;
-			return b.lastActivity - a.lastActivity;
+			return ar !== br ? ar - br : newest(a, b);
 		});
-		return { mains, subs };
+		inactive.sort(newest);
+		return { mains, active, inactive };
 	}, [agents]);
+
+	const row = (agent: AgentSnapshot): ReactNode => (
+		<AgentRow
+			key={agent.id}
+			agent={agent}
+			payload={progress.get(agent.id)}
+			lifecycle={lifecycle.get(agent.id)}
+			selected={selectedId === agent.id}
+			now={now}
+			onSelect={onSelect}
+		/>
+	);
+	// The selected agent stays visible even when its group is folded.
+	const inactiveShown = showInactive ? sorted.inactive : sorted.inactive.filter(agent => agent.id === selectedId);
 
 	return (
 		<div className="ag-panel">
 			<div className="ag-heading">Session</div>
-			{sorted.mains.map(agent => (
-				<AgentRow
-					key={agent.id}
-					agent={agent}
-					payload={progress.get(agent.id)}
-					lifecycle={lifecycle.get(agent.id)}
-					selected={selectedId === agent.id}
-					now={now}
-					onSelect={onSelect}
-				/>
-			))}
+			{sorted.mains.map(row)}
 			<div className="ag-heading">
 				Subagents
-				{sorted.subs.length > 0 && <span className="ag-heading-count">{sorted.subs.length}</span>}
+				{sorted.active.length > 0 && <span className="ag-heading-count">{sorted.active.length}</span>}
 			</div>
-			{sorted.subs.map(agent => (
-				<AgentRow
-					key={agent.id}
-					agent={agent}
-					payload={progress.get(agent.id)}
-					lifecycle={lifecycle.get(agent.id)}
-					selected={selectedId === agent.id}
-					now={now}
-					onSelect={onSelect}
-				/>
-			))}
-			{sorted.subs.length === 0 ? <div className="ag-empty">No subagents yet</div> : null}
+			{sorted.active.map(row)}
+			{sorted.active.length === 0 && <div className="ag-empty">None running</div>}
+			{sorted.inactive.length > 0 && (
+				<button
+					type="button"
+					className="ag-fold"
+					onClick={() => setShowInactive(open => !open)}
+					aria-expanded={showInactive}
+				>
+					<ChevronRight size={13} className={showInactive ? "ag-fold-chev ag-fold-chev--open" : "ag-fold-chev"} />
+					Inactive
+					<span className="ag-heading-count">{sorted.inactive.length}</span>
+				</button>
+			)}
+			{inactiveShown.map(row)}
 		</div>
 	);
 });

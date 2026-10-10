@@ -116,6 +116,34 @@
 	border-radius: var(--radius);
 }
 
+/* Parked and aborted subagents fold under one toggle, closed by default. */
+.ag-fold {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 6px;
+	padding: 8px 10px 6px;
+	color: var(--fg-faint);
+	font: 500 12px / 1.4 var(--font-ui);
+	background: none;
+	border: 0;
+	border-radius: var(--radius);
+	cursor: pointer;
+}
+
+.ag-fold:hover {
+	color: var(--fg-muted);
+	background: var(--hover);
+}
+
+.ag-fold-chev {
+	transition: transform 150ms ease-out;
+}
+
+.ag-fold-chev--open {
+	transform: rotate(90deg);
+}
+
 /* Terminal transcript-read failure reported by the host (drawer stops polling). */
 .ag-fetch-error {
 	padding: 10px;

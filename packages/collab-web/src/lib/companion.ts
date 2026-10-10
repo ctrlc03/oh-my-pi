@@ -49,6 +49,8 @@ const PREVIEW_TIMEOUT_MS = 45_000;
 const TRANSCRIBE_TIMEOUT_MS = 120_000;
 /** Setting up voice input downloads the speech model (hundreds of MB) and its runtime. */
 const TRANSCRIBE_SETUP_TIMEOUT_MS = 30 * 60_000;
+/** GitHub listings go through `gh` to the GitHub API (the companion allows it 20s). */
+const GITHUB_TIMEOUT_MS = 30_000;
 /** Pings sent per round-trip measurement; the median is reported. */
 const PING_SAMPLES = 3;
 
@@ -156,6 +158,63 @@ export interface GitReview {
 	pr: { number: number; url: string; state: string; title: string } | null;
 	/** The checkout is a linked git worktree. */
 	worktree: boolean;
+}
+
+export type GithubKind = "issue" | "pr";
+/** `open`: every open item. `mine`: issues assigned to me, pull requests I opened. `review`: pull requests waiting on my review. */
+export type GithubFilter = "open" | "mine" | "review";
+
+/** An issue or pull request of the session's GitHub repository, as listed. */
+export interface GithubItem {
+	kind: GithubKind;
+	number: number;
+	title: string;
+	/** `merged` only for pull requests. */
+	state: "open" | "closed" | "merged";
+	/** Pull requests only; false for issues. */
+	draft: boolean;
+	author: string;
+	labels: string[];
+	/** ms since epoch. */
+	updatedAt: number;
+	url: string;
+	/** Pull requests: the review decision; null for issues and when no review is required. */
+	review: "approved" | "changes" | "required" | null;
+	/** Pull requests: all checks combined; null for issues and when there are none. */
+	checks: GithubCheckState | null;
+}
+
+export type GithubCheckState = "pass" | "fail" | "pending";
+
+/** One check of a pull request's head commit: a check run (GitHub Actions, apps) or a commit status. */
+export interface GithubCheck {
+	/** `workflow / job` for Actions runs. */
+	name: string;
+	state: GithubCheckState;
+	/** Page with the check's details; empty when GitHub gives none. */
+	url: string;
+}
+
+export interface GithubComment {
+	author: string;
+	body: string;
+	/** ms since epoch. */
+	createdAt: number;
+}
+
+/** One item opened: its description, checks and latest comments, plus a pull request's branch and size. */
+export interface GithubItemDetail extends GithubItem {
+	body: string;
+	/** Pull requests: every check, failing first; empty for issues. */
+	checkList: GithubCheck[];
+	/** The latest comments, oldest first. */
+	comments: GithubComment[];
+	/** Comments left out before the first one shown. */
+	olderComments: number;
+	/** Pull requests: `head` merges into `base`; null for issues. */
+	branch: { head: string; base: string } | null;
+	/** Pull requests: lines and files changed; null for issues. */
+	size: { additions: number; deletions: number; files: number } | null;
 }
 
 /** A read-only file read inside a session's repository (or cwd outside a repository). */
@@ -546,7 +605,11 @@ export type CompanionRequest =
 	/** Text of a voice recording, transcribed on the computer (needs `transcribe`); `audio` is the base64 of the recording. */
 	| { t: "transcribe"; reqId: number; audio: string; mimeType: string }
 	/** Download the speech model and its runtime; answered once transcribing can run (needs `transcribe`). */
-	| { t: "transcribe-setup"; reqId: number };
+	| { t: "transcribe-setup"; reqId: number }
+	/** Issues or pull requests of the session's GitHub repository, read through `gh` (needs `canGithub`). */
+	| { t: "github"; reqId: number; instanceId: string; kind: GithubKind; filter: GithubFilter }
+	/** One issue or pull request with its description, comments and checks (needs `canGithub`). */
+	| { t: "github-item"; reqId: number; instanceId: string; kind: GithubKind; number: number };
 
 export type CompanionReply =
 	/**
@@ -568,6 +631,8 @@ export type CompanionReply =
 			canCodemap?: boolean;
 			/** The companion can screenshot local pages (it found Chrome or another Chromium browser). */
 			canPreview?: boolean;
+			/** The companion can list the session repository's issues and pull requests (`gh` signed in). */
+			canGithub?: boolean;
 			/** The companion can transcribe voice recordings, and with which model; absent when it cannot. */
 			transcribe?: TranscribeInfo;
 			/** Power of the computer; absent off macOS and from companions that predate it. */
@@ -604,7 +669,10 @@ export type CompanionReply =
 	| { t: "preview"; reqId: number; shot: PreviewShot }
 	| { t: "preview-targets"; reqId: number; targets: PreviewTarget[] }
 	| { t: "transcribe"; reqId: number; text: string }
-	| { t: "transcribe-setup"; reqId: number };
+	| { t: "transcribe-setup"; reqId: number }
+	/** `repo`: `owner/name` of the listed repository. */
+	| { t: "github"; reqId: number; repo: string; items: GithubItem[] }
+	| { t: "github-item"; reqId: number; item: GithubItemDetail };
 
 /** Credentials the companion issued to a paired device. */
 export interface DeviceCreds {
@@ -725,6 +793,8 @@ export interface CompanionSnapshot {
 	canCodemap: boolean;
 	/** The companion can screenshot local pages. */
 	canPreview: boolean;
+	/** The companion can list the session repository's issues and pull requests. */
+	canGithub: boolean;
 	/** Voice input on the computer; null when the companion cannot transcribe. */
 	transcribe: TranscribeInfo | null;
 	/** Power of the computer, while the companion reports it. */
@@ -777,6 +847,7 @@ export class CompanionClient {
 		canPr: false,
 		canCodemap: false,
 		canPreview: false,
+		canGithub: false,
 		transcribe: null,
 		power: null,
 		vapidKey: null,
@@ -972,6 +1043,21 @@ export class CompanionClient {
 		await this.#call({ t: "transcribe-setup" }, "transcribe-setup", TRANSCRIBE_SETUP_TIMEOUT_MS);
 	}
 
+	/** Issues or pull requests of the session's GitHub repository, most recently updated first. */
+	async requestGithub(
+		instanceId: string,
+		kind: GithubKind,
+		filter: GithubFilter,
+	): Promise<{ repo: string; items: GithubItem[] }> {
+		const { repo, items } = await this.#call({ t: "github", instanceId, kind, filter }, "github", GITHUB_TIMEOUT_MS);
+		return { repo, items };
+	}
+
+	/** One issue or pull request with its description, latest comments and checks. */
+	async requestGithubItem(instanceId: string, kind: GithubKind, number: number): Promise<GithubItemDetail> {
+		return (await this.#call({ t: "github-item", instanceId, kind, number }, "github-item", GITHUB_TIMEOUT_MS)).item;
+	}
+
 	/** Sessions that changed `path` in the session's repository, newest first; the scan is bounded to recent sessions. */
 	async requestFileSessions(instanceId: string, path: string): Promise<SessionOverview[]> {
 		return (await this.#call({ t: "file-sessions", instanceId, path }, "sessions", USAGE_TIMEOUT_MS)).sessions;
@@ -1130,6 +1216,7 @@ export class CompanionClient {
 				canPr: frame.canPr ?? false,
 				canCodemap: frame.canCodemap ?? false,
 				canPreview: frame.canPreview ?? false,
+				canGithub: frame.canGithub ?? false,
 				transcribe: frame.transcribe ?? null,
 				power: frame.power ?? null,
 				vapidKey: frame.vapidKey,

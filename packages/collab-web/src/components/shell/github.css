@@ -1,0 +1,358 @@
+/* ---- GitHub sheet (issues and pull requests of the session's repository) ---- */
+.sh-gh-pane {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 0;
+}
+
+.sh-gh-pane[hidden] {
+	display: none;
+}
+
+.sh-gh-repo {
+	display: block;
+	margin-top: 2px;
+	font: 400 12px / 1.5 var(--font-mono);
+	color: var(--fg-faint);
+	letter-spacing: 0;
+}
+
+.sh-gh-controls {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.sh-gh-filters {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.sh-gh-filter {
+	height: 26px;
+	padding: 0 10px;
+	font: 500 12px / 1 var(--font-ui);
+	color: var(--fg-muted);
+	background: transparent;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	cursor: pointer;
+	transition:
+		background 140ms ease-out,
+		color 140ms ease-out,
+		border-color 140ms ease-out;
+}
+
+.sh-gh-filter:hover {
+	color: var(--fg);
+	border-color: var(--border-strong);
+}
+
+.sh-gh-filter-on {
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft);
+	border-color: transparent;
+}
+
+.sh-gh-filter-on:hover {
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft-hover);
+	border-color: transparent;
+}
+
+/* ---- list ---- */
+.sh-gh-list {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	border-top: 1px solid var(--border);
+}
+
+.sh-gh-list > li {
+	border-bottom: 1px solid var(--border);
+}
+
+.sh-gh-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	width: 100%;
+	padding: 10px 6px;
+	color: var(--fg);
+	text-align: left;
+	background: none;
+	border: 0;
+	border-radius: var(--radius);
+	cursor: pointer;
+	transition: background 140ms ease-out;
+}
+
+.sh-gh-row:hover {
+	background: var(--hover);
+}
+
+.sh-gh-row:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: -2px;
+}
+
+.sh-gh-state {
+	flex: none;
+	margin-top: 2px;
+}
+
+.sh-gh-row-main {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+	flex: 1;
+}
+
+.sh-gh-row-title {
+	font-size: 14px;
+	font-weight: 500;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+
+.sh-gh-row-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 10px;
+	font: 400 11.5px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+.sh-gh-labels {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+.sh-gh-label {
+	padding: 1px 7px;
+	font: 500 11px / 1.4 var(--font-ui);
+	color: var(--fg-muted);
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: 999px;
+}
+
+/* ---- state tones ---- */
+.sh-gh-open {
+	color: var(--ok);
+}
+
+.sh-gh-done {
+	color: var(--accent-b);
+}
+
+.sh-gh-closed {
+	color: var(--err);
+}
+
+.sh-gh-draft {
+	color: var(--fg-faint);
+}
+
+.sh-gh-check-pass {
+	color: var(--ok);
+}
+
+.sh-gh-check-fail {
+	color: var(--err);
+}
+
+.sh-gh-check-pending {
+	color: var(--warn);
+}
+
+.sh-gh-checks-badge {
+	display: inline-flex;
+}
+
+.sh-gh-review {
+	font-family: var(--font-ui);
+}
+
+.sh-gh-review-approved {
+	color: var(--ok);
+}
+
+.sh-gh-review-changes {
+	color: var(--err);
+}
+
+.sh-gh-review-required {
+	color: var(--warn);
+}
+
+/* ---- detail ---- */
+/* Two classes: `.sh-btn` (shell.css) loads after this sheet's styles. */
+.sh-btn.sh-gh-back {
+	height: 30px;
+	padding: 0 10px 0 6px;
+	gap: 2px;
+	color: var(--fg-muted);
+	background: transparent;
+	border-color: transparent;
+}
+
+.sh-gh-detail-head {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.sh-gh-title {
+	margin: 0;
+	font-size: 17px;
+	font-weight: 600;
+	line-height: 1.35;
+	letter-spacing: -0.01em;
+	overflow-wrap: anywhere;
+}
+
+.sh-gh-number {
+	font-weight: 400;
+	color: var(--fg-faint);
+}
+
+.sh-gh-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 1px 8px;
+	font: 600 11.5px / 1.5 var(--font-ui);
+	border: 1px solid currentcolor;
+	border-radius: 999px;
+}
+
+.sh-gh-add {
+	color: var(--ok);
+}
+
+.sh-gh-del {
+	color: var(--err);
+}
+
+.sh-gh-branch {
+	font-size: 12px;
+	color: var(--fg-faint);
+	overflow-wrap: anywhere;
+}
+
+.sh-gh-branch code {
+	font: 400 12px / 1.4 var(--font-mono);
+	color: var(--fg-muted);
+}
+
+.sh-gh-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 2px;
+}
+
+.sh-gh-actions a.sh-btn {
+	text-decoration: none;
+}
+
+.sh-gh-body {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	min-width: 0;
+}
+
+.sh-gh-body section {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+}
+
+.sh-gh-checks {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-gh-check {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	font-size: 13px;
+}
+
+.sh-gh-check > svg {
+	flex: none;
+}
+
+.sh-gh-check > a,
+.sh-gh-check > span {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--fg-muted);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	text-decoration: none;
+}
+
+.sh-gh-check > a:hover {
+	color: var(--fg);
+	text-decoration: underline;
+}
+
+.sh-gh-post {
+	min-width: 0;
+	padding: 10px 12px;
+	font-size: 13.5px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	overflow-wrap: anywhere;
+}
+
+.sh-gh-post .tr-md img {
+	max-width: 100%;
+}
+
+.sh-gh-comments {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-gh-comments .sh-gh-row-meta {
+	margin-bottom: 4px;
+}
+
+.sh-gh-author {
+	font-weight: 600;
+	color: var(--fg-muted);
+}
+
+.sh-gh-older {
+	font-size: 12.5px;
+	color: var(--fg-faint);
+}
+
+.sh-gh-muted {
+	color: var(--fg-faint);
+}

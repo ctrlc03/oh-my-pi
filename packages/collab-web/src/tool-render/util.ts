@@ -2,7 +2,7 @@
  * Pure helpers shared by tool renderers. Host-agnostic; no DOM beyond
  * `globalThis` feature probes, no host package imports.
  */
-import type { ToolResultImage, ToolResultLike } from "./types";
+import type { ToolResultBlock, ToolResultImage, ToolResultLike } from "./types";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -171,6 +171,20 @@ export function resultImagesOf(result: ToolResultLike | undefined): ToolResultIm
 /** `result.details` when it is a plain object; renderers narrow field-by-field. */
 export function detailsRecord(result: ToolResultLike | undefined): Record<string, unknown> | null {
 	return result && isRecord(result.details) ? result.details : null;
+}
+
+/** Result with `details.images` (`{data, mimeType}[]`, how `generate_image` ships its output) appended as image blocks. */
+export function withDetailImages(result: ToolResultLike | undefined): ToolResultLike | undefined {
+	const details = detailsRecord(result);
+	if (!result || !details || !Array.isArray(details.images)) return result;
+	const extra: ToolResultBlock[] = [];
+	for (const img of details.images) {
+		if (isRecord(img) && typeof img.data === "string" && typeof img.mimeType === "string") {
+			extra.push({ type: "image", data: img.data, mimeType: img.mimeType });
+		}
+	}
+	if (extra.length === 0) return result;
+	return { content: [...result.content, ...extra], details: result.details, isError: result.isError };
 }
 
 /** Compact one-line JSON digest of arbitrary args (generic summary fallback). */

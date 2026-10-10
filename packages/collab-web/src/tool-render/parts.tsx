@@ -210,7 +210,8 @@ export function ResultText({
 	);
 }
 
-function openImage(img: ToolResultImage): void {
+/** Opens an image in a new browser tab at full size. */
+export function openImage(img: ToolResultImage): void {
 	try {
 		const bin = atob(img.data);
 		const bytes = new Uint8Array(bin.length);

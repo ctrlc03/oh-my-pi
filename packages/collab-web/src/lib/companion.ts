@@ -43,6 +43,8 @@ const GIT_REMOTE_TIMEOUT_MS = 120_000;
 const CODEMAP_TIMEOUT_MS = 180_000;
 /** Installing an omp update downloads and replaces the install: the companion allows it five minutes. */
 const UPDATE_TIMEOUT_MS = 330_000;
+/** A preview capture waits for the page (the companion allows its Chrome 20s) and for the queue of captures before it. */
+const PREVIEW_TIMEOUT_MS = 45_000;
 /** Pings sent per round-trip measurement; the median is reported. */
 const PING_SAMPLES = 3;
 
@@ -229,6 +231,34 @@ export interface PaneCapture {
 	rows: number;
 	/** When the screen was captured (Unix ms). */
 	at: number;
+}
+
+/** Screen sizes a preview renders at, in CSS pixels. */
+export type PreviewViewport = "phone" | "tablet" | "desktop";
+
+/** Device pixels per CSS pixel in a preview image. */
+export const PREVIEW_SCALE = 2;
+
+/** A screenshot of a local page taken on the paired computer. */
+export interface PreviewShot {
+	/** Base64 of the image bytes. */
+	data: string;
+	mimeType: string;
+	/** Image size in device pixels. */
+	width: number;
+	height: number;
+	/** The page that was captured. */
+	url: string;
+	/** When it was captured (Unix ms). */
+	at: number;
+}
+
+/** A dev server listening on the computer that runs from a session's repository. */
+export interface PreviewTarget {
+	url: string;
+	port: number;
+	/** Name of the listening process, e.g. `node` or `bun`. */
+	command: string;
 }
 
 /** A session in the inbox: waiting on an answer (`input`) or finished a turn recently (`done`). */
@@ -464,7 +494,11 @@ export type CompanionRequest =
 	/** Code map of the session's repository around `focus` (needs `canCodemap`); `flow` adds a walk for symbol foci. */
 	| { t: "codemap"; reqId: number; instanceId: string; focus: CodemapFocus; flow?: CodemapFlowDirection }
 	/** Files whose path matches `q`, then symbols matching its words. */
-	| { t: "codemap-search"; reqId: number; instanceId: string; q: string };
+	| { t: "codemap-search"; reqId: number; instanceId: string; q: string }
+	/** Screenshot `url` (a loopback http(s) page) in headless Chrome at `viewport`, the whole page when `fullPage` (needs `canPreview`). */
+	| { t: "preview"; reqId: number; instanceId: string; url: string; viewport: PreviewViewport; fullPage?: boolean }
+	/** Dev servers listening on the computer that run from the session's repository (needs `canPreview`). */
+	| { t: "preview-targets"; reqId: number; instanceId: string };
 
 export type CompanionReply =
 	/**
@@ -484,6 +518,8 @@ export type CompanionReply =
 			canPr?: boolean;
 			/** The companion can build code maps (its omp checkout loads the codemap index). */
 			canCodemap?: boolean;
+			/** The companion can screenshot local pages (it found Chrome or another Chromium browser). */
+			canPreview?: boolean;
 			/** Power of the computer; absent off macOS and from companions that predate it. */
 			power?: CompanionPower;
 	  }
@@ -513,7 +549,9 @@ export type CompanionReply =
 	| { t: "sessions"; reqId: number; sessions: SessionOverview[] }
 	| { t: "pane"; reqId: number; pane: PaneCapture }
 	| { t: "codemap"; reqId: number; view: CodemapView }
-	| { t: "codemap-search"; reqId: number; hits: CodemapNode[] };
+	| { t: "codemap-search"; reqId: number; hits: CodemapNode[] }
+	| { t: "preview"; reqId: number; shot: PreviewShot }
+	| { t: "preview-targets"; reqId: number; targets: PreviewTarget[] };
 
 /** Credentials the companion issued to a paired device. */
 export interface DeviceCreds {
@@ -632,6 +670,8 @@ export interface CompanionSnapshot {
 	canPr: boolean;
 	/** The companion can build code maps. */
 	canCodemap: boolean;
+	/** The companion can screenshot local pages. */
+	canPreview: boolean;
 	/** Power of the computer, while the companion reports it. */
 	power: CompanionPower | null;
 	/** Web Push application server key, once the companion has listed hosts. */
@@ -681,6 +721,7 @@ export class CompanionClient {
 		canSandbox: false,
 		canPr: false,
 		canCodemap: false,
+		canPreview: false,
 		power: null,
 		vapidKey: null,
 		error: null,
@@ -841,6 +882,22 @@ export class CompanionClient {
 		return (await this.#call({ t: "pane", instanceId }, "pane")).pane;
 	}
 
+	/** A screenshot of the loopback page `url` at `viewport` (the whole page when `fullPage`), taken on the computer. */
+	async requestPreview(
+		instanceId: string,
+		url: string,
+		viewport: PreviewViewport,
+		fullPage: boolean,
+	): Promise<PreviewShot> {
+		return (await this.#call({ t: "preview", instanceId, url, viewport, fullPage }, "preview", PREVIEW_TIMEOUT_MS))
+			.shot;
+	}
+
+	/** Dev servers listening on the computer that run from the session's repository, by port. */
+	async requestPreviewTargets(instanceId: string): Promise<PreviewTarget[]> {
+		return (await this.#call({ t: "preview-targets", instanceId }, "preview-targets")).targets;
+	}
+
 	/** Sessions that changed `path` in the session's repository, newest first; the scan is bounded to recent sessions. */
 	async requestFileSessions(instanceId: string, path: string): Promise<SessionOverview[]> {
 		return (await this.#call({ t: "file-sessions", instanceId, path }, "sessions", USAGE_TIMEOUT_MS)).sessions;
@@ -998,6 +1055,7 @@ export class CompanionClient {
 				canSandbox: frame.canSandbox ?? false,
 				canPr: frame.canPr ?? false,
 				canCodemap: frame.canCodemap ?? false,
+				canPreview: frame.canPreview ?? false,
 				power: frame.power ?? null,
 				vapidKey: frame.vapidKey,
 				error: null,

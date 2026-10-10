@@ -45,6 +45,10 @@ const CODEMAP_TIMEOUT_MS = 180_000;
 const UPDATE_TIMEOUT_MS = 330_000;
 /** A preview capture waits for the page (the companion allows its Chrome 20s) and for the queue of captures before it. */
 const PREVIEW_TIMEOUT_MS = 45_000;
+/** Transcribing loads the speech model on first use, then decodes the recording on the computer's CPU. */
+const TRANSCRIBE_TIMEOUT_MS = 120_000;
+/** Setting up voice input downloads the speech model (hundreds of MB) and its runtime. */
+const TRANSCRIBE_SETUP_TIMEOUT_MS = 30 * 60_000;
 /** Pings sent per round-trip measurement; the median is reported. */
 const PING_SAMPLES = 3;
 
@@ -259,6 +263,16 @@ export interface PreviewTarget {
 	port: number;
 	/** Name of the listening process, e.g. `node` or `bun`. */
 	command: string;
+}
+
+/** Voice input on the computer: the local speech model it transcribes with. */
+export interface TranscribeInfo {
+	/** Model name, e.g. "Parakeet TDT v3". */
+	model: string;
+	/** Approximate download size, e.g. "~680 MB". */
+	size: string;
+	/** The model is downloaded: recordings transcribe without a setup step. */
+	ready: boolean;
 }
 
 /** A session in the inbox: waiting on an answer (`input`) or finished a turn recently (`done`). */
@@ -498,7 +512,11 @@ export type CompanionRequest =
 	/** Screenshot `url` (a loopback http(s) page) in headless Chrome at `viewport`, the whole page when `fullPage` (needs `canPreview`). */
 	| { t: "preview"; reqId: number; instanceId: string; url: string; viewport: PreviewViewport; fullPage?: boolean }
 	/** Dev servers listening on the computer that run from the session's repository (needs `canPreview`). */
-	| { t: "preview-targets"; reqId: number; instanceId: string };
+	| { t: "preview-targets"; reqId: number; instanceId: string }
+	/** Text of a voice recording, transcribed on the computer (needs `transcribe`); `audio` is the base64 of the recording. */
+	| { t: "transcribe"; reqId: number; audio: string; mimeType: string }
+	/** Download the speech model and its runtime; answered once transcribing can run (needs `transcribe`). */
+	| { t: "transcribe-setup"; reqId: number };
 
 export type CompanionReply =
 	/**
@@ -520,6 +538,8 @@ export type CompanionReply =
 			canCodemap?: boolean;
 			/** The companion can screenshot local pages (it found Chrome or another Chromium browser). */
 			canPreview?: boolean;
+			/** The companion can transcribe voice recordings, and with which model; absent when it cannot. */
+			transcribe?: TranscribeInfo;
 			/** Power of the computer; absent off macOS and from companions that predate it. */
 			power?: CompanionPower;
 	  }
@@ -551,7 +571,9 @@ export type CompanionReply =
 	| { t: "codemap"; reqId: number; view: CodemapView }
 	| { t: "codemap-search"; reqId: number; hits: CodemapNode[] }
 	| { t: "preview"; reqId: number; shot: PreviewShot }
-	| { t: "preview-targets"; reqId: number; targets: PreviewTarget[] };
+	| { t: "preview-targets"; reqId: number; targets: PreviewTarget[] }
+	| { t: "transcribe"; reqId: number; text: string }
+	| { t: "transcribe-setup"; reqId: number };
 
 /** Credentials the companion issued to a paired device. */
 export interface DeviceCreds {
@@ -672,6 +694,8 @@ export interface CompanionSnapshot {
 	canCodemap: boolean;
 	/** The companion can screenshot local pages. */
 	canPreview: boolean;
+	/** Voice input on the computer; null when the companion cannot transcribe. */
+	transcribe: TranscribeInfo | null;
 	/** Power of the computer, while the companion reports it. */
 	power: CompanionPower | null;
 	/** Web Push application server key, once the companion has listed hosts. */
@@ -722,6 +746,7 @@ export class CompanionClient {
 		canPr: false,
 		canCodemap: false,
 		canPreview: false,
+		transcribe: null,
 		power: null,
 		vapidKey: null,
 		error: null,
@@ -898,6 +923,16 @@ export class CompanionClient {
 		return (await this.#call({ t: "preview-targets", instanceId }, "preview-targets")).targets;
 	}
 
+	/** Text of a voice recording (`audio`: base64 of the bytes, as recorded), transcribed on the computer. */
+	async requestTranscribe(audio: string, mimeType: string): Promise<string> {
+		return (await this.#call({ t: "transcribe", audio, mimeType }, "transcribe", TRANSCRIBE_TIMEOUT_MS)).text;
+	}
+
+	/** Download the speech model on the computer; resolves once voice input works. */
+	async requestTranscribeSetup(): Promise<void> {
+		await this.#call({ t: "transcribe-setup" }, "transcribe-setup", TRANSCRIBE_SETUP_TIMEOUT_MS);
+	}
+
 	/** Sessions that changed `path` in the session's repository, newest first; the scan is bounded to recent sessions. */
 	async requestFileSessions(instanceId: string, path: string): Promise<SessionOverview[]> {
 		return (await this.#call({ t: "file-sessions", instanceId, path }, "sessions", USAGE_TIMEOUT_MS)).sessions;
@@ -1056,6 +1091,7 @@ export class CompanionClient {
 				canPr: frame.canPr ?? false,
 				canCodemap: frame.canCodemap ?? false,
 				canPreview: frame.canPreview ?? false,
+				transcribe: frame.transcribe ?? null,
 				power: frame.power ?? null,
 				vapidKey: frame.vapidKey,
 				error: null,

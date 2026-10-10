@@ -11,7 +11,10 @@
 			"@oh-my-pi/omp-stats/rollup": ["./scripts/omp-stats.d.ts"],
 			"@oh-my-pi/omp-stats/trace": ["./scripts/omp-stats.d.ts"],
 			"@oh-my-pi/pi-coding-agent/codemap/index": ["./scripts/omp-codemap.d.ts"],
-			"@oh-my-pi/pi-coding-agent/collab/registry": ["./scripts/omp-registry.d.ts"]
+			"@oh-my-pi/pi-coding-agent/collab/registry": ["./scripts/omp-registry.d.ts"],
+			"@oh-my-pi/pi-coding-agent/stt/asr-client": ["./scripts/omp-stt.d.ts"],
+			"@oh-my-pi/pi-coding-agent/stt/downloader": ["./scripts/omp-stt.d.ts"],
+			"@oh-my-pi/pi-coding-agent/stt/models": ["./scripts/omp-stt.d.ts"]
 		}
 	}
 }

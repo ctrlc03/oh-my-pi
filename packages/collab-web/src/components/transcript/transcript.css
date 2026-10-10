@@ -84,11 +84,18 @@
 	color: var(--fg-muted);
 }
 
+/* Stretched to the row so long unbroken runs (progress bars in job output) wrap inside it. */
 .tr-custom {
 	display: flex;
 	flex-direction: column;
 	align-items: flex-start;
+	align-self: stretch;
+	min-width: 0;
 	gap: 4px;
+}
+
+.tr-custom > .tr-md {
+	align-self: stretch;
 }
 
 .tr-msg-img {

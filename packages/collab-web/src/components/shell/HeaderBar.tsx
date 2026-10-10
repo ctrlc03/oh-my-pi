@@ -98,7 +98,8 @@ export const HeaderBar = memo(function HeaderBar({
 	onSessionCommand,
 	push,
 }: HeaderBarProps): ReactNode {
-	const title = header?.title ?? state?.sessionName ?? "session";
+	// The live name first: `header.title` is the session file's title as of joining.
+	const title = state?.sessionName ?? header?.title ?? "session";
 	const [sheetOpen, setSheetOpen] = useState(false);
 	const closeSheet = useCallback(() => setSheetOpen(false), []);
 	const usage = state?.contextUsage;

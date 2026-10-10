@@ -115,7 +115,7 @@ https://web.example/collab/#relay.example.com/r/<roomId>.<key>   → web UI and 
 
 The trailing `.<key>` or `#<key>` part is the room secret, base64url-encoded, in one of two strengths:
 
-- **Full link** — 48 bytes: the 32-byte AES-256-GCM room key followed by a 16-byte write token. Grants prompting, interrupting, subagent control, and session controls (model, thinking level, compaction).
+- **Full link** — 48 bytes: the 32-byte AES-256-GCM room key followed by a 16-byte write token. Grants prompting, interrupting, subagent control, and session controls (model, thinking level, compaction, rename).
 - **View-only link** — the bare 32-byte key, no write token. Grants live read access only. Pre-token links parse as view-only.
 
 The room secret is dot-joined in newly generated links because RFC 3986 forbids a raw `#` inside a URL fragment; parsers still accept legacy `#` forms and `%23`-mangled legacy deep links.
@@ -141,7 +141,7 @@ Guests with a full link can:
 - interrupt the agent (Esc),
 - use [Agent Hub](./agent-hub.md) against the host's subagents: live table and progress, chat (steers the host's subagent), kill, revive, and transcript viewing (fetched from the host on demand).
 - answer host interactive `select` and `editor` requests. The host broadcasts each pending request only to writable guests; the first submitted or cancelled response settles it and dismisses the other presentations.
-- run session controls (`session-cmd`): switch the model for this session only (not saved as the default; refused while a turn runs or when the conversation exceeds the target model's context window), set the thinking level among those the current model accepts, and compact with optional instructions, as the host's `/compact` does. Writers receive the selectable models in `welcome.models`; hosts that predate the frame send no list, and guests hide the controls.
+- run session controls (`session-cmd`): switch the model for this session only (not saved as the default; refused while a turn runs or when the conversation exceeds the target model's context window), set the thinking level among those the current model accepts, compact with optional instructions, as the host's `/compact` does, and rename the session, as the host's `/rename` does (a user-set name the automatic titler keeps). Writers receive the selectable models in `welcome.models`; hosts that predate the frame send no list, and guests hide the controls.
 
 Guests with a view-only link can read everything live — back-transcript, streaming text, tool cards, subagent transcripts — but the host rejects prompting, interrupting, agent control, and session controls from them.
 
@@ -213,6 +213,6 @@ Hub topology — the host is authoritative, guests never peer:
 6. `agents` frames — agent-registry snapshots feeding a guest-local registry, so the Agent Hub table renders host subagents.
 7. `ui-request` / `ui-request-end` frames — host select/editor prompts presented to full-control guests and dismissed everywhere once settled. Guests answer with `ui-response`.
 
-Guest→host: `hello`, `prompt`, `abort`, `agent-cmd` (hub chat/kill/revive), `fetch-transcript` (incremental subagent-transcript reads answered by targeted `transcript` frames), `ui-response`, and `session-cmd` (model, thinking level, compaction). The replica loads through the regular `/resume` machinery, so theming, ctrl+o, and transcript behavior are native by construction; the guest process never chdirs to host paths.
+Guest→host: `hello`, `prompt`, `abort`, `agent-cmd` (hub chat/kill/revive), `fetch-transcript` (incremental subagent-transcript reads answered by targeted `transcript` frames), `ui-response`, and `session-cmd` (model, thinking level, compaction, rename). The replica loads through the regular `/resume` machinery, so theming, ctrl+o, and transcript behavior are native by construction; the guest process never chdirs to host paths.
 
 Transcript fetches are capped at 4 MiB per reply and end on complete JSONL lines. Guests continue from `newSize`; a single entry exceeding the cap produces a terminal transcript error instead of an endless empty-read retry.

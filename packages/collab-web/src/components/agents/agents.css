@@ -116,12 +116,19 @@
 	border-radius: var(--radius);
 }
 
-/* Parked and aborted subagents fold under one toggle, closed by default. */
+/* Parked and aborted subagents fold under one toggle, closed by default; *Clear* hides them on this device. */
+.ag-fold-row {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	margin-top: 6px;
+}
+
 .ag-fold {
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	margin-top: 6px;
+	margin-right: auto;
 	padding: 8px 10px 6px;
 	color: var(--fg-faint);
 	font: 500 12px / 1.4 var(--font-ui);
@@ -142,6 +149,31 @@
 
 .ag-fold-chev--open {
 	transform: rotate(90deg);
+}
+
+.ag-fold--static {
+	cursor: default;
+}
+
+.ag-fold--static:hover {
+	color: var(--fg-faint);
+	background: none;
+}
+
+.ag-fold-action {
+	padding: 4px 8px;
+	color: var(--fg-faint);
+	font: 500 11.5px / 1.4 var(--font-ui);
+	white-space: nowrap;
+	background: none;
+	border: 0;
+	border-radius: var(--radius);
+	cursor: pointer;
+}
+
+.ag-fold-action:hover {
+	color: var(--fg);
+	background: var(--hover);
 }
 
 /* Terminal transcript-read failure reported by the host (drawer stops polling). */

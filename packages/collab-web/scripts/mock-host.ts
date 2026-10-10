@@ -8,7 +8,7 @@
  * view link (read-only). Replays a scripted streaming turn on every guest
  * prompt, ticks subagent progress on the bus every 2s, answers
  * fetch-transcript with byte slices of the fixture JSONL, and handles
- * `session-cmd` (model / thinking switches, compact) — exactly the frames a
+ * `session-cmd` (model / thinking switches, compact, rename) — exactly the frames a
  * real `omp /collab` host emits.
  */
 
@@ -98,6 +98,7 @@ let replayQueue: ScriptedStep[] = [];
 let replayTimer: Timer | null = null;
 let tick = 0;
 let shuttingDown = false;
+let sessionName = fixtureHeader.title;
 
 // ── sealed transport (order-preserving, mirrors relay-client) ────────────────
 
@@ -127,7 +128,7 @@ function buildState(): SessionState {
 	return {
 		isStreaming: streaming,
 		queuedMessageCount: queuedPrompts,
-		sessionName: fixtureHeader.title,
+		sessionName,
 		cwd: fixtureHeader.cwd,
 		model: currentModel,
 		thinkingLevel,
@@ -299,6 +300,17 @@ function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer
 		case "compact":
 			notice("info", arg ? `${who} compacted the context (${arg})` : `${who} compacted the context`);
 			break;
+		case "rename": {
+			const name = arg?.trim();
+			if (!name) {
+				sendFrame({ t: "error", message: "rename: session name cannot be empty" }, fromPeer);
+				return;
+			}
+			sessionName = name;
+			notice("info", `${who} renamed the session to "${name}"`);
+			broadcastState();
+			break;
+		}
 	}
 }
 

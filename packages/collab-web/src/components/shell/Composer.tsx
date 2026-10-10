@@ -123,7 +123,7 @@ function AskEditor({ prefill, onSubmit }: AskEditorProps): ReactNode {
 					onClick={() => onSubmit(draft)}
 					title="submit response"
 				>
-					<SendHorizontal size={12} /> <span className="sh-btn-label">Submit</span>
+					<SendHorizontal size={16} /> <span className="sh-btn-label">Submit</span>
 				</button>
 			</div>
 		</div>
@@ -395,7 +395,7 @@ export const Composer = memo(function Composer({
 						disabled={!canSend}
 						title={live ? "send (Enter)" : "queue until reconnected (Enter)"}
 					>
-						<SendHorizontal size={12} /> <span className="sh-btn-label">Send</span>
+						<SendHorizontal size={16} /> <span className="sh-btn-label">Send</span>
 					</button>
 				</div>
 			</div>

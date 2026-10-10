@@ -21,8 +21,8 @@
 	inset: 0;
 	pointer-events: none;
 	background:
-		radial-gradient(60rem 28rem at 12% -10%, var(--ambient-a), transparent 70%),
-		radial-gradient(50rem 26rem at 95% -12%, var(--ambient-b), transparent 70%);
+		radial-gradient(64rem 30rem at 10% -12%, var(--ambient-a), transparent 70%),
+		radial-gradient(52rem 28rem at 96% -14%, var(--ambient-b), transparent 70%);
 }
 
 .sh-main {
@@ -34,7 +34,8 @@
 	overflow: hidden;
 }
 
-/* The inset panel: one surface step off the page, hairline edge. */
+/* The conversation panel: one surface step off the page, a lit top edge, and a
+ * faint accent glow at the head so the chassis reads as layered, not flat. */
 .sh-panel {
 	position: relative;
 	flex: 1;
@@ -43,24 +44,23 @@
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	background: var(--panel);
-	border: 1px solid var(--border);
+	border: 1px solid transparent;
 	border-radius: var(--radius-xl);
-	box-shadow: var(--shadow-card);
+	background:
+		radial-gradient(70% 40% at 50% -8%, var(--ambient-a), transparent 75%) padding-box,
+		linear-gradient(var(--panel), var(--panel)) padding-box,
+		linear-gradient(180deg, var(--edge-top), var(--border) 30%) border-box;
+	box-shadow: var(--shadow-float);
 	overflow: hidden;
 }
 
 .sh-transcript {
 	width: 100%;
-	max-width: 900px;
+	max-width: var(--chat-width);
 	flex: 1;
 	min-height: 0;
 	display: flex;
 	flex-direction: column;
-}
-
-.sh-panel[data-rail="true"] .sh-transcript {
-	max-width: 960px;
 }
 
 .sh-transcript > * {
@@ -152,8 +152,8 @@
 	align-items: center;
 	justify-content: center;
 	gap: 6px;
-	height: 30px;
-	padding: 0 12px;
+	height: 32px;
+	padding: 0 13px;
 	font-size: 13px;
 	font-weight: 500;
 	white-space: nowrap;
@@ -162,9 +162,10 @@
 	border: 1px solid var(--border-strong);
 	border-radius: var(--radius);
 	transition:
-		background 120ms ease-out,
-		color 120ms ease-out,
-		border-color 120ms ease-out,
+		background 140ms ease-out,
+		color 140ms ease-out,
+		border-color 140ms ease-out,
+		box-shadow 140ms ease-out,
 		transform 120ms ease-out;
 }
 
@@ -182,17 +183,22 @@
 	cursor: default;
 }
 
-/* Primary = inverse ink: the one lead action of a surface. */
+/* Primary = solid accent: the one lead action of a surface. */
 .sh-btn-primary {
-	color: var(--fg-inverse);
-	background: var(--fg);
+	color: var(--accent-fg);
+	background: var(--accent-strong);
 	border-color: transparent;
+	box-shadow: var(--shadow-accent);
 }
 
 .sh-btn-primary:hover:not(:disabled) {
-	color: var(--fg-inverse);
-	background: color-mix(in srgb, var(--fg) 86%, transparent);
+	color: var(--accent-fg);
+	background: var(--accent-strong-hover);
 	border-color: transparent;
+}
+
+.sh-btn-primary:disabled {
+	box-shadow: none;
 }
 
 .sh-btn-stop {
@@ -276,8 +282,8 @@
 	display: inline-flex;
 	align-items: center;
 	height: 22px;
-	padding: 0 8px;
-	font: 400 11.5px / 1 var(--font-mono);
+	padding: 0 9px;
+	font: 500 11.5px / 1 var(--font-ui);
 	color: var(--fg-muted);
 	background: var(--bg-raised);
 	border: 1px solid var(--border);
@@ -343,7 +349,8 @@
 
 .sh-title {
 	font-size: 14px;
-	font-weight: 500;
+	font-weight: 600;
+	letter-spacing: -0.005em;
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -506,40 +513,47 @@
 	background: var(--err);
 }
 
-/* ---- composer (docked card at the panel foot) ---- */
+/* ---- composer (glass card docked at the panel foot: field on top, toolbar below) ---- */
 .sh-composer {
 	width: 100%;
-	max-width: 900px;
+	max-width: var(--chat-width);
 	padding: 0 16px 16px;
 	padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
 }
 
 .sh-composer-inner {
-	display: flex;
-	align-items: flex-end;
-	gap: 8px;
-	padding: 8px 8px 8px 12px;
-	border-radius: var(--radius-lg);
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	grid-template-areas:
+		"input input input"
+		"attach . actions";
+	align-items: center;
+	gap: 6px 8px;
+	padding: 12px 10px 10px;
+	border-radius: var(--radius-xl);
 	border: 1px solid transparent;
 	background:
-		linear-gradient(var(--bg-raised), var(--bg-raised)) padding-box,
+		linear-gradient(var(--glass), var(--glass)) padding-box,
 		linear-gradient(180deg, var(--edge-top), var(--edge-bottom) 60%) border-box;
-	box-shadow: var(--shadow-card);
-	transition: box-shadow 160ms ease-out;
+	backdrop-filter: blur(18px) saturate(150%);
+	-webkit-backdrop-filter: blur(18px) saturate(150%);
+	box-shadow: var(--shadow-float);
+	transition: box-shadow 180ms ease-out;
 }
 
 .sh-composer-inner:focus-within {
 	box-shadow:
 		0 0 0 3px var(--ring-soft),
-		var(--shadow-card);
+		var(--shadow-float);
 }
 
 .sh-composer-input {
-	flex: 1;
+	grid-area: input;
 	min-width: 0;
-	padding: 5px 0;
-	font-size: 14px;
-	line-height: 20px;
+	min-height: 44px;
+	padding: 2px 6px;
+	font-size: 15px;
+	line-height: 22px;
 	color: var(--fg);
 	background: transparent;
 	border: 0;
@@ -559,16 +573,32 @@
 }
 
 .sh-composer-actions {
+	grid-area: actions;
 	display: flex;
 	align-items: center;
 	gap: 6px;
 	flex: none;
 }
 
+/* Round icon actions in the toolbar; the send button is the one solid accent. */
+.sh-composer-actions .sh-btn {
+	height: 36px;
+	border-radius: 999px;
+}
+
+.sh-composer-actions .sh-btn-icon,
+.sh-composer-actions .sh-btn-primary {
+	width: 36px;
+	padding: 0;
+}
+
+.sh-composer-actions .sh-btn-primary .sh-btn-label {
+	display: none;
+}
+
 .sh-attach {
-	flex: none;
-	align-self: flex-end;
-	margin-left: -4px;
+	grid-area: attach;
+	border-radius: 999px;
 }
 
 /* ---- voice input (status line above the composer, mic button in its actions) ---- */
@@ -652,22 +682,25 @@
 	align-items: center;
 	gap: 4px;
 	max-width: 70vw;
-	height: 30px;
-	padding: 0 12px;
+	height: 32px;
+	padding: 0 14px;
 	font-size: 13px;
+	font-weight: 500;
 	color: var(--fg-muted);
-	background: var(--bg-raised);
+	background: var(--glass);
 	border: 1px solid var(--border);
 	border-radius: 999px;
 	transition:
-		background 120ms ease-out,
-		color 120ms ease-out;
+		background 140ms ease-out,
+		color 140ms ease-out,
+		border-color 140ms ease-out;
 }
 
 .sh-quick-chip:hover:not(:disabled),
 .sh-quick-chip:active:not(:disabled) {
-	color: var(--fg);
-	background: var(--hover);
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft);
+	border-color: transparent;
 }
 
 .sh-quick-chip:disabled {
@@ -2110,6 +2143,18 @@
 		padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
 		padding-left: max(8px, env(safe-area-inset-left, 0px));
 		padding-right: max(8px, env(safe-area-inset-right, 0px));
+	}
+	/* One row on a phone: the toolbar row would cost a line of transcript. */
+	.sh-composer-inner {
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		grid-template-areas: "attach input actions";
+		align-items: end;
+		padding: 6px;
+		border-radius: var(--radius-xl);
+	}
+	.sh-composer-input {
+		min-height: 0;
+		padding: 9px 4px;
 	}
 	.sh-composer-actions .sh-btn {
 		width: 40px;

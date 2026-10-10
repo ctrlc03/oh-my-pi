@@ -1,35 +1,43 @@
-/* Design tokens — pure-black chassis, one inset panel, alpha hairlines, and
- * one omp accent gradient (cyan → pink). Dark is the default;
- * `[data-theme="light"]` and the prefers-color-scheme fallback flip to light.
+/* Design tokens — warm plum chassis, one raised conversation panel, hairlines
+ * tinted to the palette, and one pink accent with an orchid partner for
+ * gradients. Dark is the default; `[data-theme="light"]` and the
+ * prefers-color-scheme fallback flip to a warm light.
  * The ONLY file allowed to contain raw color values. */
 :root {
 	color-scheme: dark;
 
-	/* surface ramp: page → inset panel → card → raised */
-	--bg: #000;
-	--panel: #09090a;
-	--bg-raised: #0e0e10;
-	--bg-inset: #060607;
-	--bg-overlay: #17171a;
-	--glass: rgba(14, 14, 16, 0.78);
-	--hover: rgba(255, 255, 255, 0.035);
-	--selected: rgba(255, 255, 255, 0.075);
+	/* surface ramp: page → panel → raised card; inset for code, overlay for sheets */
+	--bg: #140e15;
+	--panel: #1b141d;
+	--bg-raised: #251c28;
+	--bg-inset: #150f17;
+	--bg-overlay: #221a25;
+	--glass: rgba(36, 27, 39, 0.72);
+	--hover: rgba(255, 226, 246, 0.05);
+	--selected: rgba(255, 226, 246, 0.09);
 
 	/* text */
-	--fg: #ededef;
-	--fg-muted: #a0a0a8;
-	--fg-faint: #6c6c74;
-	--fg-inverse: #0a0a0b;
+	--fg: #f7eff6;
+	--fg-muted: #c0aec0;
+	--fg-faint: #8a7a8d;
+	--fg-inverse: #170f16;
 
-	/* accent: omp cyan → pink; solid pink for text and strokes */
-	--accent-a: #5ad8e6;
-	--accent-b: #ed4abf;
-	--accent: #f068c8;
+	/* accent: one pink; orchid only as its gradient partner */
+	--accent-a: #ff8acb;
+	--accent-b: #c058e0;
+	--accent: #f472c0;
 	--accent-fg: #fff;
-	--accent-muted: rgba(237, 74, 191, 0.14);
+	--accent-muted: rgba(244, 114, 192, 0.14);
 	--accent-gradient: linear-gradient(100deg, var(--accent-a), var(--accent-b));
-	--ambient-a: rgba(90, 216, 230, 0.07);
-	--ambient-b: rgba(237, 74, 191, 0.06);
+	/* tinted action: pink-washed fill with a light pink label */
+	--accent-soft: rgba(219, 39, 119, 0.2);
+	--accent-soft-hover: rgba(219, 39, 119, 0.3);
+	--accent-soft-fg: #fbd0e8;
+	/* solid lead action (send, connect) */
+	--accent-strong: #a8245f;
+	--accent-strong-hover: #bc2b6c;
+	--ambient-a: rgba(219, 39, 119, 0.1);
+	--ambient-b: rgba(139, 70, 230, 0.06);
 
 	/* omp mark gradient stops (magenta → iris → cyan) */
 	--mark-a: oklch(0.7 0.24 340);
@@ -40,15 +48,15 @@
 	--ok: #3ecf8e;
 	--live: #3ecf8e;
 	--warn: #f5a524;
-	--err: #ff6166;
+	--err: #ff6b78;
 
 	/* hairlines: alpha so one value reads on every surface step */
-	--border: rgba(255, 255, 255, 0.07);
-	--border-strong: rgba(255, 255, 255, 0.13);
-	--edge-top: rgba(255, 255, 255, 0.14);
-	--edge-bottom: rgba(255, 255, 255, 0.05);
-	--ring: #5ad8e6;
-	--ring-soft: rgba(90, 216, 230, 0.18);
+	--border: rgba(255, 222, 244, 0.075);
+	--border-strong: rgba(255, 222, 244, 0.14);
+	--edge-top: rgba(255, 230, 247, 0.15);
+	--edge-bottom: rgba(255, 230, 247, 0.04);
+	--ring: #f472c0;
+	--ring-soft: rgba(244, 114, 192, 0.2);
 
 	/* code map: one hue per source language */
 	--lang-rust: #f0883e;
@@ -92,61 +100,74 @@
 	--font-ui: "Inter var", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 	--font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 
-	/* radii by role: chip · control · card · panel */
-	--radius-sm: 6px;
-	--radius: 8px;
-	--radius-lg: 12px;
-	--radius-xl: 16px;
+	/* radii by role: chip · control · card · panel/composer */
+	--radius-sm: 7px;
+	--radius: 10px;
+	--radius-lg: 14px;
+	--radius-xl: 20px;
+
+	/* conversation column: transcript and composer share it */
+	--chat-width: 820px;
 
 	--topbar-h: 52px;
 	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
-	--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5);
-	--shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.7), 0 1px 0 rgba(255, 255, 255, 0.06) inset;
-	--rail-mobile-shadow: -12px 0 32px rgba(0, 0, 0, 0.6);
-	--backdrop: rgba(0, 0, 0, 0.55);
+	--shadow-card: 0 1px 2px rgba(10, 3, 10, 0.5);
+	--shadow-float: 0 1px 0 rgba(255, 236, 249, 0.06) inset, 0 10px 30px rgba(10, 3, 10, 0.45), 0 2px 6px rgba(10, 3, 10, 0.3);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(219, 39, 119, 0.3);
+	--shadow-overlay: 0 32px 80px rgba(10, 3, 10, 0.65), 0 1px 0 rgba(255, 236, 249, 0.07) inset;
+	--rail-mobile-shadow: -12px 0 32px rgba(10, 3, 10, 0.6);
+	--backdrop: rgba(12, 5, 12, 0.55);
 
 	/* QR codes: dark modules on a light square in every theme, or scanners fail */
 	--qr-paper: #fff;
 	--qr-ink: #000;
+
+	/* scroll-edge fade: masks read alpha only, so the stop color is irrelevant */
+	--fade-bottom: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
 }
 
 /* Light theme — explicit override (toggle writes data-theme="light"). */
 [data-theme="light"] {
 	color-scheme: light;
 
-	--bg: #f2f2f3;
-	--panel: #fff;
+	--bg: #f4eaf1;
+	--panel: #fdf9fc;
 	--bg-raised: #fff;
-	--bg-inset: #f6f6f7;
+	--bg-inset: #f7eff5;
 	--bg-overlay: #fff;
-	--glass: rgba(255, 255, 255, 0.82);
-	--hover: rgba(0, 0, 0, 0.03);
-	--selected: rgba(0, 0, 0, 0.06);
+	--glass: rgba(255, 250, 253, 0.8);
+	--hover: rgba(90, 20, 70, 0.04);
+	--selected: rgba(90, 20, 70, 0.075);
 
-	--fg: #151518;
-	--fg-muted: #5a5a63;
-	--fg-faint: #8b8b94;
+	--fg: #2a1825;
+	--fg-muted: #6c5468;
+	--fg-faint: #9b8597;
 	--fg-inverse: #fff;
 
-	--accent-a: #1fa9bb;
-	--accent-b: #d42ea3;
-	--accent: #c42596;
-	--accent-muted: rgba(212, 46, 163, 0.1);
-	--ambient-a: rgba(31, 169, 187, 0.06);
-	--ambient-b: rgba(212, 46, 163, 0.05);
+	--accent-a: #e2479d;
+	--accent-b: #9a3fd0;
+	--accent: #b8247a;
+	--accent-muted: rgba(184, 36, 122, 0.1);
+	--accent-soft: rgba(219, 39, 119, 0.1);
+	--accent-soft-hover: rgba(219, 39, 119, 0.16);
+	--accent-soft-fg: #93195c;
+	--accent-strong: #b0266a;
+	--accent-strong-hover: #9c1f5d;
+	--ambient-a: rgba(219, 39, 119, 0.08);
+	--ambient-b: rgba(139, 70, 230, 0.05);
 
 	--ok: #12a36b;
 	--live: #12a36b;
 	--warn: #c77c02;
 	--err: #dc3a40;
 
-	--border: rgba(0, 0, 0, 0.08);
-	--border-strong: rgba(0, 0, 0, 0.14);
-	--edge-top: rgba(0, 0, 0, 0.1);
-	--edge-bottom: rgba(0, 0, 0, 0.06);
-	--ring: #1fa9bb;
-	--ring-soft: rgba(31, 169, 187, 0.16);
+	--border: rgba(90, 20, 70, 0.09);
+	--border-strong: rgba(90, 20, 70, 0.16);
+	--edge-top: rgba(90, 20, 70, 0.11);
+	--edge-bottom: rgba(90, 20, 70, 0.06);
+	--ring: #c42d85;
+	--ring-soft: rgba(196, 45, 133, 0.16);
 
 	/* code map: one hue per source language */
 	--lang-rust: #c25a0c;
@@ -186,10 +207,12 @@
 	--term-14: #1fa9bb;
 	--term-15: #151518;
 
-	--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
-	--shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.16);
-	--rail-mobile-shadow: -12px 0 32px rgba(0, 0, 0, 0.12);
-	--backdrop: rgba(0, 0, 0, 0.25);
+	--shadow-card: 0 1px 2px rgba(90, 20, 70, 0.06);
+	--shadow-float: 0 10px 30px rgba(90, 20, 70, 0.1), 0 2px 6px rgba(90, 20, 70, 0.06);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(176, 38, 106, 0.25);
+	--shadow-overlay: 0 24px 64px rgba(90, 20, 70, 0.16);
+	--rail-mobile-shadow: -12px 0 32px rgba(90, 20, 70, 0.12);
+	--backdrop: rgba(40, 10, 30, 0.25);
 }
 
 /* Light theme — system fallback when no explicit preference is stored. */
@@ -197,38 +220,43 @@
 	:root:not([data-theme]) {
 		color-scheme: light;
 
-		--bg: #f2f2f3;
-		--panel: #fff;
+		--bg: #f4eaf1;
+		--panel: #fdf9fc;
 		--bg-raised: #fff;
-		--bg-inset: #f6f6f7;
+		--bg-inset: #f7eff5;
 		--bg-overlay: #fff;
-		--glass: rgba(255, 255, 255, 0.82);
-		--hover: rgba(0, 0, 0, 0.03);
-		--selected: rgba(0, 0, 0, 0.06);
+		--glass: rgba(255, 250, 253, 0.8);
+		--hover: rgba(90, 20, 70, 0.04);
+		--selected: rgba(90, 20, 70, 0.075);
 
-		--fg: #151518;
-		--fg-muted: #5a5a63;
-		--fg-faint: #8b8b94;
+		--fg: #2a1825;
+		--fg-muted: #6c5468;
+		--fg-faint: #9b8597;
 		--fg-inverse: #fff;
 
-		--accent-a: #1fa9bb;
-		--accent-b: #d42ea3;
-		--accent: #c42596;
-		--accent-muted: rgba(212, 46, 163, 0.1);
-		--ambient-a: rgba(31, 169, 187, 0.06);
-		--ambient-b: rgba(212, 46, 163, 0.05);
+		--accent-a: #e2479d;
+		--accent-b: #9a3fd0;
+		--accent: #b8247a;
+		--accent-muted: rgba(184, 36, 122, 0.1);
+		--accent-soft: rgba(219, 39, 119, 0.1);
+		--accent-soft-hover: rgba(219, 39, 119, 0.16);
+		--accent-soft-fg: #93195c;
+		--accent-strong: #b0266a;
+		--accent-strong-hover: #9c1f5d;
+		--ambient-a: rgba(219, 39, 119, 0.08);
+		--ambient-b: rgba(139, 70, 230, 0.05);
 
 		--ok: #12a36b;
 		--live: #12a36b;
 		--warn: #c77c02;
 		--err: #dc3a40;
 
-		--border: rgba(0, 0, 0, 0.08);
-		--border-strong: rgba(0, 0, 0, 0.14);
-		--edge-top: rgba(0, 0, 0, 0.1);
-		--edge-bottom: rgba(0, 0, 0, 0.06);
-		--ring: #1fa9bb;
-		--ring-soft: rgba(31, 169, 187, 0.16);
+		--border: rgba(90, 20, 70, 0.09);
+		--border-strong: rgba(90, 20, 70, 0.16);
+		--edge-top: rgba(90, 20, 70, 0.11);
+		--edge-bottom: rgba(90, 20, 70, 0.06);
+		--ring: #c42d85;
+		--ring-soft: rgba(196, 45, 133, 0.16);
 
 		/* code map: one hue per source language */
 		--lang-rust: #c25a0c;
@@ -268,9 +296,11 @@
 		--term-14: #1fa9bb;
 		--term-15: #151518;
 
-		--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
-		--shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.16);
-		--rail-mobile-shadow: -12px 0 32px rgba(0, 0, 0, 0.12);
-		--backdrop: rgba(0, 0, 0, 0.25);
+		--shadow-card: 0 1px 2px rgba(90, 20, 70, 0.06);
+		--shadow-float: 0 10px 30px rgba(90, 20, 70, 0.1), 0 2px 6px rgba(90, 20, 70, 0.06);
+		--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(176, 38, 106, 0.25);
+		--shadow-overlay: 0 24px 64px rgba(90, 20, 70, 0.16);
+		--rail-mobile-shadow: -12px 0 32px rgba(90, 20, 70, 0.12);
+		--backdrop: rgba(40, 10, 30, 0.25);
 	}
 }

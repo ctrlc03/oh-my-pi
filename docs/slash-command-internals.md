@@ -247,6 +247,25 @@ The parser is simple quote-aware splitting:
 
 Argument substitution is one pass over the template; dollar placeholders inside argument values are not substituted again. Missing positional values, zero start/length slices, and out-of-range slice starts render as empty strings.
 
+### Shell output in commands
+
+`expandSlashCommand(text, fileCommands, shell?)` and `expandPromptTemplate(text, templates, shell?)` accept a `CommandShellExpansion` (`config/command-shell.ts`). Without one, ``!`cmd` `` stays literal text. With one, a markdown command or prompt template can embed ``!`cmd` `` (OpenCode's syntax; the inline form is the only one OpenCode defines) and the snippet is replaced by the command's output:
+
+```markdown
+Current diff: !`git diff --stat`
+Tests for $1: !`bun test $1`
+```
+
+The session creates one expansion per prompt (`AgentSession.createCommandShell()`), passes it through slash-command and template expansion, and then runs it (`resolveCommandShell`). Steered and follow-up prompts that name a template go through the same path, as do file commands and templates a collab guest invokes.
+
+- Capture happens before argument substitution and Handlebars rendering. Each snippet becomes an opaque placeholder, so `{{…}}`, `$1` or a snippet inside an argument or inside a command's output are never re-scanned: output is spliced in last, verbatim.
+- Arguments never become shell source. Each argument travels in the command's environment (`OMP_COMMAND_ARG_1`, `OMP_COMMAND_ARG_2`, …) and `$1`, `$@[2]`, `$ARGUMENTS`, `$@` are rewritten to references to those variables, so no quoting context (`$(…)`, a heredoc, backticks, the author's own quotes) can turn an argument into code. Written bare, a reference is `"$OMP_COMMAND_ARG_1"` (`$ARGUMENTS` becomes one reference per argument); inside the author's own `"…"` it is `$OMP_COMMAND_ARG_1`, inside `'…'` it is `'"$OMP_COMMAND_ARG_1"'`, and a `$( … )` starts a fresh bare context. A heredoc body is not tracked, so a bare `$1` there keeps its double quotes in the text. So `!`grep -rn $1 src`` and `!`grep -rn "$1" src`` both receive exactly the argument the user typed. Mustache placeholders are not substituted inside a snippet.
+- Commands run through the bash executor (`exec/bash-executor.ts`, so the `bash` tool's sandbox, if enabled, applies) in the session working directory, each with a `commands.shellTimeoutMs` deadline (default 10000). Output keeps its content with trailing whitespace trimmed and is cut at 20,000 characters (`… (output truncated)`).
+- A failing command contributes its error text in place of its output: ``Error running `cmd`: exited with code N`` (followed by whatever it printed), `timed out after Nms`, or the reason it could not start. The prompt is still sent.
+- `commands.shellExpansion` gates by origin: `off` runs nothing, `user` (default) runs snippets only from the user's own command directories (`~/.omp/commands`, `~/.claude/commands`, `~/.config/opencode/commands`, …) and bundled commands, `all` also runs commands a repository or an installed package supplies. A command counts as the user's own only when its `FileSlashCommand._source.level` is not `project` and its provider is not `claude-plugins` or `omp-plugins`, so marketplace and extension-package commands are gated like project ones; prompt templates count by directory (`(user…)` vs `(project…)`). A project layer cannot set the setting itself. Snippets that may not run stay in the prompt as written.
+- A `notice` event (source `command-shell`) lists the commands that ran (`info`) and the commands whose snippets were held back by the gate (`warning`).
+- A collab guest invoking a command is subject to the same gate and runs the snippet on the host with the guest's arguments passed through the environment as above.
+
 ## 7) Unknown `/...` behavior
 
 Unknown slash input is **not rejected** by core slash logic.
@@ -459,3 +478,7 @@ Without an interactive UI, `code-review` delegates to `/review` instead of openi
 ## 13) Built-in command note: `/plan-review`
 
 `/plan-review` reopens the Plan Review overlay for the latest plan (plan mode only). In the Contents sidebar `a` annotates the selected section; in the plan body `a` annotates the top visible line. `e` edits the annotation(s) at that section or line (with a chooser when several apply) and `u` undoes the latest section deletion or annotation change. The note editor behaves like `/annotate`'s: Enter saves, Shift+Enter inserts a newline, Escape discards the draft, the external-editor key replaces the draft without saving, and saving an empty edit deletes the annotation.
+
+## 14) Built-in command note: `/sandbox`
+
+`/sandbox` shows the shell sandbox's policy, backend and escalation status; `/sandbox off|read-only|workspace-write` and `/sandbox network on|off` set `sandbox.mode` / `sandbox.network` as runtime overrides for the session (never written to settings files). Parsing and formatting live in `src/sandbox/command.ts`; the spec is `src/slash-commands/builtin-sandbox.ts`. The system-prompt `<sandbox>` section follows through `cfgSystemPromptInputs`. It is host-only: collab guests cannot run it. See [Shell sandbox](./sandbox.md).

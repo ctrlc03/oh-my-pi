@@ -9,6 +9,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { MODEL_SELECTOR_RE } from "../src/lib/fanout";
 import { prepareSandbox, SANDBOX_EXEC, type SandboxLaunch } from "./companion-sandbox";
 import { SAFE_ID_RE } from "./companion-sessions";
 
@@ -57,6 +58,8 @@ export interface TmuxLaunch {
 	prompt?: string;
 	/** Stop the session at a safe point once it has spent this many USD (`omp --max-cost`). */
 	maxCostUsd?: number;
+	/** Run on this model (`omp --model provider/id`); validated like a fan-out model selector. */
+	model?: string;
 }
 
 /**
@@ -64,6 +67,7 @@ export interface TmuxLaunch {
  * the tmux session name and the realpath of the directory it runs in.
  */
 export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; cwd: string }> {
+	if (launch.model !== undefined && !MODEL_SELECTOR_RE.test(launch.model)) throw new Error("invalid model");
 	if (!path.isAbsolute(launch.cwd) || launch.cwd.includes("\0")) throw new Error("cwd must be an absolute path");
 	if (launch.resume !== undefined && !SAFE_ID_RE.test(launch.resume)) throw new Error("invalid session id");
 	let cwd: string;
@@ -95,6 +99,7 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 		...(sandbox?.ompArgs ?? []),
 		...(launch.resume ? ["-r", launch.resume] : []),
 		...(launch.maxCostUsd !== undefined ? ["--max-cost", String(launch.maxCostUsd)] : []),
+		...(launch.model !== undefined ? ["--model", launch.model] : []),
 	];
 	let promptFile: string | null = null;
 	// tmux format-expands `-c` (`#(cmd)` would run in the tmux server, outside any sandbox), so the folder is never a

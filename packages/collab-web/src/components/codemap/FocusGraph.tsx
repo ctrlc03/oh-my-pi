@@ -1,8 +1,9 @@
 import { FileText } from "lucide-react";
 import type { ReactNode } from "react";
 import { useLayoutEffect, useRef, useState } from "react";
+import { focusToSkeleton } from "../../lib/codemap-scene";
 import type { CodemapLink, CodemapNode, CodemapView } from "../../lib/companion";
-import { nodeCounts, NodeIcon, NodeRow, nodeSub, PHONE_QUERY, strokeWidth, useMedia } from "./shared";
+import { nodeCounts, NodeIcon, NodeRow, nodeSub, OpenInCanvas, PHONE_QUERY, strokeWidth, useMedia } from "./shared";
 
 export interface FocusGraphProps {
 	view: CodemapView;
@@ -117,6 +118,11 @@ export function FocusGraph({ view, onFocus, onOpenFile }: FocusGraphProps): Reac
 							<FileText size={14} /> {symbol ? "View source" : "View file"}
 						</button>
 					)}
+					<OpenInCanvas
+						title={`Code map: ${view.focus.label}`}
+						build={palette => focusToSkeleton(view, palette)}
+						className="sh-btn sh-cm-card-action"
+					/>
 				</section>
 				<LinkColumn
 					side="down"

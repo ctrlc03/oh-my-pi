@@ -74,6 +74,8 @@ export interface JudgeDeps {
 	sessionModel?: Model;
 	sessionId?: string;
 	metadataResolver?: (provider: string) => Record<string, unknown> | undefined;
+	/** Model role whose candidates answer; defaults to `judge`. */
+	role?: string;
 	/** Why the judgment runs (`find`, `ttsr`, `judge_batch`, …); labels ledger entries and telemetry spans. */
 	purpose: string;
 	/**
@@ -149,7 +151,7 @@ const kRejections = Symbol("judgment.rejections");
 const kRoleChain = Symbol("judgment.roleChain");
 interface RegistryWithRejections extends ModelRegistry {
 	[kRejections]?: Map<string, number>;
-	[kRoleChain]?: { settings: Settings; revision: number; list: RoleChainCandidate[]; expiresAt: number };
+	[kRoleChain]?: Map<string, { settings: Settings; revision: number; list: RoleChainCandidate[]; expiresAt: number }>;
 }
 
 /**
@@ -157,15 +159,20 @@ interface RegistryWithRejections extends ModelRegistry {
  * A settings change (e.g. a new judge role) resolves afresh; registry or credential changes still wait out the TTL,
  * so {@link hasNativeJudge} (uncached) can briefly see a different chain after a login or discovery change.
  */
-function cachedJudgeRoleChain(settings: Settings, registry: RegistryWithRejections): RoleChainCandidate[] {
+function cachedJudgeRoleChain(
+	settings: Settings,
+	registry: RegistryWithRejections,
+	role: string,
+): RoleChainCandidate[] {
 	const now = Date.now();
 	const revision = settings.revision;
-	const cached = registry[kRoleChain];
+	const cache = (registry[kRoleChain] ??= new Map());
+	const cached = cache.get(role);
 	if (cached && cached.settings === settings && cached.revision === revision && now < cached.expiresAt) {
 		return cached.list;
 	}
-	const list = judgeRoleChain(settings, registry);
-	registry[kRoleChain] = { settings, revision, list, expiresAt: now + CANDIDATE_TTL_MS };
+	const list = judgeRoleChain(settings, registry, role);
+	cache.set(role, { settings, revision, list, expiresAt: now + CANDIDATE_TTL_MS });
 	return list;
 }
 
@@ -198,8 +205,8 @@ export function kindOf(value: RoleChainCandidate | Model): JudgeKind {
  * candidates remain: a prompted model never stands in for a failed native
  * judgment, whose calibrated probabilities it cannot reproduce.
  */
-function judgeRoleChain(settings: Settings, registry: ModelRegistry): RoleChainCandidate[] {
-	const chain = resolveRoleChain("judge", settings, roleCandidatePool("judge", settings, registry));
+function judgeRoleChain(settings: Settings, registry: ModelRegistry, role = "judge"): RoleChainCandidate[] {
+	const chain = resolveRoleChain(role, settings, roleCandidatePool(role, settings, registry));
 	const firstNative = chain.findIndex(candidate => kindOf(candidate) === "native");
 	if (firstNative < 0) return chain;
 	return chain.filter((candidate, index) => index < firstNative || kindOf(candidate) === "native");
@@ -325,7 +332,7 @@ export class ChainJudge implements Judge {
 
 	#resolveCandidates(): RoleChainCandidate[] {
 		const { settings, registry, sessionModel } = this.#deps;
-		const candidates = cachedJudgeRoleChain(settings, registry);
+		const candidates = cachedJudgeRoleChain(settings, registry, this.#deps.role ?? "judge");
 		if (candidates === this.#candidates?.chain) return this.#candidates.list;
 		const list = withSessionFallback(candidates, sessionModel);
 		this.#candidates = { chain: candidates, list };
@@ -352,7 +359,7 @@ export class ChainJudge implements Judge {
 			// aggregates these same attempts and must never be billed again.
 			onAttempt: attempt =>
 				this.#report({
-					role: "judge",
+					role: this.#deps.role ?? "judge",
 					api: attempt.api,
 					provider: attempt.provider,
 					model: attempt.model,

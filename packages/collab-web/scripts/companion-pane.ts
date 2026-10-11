@@ -117,3 +117,18 @@ export async function capturePane(pid: number): Promise<PaneCapture> {
 		at: Date.now(),
 	};
 }
+
+/** Name of the tmux session whose pane runs the process `pid`; null outside tmux (or without a tmux server). */
+export async function paneSessionName(pid: number): Promise<string | null> {
+	const tmux = await findTmux();
+	if (tmux === null) return null;
+	let panes: PaneRow[];
+	try {
+		panes = parsePanes(await run(tmux, ["list-panes", "-a", "-F", LIST_PANES_FORMAT]));
+	} catch {
+		return null;
+	}
+	const pane = findPane(pid, panes, parseParents(await run("ps", ["-A", "-o", "pid=,ppid="])));
+	// `session:window.pane`, and a session name never contains a colon (tmux rewrites it).
+	return pane === null ? null : pane.target.slice(0, pane.target.lastIndexOf(":"));
+}

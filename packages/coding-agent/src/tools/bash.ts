@@ -21,6 +21,8 @@ import { isPosixShell } from "@oh-my-pi/pi-utils/procmgr";
 import { raceJobSettlement, resolveAutoBackgroundWaitMs } from "../async";
 import type { Settings } from "../config/settings";
 import { applyDirenvPreflight, type BashResult, executeBash } from "../exec/bash-executor";
+import { parseEscalation, prepareSandboxRun, type SandboxEscalation, sandboxEscalationDecision } from "../sandbox/run";
+import { effectiveSandboxMode } from "../sandbox/settings";
 import { InternalUrlRouter } from "../internal-urls";
 import { sessionResolveContext } from "../internal-urls/context";
 import { InternalUrlFilesystem, UrlFsError } from "../internal-urls/url-filesystem";
@@ -34,7 +36,7 @@ import { DEFAULT_MAX_BYTES, enforceInlineByteCap } from "@oh-my-pi/pi-tui/tools/
 import { resolveCliEntryCmd } from "../subprocess/worker-client";
 import { TerminalGraphicsDecoder } from "../utils/terminal-graphics";
 import type { ToolSession } from ".";
-import { type ApprovalDetailsOptions, truncateApprovalDetail } from "./approval";
+import { type ApprovalDetailsOptions, truncateApprovalDetail, truncateForPrompt } from "./approval";
 import { type BashInteractiveResult, runInteractiveBashPty } from "./bash-interactive";
 import { checkBashInterception } from "./bash-interceptor";
 import { rewriteGitWorktreeAdd } from "./bash-worktree-rewrite";
@@ -91,7 +93,7 @@ const BASH_APPROVAL_SHELL_CONTROL_CHARS: Record<string, true> = {
 };
 const BASH_APPROVAL_REINTERPRETED_ARGUMENT_RE = /(?:^|[ \t])(?:-[^-]*[ce]|--(?:command|eval))(?:[= \t]|$)/u;
 
-function hasBashApprovalShellControl(command: string): boolean {
+export function hasBashApprovalShellControl(command: string): boolean {
 	let quote: "'" | '"' | undefined;
 	let hasReinterpretableShellControl = false;
 	for (let i = 0; i < command.length; i++) {
@@ -236,7 +238,7 @@ interface BashApprovalPatternRule {
 	approval: BashPatternApproval;
 }
 
-function normalizeBashApprovalPattern(value: string): string {
+export function normalizeBashApprovalPattern(value: string): string {
 	return value.trim().replace(/\s+/gu, " ");
 }
 
@@ -268,7 +270,7 @@ function getBashApprovalPatternRules(value: unknown): BashApprovalPatternRule[] 
 		.filter((rule): rule is BashApprovalPatternRule => !!rule);
 }
 
-function commandMatchesBashApprovalPattern(command: string, pattern: string): boolean {
+export function commandMatchesBashApprovalPattern(command: string, pattern: string): boolean {
 	const normalizedCommand = normalizeBashApprovalPattern(command);
 	if (normalizedCommand.length === 0) return false;
 	return bashApprovalPatternToRegExp(pattern).test(normalizedCommand);
@@ -286,7 +288,7 @@ function bashCommandSegments(command: string): string[] {
 
 // `deny`/`prompt` matching: the rule fires when its glob matches the whole
 // command or any single segment of a compound command.
-function commandSegmentMatchesBashApprovalPattern(command: string, pattern: string): boolean {
+export function commandSegmentMatchesBashApprovalPattern(command: string, pattern: string): boolean {
 	const regex = bashApprovalPatternToRegExp(pattern);
 	const normalizedCommand = normalizeBashApprovalPattern(command);
 	if (normalizedCommand.length === 0) return false;
@@ -370,11 +372,27 @@ const bashSchemaWithAsyncAndService = type({
 	}),
 });
 
+/** Fields added while `sandbox.mode` is on: a request to run one command with more access. */
+const sandboxEscalationFields = type({
+	"escalate?": type("string").describe(
+		"Shell sandbox only: `network` runs this one command with network access, `full` runs it unsandboxed. Requires `justification`; the user must approve.",
+	),
+	"justification?": type("string").describe("Why the command needs the escalation"),
+});
+const bashSchemaBaseSandbox = bashSchemaBase.and(sandboxEscalationFields);
+const bashSchemaWithAsyncSandbox = bashSchemaWithAsync.and(sandboxEscalationFields);
+const bashSchemaWithServiceSandbox = bashSchemaWithService.and(sandboxEscalationFields);
+const bashSchemaWithAsyncAndServiceSandbox = bashSchemaWithAsyncAndService.and(sandboxEscalationFields);
+
 type BashToolSchema =
 	| typeof bashSchemaBase
 	| typeof bashSchemaWithAsync
 	| typeof bashSchemaWithService
-	| typeof bashSchemaWithAsyncAndService;
+	| typeof bashSchemaWithAsyncAndService
+	| typeof bashSchemaBaseSandbox
+	| typeof bashSchemaWithAsyncSandbox
+	| typeof bashSchemaWithServiceSandbox
+	| typeof bashSchemaWithAsyncAndServiceSandbox;
 
 export interface BashToolInput {
 	command: string;
@@ -384,6 +402,8 @@ export interface BashToolInput {
 	ready?: ServiceReady;
 	async?: boolean;
 	pty?: boolean;
+	escalate?: string;
+	justification?: string;
 }
 
 /**
@@ -501,7 +521,8 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 	readonly name = "bash";
 	/** Bash reads `skill://` paths through its shell filesystem, including as a working directory. */
 	readonly readsSkillUris = true;
-	readonly approval = (args: unknown): ToolApprovalDecision => {
+	/** Bash-pattern and critical-command policy; {@link approval} layers sandbox escalation on top. */
+	readonly #patternApproval = (args: unknown): ToolApprovalDecision => {
 		const rawCommand = (args as Partial<BashToolInput>).command;
 		const command = typeof rawCommand === "string" ? rawCommand : "";
 		const patternRules = getBashApprovalPatternRules(cfgBashPatterns.get(this.session.settings));
@@ -586,10 +607,25 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 		}
 		return "exec";
 	};
+	readonly approval = (args: unknown): ToolApprovalDecision => {
+		const decision = this.#patternApproval(args);
+		if (typeof decision !== "string" && decision.policy === "deny") return decision;
+		const { escalate, justification } = args as Partial<BashToolInput>;
+		return sandboxEscalationDecision(this.session.settings, escalate, justification) ?? decision;
+	};
 	readonly formatApprovalDetails = (args: unknown, options?: ApprovalDetailsOptions): string[] => {
 		const rawCommand = (args as Partial<BashToolInput>).command;
 		const command = typeof rawCommand === "string" ? rawCommand : "(missing)";
-		return [`Command: ${truncateApprovalDetail(command, options)}`];
+		const details = [`Command: ${truncateApprovalDetail(command, options)}`];
+		const { escalate, justification } = args as Partial<BashToolInput>;
+		const escalation = parseEscalation(escalate);
+		if (escalation) {
+			details.push(`Sandbox escalation: ${escalation}`);
+			if (typeof justification === "string" && justification.trim()) {
+				details.push(`Justification: ${truncateForPrompt(justification.trim(), 500)}`);
+			}
+		}
+		return details;
 	};
 	readonly label = "Bash";
 	readonly loadMode = "essential";
@@ -623,6 +659,12 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 	/** Schema variant for the live `async.enabled` and `launch.enabled` settings. */
 	get parameters(): BashToolSchema {
 		const asyncEnabled = cfgAsyncEnabled.get(this.session.settings);
+		if (effectiveSandboxMode(this.session.settings) !== "off") {
+			if (this.#launchEnabled) {
+				return asyncEnabled ? bashSchemaWithAsyncAndServiceSandbox : bashSchemaWithServiceSandbox;
+			}
+			return asyncEnabled ? bashSchemaWithAsyncSandbox : bashSchemaBaseSandbox;
+		}
 		if (this.#launchEnabled) return asyncEnabled ? bashSchemaWithAsyncAndService : bashSchemaWithService;
 		return asyncEnabled ? bashSchemaWithAsync : bashSchemaBase;
 	}
@@ -830,6 +872,8 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 		foreground: boolean;
 		/** Approval tier bounding the job's URL filesystem. */
 		approvalTier: ToolTier;
+		/** Sandbox escalation the model requested (approved before the call ran). */
+		escalation?: SandboxEscalation;
 	}): ManagedBashJobHandle {
 		const manager = this.session.asyncJobManager;
 		if (!manager) {
@@ -872,6 +916,11 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 						timeout: options.timeoutMs ?? 0,
 						signal: runSignal,
 						gitGuard: cfgBashGitGuard.get(this.session.settings),
+						sandbox: {
+							settings: this.session.settings,
+							additionalDirectories: this.session.additionalDirectories,
+							escalation: options.escalation,
+						},
 						// Bound to the job's own signal: the job outlives the call that started it.
 						filesystem: this.#urlFilesystem(runSignal, options.approvalTier).shellFilesystem(),
 						artifactPath,
@@ -943,6 +992,22 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 		};
 	}
 
+	/**
+	 * Wrap `command` for the sandbox on the backends that bypass `executeBash` (services, PTY,
+	 * client terminal). `executeBash` wraps its own commands.
+	 */
+	#prepareSandboxRun(command: string, cwd: string, escalation: SandboxEscalation | undefined, tty = false) {
+		return prepareSandboxRun({
+			command,
+			cwd,
+			settings: this.session.settings,
+			additionalDirectories: this.session.additionalDirectories,
+			escalation,
+			tty,
+			shell: this.session.settings.getShellConfig(),
+		});
+	}
+
 	async execute(
 		_toolCallId: string,
 		{
@@ -953,6 +1018,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 			ready: rawReady,
 			async: rawAsync,
 			pty,
+			escalate: rawEscalate,
 		}: BashToolInput,
 		signal?: AbortSignal,
 		onUpdate?: AgentToolUpdateCallback<BashToolDetails>,
@@ -1020,6 +1086,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 		// instead of the cached pre-mutation snapshot.
 		invalidateGithubCacheForBashCommand(command);
 
+		const escalation = parseEscalation(rawEscalate);
 		// URL paths resolve through the embedded shell's filesystem, within the
 		// tier this command was approved at. A URL cwd stays a URL: only that
 		// filesystem can enter it, so external backends (service, PTY, client
@@ -1064,11 +1131,12 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 		}
 
 		if (name !== undefined) {
+			const serviceRun = this.#prepareSandboxRun(command, commandCwd, escalation);
 			const service = await startService(
 				this.session,
 				{
 					name,
-					command,
+					command: serviceRun.command,
 					cwd: commandCwd,
 					pty: pty ?? true,
 					ready,
@@ -1085,6 +1153,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 				);
 			if (daemon.exitReason) lines.push(`Reason: ${daemon.exitReason}`);
 			if (service.log) lines.push(service.log);
+			if (serviceRun.notice) lines.push(serviceRun.notice);
 			return {
 				content: [{ type: "text", text: lines.join("\n") }],
 				details: {
@@ -1125,6 +1194,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 				onUpdate,
 				foreground: false,
 				approvalTier,
+				escalation,
 			});
 			return this.#buildBackgroundStartResult(job.jobId, "", timeoutSec, {
 				requestedTimeoutSec,
@@ -1165,6 +1235,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 				onUpdate,
 				foreground: !startBackgrounded,
 				approvalTier,
+				escalation,
 			});
 			if (startBackgrounded) {
 				return this.#buildBackgroundStartResult(job.jobId, "", timeoutSec, {
@@ -1218,15 +1289,19 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 		// `callerTimeoutMs` clamps the direnv load to a positive command timeout
 		// (the backend's own timeout is installed only after this await), matching
 		// the executeBash branch so a cold `.envrc` can't outlast a short call.
-		const backendPreflight =
+		const backendWrap =
 			bridgeTerminalAvailable || canUseInteractiveBashPty(pty === true, ctx)
-				? await applyDirenvPreflight(command, commandCwd, {
-						signal,
-						timeoutMs: cfgBashDirenvLoadTimeoutMs.get(this.session.settings),
-						callerTimeoutMs: timeoutMs,
-						direnvSetting: cfgBashDirenv.get(this.session.settings),
-					})
+				? this.#prepareSandboxRun(command, commandCwd, escalation, true)
 				: undefined;
+		if (backendWrap?.notice) pendingNotices.push(backendWrap.notice);
+		const backendPreflight = backendWrap
+			? await applyDirenvPreflight(backendWrap.command, commandCwd, {
+					signal,
+					timeoutMs: cfgBashDirenvLoadTimeoutMs.get(this.session.settings),
+					callerTimeoutMs: timeoutMs,
+					direnvSetting: cfgBashDirenv.get(this.session.settings),
+				})
+			: undefined;
 
 		// Route through the client terminal when the client advertises the terminal capability.
 		// Skip when pty=true (PTY needs the local terminal UI) or the cwd is a URL
@@ -1532,6 +1607,11 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					timeout: timeoutMs ?? 0,
 					signal,
 					gitGuard: cfgBashGitGuard.get(this.session.settings),
+					sandbox: {
+						settings: this.session.settings,
+						additionalDirectories: this.session.additionalDirectories,
+						escalation,
+					},
 					filesystem: this.#urlFilesystem(signal, approvalTier).shellFilesystem(),
 					artifactPath,
 					artifactId,

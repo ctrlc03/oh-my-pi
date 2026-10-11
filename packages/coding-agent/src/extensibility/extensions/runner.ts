@@ -37,6 +37,7 @@ import { type Theme, theme } from "@oh-my-pi/pi-tui/theme";
 import type { AsyncJobSnapshot, SendUserMessageOptions } from "../../session/agent-session";
 import { MAIN_AGENT_ID } from "../../registry/agent-registry";
 import type { SessionManager } from "../../session/session-manager";
+import { ApprovalGrantStore } from "../../tools/approval-grants";
 import { addFileDeleteFallback, addFileWriteFallback } from "../../tools/file-write-fallback";
 import type { BranchHandler, NavigateTreeHandler, NewSessionHandler } from "../session-handler-types";
 import { accumulateToolCallResult, buildAggregatedToolCallResult } from "../shared-events";
@@ -722,6 +723,14 @@ export class ExtensionRunner {
 			options?.onUpdate as never,
 			options?.callerContext ?? resolved.makeContext(),
 		)) as AgentToolResult<TDetails>;
+	}
+
+	/** "Always allow" / "Deny always" choices of this session, plus the project's saved ones; see `tools/approval-grants.ts`. */
+	readonly approvalGrants = new ApprovalGrantStore(() => this.cwd);
+
+	/** Append a custom entry to the session log this runner serves. */
+	appendSessionEntry(customType: string, data: unknown): void {
+		this.sessionManager.appendCustomEntry(customType, data);
 	}
 
 	constructor(

@@ -98,7 +98,41 @@ Each rule has a `glob`, an `action` (`allow`, `deny`, `prompt`), and optionally 
 
 **Search tools.** `grep`, `glob`, `find`, and `ast_grep` do not fail when a denied path is in scope; matches under denied paths are removed from the results (for `find`, the files are never listed or sent to the judge) and a note says how many paths were omitted. A path matching a `prompt` rule is omitted the same way unless the search root itself was a `prompt` match you approved; naming the path directly triggers the prompt. A `prompt` match on the search root asks before the search runs. `ast_edit` cannot filter a rewrite after the fact: it refuses when its preview reaches a protected file, so narrow `paths`. The limit on results is applied before filtering, so a search that mostly matches denied files may return fewer results than requested.
 
-`tools.pathRules` is an approval policy for the agent's file tools, not a sandbox: a program started through `bash` or `eval` has the process's own file access.
+`tools.pathRules` is an approval policy for the agent's file tools, not a sandbox: a program started through `bash` or `eval` has the process's own file access. To bound what shell commands can touch, turn on the [shell sandbox](./sandbox.md) (`sandbox.mode`), which also reads the `deny` rules of `tools.pathRules`.
+
+## Always allow and deny always
+
+When a prompt comes from the approval mode itself (`always-ask`, or `write` for an exec-tier tool), it offers five choices instead of Approve / Deny:
+
+| Choice                        | Effect                                                                                       |
+| ----------------------------- | -------------------------------------------------------------------------------------------- |
+| Allow once                    | Runs this call only.                                                                         |
+| Always allow (this session)   | Saves an allow rule in memory; it ends with the session (a resumed session starts with none). |
+| Always allow (this project)   | Saves an allow rule for this project in your agent directory (`approval-grants/`), so later sessions in the project use it. |
+| Deny                          | Refuses this call only.                                                                      |
+| Deny always (this project)    | Saves a deny rule to the project file; matching calls are refused without asking.             |
+
+The rule is the narrowest one that still covers what you approved:
+
+- **`bash`**: a command prefix. `bun test src/a.test.ts` becomes `bun test *`, `bun run build --watch` becomes `bun run build *`; programs with subcommands (`bun`, `npm`, `cargo`, `git`, `docker`, `gh`, `make`, …) keep the subcommand, any other program keeps the exact command line. A pattern ending in ` *` also matches the bare prefix (`bun test`). In the TUI an editor opens pre-filled with the pattern before a session or project rule is saved; Esc, or a pattern that no longer matches the command you just approved, runs the call once and saves nothing. A compound or shell-controlled line (`&&`, `|`, `;`, redirects, `$(…)`, globs) offers no always-allow rule, and an allow rule never matches such a line.
+- **`edit` and `write`**: a path grant for the real, absolute path of each file the call changes (move destinations included; at most 8 files). It is stored in the grant list, not as a `tools.pathRules` allow rule, which only exempts a path from rules and `tools.outsideProject` and does not approve the call. A call with several targets is covered only when every target is, and a path reached through a symlink is judged by where it really points.
+- **every other tool**: a whole-tool grant (`*`).
+
+A saved rule is consulted by the approval flow and answers only a prompt the approval mode raised. It never overrides an explicit restriction: a `deny` or `prompt` in `tools.approval`, a tool's own deny/prompt policy, a `tools.pathRules` or `tools.outsideProject` decision, a `bash.patterns` rule, a critical-command prompt, a computer-use safety check, or a sandbox escalation prompt still decides, and those prompts offer only Allow once / Deny. A deny rule is the exception in the other direction: it refuses a matching call under every mode (including `yolo`) and beats an allow rule.
+
+`/approvals` lists the saved rules (session and project), `/approvals remove <number|id>` deletes one and `/approvals clear [session|project]` deletes a scope. Project rules live in `<agent dir>/approval-grants/<project name>-<hash of the real project path>.json` (`/approvals` prints the path), never inside the repository: a project directory is untrusted, so a cloned repository cannot ship rules and a command or write-tier tool call that creates a file there cannot grant itself approval. The file starts with a `managedBy` note and marks each rule `"source": "approval-prompt"`; it is rewritten atomically, re-read when it changes (so another session's new rule applies without a restart), and an unreadable file is ignored. It is separate from `config.yml`, which omp never rewrites. Moving or renaming the project directory starts with no project rules.
+
+Each decision is recorded in a `tool-approval` custom session entry, `{ toolCallId, tool, approved, by: "tui" | "guest" | "grant", choice, reason? }`; a call answered by a saved rule records `by: "grant"`.
+
+Limits: a subagent has its own approval runner, so session rules are not shared with it (project rules are, through the file); `ast_edit`, `eval` and the other non-`edit`/`write` tools get a whole-tool grant, not a path or command rule.
+
+**Collab.** The prompt reaches writers in the web app through the usual `ui-request`; the app shows the same five choices when the host advertises `approval-grants` (see [Collab](./collab.md#tool-approval-choices)). Whoever answers first wins. A guest's session rule is saved; a guest's project choice (Always allow or Deny always) is applied to that call only, with a warning, unless the host sets `collab.guestsCanSaveApprovals` (default `false`). Read-only links never receive the prompt.
+
+## Sandbox escalation
+
+With `sandbox.mode` on, the `bash` tool takes `escalate` (`network` or `full`) and `justification`. An escalated call always prompts, even in `yolo`, and saved "Always allow" grants do not answer it; a call with no justification is refused. `sandbox.autoEscalate: true` removes the prompt. The `eval` tool, which the sandbox does not cover, also prompts while the sandbox is on. See [Shell sandbox](./sandbox.md#escalation).
+
+A prompt that a tool declares itself (sandbox escalation, `schedule` creation, `bash.patterns` `prompt` rules) is also asked when the call is dispatched through `write xd://<tool>`, in every mode including `yolo`: the outer `write` prompt only covers the tool's tier, not what the call asks for.
 
 ## Agent profiles
 
@@ -161,6 +195,8 @@ Tools can add approval-prompt body lines with `formatApprovalDetails(args)`. The
 - tool-specific details such as command, path, code, browser action, or subagent assignment
 
 In the interactive UI the prompt replaces the composer until answered: `Ctrl+Enter` (or `Ctrl+Q`; rebind `app.approval.approve`) approves, `Esc` denies, and plain `Enter` does nothing, so typing into the composer as the prompt appears cannot approve a call. The approve key is ignored for the first half second, since it is also the follow-up key. The prompt shows one row per detail, with multi-line values (file content, code) reduced to a line count, since the tool call in the transcript shows them in full; with `display.hideToolActivity` on, it shows the full details instead. RPC, ACP, and other hosts without an approval dialog get an Approve/Deny select with the full details.
+
+The `schedule` tool (see [schedule](./tools/schedule.md)) prompts for every `create` in every mode, `yolo` included, and ignores a user `allow` policy (a `deny` still applies); its details show the cron in words, the zone and the next three run times.
 
 ## Defining approval on tools
 

@@ -219,7 +219,7 @@ const SESSION_AGENT_NOTICE_MESSAGE_TYPE = "session-agent-notice";
 const SYSTEM_PROMPT_DIGEST_CUSTOM_TYPE = "system-prompt-digest";
 
 /** Equal digests mean equal prompt blocks. */
-function systemPromptDigest(blocks: readonly string[]): string {
+export function systemPromptDigest(blocks: readonly string[]): string {
 	let hash = BigInt(blocks.length);
 	for (const block of blocks) hash = Bun.hash.wyhash(block, hash);
 	return hash.toString(16);

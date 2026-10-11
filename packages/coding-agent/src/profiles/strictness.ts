@@ -9,6 +9,7 @@ import type {
 	ProfileDefinition,
 	ProfileOutsideProject,
 } from "./definition";
+import { SANDBOX_MODE_RANK } from "../sandbox/settings";
 import { APPROVAL_MODE_RANK } from "./merge";
 
 /** What a profile switch inherits from the session when a profile leaves a field unset. */
@@ -85,6 +86,9 @@ export function describeLoosening(
 
 	if (OUTSIDE_RANK[to.outsideProject ?? "allow"] < OUTSIDE_RANK[from.outsideProject ?? "allow"]) {
 		return `outsideProject ${to.outsideProject ?? "unset"} is looser than ${from.outsideProject}`;
+	}
+	if (SANDBOX_MODE_RANK[to.sandbox ?? "off"] < SANDBOX_MODE_RANK[from.sandbox ?? "off"]) {
+		return `sandbox ${to.sandbox ?? "unset"} is looser than ${from.sandbox}`;
 	}
 	if (from.lspReadOnly && !to.lspReadOnly) return "allows LSP edits (rename, code actions)";
 	return undefined;

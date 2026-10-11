@@ -1,0 +1,100 @@
+/* ---- stashed drafts: the composer button and its list ---- */
+.sh-stash-btn {
+	position: relative;
+}
+
+.sh-stash-count {
+	position: absolute;
+	top: -2px;
+	right: -2px;
+	min-width: 15px;
+	height: 15px;
+	padding: 0 4px;
+	font: 600 10px / 15px var(--font-mono);
+	text-align: center;
+	color: var(--accent-fg, var(--bg));
+	background: var(--accent);
+	border-radius: 999px;
+}
+
+.sh-stash-now {
+	align-self: flex-start;
+}
+
+.sh-stash-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-height: min(50vh, 360px);
+	margin: 0;
+	padding: 0;
+	overflow-y: auto;
+	list-style: none;
+}
+
+.sh-stash-item {
+	display: flex;
+	align-items: stretch;
+	gap: 2px;
+}
+
+.sh-stash-text {
+	display: flex;
+	flex: 1 1 auto;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	min-height: 40px;
+	padding: 4px 10px;
+	font-size: 13px;
+	text-align: left;
+	color: var(--fg);
+	background: transparent;
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.sh-stash-text:hover:not(:disabled) {
+	background: var(--selected);
+}
+
+.sh-stash-text svg,
+.sh-stash-drop svg {
+	flex: none;
+}
+
+.sh-stash-preview {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-stash-age {
+	flex: none;
+	font-size: 11.5px;
+	color: var(--fg-faint);
+}
+
+.sh-stash-drop {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 40px;
+	color: var(--fg-muted);
+	background: transparent;
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.sh-stash-drop:hover {
+	color: var(--err);
+	background: var(--hover);
+}
+
+.sh-stash-note {
+	font-size: 12.5px;
+	color: var(--fg-muted);
+}

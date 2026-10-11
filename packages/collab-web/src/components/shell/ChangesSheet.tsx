@@ -23,6 +23,8 @@ export interface ChangesTree {
 	instanceId: string;
 	/** The companion can open pull requests. */
 	canPr: boolean;
+	/** The companion writes commit and pull request text (`git-message`). */
+	canGitFlow: boolean;
 	/** The session's agent is mid-turn. */
 	busy: boolean | null;
 	/** Session title, offered as the commit message and pull request title. */
@@ -39,6 +41,8 @@ export interface ChangesSheetProps {
 	/** Puts the review prompt into the composer. null (read-only viewer): no commenting. */
 	onSendToAgent: ((text: string) => void) | null;
 	onClose(): void;
+	/** Open on the branch review (commit, push, pull request), e.g. after keeping a model comparison's winner. */
+	initialTab?: "branch";
 }
 
 type Tab = "agent" | "tree" | "branch";
@@ -47,8 +51,16 @@ type Tab = "agent" | "tree" | "branch";
  * What changed: the agent's edit-tool calls from the transcript, and, when the
  * session's computer is paired, the repository's working tree.
  */
-export function ChangesSheet({ changes, host, tree, sessionId, onSendToAgent, onClose }: ChangesSheetProps): ReactNode {
-	const [tab, setTab] = useState<Tab>(changes.length === 0 && tree !== null ? "tree" : "agent");
+export function ChangesSheet({
+	changes,
+	host,
+	tree,
+	sessionId,
+	onSendToAgent,
+	onClose,
+	initialTab,
+}: ChangesSheetProps): ReactNode {
+	const [tab, setTab] = useState<Tab>(initialTab ?? (changes.length === 0 && tree !== null ? "tree" : "agent"));
 	const [comments, setComments] = useState<Record<string, ReviewComment>>(() =>
 		onSendToAgent === null || sessionId === null || tree === null ? {} : loadReviewComments(sessionId),
 	);
@@ -127,6 +139,7 @@ export function ChangesSheet({ changes, host, tree, sessionId, onSendToAgent, on
 					instanceId={tree.instanceId}
 					host={host}
 					canPr={tree.canPr}
+					canGitFlow={tree.canGitFlow}
 					busy={tree.busy}
 					title={tree.title}
 					diffReview={review}

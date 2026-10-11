@@ -21,6 +21,7 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { isEnoent, logger, ptree } from "@oh-my-pi/pi-utils";
+import { buildTurnDiff, parseNumstat, splitPatch, type TurnDiff } from "./turn-diff";
 
 /** Files above this size are left out of snapshots and never restored or deleted. */
 export const SNAPSHOT_MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -374,6 +375,18 @@ export class SnapshotRepo {
 			}
 		}
 		return changes;
+	}
+
+	/** The changed files from tree-ish `from` to tree-ish `to`, with line counts and unified diffs. */
+	async fileDiffs(from: string, to: string, spansTurns: number): Promise<TurnDiff> {
+		const changes = await this.diff(from, to);
+		if (changes.length === 0) return { files: [], omitted: 0, spansTurns };
+		const diffTree = ["diff-tree", "-r", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color"];
+		const [numstat, patch] = await Promise.all([
+			this.#store([...diffTree, "-z", "--numstat", from, to]),
+			this.#store([...diffTree, "-p", "-U3", from, to]),
+		]);
+		return buildTurnDiff(changes, parseNumstat(numstat.stdout), splitPatch(patch.stdout), spansTurns);
 	}
 
 	/**
@@ -731,6 +744,51 @@ export class FileSnapshotStore {
 			} catch (error) {
 				logger.warn("file restore preview failed", { error: describeFailure(error) });
 				return undefined;
+			}
+		});
+	}
+
+	/**
+	 * What prompt `entryId` changed: the snapshot taken before it against the snapshot before the
+	 * first of `laterEntryIds` (the prompts after it, nearest first) that has one, or against the
+	 * working tree when none does. Undefined when `entryId` has no snapshot; throws
+	 * {@link FileSnapshotError} when git fails.
+	 */
+	turnDiff(entryId: string, laterEntryIds: readonly string[]): Promise<TurnDiff | undefined> {
+		if (!this.supported) return Promise.resolve(undefined);
+		return this.#serial(async () => {
+			try {
+				const from = await this.#lookup(entryId);
+				if (!from) return undefined;
+				for (const [index, laterId] of laterEntryIds.entries()) {
+					const to = await this.#lookup(laterId);
+					if (to) return await from.repo.fileDiffs(from.commit, to.commit, index + 1);
+				}
+				const now = await from.repo.captureTree(this.#indexName());
+				return await from.repo.fileDiffs(from.commit, now, laterEntryIds.length + 1);
+			} catch (error) {
+				throw new FileSnapshotError(`reading the turn's changes failed: ${describeFailure(error)}`);
+			}
+		});
+	}
+
+	/**
+	 * Everything changed since the first of `promptIds` (the active path's prompts, oldest first) that
+	 * has a snapshot, against the working tree. Undefined when none has one.
+	 */
+	sessionDiff(promptIds: readonly string[]): Promise<TurnDiff | undefined> {
+		if (!this.supported) return Promise.resolve(undefined);
+		return this.#serial(async () => {
+			try {
+				for (const [index, promptId] of promptIds.entries()) {
+					const from = await this.#lookup(promptId);
+					if (!from) continue;
+					const now = await from.repo.captureTree(this.#indexName());
+					return await from.repo.fileDiffs(from.commit, now, promptIds.length - index);
+				}
+				return undefined;
+			} catch (error) {
+				throw new FileSnapshotError(`reading the session's changes failed: ${describeFailure(error)}`);
 			}
 		});
 	}

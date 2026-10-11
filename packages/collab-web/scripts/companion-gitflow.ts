@@ -94,7 +94,7 @@ export function canCreatePr(): Promise<boolean> {
 
 // ── repository state ─────────────────────────────────────────────────────────
 
-async function requireRoot(cwd: string): Promise<string> {
+export async function requireRoot(cwd: string): Promise<string> {
 	const root = await repoRoot(cwd);
 	if (root === null) throw new Error("not a git repository");
 	return root;
@@ -117,14 +117,14 @@ function baseBranchName(base: string): string {
 	return base.startsWith("origin/") ? base.slice("origin/".length) : base;
 }
 
-interface BranchState {
+export interface BranchState {
 	branch: string | null;
 	base: string | null;
 	mergeBase: string | null;
 	isDefaultBranch: boolean;
 }
 
-async function branchState(root: string): Promise<BranchState> {
+export async function branchState(root: string): Promise<BranchState> {
 	const [head, base] = await Promise.all([git(root, ["symbolic-ref", "--short", "-q", "HEAD"]), resolveBase(root)]);
 	const branch = head.code === 0 ? text(head) : null;
 	let mergeBase: string | null = null;
@@ -140,14 +140,14 @@ async function branchState(root: string): Promise<BranchState> {
 	};
 }
 
-async function isDirty(root: string): Promise<boolean> {
+export async function isDirty(root: string): Promise<boolean> {
 	const status = await git(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
 	if (status.code !== 0) throw gitFailure(status, "git status");
 	return status.out.length > 0;
 }
 
 /** Absolute `--git-dir` and `--git-common-dir` of the checkout at `root`, symlinks resolved. */
-async function gitDirs(root: string): Promise<{ gitDir: string; commonDir: string }> {
+export async function gitDirs(root: string): Promise<{ gitDir: string; commonDir: string }> {
 	const result = await git(root, ["rev-parse", "--git-dir", "--git-common-dir"]);
 	if (result.code !== 0) throw gitFailure(result, "git rev-parse");
 	const [gitDir, commonDir] = text(result).split("\n");
@@ -326,25 +326,30 @@ export async function createPullRequest(
 
 // ── worktrees ────────────────────────────────────────────────────────────────
 
-function defaultBranchName(now: Date): string {
+function defaultBranchName(now: Date, prefix: string): string {
 	const pad = (value: number) => String(value).padStart(2, "0");
 	const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
-	return `omp/${stamp}-${crypto.randomUUID().slice(0, 4)}`;
+	return `${prefix}${stamp}-${crypto.randomUUID().slice(0, 4)}`;
 }
 
+/** Branch-name prefix of generated worktree branches unless the settings say otherwise. */
+export const DEFAULT_BRANCH_PREFIX = "omp/";
+
 /**
- * A new branch (default `omp/<YYYYMMDD-HHmm>-<4 hex>`) from HEAD in its own
- * worktree at `<worktreesRoot>/<repo>/<branch, / as ->`, so a session can work
- * without touching the checkout it started from.
+ * A new branch (default `<prefix><YYYYMMDD-HHmm>-<4 hex>`, prefix `omp/`) from HEAD
+ * in its own worktree at `<worktreesRoot>/<repo>/<branch, / as ->`, so a session
+ * can work without touching the checkout it started from. A branch name given
+ * explicitly is used as written, without the prefix.
  */
 export async function createWorktree(
 	cwd: string,
 	worktreesRoot: string,
 	branch?: string,
 	now = new Date(),
+	options: { branchPrefix?: string } = {},
 ): Promise<{ root: string; path: string; branch: string }> {
 	const root = await requireRoot(cwd);
-	const name = branch?.trim() || defaultBranchName(now);
+	const name = branch?.trim() || defaultBranchName(now, options.branchPrefix ?? DEFAULT_BRANCH_PREFIX);
 	const check = await git(root, ["check-ref-format", "--branch", name]);
 	// `--branch` also expands `@{-1}`; only a name that comes back unchanged is a plain branch name.
 	if (name.length > MAX_BRANCH_CHARS || name.startsWith("-") || check.code !== 0 || text(check) !== name) {
@@ -365,17 +370,23 @@ export async function discardWorktree(created: { root: string; path: string; bra
 }
 
 /**
- * Remove the linked worktree at `target`, which must be under `worktreesRoot`
- * (where the companion creates them), and keep its branch. Refused while any
- * of `runningCwds` (working directories of running omp processes) is inside it,
- * or while it has uncommitted changes.
+ * Remove the linked worktree at `target`, which must be under one of
+ * `worktreesRoots` (where the companion creates them), and keep its branch.
+ * Refused while any of `runningCwds` (working directories of running omp
+ * processes) is inside it, or while it has uncommitted changes (unless `discardChanges`, which the
+ * app sends only after the user confirmed losing them; the branch and its commits stay either way).
  */
-export async function removeWorktree(target: string, worktreesRoot: string, runningCwds: string[]): Promise<void> {
+export async function removeWorktree(
+	target: string,
+	worktreesRoots: string | readonly string[],
+	runningCwds: string[],
+	discardChanges = false,
+): Promise<void> {
 	if (!path.isAbsolute(target) || target.includes("\0")) throw new Error("invalid worktree path");
-	const base = await fs.realpath(worktreesRoot).catch(() => null);
+	const bases = await Promise.all([worktreesRoots].flat().map(root => fs.realpath(root).catch(() => null)));
 	const resolved = await fs.realpath(target).catch(() => null);
 	if (resolved === null) throw new Error("worktree not found");
-	if (base === null || resolved === base || !isInside(base, resolved)) {
+	if (!bases.some(base => base !== null && resolved !== base && isInside(base, resolved))) {
 		throw new Error("only worktrees created by the companion can be removed");
 	}
 	// `target` itself, not a repository somewhere beneath it.
@@ -387,9 +398,11 @@ export async function removeWorktree(target: string, worktreesRoot: string, runn
 	}
 	const { gitDir, commonDir } = await gitDirs(root);
 	if (gitDir === commonDir) throw new Error("not a linked worktree");
-	if (await isDirty(root)) throw new Error("the worktree has uncommitted changes");
+	if (!discardChanges && (await isDirty(root))) throw new Error("the worktree has uncommitted changes");
 	// A linked worktree cannot remove itself from inside: run from the main checkout.
 	const main = path.basename(commonDir) === ".git" ? path.dirname(commonDir) : commonDir;
-	const removed = await git(main, ["worktree", "remove", root], { write: true });
+	const removed = await git(main, ["worktree", "remove", ...(discardChanges ? ["--force"] : []), root], {
+		write: true,
+	});
 	if (removed.code !== 0) throw writeFailure(removed, "git worktree remove");
 }

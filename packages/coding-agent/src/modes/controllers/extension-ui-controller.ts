@@ -633,9 +633,13 @@ export class ExtensionUiController {
 			checkedIndices: dialogOptions?.checkedIndices ? [...dialogOptions.checkedIndices] : undefined,
 			markableCount: dialogOptions?.markableCount,
 			helpText: dialogOptions?.helpText,
+			approval: dialogOptions?.approval,
 		};
-		return this.#raceCollabDialog(request, dialogOptions?.signal, signal =>
-			this.showHookSelector(title, options, { ...dialogOptions, signal }, extra),
+		return this.#raceCollabDialog(
+			request,
+			dialogOptions?.signal,
+			signal => this.showHookSelector(title, options, { ...dialogOptions, signal }, extra),
+			dialogOptions?.onAnswer,
 		);
 	}
 
@@ -865,16 +869,22 @@ export class ExtensionUiController {
 		request: CollabUiRequestDraft,
 		signal: AbortSignal | undefined,
 		local: (signal: AbortSignal | undefined) => Promise<string | undefined>,
+		onAnswer?: (source: "local" | "remote") => void,
 	): Promise<string | undefined> {
+		const answeredLocally = async (pending: Promise<string | undefined>): Promise<string | undefined> => {
+			const value = await pending;
+			onAnswer?.("local");
+			return value;
+		};
 		const host = this.ctx.collabHost;
-		if (!host) return local(signal);
+		if (!host) return answeredLocally(local(signal));
 		const localAbort = new AbortController();
 		const remoteAbort = new AbortController();
 		const remote = host.requestGuestUi(
 			request,
 			signal ? AbortSignal.any([signal, remoteAbort.signal]) : remoteAbort.signal,
 		);
-		if (!remote) return local(signal);
+		if (!remote) return answeredLocally(local(signal));
 		const localWinner = local(signal ? AbortSignal.any([signal, localAbort.signal]) : localAbort.signal).then(
 			(value): CollabDialogWinner => ({ source: "local", value }),
 		);
@@ -884,6 +894,7 @@ export class ExtensionUiController {
 		const winner = await Promise.race([localWinner, remoteWinner]);
 		if (winner.source === "remote") localAbort.abort();
 		else remoteAbort.abort();
+		onAnswer?.(winner.source);
 		return winner.value;
 	}
 

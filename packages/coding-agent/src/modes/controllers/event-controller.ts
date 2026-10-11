@@ -30,6 +30,7 @@ import {
 } from "@oh-my-pi/pi-tui/chat/tool-execution";
 import { TtsrNotificationComponent } from "@oh-my-pi/pi-tui/chat/ttsr-notification";
 import { createUsageRowBlock, TurnUsageTally, turnElapsedMs } from "@oh-my-pi/pi-tui/overlays/usage-row";
+import { formatRouteLabel } from "../../routing/format";
 import { appKey } from "@oh-my-pi/pi-tui/chrome/keybinding-hints";
 import { getSymbolTheme, theme } from "@oh-my-pi/pi-tui/theme";
 import type { InteractiveModeContext } from "../../modes/types";
@@ -44,6 +45,7 @@ import {
 	resolveAbortLabel,
 } from "../../session/messages";
 import { formatApprovalPrompt, resolveApproval } from "../../tools/approval";
+import { applyApprovalGrants } from "../../tools/approval-grants";
 import { recoverAskQuestions } from "../../tools/ask";
 import { previewLine, PREVIEW_LIMITS, TRUNCATE_LENGTHS } from "@oh-my-pi/pi-tui/render/render-utils";
 import { PROPOSE_DEVICE_NAME } from "@oh-my-pi/pi-tui/tools/resolve";
@@ -80,6 +82,7 @@ import {
 	cfgTerminalShowImages,
 	cfgTerminalShowProgress,
 } from "../settings";
+import { CACHE_MISS_LABELS } from "../../session/cache-report";
 import { cfgCompaction } from "../../session/context-settings";
 import { cfgReadToolResultPreview, cfgToolsApproval, cfgToolsApprovalMode } from "../../tools/settings";
 import { cfgSpeechEnabled, cfgSpeechMode } from "../../tts/settings";
@@ -1783,7 +1786,13 @@ export class EventController {
 			if (usage.cacheRead + usage.cacheWrite + usage.input > 0) {
 				if (cfgDisplayCacheMissMarker.get(settings)) {
 					const invalidation = detectCacheInvalidation(this.ctx.lastAssistantUsage, usage);
-					if (invalidation) this.ctx.streamingComponent.setCacheInvalidation(invalidation);
+					if (invalidation) {
+						const latest = this.ctx.viewSession.requestLedger.latest();
+						const reason = latest?.startedAt === event.message.timestamp ? latest.miss?.reasons[0] : undefined;
+						this.ctx.streamingComponent.setCacheInvalidation(
+							reason ? { ...invalidation, cause: CACHE_MISS_LABELS[reason] } : invalidation,
+						);
+					}
 				}
 				this.ctx.lastAssistantUsage = usage;
 			}
@@ -1827,6 +1836,7 @@ export class EventController {
 							event.message.ttft,
 							event.message.timestamp,
 							turnElapsed,
+							formatRouteLabel(this.ctx.viewSession.routing?.activeTurn),
 						),
 					);
 				}
@@ -1966,7 +1976,14 @@ export class EventController {
 		if (!tool) return undefined;
 		const mode = cfgToolsApprovalMode.get(settings);
 		const userPolicies: Record<string, unknown> = cfgToolsApproval.get(settings);
-		const approval = resolveApproval(tool, args, mode, userPolicies);
+		const runner = this.ctx.viewSession.extensionRunner;
+		const approval = applyApprovalGrants(
+			runner?.approvalGrants,
+			tool,
+			args,
+			resolveApproval(tool, args, mode, userPolicies),
+			{ cwd: runner?.cwd ?? this.ctx.sessionManager.getCwd() },
+		);
 		if (approval.policy !== "prompt") return undefined;
 		return { state: "blocked", kind: "permission", msg: formatApprovalPrompt(tool, args, approval.reason) };
 	}

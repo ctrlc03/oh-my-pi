@@ -5,6 +5,7 @@
  */
 import type { PathRule } from "../tools/path-rules";
 import type { ProfileApprovalMode } from "./definition";
+import { SANDBOX_MODE_RANK, type SandboxMode } from "../sandbox/settings";
 
 type OutsideProject = "allow" | "prompt" | "deny";
 
@@ -56,4 +57,9 @@ export const APPROVAL_MODE_RANK: Record<ProfileApprovalMode, number> = { yolo: 0
 /** The stricter of two approval modes (`always-ask` over `write` over `yolo`). */
 export function stricterApprovalMode(a: ProfileApprovalMode, b: ProfileApprovalMode): ProfileApprovalMode {
 	return APPROVAL_MODE_RANK[b] > APPROVAL_MODE_RANK[a] ? b : a;
+}
+
+/** The stricter of two sandbox modes (`read-only` over `workspace-write` over `off`). */
+export function stricterSandboxMode(a: SandboxMode, b: SandboxMode): SandboxMode {
+	return SANDBOX_MODE_RANK[b] > SANDBOX_MODE_RANK[a] ? b : a;
 }

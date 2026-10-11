@@ -1,5 +1,16 @@
 import type { CollabUiRequest, ImageContent, SessionCommand, WireModel, WireProfile } from "@oh-my-pi/pi-wire";
-import { File as FileIcon, FileText, ListEnd, LoaderCircle, Paperclip, SendHorizontal, Square, X } from "lucide-react";
+import {
+	File as FileIcon,
+	FileText,
+	ListEnd,
+	LoaderCircle,
+	Paperclip,
+	PenLine,
+	SendHorizontal,
+	Square,
+	X,
+	Zap,
+} from "lucide-react";
 import type { ClipboardEvent, KeyboardEvent, ReactNode, Ref, RefObject } from "react";
 import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import type { ConnectionPhase, GuestClient, PromptModelChoice } from "../../lib/client";
@@ -14,10 +25,21 @@ import {
 	planFile,
 	planUpload,
 } from "../../lib/files";
+import { useEnterWhileRunning } from "../../lib/composer-prefs";
+import { dropStashed, type StashedDraft, stashDraft, useStashedDrafts } from "../../lib/draft-stash";
 import { MAX_ATTACHMENTS, toImageContent } from "../../lib/images";
+import { isLargePaste, pastedTextFile } from "../../lib/large-paste";
+import { NOT_RECALLING, promptHistory, type RecallState, recallStep } from "../../lib/recall";
+import { IS_MAC, shortcutFires } from "../../lib/shortcuts";
+import { openSketch } from "../../lib/diagram-store";
 import { loadDraft, saveDraft } from "../../lib/rooms";
 import { insertAtCaret } from "../../lib/voice";
+import { DraftStash } from "./DraftStash";
+import { FollowUps } from "./FollowUps";
+import { type MentionSources, useMentionMenu } from "./MentionMenu";
 import { ModelControls } from "./ModelControls";
+import { FanoutPill, type FanoutTarget } from "./FanoutSheet";
+import { ApprovalChoices } from "./ApprovalChoices";
 import { modelOfChoice, PromptModelPicker } from "./PromptModelPicker";
 import { QuickReplies } from "./QuickReplies";
 import { useSlashMenu } from "./SlashMenu";
@@ -38,6 +60,12 @@ export interface ComposerProps {
 	followUp: boolean;
 	/** Texts of the host's queued follow-ups, oldest first. */
 	followUps: readonly string[];
+	/** Ids of `followUps`, same order; used when `queueEdit` is on. */
+	followUpIds?: readonly string[];
+	/** The host edits, moves and steers queued follow-ups by id (`queue-edit`) and this guest may write. */
+	queueEdit?: boolean;
+	/** Where `#` (pull requests) and `@` (sessions) find what they name; null when the host does not expand mentions. */
+	mentions?: MentionSources | null;
 	/** Saves a file on the paired computer and resolves with its absolute path; null without a companion for this session. */
 	upload: ((file: File) => Promise<string>) | null;
 	/** Room the unsent draft is saved under; null keeps it in memory only. */
@@ -58,6 +86,10 @@ export interface ComposerProps {
 	followsRoom: boolean;
 	/** The host runs a prompt on a model the writer picks for it alone: offers the per-message model pill. */
 	promptModel: boolean;
+	/** Where "try on several models" can start the draft (a paired computer that runs fan-outs); null hides the pill. */
+	fanout?: FanoutTarget | null;
+	/** The host advertises `approval-grants`: a tool-approval ask shows the always-allow / deny-always choices. */
+	approvalGrants?: boolean;
 	onSessionCommand(cmd: SessionCommand, arg?: string): void;
 	ref?: Ref<ComposerHandle>;
 }
@@ -71,6 +103,10 @@ export interface ComposerHandle {
 	discard(draft: string): void;
 	/** Put the caret in the message box. */
 	focus(): void;
+	/** Set the draft text aside in the stash (what ⌘S does); nothing happens for a blank draft. */
+	stash(): void;
+	/** Attach files as the file picker would (a sketch's PNG and scene) and add `note` to the draft. */
+	attach(picked: readonly File[], note: string): Promise<void>;
 }
 
 /** Textarea metrics: line-height 20px + 8px vertical padding × 2 (kept in sync with shell.css). */
@@ -188,6 +224,9 @@ export const Composer = memo(function Composer({
 	queuedMessageCount,
 	followUp,
 	followUps,
+	followUpIds = [],
+	queueEdit = false,
+	mentions = null,
 	upload,
 	draftKey,
 	voice,
@@ -199,6 +238,8 @@ export const Composer = memo(function Composer({
 	profile,
 	followsRoom,
 	promptModel,
+	fanout = null,
+	approvalGrants = false,
 	onSessionCommand,
 	ref,
 }: ComposerProps): ReactNode {
@@ -217,6 +258,14 @@ export const Composer = memo(function Composer({
 	const [promptChoice, setPromptChoice] = useState<PromptModelChoice | null>(null);
 	const fileRef = useRef<HTMLInputElement | null>(null);
 	const { composingRef, onCompositionStart, onCompositionEnd } = useCompositionGuard();
+	// The caret as state (the menus follow it), the ↑/↓ walk through earlier prompts, and the stash.
+	const [caretPos, setCaretPos] = useState(0);
+	const recallRef = useRef<RecallState>(NOT_RECALLING);
+	const recallHistoryRef = useRef<readonly string[]>([]);
+	const pasteSeqRef = useRef(0);
+	const stashed = useStashedDrafts();
+	const [stashNote, setStashNote] = useState<string | null>(null);
+	const enterPref = useEnterWhileRunning();
 
 	const live = phase === "live";
 	// Host-driven controls (ask answers, quick replies, stop) need the live session; typed
@@ -228,11 +277,39 @@ export const Composer = memo(function Composer({
 	const queued = Math.max(0, queuedMessageCount - followUps.length);
 	const uploading = files.some(f => f.kind === "upload" && f.path === null);
 	const canFollowUp = followUp && busy && canPrompt;
+	// With "queue" as the device's Enter, Enter holds the message until the turn ends and Alt+Enter steers.
+	const queueFirst = canFollowUp && enterPref === "queue";
 	const canSend = canType && !uploading && (text.trim().length > 0 || files.length > 0);
 
 	useLayoutEffect(() => {
 		autosize(taRef.current);
 	}, [text, uiRequest?.reqId]);
+
+	useEffect(() => {
+		if (stashNote === null) return;
+		const timer = setTimeout(() => setStashNote(null), 3000);
+		return () => clearTimeout(timer);
+	}, [stashNote]);
+
+	/** Sets the draft text aside and empties the box; false (and nothing changes) for a blank draft. */
+	const stashNow = (): boolean => {
+		if (!stashDraft(text)) return false;
+		setText("");
+		caretRef.current = null;
+		setCaretPos(0);
+		recallRef.current = NOT_RECALLING;
+		setStashNote("Draft stashed");
+		return true;
+	};
+	/** Takes a stashed draft back; a draft already in the box is stashed in its place, so nothing is lost. */
+	const restoreStashed = (draft: StashedDraft): void => {
+		if (text.trim() !== "") stashDraft(text);
+		dropStashed(draft.id);
+		pendingCaretRef.current = draft.text.length;
+		setText(draft.text);
+		setCaretTick(tick => tick + 1);
+		recallRef.current = NOT_RECALLING;
+	};
 
 	useEffect(() => {
 		if (draftKey) saveDraft(draftKey, text);
@@ -256,6 +333,8 @@ export const Composer = memo(function Composer({
 		pendingCaretRef.current = next.caret;
 		setText(next.text);
 	};
+	// The latest `attach`, for the handle below (declared further down).
+	const attachRef = useRef<(picked: readonly File[]) => Promise<void>>(async () => {});
 	useImperativeHandle(
 		ref,
 		() => ({
@@ -266,6 +345,15 @@ export const Composer = memo(function Composer({
 			},
 			focus(): void {
 				taRef.current?.focus();
+			},
+			attach(picked: readonly File[], note: string): Promise<void> {
+				const next = text.trim() ? `${text.trimEnd()}\n\n${note}` : note;
+				pendingCaretRef.current = next.length;
+				setText(next);
+				return attachRef.current(picked);
+			},
+			stash(): void {
+				if (canType) stashNow();
 			},
 			replace(next: string, nextImages: readonly ImageContent[] = []): void {
 				pendingCaretRef.current = next.length;
@@ -291,6 +379,21 @@ export const Composer = memo(function Composer({
 	});
 	const showVoice = voice !== null && (canType || voiceInput.step !== "idle");
 
+	// "#" in the draft lists pull requests, "@" other sessions; picking one writes its token, nothing is sent.
+	const mention = useMentionMenu({
+		client,
+		text,
+		caret: caretPos,
+		enabled: canType,
+		sources: mentions,
+		onPick: (picked, caret) => {
+			pendingCaretRef.current = caret;
+			setText(picked);
+			setCaretTick(tick => tick + 1);
+		},
+	});
+	const resolveMentions = mention.resolve;
+
 	/** Sends `override` (a quick reply) or the typed text with its attachments; `deliver` queues it behind the running turn. */
 	const send = useCallback(
 		(override?: string, deliver?: "follow-up"): void => {
@@ -299,7 +402,10 @@ export const Composer = memo(function Composer({
 			// A choice for a model the host stopped offering is dropped rather than sent.
 			const choice =
 				promptModel && modelOfChoice(models ?? [], promptChoice) ? (promptChoice ?? undefined) : undefined;
-			client.sendPrompt(prompt, images, deliver, choice);
+			client.sendPrompt(prompt, images, deliver, choice, {
+				mentions: mentions === null ? undefined : resolveMentions(override === undefined ? text : prompt),
+			});
+			recallRef.current = NOT_RECALLING;
 			setPromptChoice(null);
 			setImages([]);
 			setFiles([]);
@@ -309,7 +415,7 @@ export const Composer = memo(function Composer({
 				caretRef.current = null;
 			}
 		},
-		[canType, client, files, images, models, promptChoice, promptModel, text, uploading],
+		[canType, client, files, images, mentions, models, promptChoice, promptModel, resolveMentions, text, uploading],
 	);
 	const handsFree = useHandsFree({
 		client,
@@ -390,17 +496,61 @@ export const Composer = memo(function Composer({
 		const failed = results.filter((message): message is string => message !== null);
 		if (failed.length > 0) setAttachError([...errors, ...failed].join(" "));
 	};
+	attachRef.current = attach;
 
-	// Screenshots and files pasted from the clipboard attach; plain text pastes as usual.
+	// Screenshots and files pasted from the clipboard attach; so does text beyond 32 KiB; shorter text pastes as usual.
 	const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>): void => {
 		const pasted = Array.from(e.clipboardData.files);
-		if (pasted.length === 0) return;
+		if (pasted.length === 0) {
+			// A long paste would flood the box: it becomes a text chip, unless no chip can hold it (then it is inserted as usual).
+			const long = e.clipboardData.getData("text/plain");
+			if (!isLargePaste(long) || files.length >= MAX_FILES) return;
+			const file = pastedTextFile(long, pasteSeqRef.current + 1);
+			if (typeof planFile(file, upload !== null) === "object") return;
+			pasteSeqRef.current++;
+			e.preventDefault();
+			void attach([file]);
+			return;
+		}
 		e.preventDefault();
 		void attach(pasted);
 	};
 
 	const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
-		if (slash.onKeyDown(e)) return;
+		if (slash.onKeyDown(e) || mention.onKeyDown(e)) return;
+		if (canType && !e.nativeEvent.isComposing && shortcutFires("stashDraft", e, e.target, IS_MAC)) {
+			e.preventDefault();
+			stashNow();
+			return;
+		}
+		// ↑ in an empty box brings back the previous prompt of this session, ↓ walks forward again, like a shell.
+		if (
+			(e.key === "ArrowUp" || e.key === "ArrowDown") &&
+			!e.shiftKey &&
+			!e.altKey &&
+			!e.ctrlKey &&
+			!e.metaKey &&
+			!e.nativeEvent.isComposing &&
+			(text === "" || recallRef.current.index !== null)
+		) {
+			if (recallRef.current.index === null) recallHistoryRef.current = promptHistory(client.getSnapshot().entries);
+			const { selectionStart, selectionEnd } = e.currentTarget;
+			const recalled = recallStep(
+				recallHistoryRef.current,
+				recallRef.current,
+				e.key === "ArrowUp" ? "older" : "newer",
+				text,
+				{ start: selectionStart, end: selectionEnd },
+			);
+			if (recalled !== null) {
+				e.preventDefault();
+				recallRef.current = recalled.state;
+				pendingCaretRef.current = recalled.text.length;
+				setText(recalled.text);
+				setCaretTick(tick => tick + 1);
+				return;
+			}
+		}
 		if (e.key === "Escape" && busy && canPrompt) {
 			e.preventDefault();
 			e.stopPropagation();
@@ -409,7 +559,7 @@ export const Composer = memo(function Composer({
 		}
 		if (shouldSubmitOnEnter(e, composingRef.current, isTouch())) {
 			e.preventDefault();
-			send(undefined, e.altKey && canFollowUp ? "follow-up" : undefined);
+			send(undefined, canFollowUp && e.altKey !== queueFirst ? "follow-up" : undefined);
 		}
 	};
 
@@ -418,7 +568,12 @@ export const Composer = memo(function Composer({
 			<div className="sh-composer sh-composer-ask">
 				{handsFree.status}
 				<div className="sh-ask-title">{uiRequest.title}</div>
-				{uiRequest.kind === "select" ? (
+				{uiRequest.kind === "select" && approvalGrants && uiRequest.approval ? (
+					<ApprovalChoices
+						approval={uiRequest.approval}
+						onChoose={label => client.sendUiResponse(uiRequest.reqId, label)}
+					/>
+				) : uiRequest.kind === "select" ? (
 					<div className="sh-ask-options">
 						{uiRequest.options.map((option, index) => {
 							const label = typeof option === "string" ? option : option.label;
@@ -473,29 +628,15 @@ export const Composer = memo(function Composer({
 	return (
 		<div className="sh-composer">
 			{canPrompt && !text && <QuickReplies disabled={!live} onPick={reply => send(reply)} />}
-			{followUps.length > 0 && (
-				<div className="sh-followups">
-					{followUps.map((queuedText, i) => (
-						<div key={`${i}-${queuedText}`} className="sh-followup" title={queuedText}>
-							<ListEnd size={14} />
-							<span className="sh-followup-label">After this turn:</span>
-							<span className="sh-followup-text">{queuedText.replace(/\s+/g, " ").trim()}</span>
-							{!readOnly && (
-								<button
-									type="button"
-									className="sh-followup-remove"
-									onClick={() => client.sendSessionCommand("unqueue", queuedText)}
-									disabled={!live}
-									aria-label="remove queued follow-up"
-									title="remove from the queue"
-								>
-									<X size={12} />
-								</button>
-							)}
-						</div>
-					))}
-				</div>
-			)}
+			<FollowUps
+				client={client}
+				followUps={followUps}
+				ids={followUpIds}
+				editable={queueEdit && followUpIds.length === followUps.length}
+				readOnly={readOnly}
+				live={live}
+				resolveMentions={resolveMentions}
+			/>
 			{(images.length > 0 || files.length > 0 || attachError) && (
 				<div className="sh-attachments">
 					{images.map((image, i) => (
@@ -538,6 +679,12 @@ export const Composer = memo(function Composer({
 			{showVoice && <VoiceStatus voice={voice} input={voiceInput} />}
 			{handsFree.status}
 			{slash.menu}
+			{mention.menu}
+			{stashNote !== null && (
+				<div className="sh-stash-note" role="status">
+					{stashNote}
+				</div>
+			)}
 			<div className="sh-composer-inner">
 				{!readOnly && (
 					<>
@@ -561,6 +708,24 @@ export const Composer = memo(function Composer({
 						>
 							<Paperclip size={16} />
 						</button>
+						<button
+							type="button"
+							className="sh-btn sh-btn-icon sh-sketch"
+							onClick={openSketch}
+							disabled={!canType || images.length >= MAX_ATTACHMENTS || files.length >= MAX_FILES}
+							aria-label="sketch a drawing"
+							title="sketch a drawing"
+						>
+							<PenLine size={16} />
+						</button>
+						<DraftStash
+							drafts={stashed}
+							canStash={text.trim() !== ""}
+							disabled={!canType}
+							onStash={() => void stashNow()}
+							onRestore={restoreStashed}
+							onDrop={dropStashed}
+						/>
 						{models !== null && (
 							<ModelControls
 								models={models}
@@ -583,16 +748,23 @@ export const Composer = memo(function Composer({
 								)}
 							</ModelControls>
 						)}
+						{fanout && (
+							<FanoutPill prompt={composePrompt(text, files)} target={fanout} disabled={!canType || uploading} />
+						)}
 					</>
 				)}
 				<textarea
 					ref={taRef}
 					className="sh-composer-input"
 					value={text}
-					onChange={e => setText(e.target.value)}
+					onChange={e => {
+						setText(e.target.value);
+						setCaretPos(e.target.selectionStart);
+					}}
 					onSelect={e => {
 						const { selectionStart, selectionEnd } = e.currentTarget;
 						caretRef.current = { start: selectionStart, end: selectionEnd };
+						setCaretPos(selectionEnd);
 					}}
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
@@ -635,25 +807,32 @@ export const Composer = memo(function Composer({
 						<button
 							type="button"
 							className="sh-btn sh-btn-after"
-							onClick={() => send(undefined, "follow-up")}
+							onClick={() => send(undefined, queueFirst ? undefined : "follow-up")}
 							disabled={!canSend}
-							aria-label="send after this turn"
-							title="send when this turn ends (Alt+Enter)"
+							aria-label={queueFirst ? "send into the running turn" : "send after this turn"}
+							title={
+								queueFirst
+									? "send now, steering the running turn (Alt+Enter)"
+									: "send when this turn ends (Alt+Enter)"
+							}
 						>
-							<ListEnd size={15} /> <span className="sh-btn-label">After turn</span>
+							{queueFirst ? <Zap size={15} /> : <ListEnd size={15} />}{" "}
+							<span className="sh-btn-label">{queueFirst ? "Steer" : "After turn"}</span>
 						</button>
 					)}
 					<button
 						type="button"
 						className="sh-btn sh-btn-primary"
-						onClick={() => send()}
+						onClick={() => send(undefined, queueFirst ? "follow-up" : undefined)}
 						disabled={!canSend}
 						title={
 							!live
 								? "queue until reconnected (Enter)"
-								: canFollowUp
-									? "send now, steering the running turn (Enter)"
-									: "send (Enter)"
+								: queueFirst
+									? "send when this turn ends (Enter)"
+									: canFollowUp
+										? "send now, steering the running turn (Enter)"
+										: "send (Enter)"
 						}
 					>
 						<SendHorizontal size={16} /> <span className="sh-btn-label">Send</span>

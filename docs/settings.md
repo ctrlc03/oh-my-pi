@@ -255,6 +255,17 @@ Two enum settings, both default `off`, let omp honor the `hooks` and `permission
 
 Project files execute arbitrary commands and can widen approvals, so a **project layer cannot set these keys**: a `claude.hooks` or `claude.permissions` value that comes from `<repo>/.omp/config.yml` or `<repo>/.claude/settings.json` is ignored (a warning is logged) and the user-level value applies. Set them in `~/.omp/agent/config.yml`, with `omp config set claude.hooks all`, or per run with a `--config` overlay. Disabling the `claude` provider (`disabledProviders`) turns both off. The loaded hooks are listed in the `/extensions` dashboard.
 
+### Shell output in markdown commands
+
+Markdown slash commands and prompt templates can embed ``!`cmd` `` (OpenCode's syntax); when the command runs, the snippet is replaced by the command's output. See [Slash command internals](./slash-command-internals.md#shell-output-in-commands).
+
+| Key                      | Type   | Default | Notes                                                                                                                                                                                                                   |
+| ------------------------ | ------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `commands.shellExpansion` | enum   | `user`  | `off` leaves snippets as written; `user` runs them only from your own command and prompt directories (`~/.omp/commands`, `~/.claude/commands`, `~/.config/opencode/commands`, …). Commands from a project (`<project>/.omp/commands`, `.claude/commands`, `.opencode/commands`, `.omp/prompts`, …) or from an installed Claude marketplace plugin or omp extension package are left as written; `all` runs those too. |
+| `commands.shellTimeoutMs` | number | `10000` | Longest one snippet may run; a timeout inserts an error line instead of the output.                                                                                                                                     |
+
+Project command files travel with a repository and could run arbitrary shell, so a **project layer cannot set `commands.shellExpansion`**: a value from `<repo>/.omp/config.yml` is ignored (a warning is logged) and the user-level value applies.
+
 ### Worked example: global vs. project
 
 ```yaml
@@ -527,6 +538,39 @@ thinkingBudgets:
 | `thinkingBudgets.max`             | number  | `32768` | Token budget for `max`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `providers.autoThinkingMaxEffort` | enum    | `xhigh` | Highest effort `defaultThinkingLevel: auto` may resolve. `xhigh` keeps the classifier one tier below the top, so only `ultrathink` reaches `max`; `max` lets the classifier bill the top tier on models that expose it. The local on-device classifier stays capped at `xhigh` either way. This governs what `auto` _resolves_: a model whose ladder offers nothing under the ceiling gets no auto level at all, and one whose metadata requires explicit effort still receives its lowest supported effort from the transport — on a `["max"]` ladder that is `max`, because the model accepts nothing else. |
 
+### Model routing
+
+Routing picks a model and thinking level for every prompt you type, so a quick question runs on a cheap model and a hard refactor on the strongest one. It is off by default; nothing changes until `routing.mode` is `auto`.
+
+```yaml
+routing:
+  mode: auto
+  classifier: judge
+  stickiness: 3
+  tiers:
+    - role: smol
+      when: "Trivial: a quick question, a lookup, explaining a snippet, or a one-line mechanical edit."
+    - role: default
+      when: "Normal coding work: a bug fix, a feature in a known area, or a refactor of a few files."
+    - role: slow
+      when: "Hard: architecture or design, a large cross-cutting refactor, a subtle concurrency or data-loss problem, or an unknown cause."
+```
+
+| Key                  | Type   | Default | Notes                                                                                                                                                                                                                                                                                                                    |
+| -------------------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `routing.mode`       | enum   | `off`   | `off` or `auto`. `/route on` / `/route off` override it for one session.                                                                                                                                                                                                                                                  |
+| `routing.tiers`      | array  | `smol`, `default`, `slow` (above) | Ordered list from the cheapest tier to the strongest; config file only. Each entry is `{ role, when }` or `{ model, when }` (exactly one of `role`/`model`), with an optional `name` shown in notices. `role` is a model role (`smol`, `slow`, a custom one); the `default` role means the session's own model, so a normal prompt causes no switch. `model` is any model selector (`provider/id`, optionally `:level`, which pins that tier's thinking level). `when` is the description the classifier chooses by. A tier whose model cannot be resolved (no credentials, or cooling down after a failure) is left out; with one tier left nothing is classified. |
+| `routing.classifier` | string | `judge` | Model role that classifies each prompt. It follows that role's fallback chain, like the other judge calls, and its cost is billed to the session. A failed or slow (over 4 s) classification leaves the prompt on the session's model with a warning notice. |
+| `routing.stickiness` | number | `3`     | Routed turns a choice is held before routing may move to a cheaper tier or lower thinking level; `0` follows the classifier every turn. Moving _up_ a tier or to a higher thinking level is never delayed. In the settings panel under Models → Routing. |
+
+One classifier call per prompt answers both questions: which tier fits, and how hard the prompt is (the same effort ladder `defaultThinkingLevel: auto` uses, clamped to what the tier's model supports; `ultrathink` forces the maximum effort). A tier's own `:level` selector wins over the classifier's effort. The prompt runs on that model for the turn and the session's own model and thinking level are put back when the run settles, so routing never rewrites your `/model` choice or the saved session.
+
+**Precedence.** An explicit model always wins and routing only notes that it stepped aside: a model chosen for one message (a collab guest's model picker, or a `^model` mention), an active profile that sets a model, plan mode (it runs on the plan model), and subagent sessions are never routed. Spend cap: a prompt a cap already refuses is never classified; while spend is in the warning band (80% of a cap) routing may keep or lower the price of a prompt but never raise it; the classifier call is billed to the session. Fallback chains: a role tier resolves through the role's fallback chain (`retry.fallbackChains`, then the built-in priority order) and skips a model that recent failures have put in cooldown, and a failure during a routed turn is handled by the usual retry/fallback recovery.
+
+**Prompt cache.** Switching models rebuilds the prompt cache: the first request on a different model re-reads the whole conversation at the uncached price. Routing therefore skips the override when the chosen model and level are what the session already uses, and `routing.stickiness` keeps a strong tier for a few turns, so a one-word follow-up right after a hard prompt does not bounce between models. Raise `routing.stickiness` (or keep long, cache-heavy sessions on `off`) when cache hits matter more than the cheaper tier.
+
+**Visibility.** Each routed prompt posts a notice (`source: "routing"`, e.g. `smol → anthropic/claude-haiku-4-5 · thinking low`; collab guests receive it as a `notice` session event, no new frame), the status line shows the model for the turn, and the turn's usage row carries `route <tier>`. `/route` prints the tiers with the models they resolve to, the held choice, and the last 20 decisions (including prompts that were skipped and why); `/route on|off` toggles routing for this session and `/route reset` goes back to `routing.mode`. Decisions are kept in memory for the process only. `/route` runs on the host; guests cannot run it.
+
 ### Sampling
 
 For the numeric sampling settings, a negative value (normally `-1`) means "use the provider/model default" — `omp` does not send that parameter.
@@ -652,10 +696,24 @@ tools:
 | `tools.xdevInlineDevices` | array | `[]` | Dynamic-device name globs to inline in `builtins` mode; ignored in `catalog` mode. |
 | `async.enabled` | boolean | `true` | Enable async bash commands and background task execution. |
 | `async.maxJobs` | number | `100` | Running background-job cap, floored to at least 1; parked/queued jobs do not consume execution slots. |
+| `schedule.enabled` | boolean | `false` | Expose the `schedule` tool: the agent can create, list and delete scheduled runs (cron, interval, or once) through the collab companion on this computer. Every creation asks the user first, in every approval mode. Needs the companion running. See [schedule](./tools/schedule.md). |
 
 Mounting still follows the session's explicit tool allow-list. A session that permits `read` but omits `write` can receive a device-only write transport; this does not grant filesystem writes.
 
 Individual built-in tools and Eval preludes are toggled by their own keys, e.g. `bash.enabled`, `launch.enabled`, `eval.py`, `eval.js`, `glob.enabled`, `grep.enabled`, `fetch.enabled`, `browser.enabled`, `computer.enabled`, `ratchet.enabled` (default `false`; the `ratchet(flow)` eval/hillclimb prelude, which `/ratchet` turns on for the current session only), `archive.enabled` (default `true`; the read-only `archive` eval prelude over prompt history, recent projects, past sessions, and recaps), `astEdit.enabled`, `astGrep.enabled`, `codemap.enabled` (default `false`; the `trace` tool, answering who defines/calls/handles/publishes/emits a symbol from a persistent incremental code index with no model calls, and the `flow` tool, which walks that index across Solidity, Rust, and Noir to trace a multi-step question), `find.enabled` (`auto`/`on`/`off`; `auto` enables `find` only when the `judge` role resolves to a native TypeSafe jev model), and `web_search.enabled`. Image questions use `read <image>?q=<question>` and honor `images.questionTimeoutMs`.
+
+### Shell sandbox
+
+An OS-level sandbox for the commands the `bash` tool runs (Seatbelt on macOS, bubblewrap on Linux). Off by default; see [Shell sandbox](./sandbox.md).
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `sandbox.mode` | enum | `off` | `off`, `workspace-write` (write only the workspace, additional directories, temp dirs and tool caches; read everywhere except credentials) or `read-only` (write only to temp dirs). `/sandbox` changes it for one session. |
+| `sandbox.network` | enum | `off` | `on` or `off`: whether sandboxed commands may use the network. |
+| `sandbox.failOpen` | boolean | `false` | Run commands unsandboxed, with a notice, when the sandbox backend is missing; `false` refuses them with an error. |
+| `sandbox.autoEscalate` | boolean | `false` | Let the agent's `escalate` requests (one command with network, or unsandboxed) run without a prompt. Off, they prompt even in `yolo` mode. |
+
+A project layer can only tighten these: a repository's `.omp/config.yml` cannot turn the sandbox off, enable the network, `failOpen` or `autoEscalate` over your user-level values (the looser project value is ignored).
 
 ### Window-scoped computer use
 
@@ -935,6 +993,27 @@ The `path` segment abbreviates the home directory to `~`. On Windows, shared pat
 
 The `cost` segment shows recorded session costs. For an active provider/model with scheduled pricing, it appends `↑` during peak hours or `↓` off-peak, refreshing at boundaries even while idle. The arrow reflects the current tariff, not past spending; flat-price models and explicit cost overrides have no arrow. See [usage costs and time-based pricing](models.md#usage-costs-and-time-based-pricing) for the UTC schedule and estimation semantics.
 
+### Prompt-cache hit rate and misses
+
+Every settled model request is recorded in a per-session ledger (`AgentSession.requestLedger`) with its token usage, cache hit percentage (`cacheRead` over `cacheRead + cacheWrite + input`), tokens per second, time to first token, and cost. Nothing is configured and nothing changes by default; three views read it.
+
+A request is a **cache miss** when it read less than half of the prefix the previous request left behind (`cacheRead + cacheWrite` of that request, at least 2,048 tokens) while reprocessing at least 2,048 prompt tokens. Each miss is attributed to what changed between the two requests, most likely cause first; more than one can apply:
+
+| Cause           | Meaning                                                                                                   |
+| --------------- | --------------------------------------------------------------------------------------------------------- |
+| `model`         | The model or provider differs from the previous request's.                                                |
+| `system-prompt` | The system prompt blocks sent differ (the same digest the session stores as `system-prompt-digest`).      |
+| `tools`         | The tool list sent differs in order, names, descriptions, or parameter schemas.                           |
+| `compaction`    | History was compacted or pruned (stale or chosen tool results) since the previous request.                |
+| `thinking`      | The thinking level differs.                                                                               |
+| `ttl`           | The gap since the previous request ended exceeds the model's prompt-cache lifetime for the tier it wrote (needs a catalog or `models.yml` `promptCache` lifetime; none is assumed). |
+| `unknown`       | None of the above: provider-side eviction, a rewound or edited history, or implicit-cache noise.          |
+
+- `/cache` prints the last request's hit rate and read/written/uncached tokens, its speed, tokens and cost, the session hit rate over every request that carried a prompt (weighted by tokens), and the ten most recent misses with their causes. It works in the TUI, ACP, and RPC.
+- The TUI's cache-miss marker (`display.cacheMissMarker`) now ends with the cause when the ledger attributed one.
+- The `cache` status-line segment shows the hit percentage of the last request. It is in no preset: add it to `statusLine.leftSegments` or `statusLine.rightSegments` under `statusLine.preset: custom`. It differs from `cache_hit`, which is the session-wide rate.
+- Collab hosts advertise `cache-stats` and send the same numbers in `state.cache`; the web app shows them as a strip above the message box (see [Collab](./collab.md)).
+
 ### Interaction
 
 | Key                    | Type    | Default         | Values                                                                                                  |
@@ -949,6 +1028,9 @@ The `cost` segment shows recorded session costs. For an active provider/model wi
 | `plan.defaultOnStartup` | boolean | `false`         | Start each fresh interactive session in plan mode when plan mode is enabled. Print/JSON (`--print`) mode ignores this and prints a note; use `--plan-yolo` for a headless plan flow. |
 | `profile.default`      | string  | unset           | Agent profile a session starts in until it switches (`/profile`). Unset starts in `build`, which changes nothing. See [Agent profiles](./profiles.md). |
 | `profiles`             | record  | `{}`            | Named agent profiles (tools, approval, path rules, model, thinking, prompt) by name. See [Agent profiles](./profiles.md). |
+| `prWatch.enabled`      | boolean | `true`          | Offer the `watch_pr` tool; `/watch-pr` refuses while it is off. Nothing is watched until the agent or you ask. See [Watching pull requests](./pr-watch.md). |
+| `prWatch.maxWakesPerHour` | number | `3`           | Most times the watcher wakes the agent for one pull request per hour. Events over the cap wait for the hour to pass; `0` never wakes the agent (events only notify). |
+| `prWatch.pollSeconds`  | number  | `120`           | How often the session polls a watched pull request while its checks are pending and no companion does it (a settled one is polled half as often, up to every 10 minutes). GitHub is asked with ETags, so an unchanged answer is a free `304`. |
 | `ask.timeout`          | number  | `0`             | Auto-select the recommended ask option after this many seconds; `0` disables automatic selection. Also bounds `cfg://` approval prompts; an unanswered approval denies the write instead of auto-selecting. |
 | `ask.notify`           | enum    | `on`            | `on`, `off`.                                                                                            |
 | `input.bareExitOnEmptySession` | boolean | `true` | Submitting exactly `exit`, `quit`, or `q` (case-insensitive) before the first message quits. |

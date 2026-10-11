@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { CommandShellExpansion } from "@oh-my-pi/pi-coding-agent/config/command-shell";
 import { importRoomKey } from "@oh-my-pi/pi-coding-agent/collab/crypto";
 import { CollabHost } from "@oh-my-pi/pi-coding-agent/collab/host";
 import { COLLAB_PROTO, type CollabFrame, parseCollabLink } from "@oh-my-pi/pi-coding-agent/collab/protocol";
@@ -192,6 +193,14 @@ function makeHost(options: HostOptions = {}): Harness {
 				{ name: "ext-wins", description: "shadowed", content: "x", source: "(user)" },
 			],
 			customCommands: [],
+			createCommandShell: () =>
+				new CommandShellExpansion({
+					mode: "user",
+					cwd: os.tmpdir(),
+					timeoutMs: 10_000,
+					sessionKey: "host-slash-test",
+				}),
+			resolveCommandShell: (shell: CommandShellExpansion, text: string) => shell.resolve(text),
 			extensionRunner: {
 				getCommand: (name: string) => (name === "ext-wins" || name === "ext-only" ? {} : undefined),
 			},

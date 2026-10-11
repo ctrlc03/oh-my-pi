@@ -214,7 +214,7 @@ Related flags for headless runs:
 - `--max-time <duration>` — bound the run.
 - `--max-cost <usd>` / `--max-tokens <n>` — cap spend; a capped run exits with status `3`.
 
-To run omp from issue and pull request comments in GitHub Actions, see [Run omp from GitHub](./github-action.md).
+To run omp from GitHub events (comment mentions, automatic pull request review, issue triage, scheduled and manual tasks) in GitHub Actions, see [Run omp from GitHub](./github-action.md).
 
 `--mode json` emits a session header followed by events as JSON lines.
 Incremental `message_update` events omit full partial-message snapshots; completed

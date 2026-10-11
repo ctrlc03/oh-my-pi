@@ -1,7 +1,10 @@
-import { Braces, FileCode, Folder } from "lucide-react";
+import { Braces, FileCode, Folder, PenLine } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useSyncExternalStore } from "react";
+import type { GraphPalette, SkeletonElement } from "../../lib/codemap-scene";
 import type { CodemapFocus, CodemapNode } from "../../lib/companion";
+import { openCanvas } from "../../lib/diagram-store";
+import { graphPalette } from "../../lib/theme-tokens";
 
 /** Phones: bottom sheet, stacked lists instead of curves. */
 export const PHONE_QUERY = "(max-width: 640px)";
@@ -96,6 +99,28 @@ export function NodeRow({ node, onPick, chip, bridge, weight, local }: NodeRowPr
 					{weight}
 				</span>
 			)}
+		</button>
+	);
+}
+
+export interface OpenInCanvasProps {
+	/** Names the sheet and the files a send to the agent attaches. */
+	title: string;
+	/** The graph as Excalidraw skeletons; called when pressed, so the colours are the theme's at that moment. */
+	build(palette: GraphPalette): SkeletonElement[];
+	className?: string;
+}
+
+/** "Open in canvas": the graph on screen as an editable Excalidraw scene that can be sent to the agent. */
+export function OpenInCanvas({ title, build, className = "sh-btn" }: OpenInCanvasProps): ReactNode {
+	return (
+		<button
+			type="button"
+			className={className}
+			onClick={() => openCanvas(title, "codemap", { kind: "skeleton", elements: build(graphPalette()) })}
+			title="draw this graph on an editable canvas"
+		>
+			<PenLine size={14} /> Open in canvas
 		</button>
 	);
 }

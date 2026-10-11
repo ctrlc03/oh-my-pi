@@ -378,6 +378,29 @@ export function evaluatePathRules(
 	return strictest;
 }
 
+/**
+ * Absolute, symlink-resolved form of `targetPath` (model spelling: relative to `cwd`, absolute, or `~/…`).
+ * What an approval grant records and compares, so a link inside the project cannot reach a file the user
+ * never approved.
+ */
+export function resolveGrantPath(targetPath: string, cwd: string): string {
+	return resolveReal(path.resolve(cwd, expandPath(targetPath)));
+}
+
+/**
+ * Whether `glob` covers `targetPath` once symlinks are resolved: tested against the absolute path and the
+ * path relative to each project root, with the same glob rules as `tools.pathRules`.
+ */
+export function pathMatchesGrantGlob(
+	glob: string,
+	targetPath: string,
+	session: Pick<PathRuleSession, "cwd" | "additionalDirectories">,
+): boolean {
+	const roots = projectRoots(session.cwd, session.additionalDirectories);
+	const real = resolveGrantPath(targetPath, session.cwd);
+	return globMatchesAny(glob, candidateForms(real, roots.real));
+}
+
 /** Whether any path rule or `tools.outsideProject` could restrict `tool`: the cheap gate for hot paths. */
 export function pathRulesActive(settings: Settings, tool: string): boolean {
 	const canonicalTool = normalizeToolName(tool);

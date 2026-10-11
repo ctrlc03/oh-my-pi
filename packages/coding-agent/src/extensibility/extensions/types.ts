@@ -57,6 +57,7 @@ import type {
 	TSchema,
 	UsageProvider,
 } from "@oh-my-pi/pi-ai";
+import type { CollabUiApproval } from "@oh-my-pi/pi-wire";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@oh-my-pi/pi-ai/oauth/types";
 import type {
 	AutocompleteItem,
@@ -231,6 +232,10 @@ export interface ExtensionUIDialogOptions {
 	markableCount?: number;
 	/** Allow image pastes in rich ask-dialog custom-answer and note prompts. */
 	acceptImages?: boolean;
+	/** Marks a select as a tool-approval prompt: mirrored to collab guests with the extra choices (feature `approval-grants`). */
+	approval?: CollabUiApproval;
+	/** Told who settled a select (including a dismissal) just before it resolves: `remote` is a collab guest. */
+	onAnswer?: (source: "local" | "remote") => void;
 }
 
 /** Raw terminal input listener for extensions. */

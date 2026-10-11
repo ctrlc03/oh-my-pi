@@ -1,12 +1,13 @@
 import type { AssistantMessage, ImageContent, SessionEntry, TextContent, ToolResultMessage } from "@oh-my-pi/pi-wire";
-import { ArrowDown, ArrowUp, Check, ChevronRight, Copy, Pencil, Share2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CheckCircle2, ChevronRight, Copy, FileDiff, Pencil, Share2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ActiveTool, ConnectionPhase } from "../../lib/client";
 import { IS_MAC, shortcutFires } from "../../lib/shortcuts";
 import { replyText, turnMarkdown, type TurnRange, turnRanges } from "../../lib/export";
 import { buildBlocks, buildChatBlocks, replyId, toolResults } from "../../lib/blocks";
-import { fmtTokens } from "../../lib/format";
+import { fmtDuration, fmtTokens } from "../../lib/format";
+import { ASYNC_RESULT_TYPE, asyncResultJobs } from "../../lib/async-result";
 import type { NewSince } from "../../lib/new-since";
 import { answeredByOtherModel } from "../../lib/prompt-model";
 import type { QueuedPrompt } from "../../lib/rooms";
@@ -47,6 +48,8 @@ export interface TranscriptProps {
 	onCancelQueued?(id: string): void;
 	/** Rows of prompts offer an edit action that calls this with the prompt's entry id. */
 	onEditPrompt?: (entryId: string) => void;
+	/** Prompts and finished turns offer a Changes action that calls this with the prompt's entry id. */
+	onTurnChanges?: (entryId: string) => void;
 	/**
 	 * Kept latest turns: entries before `from` stay unmounted, and the top of the
 	 * transcript offers *Show all* instead of earlier rows.
@@ -175,6 +178,44 @@ function MsgContent({ content }: { content: string | readonly (TextContent | Ima
 	);
 }
 
+/** A finished background job: one status line per job; the delivered output only on request. */
+function AsyncResultRow({ entry }: { entry: Extract<SessionEntry, { type: "custom_message" }> }): ReactNode {
+	const [open, setOpen] = useState(false);
+	const jobs = asyncResultJobs(entry.details);
+	return (
+		<Row kind="custom" gutter="" title={entry.timestamp} entryId={entry.id}>
+			<div className="tr-job-done">
+				{jobs.map((job, i) => (
+					<div key={`${job.id}-${i}`} className="tr-job-done-row">
+						<CheckCircle2 size={13} className="tr-job-done-icon" />
+						<span>Background job completed</span>
+						{job.type !== null && <span className="tr-job-done-dim">[{job.type}]</span>}
+						<span className="tr-job-done-id">{job.label ?? job.id}</span>
+						{job.durationMs !== null && <span className="tr-job-done-dim">({fmtDuration(job.durationMs)})</span>}
+					</div>
+				))}
+				<button
+					type="button"
+					className="tr-job-done-toggle"
+					aria-expanded={open}
+					onClick={() => setOpen(value => !value)}
+				>
+					<ChevronRight
+						size={12}
+						className={open ? "tr-job-done-chev tr-job-done-chev--open" : "tr-job-done-chev"}
+					/>
+					{open ? "Hide output" : jobs.length === 0 ? "Background job output" : "Show output"}
+				</button>
+				{open && (
+					<div className="tr-job-done-body">
+						<MsgContent content={entry.content} />
+					</div>
+				)}
+			</div>
+		</Row>
+	);
+}
+
 function AssistantBody({
 	message,
 	entryId,
@@ -246,17 +287,40 @@ function AssistantBody({
 	);
 }
 
-function EditPrompt({ entryId, onEdit }: { entryId: string; onEdit: (entryId: string) => void }): ReactNode {
+function PromptActions({
+	entryId,
+	onEdit,
+	onChanges,
+}: {
+	entryId: string;
+	onEdit?: (entryId: string) => void;
+	onChanges?: (entryId: string) => void;
+}): ReactNode {
 	return (
-		<button
-			type="button"
-			className="tr-act tr-edit"
-			onClick={() => onEdit(entryId)}
-			aria-label="edit and resend"
-			title="edit and resend"
-		>
-			<Pencil size={13} />
-		</button>
+		<>
+			{onChanges && (
+				<button
+					type="button"
+					className="tr-act tr-changes"
+					onClick={() => onChanges(entryId)}
+					aria-label="changes in this turn"
+					title="changes in this turn"
+				>
+					<FileDiff size={13} />
+				</button>
+			)}
+			{onEdit && (
+				<button
+					type="button"
+					className="tr-act tr-edit"
+					onClick={() => onEdit(entryId)}
+					aria-label="edit and resend"
+					title="edit and resend"
+				>
+					<Pencil size={13} />
+				</button>
+			)}
+		</>
 	);
 }
 
@@ -271,7 +335,15 @@ interface PlannedTurn extends TurnRange {
 }
 
 /** Copy the reply or share the turn: quiet actions at the end of a finished agent turn. */
-function TurnActions({ entries, turn }: { entries: readonly SessionEntry[]; turn: PlannedTurn }): ReactNode {
+function TurnActions({
+	entries,
+	turn,
+	onChanges,
+}: {
+	entries: readonly SessionEntry[];
+	turn: PlannedTurn;
+	onChanges?: () => void;
+}): ReactNode {
 	const [done, flash] = useFlash();
 	const slice = (): readonly SessionEntry[] => entries.slice(turn.from, turn.to);
 	const copyReply = async (): Promise<void> => {
@@ -304,6 +376,12 @@ function TurnActions({ entries, turn }: { entries: readonly SessionEntry[]; turn
 				{done === "share" ? <Check size={12} /> : <Share2 size={12} />}
 				{done === "share" ? "Copied" : "Share"}
 			</button>
+			{onChanges && (
+				<button type="button" className="tr-turn-btn" onClick={onChanges}>
+					<FileDiff size={12} />
+					Changes
+				</button>
+			)}
 		</div>
 	);
 }
@@ -319,6 +397,7 @@ interface EntryRowProps {
 	active: ReadonlyMap<string, ActiveTool>;
 	host?: ToolRenderHost;
 	onEdit?: (entryId: string) => void;
+	onChanges?: (entryId: string) => void;
 	/** Model id of a reply a model other than the session's gave. */
 	answeredBy?: string;
 }
@@ -329,6 +408,7 @@ function entryRowEqual(prev: EntryRowProps, next: EntryRowProps): boolean {
 		prev.entry !== next.entry ||
 		prev.host !== next.host ||
 		prev.onEdit !== next.onEdit ||
+		prev.onChanges !== next.onChanges ||
 		prev.answeredBy !== next.answeredBy
 	) {
 		return false;
@@ -349,6 +429,7 @@ const EntryRow = memo(function EntryRow({
 	active,
 	host,
 	onEdit,
+	onChanges,
 	answeredBy,
 }: EntryRowProps): ReactNode {
 	switch (entry.type) {
@@ -363,7 +444,10 @@ const EntryRow = memo(function EntryRow({
 								kind="prompt"
 								label="host"
 								title={entry.timestamp}
-								extra={onEdit && !msg.synthetic && <EditPrompt entryId={entry.id} onEdit={onEdit} />}
+								extra={
+									(onEdit || onChanges) &&
+									!msg.synthetic && <PromptActions entryId={entry.id} onEdit={onEdit} onChanges={onChanges} />
+								}
 							>
 								<MsgContent content={msg.content} />
 							</BlockShell>
@@ -404,13 +488,18 @@ const EntryRow = memo(function EntryRow({
 							kind="prompt"
 							label={<span className="tr-badge">{from}</span>}
 							title={entry.timestamp}
-							extra={onEdit && <EditPrompt entryId={entry.id} onEdit={onEdit} />}
+							extra={
+								(onEdit || onChanges) && (
+									<PromptActions entryId={entry.id} onEdit={onEdit} onChanges={onChanges} />
+								)
+							}
 						>
 							<MsgContent content={entry.content} />
 						</BlockShell>
 					</Row>
 				);
 			}
+			if (entry.customType === ASYNC_RESULT_TYPE) return <AsyncResultRow entry={entry} />;
 			if (!entry.display) return null;
 			return (
 				<Row kind="custom" gutter="" title={entry.timestamp} entryId={entry.id}>
@@ -525,6 +614,7 @@ function ChatRow({
 	active,
 	host,
 	onEdit,
+	onChanges,
 	otherModels,
 }: {
 	item: ChatItem;
@@ -532,6 +622,7 @@ function ChatRow({
 	active: ReadonlyMap<string, ActiveTool>;
 	host?: ToolRenderHost;
 	onEdit?: (entryId: string) => void;
+	onChanges?: (entryId: string) => void;
 	/** Assistant entries a model other than the session's answered. */
 	otherModels: ReadonlyMap<string, string>;
 }): ReactNode {
@@ -544,6 +635,7 @@ function ChatRow({
 					active={active}
 					host={host}
 					onEdit={onEdit}
+					onChanges={onChanges}
 					answeredBy={otherModels.get(item.entry.id)}
 				/>
 			);
@@ -641,6 +733,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		queued,
 		onCancelQueued,
 		onEditPrompt,
+		onTurnChanges,
 		trimmed,
 		sessionModel,
 		onSendToAgent,
@@ -781,6 +874,14 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	editRef.current = onEditPrompt;
 	const canEdit = onEditPrompt !== undefined && compact !== true;
 	const onEdit = useMemo(() => (canEdit ? (entryId: string) => editRef.current?.(entryId) : undefined), [canEdit]);
+	// Changes action: the same, for hosts that can say what a turn changed.
+	const changesRef = useRef(onTurnChanges);
+	changesRef.current = onTurnChanges;
+	const canChanges = onTurnChanges !== undefined && compact !== true;
+	const onChanges = useMemo(
+		() => (canChanges ? (entryId: string) => changesRef.current?.(entryId) : undefined),
+		[canChanges],
+	);
 
 	// The blocks the view renders, in order, for selecting and copying. Chat items are built here without
 	// the live stream, so token updates do not churn the list.
@@ -796,6 +897,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		compact: compact === true,
 		onSendToAgent,
 		onEdit,
+		onChanges,
 	});
 
 	// Where each turn's agent work ends, for the copy/share row. Computed over all
@@ -838,7 +940,14 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		const turn = t === undefined ? undefined : turnPlan.turns[t];
 		if (turn === undefined || !turn.agent) return null;
 		if (t === turnPlan.turns.length - 1 && !finished) return null;
-		return <TurnActions entries={entries} turn={turn} />;
+		const promptId = entries[turn.from]?.id;
+		return (
+			<TurnActions
+				entries={entries}
+				turn={turn}
+				onChanges={onChanges !== undefined && promptId !== undefined ? () => onChanges(promptId) : undefined}
+			/>
+		);
 	};
 
 	// Find-in-session: mount the target's window if it is above it, then center it
@@ -1060,6 +1169,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 									active={activeTools}
 									host={host}
 									onEdit={onEdit}
+									onChanges={onChanges}
 									otherModels={otherModels}
 								/>
 								{Object.hasOwn(chatTurnEnds, i) && turnActions(chatTurnEnds[i])}
@@ -1074,6 +1184,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 									active={activeTools}
 									host={host}
 									onEdit={onEdit}
+									onChanges={onChanges}
 									answeredBy={otherModels.get(entry.id)}
 								/>
 								{Object.hasOwn(turnPlan.endOf, entry.id) && turnActions(turnPlan.endOf[entry.id])}

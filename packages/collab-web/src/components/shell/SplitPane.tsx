@@ -12,7 +12,9 @@ import { useHostRecovery } from "../../lib/use-host-recovery";
 import { useNewSince } from "../../lib/new-since";
 import { Transcript } from "../transcript/Transcript";
 import { Composer, type ComposerHandle } from "./Composer";
+import { useComposerExtras } from "./composer-extras";
 import { useEditPrompt } from "./EditPromptSheet";
+import { useTurnChanges } from "./TurnChangesSheet";
 import "./split.css";
 
 const PHASE_LABEL: Record<ConnectionPhase, string> = {
@@ -69,6 +71,12 @@ export function SplitPane({
 	const hostId = companion?.snap.hosts.find(host => host.sessionId === sessionId)?.instanceId ?? null;
 	const storedInstance = rooms.find(room => room.roomId === roomId)?.instanceId;
 	const instanceId = hostId ?? storedInstance ?? null;
+	const composerExtras = useComposerExtras(
+		snap,
+		companionClient,
+		hostId,
+		companionClient !== null && hostId !== null && companion?.snap.canGithub === true,
+	);
 
 	// Remember the room, so a collapsed or closed pane's session stays one tap away in recents.
 	useEffect(() => {
@@ -85,6 +93,7 @@ export function SplitPane({
 
 	const composerRef = useRef<ComposerHandle>(null);
 	const editPrompt = useEditPrompt(client, snap, composerRef);
+	const turnChanges = useTurnChanges(client, snap, sessionId, composerRef);
 	const sendToAgent = useCallback((text: string) => composerRef.current?.insert(text), []);
 	const { newSince, seen: newSeen, markSeen, markTail } = useNewSince(client, roomId, snap.entries, live);
 	const sendSessionCommand = useCallback(
@@ -180,11 +189,13 @@ export function SplitPane({
 					queued={snap.queued}
 					onCancelQueued={cancelQueued}
 					onEditPrompt={editPrompt.onEditPrompt}
+					onTurnChanges={turnChanges.onTurnChanges}
 					onSendToAgent={snap.readOnly ? undefined : sendToAgent}
 					sessionModel={snap.state?.model?.id}
 				/>
 			</div>
 			{editPrompt.sheet}
+			{turnChanges.sheet}
 			<Composer
 				ref={composerRef}
 				key={roomId}
@@ -195,7 +206,11 @@ export function SplitPane({
 				working={snap.working}
 				queuedMessageCount={snap.state?.queuedMessageCount ?? 0}
 				followUp={Object.hasOwn(snap.features, "follow-up") && !snap.readOnly}
+				approvalGrants={Object.hasOwn(snap.features, "approval-grants")}
 				followUps={snap.followUps}
+				followUpIds={composerExtras.followUpIds}
+				queueEdit={composerExtras.queueEdit}
+				mentions={composerExtras.mentions}
 				upload={upload}
 				voice={null}
 				draftKey={roomId}

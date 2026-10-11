@@ -61,6 +61,8 @@ export interface HeaderBarProps {
 	onOpenGithub: (() => void) | null;
 	/** File tree and editor of the session's folder; null unless the paired computer can edit its files. */
 	onOpenEditor: (() => void) | null;
+	/** Per-request timeline (timing, cache, injected context); null unless the host advertises `inspect` and this guest may write. */
+	onOpenTimeline: (() => void) | null;
 	/** Scripts and build targets of the session's repository, run on the computer; null unless allowed for this session. */
 	onOpenRun: (() => void) | null;
 	/** Images the agent's tools produced this session. */
@@ -77,6 +79,8 @@ export interface HeaderBarProps {
 	turnUndo: TurnUndoControl | undefined;
 	/** Host ranking of what fills the context; undefined unless the host advertises `context-items`, null until it replies. */
 	contextItems: ContextItemsInfo | null | undefined;
+	/** The host can watch pull requests (feature `pr-watch`). */
+	canWatchPr: boolean;
 	/** The session as Markdown, built on demand from every entry (not the trimmed view). Stable across renders. */
 	exportMarkdown(title: string): string;
 	push: PushControl;
@@ -114,6 +118,7 @@ export const HeaderBar = memo(function HeaderBar({
 	onOpenPreview,
 	onOpenGithub,
 	onOpenEditor,
+	onOpenTimeline,
 	onOpenRun,
 	screenCount,
 	onOpenScreens,
@@ -123,6 +128,7 @@ export const HeaderBar = memo(function HeaderBar({
 	onSessionCommand,
 	turnUndo,
 	contextItems,
+	canWatchPr,
 	exportMarkdown,
 	push,
 }: HeaderBarProps): ReactNode {
@@ -360,6 +366,13 @@ export const HeaderBar = memo(function HeaderBar({
 							onOpenEditor();
 						})
 					}
+					onOpenTimeline={
+						onOpenTimeline &&
+						(() => {
+							setSheetOpen(false);
+							onOpenTimeline();
+						})
+					}
 					onOpenRun={
 						onOpenRun &&
 						(() => {
@@ -378,6 +391,7 @@ export const HeaderBar = memo(function HeaderBar({
 					onSessionCommand={onSessionCommand}
 					turnUndo={turnUndo}
 					contextItems={contextItems}
+					canWatchPr={canWatchPr}
 					exportMarkdown={exportMarkdown}
 					push={push}
 					onLeave={onLeave}

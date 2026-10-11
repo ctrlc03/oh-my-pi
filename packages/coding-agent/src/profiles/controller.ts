@@ -14,6 +14,7 @@ import { isRecord, logger } from "@oh-my-pi/pi-utils";
 import type { Setting } from "../config/registry";
 import type { Settings } from "../config/settings";
 import type { SessionEntry } from "../session/session-entries";
+import { cfgSandboxMode, effectiveSandboxMode } from "../sandbox/settings";
 import { cfgToolsApproval, cfgToolsApprovalMode, cfgToolsOutsideProject, cfgToolsPathRules } from "../tools/settings";
 import { parsePathRules } from "../tools/path-rules";
 import { findProfile, loadProfileCatalog, type ProfileCatalog } from "./catalog";
@@ -23,7 +24,13 @@ import {
 	type ProfileApprovalMode,
 	type ProfileDefinition,
 } from "./definition";
-import { mergeApproval, mergePathRules, stricterApprovalMode, stricterOutsideProject } from "./merge";
+import {
+	mergeApproval,
+	mergePathRules,
+	stricterApprovalMode,
+	stricterOutsideProject,
+	stricterSandboxMode,
+} from "./merge";
 import { cfgProfileDefault, cfgProfiles } from "./settings";
 import { describeLoosening } from "./strictness";
 
@@ -305,6 +312,9 @@ export class SessionProfiles {
 		}
 		if (profile.outsideProject) {
 			this.#override(cfgToolsOutsideProject, stricterOutsideProject(outsideProject, profile.outsideProject));
+		}
+		if (profile.sandbox) {
+			this.#override(cfgSandboxMode, stricterSandboxMode(effectiveSandboxMode(host.settings), profile.sandbox));
 		}
 
 		const sectionChanged = profile.prompt !== this.#promptSection;

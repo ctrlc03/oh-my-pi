@@ -114,7 +114,13 @@ function usageThroughput(usage: Usage, durationMs: number | undefined): number |
 }
 
 /** Every metric except throughput, which the native row declares as a `rate`. */
-function usageRowBaseSpecs(usage: Usage, ttftMs?: number, timestamp?: number, turnElapsedMs?: number): MetricSpec[] {
+function usageRowBaseSpecs(
+	usage: Usage,
+	ttftMs?: number,
+	timestamp?: number,
+	turnElapsedMs?: number,
+	route?: string,
+): MetricSpec[] {
 	const totalInput = usage.input + usage.cacheWrite;
 	const specs: MetricSpec[] = [];
 	// Lead with the turn's local wall-clock time (down to the second), log-line style.
@@ -129,6 +135,8 @@ function usageRowBaseSpecs(usage: Usage, ttftMs?: number, timestamp?: number, tu
 	if (turnElapsedMs !== undefined && turnElapsedMs > 0) {
 		specs.push({ value: `Δ ${formatDuration(Math.round(turnElapsedMs))}` });
 	}
+	// The model-routing tier this turn ran on (`routing.mode: auto`).
+	if (route) specs.push({ value: route });
 	specs.push({ leading: theme.icon.input, value: formatNumber(totalInput) });
 	specs.push({ leading: theme.icon.output, value: formatNumber(usage.output) });
 	if (usage.cacheRead > 0) {
@@ -146,8 +154,9 @@ function usageRowSpecs(
 	ttftMs?: number,
 	timestamp?: number,
 	turnElapsedMs?: number,
+	route?: string,
 ): MetricSpec[] {
-	const specs = usageRowBaseSpecs(usage, ttftMs, timestamp, turnElapsedMs);
+	const specs = usageRowBaseSpecs(usage, ttftMs, timestamp, turnElapsedMs, route);
 	const tokPerSec = usageThroughput(usage, durationMs);
 	if (tokPerSec !== undefined) {
 		specs.push({ leading: theme.icon.throughput, value: `${tokPerSec.toFixed(1)}/s` });
@@ -162,20 +171,29 @@ class UsageRowBlock extends Container {
 	readonly #ttftMs: number | undefined;
 	readonly #timestamp: number | undefined;
 	readonly #turnElapsedMs: number | undefined;
+	readonly #route: string | undefined;
 	#nativeNode: NativeNode | undefined;
 	/** The terminal's clock {@link #nativeNode} was described with. */
 	#nativeHour12: boolean | undefined;
 
-	constructor(usage: Usage, durationMs?: number, ttftMs?: number, timestamp?: number, turnElapsedMs?: number) {
+	constructor(
+		usage: Usage,
+		durationMs?: number,
+		ttftMs?: number,
+		timestamp?: number,
+		turnElapsedMs?: number,
+		route?: string,
+	) {
 		super();
 		this.#usage = usage;
 		this.#durationMs = durationMs;
 		this.#ttftMs = ttftMs;
 		this.#timestamp = timestamp;
 		this.#turnElapsedMs = turnElapsedMs;
+		this.#route = route;
 		this.addChild(new Spacer(1));
 		this.addChild(
-			new MetricRow(usageRowSpecs(usage, durationMs, ttftMs, timestamp, turnElapsedMs), {
+			new MetricRow(usageRowSpecs(usage, durationMs, ttftMs, timestamp, turnElapsedMs, route), {
 				separator: "  ",
 				overflow: "wrap",
 				paddingX: 1,
@@ -210,6 +228,7 @@ class UsageRowBlock extends Container {
 		if (this.#turnElapsedMs !== undefined && this.#turnElapsedMs > 0) {
 			parts.push(`Δ ${formatDuration(Math.round(this.#turnElapsedMs))}`);
 		}
+		if (this.#route) parts.push(this.#route);
 		parts.push(`in ${formatNumber(usage.input + usage.cacheWrite)}`, `out ${formatNumber(usage.output)}`);
 		if (usage.cacheRead > 0) parts.push(`cache ${formatNumber(usage.cacheRead)}`);
 		if (this.#ttftMs && this.#ttftMs > 0) parts.push(`ttft ${(this.#ttftMs / 1000).toFixed(1)}s`);
@@ -261,8 +280,9 @@ export function createUsageRowBlock(
 	ttftMs?: number,
 	timestamp?: number,
 	turnElapsedMs?: number,
+	route?: string,
 ): Container {
-	const block = new UsageRowBlock(usage, durationMs, ttftMs, timestamp, turnElapsedMs);
+	const block = new UsageRowBlock(usage, durationMs, ttftMs, timestamp, turnElapsedMs, route);
 	usageRowBlocks.add(block);
 	return block;
 }

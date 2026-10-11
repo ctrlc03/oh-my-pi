@@ -61,6 +61,7 @@ The same fields work under `profiles.<name>` (with `prompt:` for the text). Inva
 | `pathRules` | Same shape as `tools.pathRules`. |
 | `lspReadOnly` | `true` limits the `lsp` tool to navigation and diagnostics (no `rename`, `rename_file` or applied `code_actions`) while active. `review` sets it. |
 | `outsideProject` | `allow`, `prompt` or `deny`; the stricter of this and `tools.outsideProject` applies. |
+| `sandbox` | `off`, `workspace-write` or `read-only`; the stricter of this and `sandbox.mode` applies (a profile never turns the [shell sandbox](./sandbox.md) down). |
 | `model` | Model selector, optionally `:level`; applied when you switch to the profile. |
 | `thinking` | Thinking level (`thinkingLevel` also works). |
 | `prompt` | Extra system-prompt section (the body of a markdown profile). |
@@ -95,7 +96,7 @@ Plan mode is unchanged and independent: it is a workflow (explore, write a plan,
 
 A host advertises the `profiles` feature in `welcome.features`. Writers receive the profile list in `welcome.profiles` and the active name in `state.profile`, and switch with `session-cmd` `profile` (`arg` is the name); view-only guests get no list and are refused like for other session controls. The web app shows a profile pill next to the model pills. A switch the host would refuse (unknown name, plan/goal/vibe mode) comes back as an `error`.
 
-A guest may only **tighten** the host's profile. A switch to a profile that is less strict than the active one (a looser approval mode, tools the active profile does not enable, a per-tool `allow` or an `allow` path rule it lacks, a dropped `deny`/`prompt` path rule, a looser `outsideProject`, or LSP edit actions the active profile blocks) is refused with an `error` naming the reason. The host can still switch to any profile from its own TUI. See [Collab](./collab.md).
+A guest may only **tighten** the host's profile. A switch to a profile that is less strict than the active one (a looser approval mode, tools the active profile does not enable, a per-tool `allow` or an `allow` path rule it lacks, a dropped `deny`/`prompt` path rule, a looser `outsideProject` or `sandbox`, or LSP edit actions the active profile blocks) is refused with an `error` naming the reason. The host can still switch to any profile from its own TUI. See [Collab](./collab.md).
 
 ## Settings
 

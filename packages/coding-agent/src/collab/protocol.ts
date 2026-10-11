@@ -14,13 +14,19 @@ import type {
 	CollabFeature,
 	ContextItemRow,
 	CollabUiRequest,
+	InspectRow,
 	GuestFrame,
 	ParsedCollabLink,
 	Participant,
+	PromptMention,
+	RequestPreview,
 	RewindFilesPlan,
 	AgentSnapshot as WireAgentSnapshot,
+	WireLimitWindow,
 	WireModel,
 	WireProfile,
+	SessionReceipts,
+	TurnDiffFile,
 } from "@oh-my-pi/pi-wire";
 import {
 	DEFAULT_RELAY_URL,
@@ -62,7 +68,15 @@ export type { CollabSessionState };
 export type CollabFrame =
 	// guest -> host (hello/abort/agent-cmd/fetch-transcript/ui-response are taken verbatim from the wire grammar)
 	| Exclude<GuestFrame, { t: "prompt" }>
-	| { t: "prompt"; text: string; images?: ImageContent[]; deliver?: "follow-up"; model?: string; thinking?: string }
+	| {
+			t: "prompt";
+			text: string;
+			images?: ImageContent[];
+			deliver?: "follow-up";
+			model?: string;
+			thinking?: string;
+			mentions?: PromptMention[];
+	  }
 	// host -> guest
 	| {
 			t: "welcome";
@@ -132,6 +146,24 @@ export type CollabFrame =
 			contextWindow: number;
 			pruned?: { entries: number; tokensFreed: number };
 	  }
+	/** Targeted reply to `session-cmd` `turn-diff` / `session-diff`; see the wire grammar. */
+	| {
+			t: "turn-diff";
+			scope: "turn" | "session";
+			entryId: string | null;
+			files: TurnDiffFile[] | null;
+			spansTurns?: number;
+			omitted?: number;
+			reason?: string;
+	  }
+	/** Targeted reply to `session-cmd` `receipts`; see the wire grammar. */
+	| { t: "receipts"; receipts: SessionReceipts }
+	/** Reply to `session-cmd` `usage-limits`, and pushed to writers when the windows change; see the wire grammar. */
+	| { t: "usage-limits"; windows: WireLimitWindow[]; fetchedAt: number }
+	/** Targeted reply to `session-cmd` `inspect`: one row per model request of the active path; see the wire grammar. */
+	| { t: "inspect"; rows: InspectRow[]; total: number }
+	/** Targeted reply to `session-cmd` `preview-request`; see the wire grammar. */
+	| { t: "request-preview"; preview: RequestPreview }
 	| { t: "ui-request-end"; reqId: number }
 	/** Targeted reply to fetch-transcript; `error` marks a terminal read failure that guests must surface without hot retrying. */
 	| { t: "transcript"; reqId: number; text: string; newSize: number; error?: string }

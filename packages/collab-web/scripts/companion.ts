@@ -61,7 +61,9 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { QrCode, renderQrHalfBlocks } from "@oh-my-pi/pi-tui/chrome/qrcode";
+import { SCHEDULE_IPC_FILE } from "@oh-my-pi/pi-wire/schedule";
 import { generateRoomKey, importRoomKey } from "../src/lib/codec";
+import { type FanoutCompare, type FanoutGroup, type FanoutKeepResult, hostFanout } from "../src/lib/fanout";
 import {
 	type CompanionHost,
 	type CompanionIdleSession,
@@ -83,13 +85,14 @@ import {
 	type ParsedCollabLink,
 	parseCollabLink,
 } from "../src/lib/link";
+import { parseOrg } from "../src/lib/session-org";
 import { CollabSocket } from "../src/lib/socket";
 import { checkFlow, checkFocus, checkSearch, codemapSearch, codemapView, loadCodemap } from "./companion-codemap";
 import { collectDiag, recordRelayEvent, recordRequestError } from "./companion-diag";
 import { readFileChunk } from "./companion-download";
 import { findFileSessions, repoRelativeFocus } from "./companion-file-sessions";
 import { fileVersions, listTree, writeRepoFile } from "./companion-files";
-import { gitDiff, gitSnapshot, isInside, readRepoFile, repoRoot } from "./companion-git";
+import { git, gitDiff, gitSnapshot, isInside, readRepoFile, repoRoot } from "./companion-git";
 import {
 	canCreatePr,
 	createPullRequest,
@@ -101,6 +104,19 @@ import {
 	removeWorktree,
 	reviewDiff,
 } from "./companion-gitflow";
+import { generateGitText } from "./companion-gitmsg";
+import {
+	applySetupTrust,
+	createWorktreeSweeper,
+	effectiveWorktreesDir,
+	loadGitFlowFile,
+	parseGitFlowSettings,
+	projectSetupStatuses,
+	replaceSettings,
+	runWorktreeSetup,
+	saveGitFlowFile,
+	worktreeLocations,
+} from "./companion-worktrees";
 import { checkNumber, checkRepo, ciFailures, repoFolders, repoSessions } from "./companion-cilog";
 import { githubItem, githubList } from "./companion-github";
 import { createPrReview } from "./companion-prreview";
@@ -119,10 +135,11 @@ import { createSessionLister } from "./companion-list";
 import { preferredRelayPort, startCompanionRelay } from "./companion-local-relay";
 import { restartCompanion, updateOmp } from "./companion-maintain";
 import { findSessionHolders } from "./companion-open";
-import { capturePane } from "./companion-pane";
+import { capturePane, paneSessionName } from "./companion-pane";
 import { holdAwake, powerNotice, readPower } from "./companion-power";
 import { capturePreview, closePreviewBrowser, findChrome, isViewport, previewTargets } from "./companion-preview";
 import { createPrWatch, ghReadPrs, loadPrWatchFile, parsePrAlertSettings, savePrWatchFile } from "./companion-prwatch";
+import { createPrWake } from "./companion-prwake";
 import { createSessionSearch, withLiveness } from "./companion-search";
 import { checkRunnableRoot, createRunManager } from "./companion-run";
 import {
@@ -132,8 +149,21 @@ import {
 	parseScheduleInput,
 	saveSchedules,
 } from "./companion-schedule";
+import { startScheduleIpc } from "./companion-schedule-ipc";
+import { createSessionOrg, ghSessionPrDone, loadOrgFile, saveOrgFile } from "./companion-sessionorg";
 import { createSpendMonitor, parseSpendLimits, parseSpendState, type SpendState, withLimits } from "./companion-spend";
 import { canSandbox, findTmux, killTmuxSession, launchInTmux } from "./companion-start";
+import {
+	compareGroup,
+	createModelCatalog,
+	keepRun,
+	loadGroups,
+	parseFanoutRequest,
+	parseKeepRequest,
+	saveGroups,
+	startFanout,
+	withGroup,
+} from "./companion-fanout";
 import { fileSessionOverviews, isUsageRange, readSpend, sessionOverview, usageReport } from "./companion-stats";
 import { storeUpload } from "./companion-upload";
 import { createVoice } from "./companion-voice";
@@ -457,6 +487,73 @@ const prWatch = createPrWatch({
 	onError: err => console.error(`companion: pull request check failed: ${errorText(err)}`),
 });
 
+/** Polls the pull requests sessions on this computer asked to have watched (`watch_pr`) and leaves each reading in the session's inbox. */
+const prWake = createPrWake({
+	dir: path.join(configDir, "run", "pr-watch"),
+	now: Date.now,
+	canRead: canCreatePr,
+	alert: alert => {
+		const { topic, ...payload } = alert;
+		for (const subscription of registry.subscriptions()) push(subscription, payload, topic);
+	},
+	onError: err => console.error(`companion: watched pull request check failed: ${errorText(err)}`),
+});
+
+const gitFlowPath = path.join(path.dirname(statePath), "collab-companion-git.json");
+let gitFlow = await loadGitFlowFile(gitFlowPath);
+
+/** Removes worktrees whose pull request merged or that went unused, when the user turned that on; never a dirty or occupied one. */
+const worktreeSweeper = createWorktreeSweeper({
+	settings: () => gitFlow.settings.cleanup,
+	dirs: () => worktreeLocations(gitFlow, worktreesDir),
+	runningCwds: async () => {
+		await loadSessions();
+		return [...knownHosts, ...knownIdle].map(session => session.cwd);
+	},
+	onRemoved: removed => {
+		for (const tree of removed) console.log(`companion: removed worktree ${tree.path} (${tree.reason})`);
+	},
+});
+
+/** Repositories whose `.omp/worktree-setup` a start left unused because the user has not approved it; listed in the worktree settings for review. */
+const unapprovedSetups = new Set<string>();
+
+/**
+ * Run the setup for a fresh worktree. A repository's own script runs only once the user approved its
+ * exact content (worktree settings); a sandboxed session's agent can write that file, so it never does for one.
+ */
+async function setupWorktree(
+	tree: { root: string; path: string; branch: string },
+	sandboxed: boolean | undefined,
+): Promise<void> {
+	const { unapproved } = await runWorktreeSetup(tree, {
+		command: gitFlow.settings.setupScript,
+		allowProjectFile: sandboxed !== true,
+		trusted: gitFlow.trustedSetups,
+	});
+	if (!unapproved) return;
+	unapprovedSetups.add(unapproved.root);
+	console.error(`companion: ${unapproved.root} has a .omp/worktree-setup that is not approved; it was not run`);
+}
+
+const sessionOrgPath = path.join(path.dirname(statePath), "collab-companion-sessionorg.json");
+
+/** Pin / snooze / settle state every device syncs through, and the auto-settle rules; see ./companion-sessionorg. */
+const sessionOrg = createSessionOrg({
+	now: Date.now,
+	initial: await loadOrgFile(sessionOrgPath),
+	save: file => saveOrgFile(sessionOrgPath, file),
+	readPrDone: ghSessionPrDone,
+	prAvailable: canCreatePr,
+	onChange: () => void refresh(),
+	onError: err => console.error(`companion: session organisation failed: ${errorText(err)}`),
+});
+
+const fanoutPath = path.join(path.dirname(statePath), "collab-companion-fanout.json");
+/** Best-of-N groups (see ./companion-fanout), newest first. */
+let fanoutGroups = await loadGroups(fanoutPath);
+const fanoutModels = createModelCatalog(ompBin);
+
 const schedulesPath = path.join(path.dirname(statePath), "collab-companion-schedules.json");
 
 /** Starts the prompts the user scheduled in the app, pushing when one starts or fails to; see ./companion-schedule. */
@@ -491,6 +588,13 @@ const scheduler = createScheduler({
 });
 /** Schedules fire with no device connected and no push subscription too, so they have their own clock besides the poll. */
 setInterval(() => void scheduler.tick(), SCHEDULE_TICK_MS).unref();
+
+/** omp's `schedule` tool reaches the scheduler through this loopback channel (see ./companion-schedule-ipc). */
+const scheduleIpc = await startScheduleIpc({
+	file: path.join(path.dirname(statePath), SCHEDULE_IPC_FILE),
+	scheduler,
+	validate: { now: Date.now, sandboxAvailable, checkDirectory },
+});
 
 /**
  * Push the session's pending question or the start of its last reply, falling
@@ -575,13 +679,21 @@ async function refresh(targetPeer?: number): Promise<void> {
 	detectEdges(listed.hosts);
 	void spendMonitor.tick();
 	void scheduler.tick();
+	void sessionOrg
+		.tick([...listed.hosts, ...listed.idle.map(session => ({ ...session, inputRequired: false }))])
+		.catch(err => console.error(`companion: session organisation failed: ${errorText(err)}`));
 	void prWatch.tick();
+	void prWake.tick();
+	void worktreeSweeper.tick().catch(err => console.error(`companion: worktree cleanup failed: ${errorText(err)}`));
 	detectPowerEdges(power);
 	if (!extras || peers.size === 0) return;
+	const fanoutOf = hostFanout(fanoutGroups);
 	const frame: CompanionReply = {
 		t: "hosts",
 		machine,
-		hosts: listed.hosts,
+		hosts: listed.hosts.map(host =>
+			Object.hasOwn(fanoutOf, host.instanceId) ? { ...host, fanout: fanoutOf[host.instanceId] } : host,
+		),
 		vapidKey: state.vapid.publicKey,
 		idle: listed.idle,
 		canStart: extras.canStart,
@@ -596,9 +708,13 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canFixIt: extras.canPr,
 		canUpload: true,
 		canSchedule: extras.canStart,
+		canScheduleCron: extras.canStart,
+		canFanout: extras.canStart,
+		canGitFlow: true,
 		canRun: process.platform !== "win32",
 		canDownload: true,
 		canSearch: true,
+		sessionOrgRev: sessionOrg.file().rev,
 		transcribe: extras.transcribe ?? undefined,
 		power: power ?? undefined,
 	};
@@ -667,6 +783,8 @@ async function startSession(
 	prompt?: string,
 	/** Scheduled runs with a per-run spend limit: `omp --max-cost` (USD). */
 	maxCostUsd?: number,
+	/** Fan-out sessions: `omp --model provider/id`. */
+	model?: string,
 ): Promise<string> {
 	if (
 		typeof cwd !== "string" ||
@@ -712,8 +830,14 @@ async function startSession(
 			}
 		: undefined;
 	// The worktree checkout can take a while: the boot wait starts after it.
-	const created = worktree ? await createWorktree(cwd, worktreesDir, worktree.branch) : null;
+	const created = worktree
+		? await createWorktree(cwd, effectiveWorktreesDir(gitFlow.settings, worktreesDir), worktree.branch, new Date(), {
+				branchPrefix: gitFlow.settings.branchPrefix,
+			})
+		: null;
 	try {
+		// A failing setup (an install that breaks) discards the tree below, like a session that cannot start.
+		if (created) await setupWorktree(created, sandboxed);
 		const before = new Set((await loadSessions()).hosts.map(h => h.instanceId));
 		const spawnedAt = Date.now();
 		const launched = await launchInTmux({
@@ -726,6 +850,7 @@ async function startSession(
 			sandbox,
 			prompt,
 			maxCostUsd,
+			model,
 		});
 		while (Date.now() < spawnedAt + START_WAIT_MS) {
 			await Bun.sleep(START_POLL_MS);
@@ -752,6 +877,90 @@ async function startSession(
 		if (created) await discardWorktree(created);
 		throw err;
 	}
+}
+
+/** Spend in USD of every session that worked in each folder, from the stats database. */
+async function folderCosts(): Promise<Map<string, number>> {
+	const costs = new Map<string, number>();
+	for (const session of await sessionOverview({ limit: 200 }, { hosts: knownHosts, idle: knownIdle }))
+		costs.set(session.folder, (costs.get(session.folder) ?? 0) + session.cost);
+	return costs;
+}
+
+/** End a session the companion started: its tmux session (named `omp-<id>`) is killed. */
+async function stopSession(instanceId: string): Promise<void> {
+	const pid = knownPids.get(instanceId);
+	const tmux = await findTmux();
+	const name = pid === undefined ? null : await paneSessionName(pid);
+	if (tmux === null || name === null || !/^omp-[0-9a-f]{8}$/.test(name))
+		throw new Error("only sessions the companion started can be ended from here");
+	await killTmuxSession(tmux, name);
+}
+
+function fanoutGroup(id: unknown): FanoutGroup {
+	const group = typeof id === "string" ? fanoutGroups.find(g => g.id === id) : undefined;
+	if (!group) throw new Error("unknown group");
+	return group;
+}
+
+async function fanoutStart(input: unknown): Promise<FanoutGroup> {
+	const request = parseFanoutRequest(input);
+	if (!(await findTmux())) throw new Error("tmux is not installed on this computer");
+	if (request.sandboxed && !sandboxAvailable) throw new Error("sandboxed sessions need macOS sandbox-exec");
+	const group = await startFanout(request, {
+		worktreesDir: effectiveWorktreesDir(gitFlow.settings, worktreesDir),
+		branchPrefix: gitFlow.settings.branchPrefix,
+		// The setup runs per tree, as for a new worktree session.
+		setup: tree => setupWorktree(tree, request.sandboxed),
+		launch: ({ cwd, prompt, model, maxCostUsd, sandboxed }) =>
+			startSession(cwd, undefined, sandboxed, undefined, undefined, prompt, maxCostUsd, model),
+	});
+	fanoutGroups = withGroup(fanoutGroups, group);
+	await saveGroups(fanoutPath, fanoutGroups);
+	// The sessions were listed while they booted, before the group existed: tell the devices which belong to it.
+	await refresh();
+	return group;
+}
+
+async function fanoutCompare(id: unknown): Promise<FanoutCompare> {
+	const group = fanoutGroup(id);
+	await loadSessions();
+	const [costs, canPr] = await Promise.all([folderCosts().catch(() => new Map<string, number>()), canCreatePr()]);
+	return compareGroup(group, {
+		hosts: () => knownHosts,
+		cost: folder => costs.get(folder) ?? null,
+		review: folder => gitReview(folder, canPr),
+		runs: instanceId => runs.list(instanceId),
+	});
+}
+
+async function fanoutKeep(input: unknown): Promise<FanoutKeepResult> {
+	const request = parseKeepRequest(input);
+	const group = fanoutGroup(request.group);
+	const result = await keepRun(group, request, {
+		worktreesDir: worktreeLocations(gitFlow, worktreesDir),
+		hosts: async () => (await loadSessions()).hosts,
+		runningCwds: async () => {
+			const listed = await loadSessions();
+			return [...listed.hosts, ...listed.idle].map(session => session.cwd);
+		},
+		dirty: async folder => {
+			if (
+				!(await fs.stat(folder).then(
+					s => s.isDirectory(),
+					() => false,
+				))
+			)
+				return null;
+			const status = await git(folder, ["status", "--porcelain=v1", "-uall"]);
+			if (status.code !== 0) throw new Error("could not read the worktree's state");
+			return status.out.byteLength > 0;
+		},
+		stop: stopSession,
+	});
+	await saveGroups(fanoutPath, fanoutGroups);
+	await refresh();
+	return result;
 }
 
 /** Poll while a device is connected (fast) or one wants push notifications (slower). */
@@ -1043,10 +1252,54 @@ socket.onFrame = (frame, fromPeer) => {
 				return { t: "pr-alerts", reqId: frame.reqId, settings: prAlertState.settings };
 			});
 			return;
+		case "git-message":
+			respond(frame.reqId, async () => {
+				if (typeof frame.commit !== "boolean" || typeof frame.pr !== "boolean") throw new Error("invalid request");
+				const session = await listedSession(frame.instanceId);
+				const text = await generateGitText({
+					cwd: session.cwd,
+					want: { commit: frame.commit, pr: frame.pr },
+					session: {
+						title: session.sessionName,
+						summary: lastAssistantSummary(await readSessionTail(sessionsDir, session.sessionId)),
+					},
+					ompBin,
+					model: gitFlow.settings.messageModel,
+				});
+				return { t: "git-message", reqId: frame.reqId, text };
+			});
+			return;
+		case "git-settings":
+			respond(frame.reqId, async () => {
+				if (frame.settings !== undefined) {
+					gitFlow = replaceSettings(gitFlow, parseGitFlowSettings(frame.settings, true), worktreesDir);
+					await saveGitFlowFile(gitFlowPath, gitFlow);
+				}
+				if (frame.trust !== undefined) {
+					gitFlow = await applySetupTrust(gitFlow, unapprovedSetups, frame.trust);
+					await saveGitFlowFile(gitFlowPath, gitFlow);
+				}
+				const swept = frame.sweep === true ? await worktreeSweeper.tick(true) : null;
+				return {
+					t: "git-settings",
+					reqId: frame.reqId,
+					settings: gitFlow.settings,
+					worktreesDir: effectiveWorktreesDir(gitFlow.settings, worktreesDir),
+					swept: swept?.removed.map(removed => removed.path),
+					projects: await projectSetupStatuses(gitFlow, unapprovedSetups),
+				};
+			});
+			return;
 		case "usage":
 			respond(frame.reqId, async () => {
 				if (!isUsageRange(frame.range)) throw new Error("unknown usage range");
 				return { t: "usage", reqId: frame.reqId, usage: await usageReport(frame.range) };
+			});
+			return;
+		case "session-org":
+			respond(frame.reqId, async () => {
+				const { doc, rev } = await sessionOrg.sync(parseOrg(frame.doc));
+				return { t: "session-org", reqId: frame.reqId, doc, rev };
 			});
 			return;
 		case "session-search":
@@ -1069,7 +1322,9 @@ socket.onFrame = (frame, fromPeer) => {
 					reqId: frame.reqId,
 					sessions: await Promise.all(
 						sessions.map(async session => {
-							const inside = session.folder !== worktreesDir && isInside(worktreesDir, session.folder);
+							const inside = worktreeLocations(gitFlow, worktreesDir).some(
+								dir => session.folder !== dir && isInside(dir, session.folder),
+							);
 							const exists =
 								inside &&
 								(await fs.stat(session.folder).then(
@@ -1322,11 +1577,35 @@ socket.onFrame = (frame, fromPeer) => {
 				await loadSessions();
 				await removeWorktree(
 					frame.path,
-					worktreesDir,
+					worktreeLocations(gitFlow, worktreesDir),
 					[...knownHosts, ...knownIdle].map(session => session.cwd),
 				);
 				return { t: "ok", reqId: frame.reqId };
 			});
+			return;
+		case "fanout-models":
+			respond(frame.reqId, async () => ({ t: "fanout-models", reqId: frame.reqId, models: await fanoutModels() }));
+			return;
+		case "fanout-start":
+			respond(frame.reqId, async () => ({
+				t: "fanout-started",
+				reqId: frame.reqId,
+				group: await fanoutStart(frame.request),
+			}));
+			return;
+		case "fanout-compare":
+			respond(frame.reqId, async () => ({
+				t: "fanout-compare",
+				reqId: frame.reqId,
+				compare: await fanoutCompare(frame.group),
+			}));
+			return;
+		case "fanout-keep":
+			respond(frame.reqId, async () => ({
+				t: "fanout-kept",
+				reqId: frame.reqId,
+				result: await fanoutKeep(frame.request),
+			}));
 			return;
 		case "diag":
 			respond(frame.reqId, async () => ({
@@ -1433,7 +1712,7 @@ function shutdown(): void {
 	awake.release();
 	socket.close();
 	// The warm preview browser and the speech worker are separate process trees: close them before exiting.
-	void Promise.allSettled([closePreviewBrowser(), voice.close()]).then(() => process.exit(0));
+	void Promise.allSettled([closePreviewBrowser(), voice.close(), scheduleIpc.stop()]).then(() => process.exit(0));
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

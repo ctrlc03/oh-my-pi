@@ -377,18 +377,24 @@ export class EditTool implements AgentTool<TInput> {
 		return this.mode === "apply_patch" ? "apply_patch" : undefined;
 	}
 
-	/**
-	 * Strictest write decision ({@link strictestApproval}) over every path the payload writes:
-	 * section targets plus move/rename destinations, folded with `tools.pathRules` over the same
-	 * targets. "write" while no target is known.
-	 */
-	readonly approval = (args: unknown): ToolApprovalDecision => {
+	/** Every path the payload writes: section targets plus move/rename destinations. */
+	approvalTargets(args: unknown): string[] {
 		const { paths, fileOps } = this.#inspect(args);
 		const targets = [...paths];
 		for (const op of fileOps) {
 			targets.push(op.path);
 			if (op.kind === "move" && op.to !== undefined) targets.push(op.to);
 		}
+		return targets;
+	}
+
+	/**
+	 * Strictest write decision ({@link strictestApproval}) over every path the payload writes:
+	 * section targets plus move/rename destinations, folded with `tools.pathRules` over the same
+	 * targets. "write" while no target is known.
+	 */
+	readonly approval = (args: unknown): ToolApprovalDecision => {
+		const targets = this.approvalTargets(args);
 		if (targets.length === 0) return "write";
 		const router = InternalUrlRouter.instance();
 		const base = strictestApproval(targets.map(target => router.writeTier(target, undefined, this.session)));

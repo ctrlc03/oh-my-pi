@@ -41,6 +41,8 @@ import {
 } from "./helpers/stats-dashboard";
 import { StatsNotice } from "@oh-my-pi/pi-tui/overlays/stats-notice";
 import { handleTodoAcp } from "./helpers/todo";
+import { runInspectCommand, runPreviewRequestCommand } from "./helpers/inspect-command";
+import { formatInspectReport, formatPreviewReport } from "./helpers/inspect-report";
 import { buildUsageReportText } from "./helpers/usage-report";
 import { runRedoCommand, runUndoCommand } from "./helpers/turn-undo";
 import type { SlashCommandRuntime, SlashCommandSpec } from "./types";
@@ -619,6 +621,36 @@ export const BUILTIN_SESSION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 				return;
 			}
 			runtime.ctx.handleContextCommand();
+		},
+	},
+	{
+		name: "inspect",
+		icon: "stats",
+		description: "List every model request: timing, tokens, cache, cost and what entered the context",
+		handle: async (_command, runtime) => {
+			await runtime.output(formatInspectReport(runtime.session.getInspectRows()));
+			return commandConsumed();
+		},
+		handleTui: async (_command, runtime) => {
+			clearSubmittedText(runtime);
+			await runInspectCommand(runtime.ctx);
+		},
+	},
+	{
+		name: "preview-request",
+		icon: "eye",
+		description: "Show the provider request the next turn would send, without sending it",
+		handle: async (_command, runtime) => {
+			try {
+				await runtime.output(formatPreviewReport(await runtime.session.previewNextRequest()));
+			} catch (error) {
+				await runtime.output(errorMessage(error));
+			}
+			return commandConsumed();
+		},
+		handleTui: async (_command, runtime) => {
+			clearSubmittedText(runtime);
+			await runPreviewRequestCommand(runtime.ctx);
 		},
 	},
 	{

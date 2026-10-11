@@ -82,3 +82,16 @@ export const cfgCollabAutoStart = register({
 		],
 	},
 });
+
+export const cfgCollabGuestsCanSaveApprovals = register({
+	id: "collab.guestsCanSaveApprovals",
+	type: "boolean",
+	default: false,
+	ui: {
+		tab: "interaction",
+		group: "Collab",
+		label: "Guests Can Save Approvals",
+		description:
+			"Let collab guests with control access pick 'Always allow (this project)' or 'Deny always' on a tool approval prompt, which saves a project rule in the user's agent directory. Off: a guest's project choice approves or denies that one call and saves nothing. Session-scoped choices are always honored",
+	},
+});

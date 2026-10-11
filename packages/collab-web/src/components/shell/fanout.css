@@ -1,0 +1,236 @@
+/* Best-of-N: the model picker and the compare sheet.
+ * Builds on the shell.css sheet, chip, pill and button primitives; token colours only. */
+
+.sh-fan-picker {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.sh-fan-picked {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-fan-chip {
+	gap: 5px;
+	height: 26px;
+	font-family: var(--font-mono);
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft);
+	border-color: transparent;
+	cursor: pointer;
+}
+
+.sh-fan-models {
+	display: flex;
+	flex-direction: column;
+	max-height: 220px;
+	margin: 0;
+	padding: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	list-style: none;
+}
+
+.sh-fan-models .sh-model {
+	width: 100%;
+	min-height: 40px;
+}
+
+.sh-fan-model-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-fan-budget {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.sh-fan-prompt {
+	display: -webkit-box;
+	margin-bottom: 10px;
+	padding: 8px 10px;
+	overflow: hidden;
+	font-size: 13px;
+	line-height: 1.45;
+	color: var(--fg-muted);
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	overflow-wrap: anywhere;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+}
+
+.sh-fan-runs {
+	display: grid;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+@media (min-width: 900px) {
+	.sh-fan-runs {
+		grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+	}
+}
+
+.sh-fan-run {
+	display: grid;
+	gap: 8px;
+	min-width: 0;
+	padding: 10px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-fan-run-kept {
+	border-color: var(--accent);
+}
+
+.sh-fan-run-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+
+.sh-fan-model {
+	min-width: 0;
+	font-family: var(--font-mono);
+	font-size: 13px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.sh-fan-status-working {
+	color: var(--accent);
+}
+
+.sh-fan-status-needs-input {
+	color: var(--warn);
+}
+
+.sh-fan-status-failed {
+	color: var(--err);
+}
+
+.sh-fan-kept-chip {
+	gap: 4px;
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft);
+	border-color: transparent;
+}
+
+.sh-fan-stats {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 12px;
+	font-size: 12.5px;
+	color: var(--fg-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.sh-fan-added {
+	color: var(--ok);
+}
+
+.sh-fan-removed {
+	color: var(--err);
+}
+
+.sh-fan-verify {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	max-width: 100%;
+	font-family: var(--font-mono);
+	font-size: 12px;
+	overflow-wrap: anywhere;
+}
+
+.sh-fan-verify-ok {
+	color: var(--ok);
+}
+
+.sh-fan-verify-fail {
+	color: var(--err);
+}
+
+.sh-fan-pr {
+	color: var(--accent);
+}
+
+.sh-fan-error {
+	font-size: 12.5px;
+	color: var(--err);
+	overflow-wrap: anywhere;
+}
+
+.sh-fan-branch {
+	font-family: var(--font-mono);
+	font-size: 11.5px;
+	color: var(--fg-faint);
+	overflow-wrap: anywhere;
+}
+
+.sh-fan-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.sh-fan-keep,
+.sh-fan-kept {
+	display: grid;
+	gap: 10px;
+}
+
+.sh-fan-skipped {
+	margin: 0;
+	padding-left: 18px;
+	font-size: 12.5px;
+	color: var(--fg-muted);
+}
+
+.sh-fan-danger {
+	background: color-mix(in srgb, var(--err) 10%, transparent);
+	border-color: color-mix(in srgb, var(--err) 40%, transparent);
+}
+
+/* Sessions list: a button per best-of-N group above the sessions, and the model on each member's row. */
+.sh-fan-groups {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-bottom: 8px;
+}
+
+.sh-fan-group-btn {
+	justify-content: flex-start;
+	min-width: 0;
+}
+
+.sh-fan-group-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-fan-row-chip {
+	gap: 4px;
+	font-family: var(--font-mono);
+}

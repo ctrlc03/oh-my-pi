@@ -1,0 +1,85 @@
+.sh-prw {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 8px;
+	width: 100%;
+	min-width: 0;
+}
+
+.sh-prw-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	width: 100%;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-prw-item {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+	min-width: 0;
+	padding: 8px 10px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+}
+
+.sh-prw-main {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.sh-prw-icon {
+	flex: none;
+	color: var(--fg-muted);
+}
+
+.sh-prw-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-prw-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 5px;
+}
+
+.sh-chip.sh-prw-ok {
+	color: var(--ok);
+}
+
+.sh-chip.sh-prw-bad {
+	color: var(--err);
+}
+
+.sh-chip.sh-prw-wait {
+	color: var(--warn);
+}
+
+.sh-prw-error {
+	font-size: 12px;
+	color: var(--err);
+	overflow-wrap: anywhere;
+}
+
+.sh-prw-form {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	width: 100%;
+}
+
+.sh-prw-form .sh-sheet-input {
+	flex: 1 1 200px;
+	min-width: 0;
+}

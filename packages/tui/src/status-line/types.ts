@@ -144,6 +144,8 @@ export interface SegmentContext {
 		subagentCost?: number;
 		tokensPerSecond: number | null;
 	};
+	/** Cache hit percentage (0–100) of the last request that carried a prompt; null/absent before any. */
+	lastCacheHitPct?: number | null;
 	/** Context usage percent, or null when unknown (e.g. right after compaction). */
 	contextPercent: number | null;
 	contextTokens: number;

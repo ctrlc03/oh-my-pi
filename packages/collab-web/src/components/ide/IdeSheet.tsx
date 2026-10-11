@@ -12,6 +12,7 @@ import {
 	PanelLeft,
 	PanelRight,
 	PanelRightClose,
+	PenLine,
 	RefreshCw,
 	Save,
 	TriangleAlert,
@@ -21,6 +22,8 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { CodemapNode, CompanionClient, FileTree } from "../../lib/companion";
 import { FileChangedError } from "../../lib/companion";
+import { openDiagramFile } from "../../lib/diagram-store";
+import { diagramFileKind } from "../../lib/diagrams";
 import { useRequest } from "../../lib/use-request";
 import { useMedia, WIDE_QUERY } from "../codemap/shared";
 import { DownloadButton } from "../shell/DownloadButton";
@@ -554,6 +557,17 @@ export function IdeSheet({
 					)}
 					{active !== undefined && (
 						<DownloadButton client={client} instanceId={instanceId} path={active.request} />
+					)}
+					{active !== undefined && diagramFileKind(active.request) !== null && (
+						<button
+							type="button"
+							className="sh-btn"
+							onClick={() => openDiagramFile(active.request)}
+							title="open the saved file in the canvas"
+						>
+							<PenLine size={14} />
+							<span>Canvas</span>
+						</button>
 					)}
 					{active?.writable === true && (
 						<button

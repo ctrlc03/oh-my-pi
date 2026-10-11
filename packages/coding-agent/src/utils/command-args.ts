@@ -52,35 +52,46 @@ export function parseCommandArgs(argsString: string, options?: { strict?: boolea
  *
  * Note: Replacement happens on the template string only. Argument values
  * containing patterns like $1, $@, or $ARGUMENTS are NOT recursively substituted.
+ *
+ * `format` renders the values one placeholder selects (none, one, or many) at its offset in
+ * `content`; the default joins them with spaces.
  */
-export function substituteArgs(content: string, args: string[]): string {
-	const allArgs = args.join(" ");
-
+export function substituteArgs(
+	content: string,
+	args: string[],
+	format: (values: string[], offset: number) => string = values => values.join(" "),
+): string {
 	return content.replace(
 		/\$@\[(\d+)(?::(\d*)?)?\]|\$ARGUMENTS|\$@|\$(\d+)/g,
-		(match, startRaw?: string, lengthRaw?: string, positionalNum?: string) => {
+		(
+			match,
+			startRaw: string | undefined,
+			lengthRaw: string | undefined,
+			positionalNum: string | undefined,
+			offset: number,
+		) => {
 			if (positionalNum !== undefined) {
 				const index = Number.parseInt(positionalNum, 10) - 1;
-				return args[index] ?? "";
+				return format(index >= 0 && index < args.length ? [args[index]] : [], offset);
 			}
 
 			if (startRaw !== undefined) {
 				const start = Number.parseInt(startRaw, 10);
-				if (!Number.isFinite(start) || start < 1) return "";
+				if (!Number.isFinite(start) || start < 1) return format([], offset);
 				const startIndex = start - 1;
-				if (startIndex >= args.length) return "";
+				if (startIndex >= args.length) return format([], offset);
 
 				if (lengthRaw === undefined || lengthRaw === "") {
-					return args.slice(startIndex).join(" ");
+					return format(args.slice(startIndex), offset);
 				}
 
 				const length = Number.parseInt(lengthRaw, 10);
-				if (!Number.isFinite(length) || length <= 0) return "";
-				return args.slice(startIndex, startIndex + length).join(" ");
+				if (!Number.isFinite(length) || length <= 0) return format([], offset);
+				return format(args.slice(startIndex, startIndex + length), offset);
 			}
 
 			if (match === "$ARGUMENTS" || match === "$@") {
-				return allArgs;
+				return format(args, offset);
 			}
 
 			return match;

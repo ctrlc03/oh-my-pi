@@ -1,0 +1,214 @@
+/* ---- per-turn changes and receipts sheet ---- */
+
+/* Scrolls inside the full-height sheet, so the head, tabs and review bar stay put. */
+.sh-tc-body {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	overflow-y: auto;
+}
+
+.sh-tc-summary {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 12px;
+	font: 400 12.5px / 1.4 var(--font-mono);
+	color: var(--fg-muted);
+}
+
+.sh-tc-layout {
+	margin-left: auto;
+}
+
+.sh-tc-turnbar {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.sh-tc-turntitle {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	text-align: center;
+	font-size: 13px;
+	color: var(--fg-muted);
+}
+
+.sh-tc-flip {
+	transform: rotate(180deg);
+}
+
+.sh-tc-file-head {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.sh-tc-file-head .sh-change-head {
+	flex: 1;
+	min-width: 0;
+	width: auto;
+}
+
+.sh-tc-file[data-viewed] .sh-change-head {
+	opacity: 0.55;
+}
+
+.sh-tc-viewed[aria-pressed="true"] {
+	color: var(--ok);
+	background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+/* ---- side-by-side diff: two cells per line, hunk headers and notes across both ---- */
+.sh-sdiff {
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.sh-sdiff-cell,
+.sh-sdiff-full {
+	padding: 0 10px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	tab-size: 4;
+}
+
+.sh-sdiff-cell + .sh-sdiff-cell {
+	border-left: 1px solid var(--border);
+}
+
+.sh-sdiff-gap {
+	background: color-mix(in srgb, var(--fg-faint) 6%, transparent);
+}
+
+.sh-sdiff-full,
+.sh-sdiff > .sh-udiff-note {
+	grid-column: 1 / -1;
+}
+
+.sh-sdiff > .sh-udiff-note {
+	width: auto;
+}
+
+/* ---- receipts ---- */
+.sh-tc-section {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.sh-tc-heading {
+	margin: 0;
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--fg-faint);
+}
+
+.sh-tc-list {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	border-top: 1px solid var(--border);
+}
+
+.sh-tc-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 40px;
+	padding: 6px 2px;
+	font-size: 13px;
+	border-bottom: 1px solid var(--border);
+}
+
+.sh-tc-main {
+	flex: 1;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.sh-tc-mono {
+	font: 400 12.5px / 1.4 var(--font-mono);
+}
+
+.sh-tc-strong {
+	font-weight: 600;
+}
+
+.sh-tc-faint {
+	flex: none;
+	color: var(--fg-faint);
+}
+
+.sh-tc-main .sh-tc-faint {
+	flex: initial;
+}
+
+.sh-tc-ok {
+	flex: none;
+	color: var(--ok);
+}
+
+.sh-tc-fail {
+	flex: none;
+	color: var(--err);
+}
+
+.sh-tc-exit {
+	flex: none;
+	min-width: 56px;
+	padding: 2px 6px;
+	font: 500 11px / 1.3 var(--font-mono);
+	text-align: center;
+	border-radius: var(--radius-sm);
+	color: var(--fg-muted);
+	background: var(--hover);
+}
+
+.sh-tc-exit-ok {
+	color: var(--ok);
+	background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+.sh-tc-exit-fail {
+	color: var(--err);
+	background: color-mix(in srgb, var(--err) 14%, transparent);
+}
+
+.sh-tc-turn {
+	flex: none;
+	font: 400 11.5px / 1.3 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+.sh-tc-turn-link {
+	min-height: 32px;
+	padding: 0 6px;
+	background: none;
+	border: 0;
+	border-radius: var(--radius-sm);
+	color: var(--accent);
+}
+
+.sh-tc-turn-link:hover {
+	background: var(--hover);
+}
+
+@media (max-width: 640px) {
+	.sh-tc-turn-link {
+		min-height: 44px;
+	}
+
+	.sh-tc-row {
+		flex-wrap: wrap;
+	}
+}

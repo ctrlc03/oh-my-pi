@@ -124,3 +124,49 @@
 	background: var(--accent-soft);
 	border-color: transparent;
 }
+
+.sh-sched-interval {
+	display: flex;
+	gap: 6px;
+}
+
+.sh-sched-interval .sh-input:first-child {
+	flex: 1;
+	min-width: 0;
+}
+
+.sh-sched-cron {
+	font-family: var(--font-mono);
+}
+
+.sh-sched-preview {
+	display: grid;
+	gap: 4px;
+	padding: 8px 10px;
+	font-size: 12px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+}
+
+.sh-sched-preview-title {
+	font-size: 13px;
+	color: var(--fg);
+}
+
+.sh-sched-preview-list {
+	display: grid;
+	gap: 2px;
+	margin: 0;
+	padding-left: 18px;
+	color: var(--fg-muted);
+}
+
+.sh-sched-preview-line {
+	color: var(--fg-muted);
+}
+
+.sh-sched-preview-error {
+	font-size: 12px;
+	color: var(--err);
+}

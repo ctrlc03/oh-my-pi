@@ -20,9 +20,14 @@ import type {
 	CollabFeature,
 	CollabUiRequest,
 	ContextItemRow,
+	SessionReceipts,
+	TurnDiffFile,
+	InspectRow,
+	RequestPreview,
 	CollabUiResponseValue,
 	HostFrame,
 	ImageContent,
+	PromptMention,
 	RewindFilesPlan,
 	SessionCommand,
 	SessionEntry,
@@ -32,6 +37,7 @@ import type {
 	SubagentProgressPayload,
 	WireModel,
 	WireProfile,
+	WireLimitWindow,
 } from "@oh-my-pi/pi-wire";
 import { CAN_INFLATE, importRoomKey } from "./codec";
 import { recordEvent } from "./diag-log";
@@ -43,6 +49,12 @@ import { CollabSocket } from "./socket";
 export type ConnectionPhase = "connecting" | "waiting" | "live" | "reconnecting" | "ended";
 
 /** A model (and optionally a thinking level) one prompt runs on, instead of the session's. */
+/** Optional extras of a prompt beyond its text, images, delivery and model. */
+export interface PromptExtras {
+	/** References in the text the host expands into context (host feature `mentions`). */
+	mentions?: readonly PromptMention[];
+}
+
 export interface PromptModelChoice {
 	/** `provider/id`, one of `GuestSnapshot.models`. */
 	model: string;
@@ -90,6 +102,13 @@ export interface TurnUndoInfo {
 	filesUnavailable?: true;
 }
 
+/** The host's latest subscription limit windows (`usage-limits` frame). */
+export interface UsageLimitsInfo {
+	windows: readonly WireLimitWindow[];
+	/** When the host read them (epoch ms, the host's clock). */
+	fetchedAt: number;
+}
+
 /** The host's latest ranking of what fills the context (`context-items` frame). */
 export interface ContextItemsInfo {
 	items: readonly ContextItemRow[];
@@ -98,6 +117,37 @@ export interface ContextItemsInfo {
 	contextWindow: number;
 	/** Present on the reply to a prune: the session entries it elided and the tokens it freed. */
 	pruned?: { entries: number; tokensFreed: number };
+}
+
+/** The host's latest answer to a `turn-diff` / `session-diff` request. */
+export interface TurnDiffInfo {
+	scope: "turn" | "session";
+	/** The prompt it was asked about; null for the session scope. */
+	entryId: string | null;
+	/** Changed files, or null when the host could not tell (see `reason`). */
+	files: readonly TurnDiffFile[] | null;
+	/** Turns the diff covers. */
+	spansTurns: number;
+	/** Changed files the host did not list. */
+	omitted: number;
+	reason: string | null;
+}
+
+/** The host's latest per-request timeline (`inspect` frame). */
+export interface InspectInfo {
+	/** Oldest first; the newest requests when the host cut the list. */
+	rows: readonly InspectRow[];
+	/** Requests on the active path, which may exceed `rows.length`. */
+	total: number;
+	/** Local epoch ms the frame arrived. */
+	receivedAt: number;
+}
+
+/** The host's latest provider-request preview (`request-preview` frame). */
+export interface RequestPreviewInfo {
+	preview: RequestPreview;
+	/** Local epoch ms the frame arrived; every reply is a new object. */
+	receivedAt: number;
 }
 
 export interface Notice {
@@ -144,6 +194,8 @@ export interface GuestSnapshot {
 	commands: readonly CollabCommand[];
 	/** Texts of the host's queued follow-ups, oldest first. */
 	followUps: readonly string[];
+	/** Stable ids of `followUps`, same order; empty on hosts without `queue-edit`. */
+	followUpIds: readonly string[];
 	/** Latest answer to a `rewind-preview` request; null until one arrives and after a reconnect. */
 	rewindPreview: RewindPreview | null;
 	/** The file restore the host last reported, while it can still be undone or just happened; cleared when a turn starts. */
@@ -152,6 +204,16 @@ export interface GuestSnapshot {
 	turnUndo: TurnUndoInfo | null;
 	/** Latest ranking of what fills the context, from a `context-items` request; null until one arrives and after a reconnect. */
 	contextItems: ContextItemsInfo | null;
+	/** Latest answer to a `turn-diff` or `session-diff` request; null until one arrives and after a reconnect. */
+	turnDiff: TurnDiffInfo | null;
+	/** Latest answer to a `receipts` request; null until one arrives and after a reconnect. */
+	receipts: SessionReceipts | null;
+	/** Latest subscription limit windows, pushed by hosts with `usage-limits`; null until one arrives and after a reconnect. */
+	usageLimits: UsageLimitsInfo | null;
+	/** Latest per-request timeline, from an `inspect` request; null until one arrives and after a reconnect. */
+	inspect: InspectInfo | null;
+	/** Latest provider-request preview, from a `preview-request`; null until one arrives and after a reconnect. */
+	requestPreview: RequestPreviewInfo | null;
 }
 
 const MAX_NOTICES = 50;
@@ -285,6 +347,11 @@ export class GuestClient {
 	#fileRestore: FileRestoreInfo | null = null;
 	#turnUndo: TurnUndoInfo | null = null;
 	#contextItems: ContextItemsInfo | null = null;
+	#turnDiff: TurnDiffInfo | null = null;
+	#receipts: SessionReceipts | null = null;
+	#usageLimits: UsageLimitsInfo | null = null;
+	#inspect: InspectInfo | null = null;
+	#requestPreview: RequestPreviewInfo | null = null;
 	/** Room the offline prompt queue is persisted under. */
 	readonly #roomId: string;
 	#queue: QueuedPrompt[] = [];
@@ -438,7 +505,13 @@ export class GuestClient {
 	 * `model` runs this prompt alone on another model (and thinking level); it needs a host that
 	 * advertises `prompt-model`. View-link guests never queue and never send.
 	 */
-	sendPrompt(text: string, images?: ImageContent[], deliver?: "follow-up", model?: PromptModelChoice): void {
+	sendPrompt(
+		text: string,
+		images?: ImageContent[],
+		deliver?: "follow-up",
+		model?: PromptModelChoice,
+		extras: PromptExtras = {},
+	): void {
 		if (this.#isReadOnly()) return;
 		const attached = images && images.length > 0 ? images : undefined;
 		const queued: QueuedPrompt = {
@@ -448,6 +521,7 @@ export class GuestClient {
 			deliver,
 			model: model?.model,
 			thinking: model?.thinking,
+			mentions: extras.mentions && extras.mentions.length > 0 ? [...extras.mentions] : undefined,
 		};
 		if (this.#phase !== "live") {
 			this.#queue = [...this.#queue, queued];
@@ -475,7 +549,29 @@ export class GuestClient {
 			deliver: prompt.deliver,
 			model: prompt.model,
 			thinking: prompt.thinking,
+			mentions: prompt.mentions,
 		});
+	}
+
+	/** Replaces the text of one queued follow-up (host feature `queue-edit`), keeping its place. */
+	editQueuedFollowUp(id: string, text: string, mentions?: readonly PromptMention[]): void {
+		this.#socket.send({
+			t: "session-cmd",
+			cmd: "queue-edit",
+			id,
+			arg: text,
+			mentions: mentions && mentions.length > 0 ? [...mentions] : undefined,
+		});
+	}
+
+	/** Puts one queued follow-up at `index` among the queued follow-ups (host feature `queue-edit`). */
+	moveQueuedFollowUp(id: string, index: number): void {
+		this.#socket.send({ t: "session-cmd", cmd: "queue-move", id, index });
+	}
+
+	/** Moves one queued follow-up into the running turn as a steer (host feature `queue-edit`). */
+	steerQueuedFollowUp(id: string): void {
+		this.#socket.send({ t: "session-cmd", cmd: "queue-steer", id });
 	}
 
 	/** Drops a queued prompt before it is sent. */
@@ -554,6 +650,11 @@ export class GuestClient {
 		this.#fileRestore = null;
 		this.#turnUndo = null;
 		this.#contextItems = null;
+		this.#turnDiff = null;
+		this.#receipts = null;
+		this.#usageLimits = null;
+		this.#inspect = null;
+		this.#requestPreview = null;
 		this.#socket.send({
 			t: "hello",
 			proto: COLLAB_PROTO,
@@ -880,6 +981,28 @@ export class GuestClient {
 					pruned: frame.pruned,
 				};
 				break;
+			case "turn-diff":
+				this.#turnDiff = {
+					scope: frame.scope,
+					entryId: frame.entryId,
+					files: frame.files,
+					spansTurns: frame.spansTurns ?? 1,
+					omitted: frame.omitted ?? 0,
+					reason: frame.reason ?? null,
+				};
+				break;
+			case "receipts":
+				this.#receipts = frame.receipts;
+				break;
+			case "usage-limits":
+				this.#usageLimits = { windows: frame.windows, fetchedAt: frame.fetchedAt };
+				break;
+			case "inspect":
+				this.#inspect = { rows: frame.rows, total: frame.total, receivedAt: Date.now() };
+				break;
+			case "request-preview":
+				this.#requestPreview = { preview: frame.preview, receivedAt: Date.now() };
+				break;
 			case "bye":
 				this.#end(frame.reason);
 				return; // #end already committed
@@ -1100,10 +1223,16 @@ export class GuestClient {
 			features: this.#features,
 			commands: this.#commands,
 			followUps: this.#state?.followUps ?? NO_FOLLOW_UPS,
+			followUpIds: this.#state?.followUpIds ?? NO_FOLLOW_UPS,
 			rewindPreview: this.#rewindPreview,
 			fileRestore: this.#fileRestore,
 			turnUndo: this.#turnUndo,
 			contextItems: this.#contextItems,
+			turnDiff: this.#turnDiff,
+			receipts: this.#receipts,
+			usageLimits: this.#usageLimits,
+			inspect: this.#inspect,
+			requestPreview: this.#requestPreview,
 		};
 	}
 

@@ -52,12 +52,14 @@ import { type CheckpointState, CheckpointTool, type CompletedRewindState, Rewind
 import { ContextNotesTool, NewContextTool } from "./context-notes";
 import { DebugTool } from "./debug";
 import { cfgIdaAvailable } from "../ida/install";
+import { cfgScheduleEnabled } from "../schedule/settings";
 import { EvalTool } from "./eval";
 import { resolveEvalBackends } from "./eval-backends";
 import { GithubTool } from "./gh";
 import { GlobTool } from "./glob";
 import { GrepTool } from "./grep";
 import { IdaTool } from "./ida";
+import { ScheduleTool } from "./schedule";
 import { isIrcEnabled } from "../irc/messaging";
 import { FindTool, isFindEnabled } from "./jfind";
 import { LearnTool } from "./learn";
@@ -77,6 +79,9 @@ import { FlowTool } from "./flow";
 import { TraceTool } from "./trace";
 import { WriteTool } from "./write";
 import { WaitTool } from "./wait";
+import { WatchPrTool } from "./watch-pr";
+import type { PrWatchManager } from "../pr-watch/manager";
+import { cfgPrWatchEnabled } from "../pr-watch/settings";
 import { isMountableUnderXdev, resolveXdevTool, type XdevState } from "./xdev";
 import { YieldTool } from "./yield";
 
@@ -130,6 +135,7 @@ export * from "./computer/supervisor";
 export * from "./context-notes";
 export * from "./debug";
 export * from "./ida";
+export * from "./schedule";
 export * from "./essential-tools";
 export * from "./eval";
 export * from "./eval-backends";
@@ -164,6 +170,7 @@ export * from "./trace";
 export * from "./tts";
 export * from "./vibe";
 export * from "./wait";
+export * from "./watch-pr";
 export type { VibeToolDetails } from "@oh-my-pi/pi-tui/tools/vibe";
 export * from "./write";
 export * from "./xdev";
@@ -506,6 +513,8 @@ export interface ToolSession {
 	setPlanProposalHandler?(handler: PlanProposalHandler | null): void;
 	/** Get active checkpoint state if any. */
 	getCheckpointState?: () => CheckpointState | undefined;
+	/** The session's pull request watcher (`watch_pr`); absent where PR watching is not offered. */
+	getPrWatch?: () => PrWatchManager;
 	/** Set or clear active checkpoint state. */
 	setCheckpointState?: (state: CheckpointState | null) => void;
 	/** Get the most recent completed rewind, if this session just rewound a checkpoint. */
@@ -564,6 +573,7 @@ export const BUILTIN_TOOLS: Record<BuiltinToolName, ToolFactory> = {
 	ask: AskTool.createIf,
 	debug: DebugTool.createIf,
 	ida: IdaTool.createIf,
+	schedule: ScheduleTool.createIf,
 	eval: s => new EvalTool(s),
 	github: GithubTool.createIf,
 	glob: s => new GlobTool(s, { rootPathAlias: true }),
@@ -587,6 +597,7 @@ export const BUILTIN_TOOLS: Record<BuiltinToolName, ToolFactory> = {
 	reflect: MemoryReflectTool.createIf,
 	learn: LearnTool.createIf,
 	manage_skill: ManageSkillTool.createIf,
+	watch_pr: WatchPrTool.createIf,
 };
 
 export const HIDDEN_TOOLS: Record<HiddenToolName, ToolFactory> = {
@@ -749,6 +760,7 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 		if (name === "eval") return allowEval;
 		if (name === "debug") return cfgDebugEnabled.get(session.settings);
 		if (name === "ida") return cfgIdaAvailable.get(session.settings);
+		if (name === "schedule") return cfgScheduleEnabled.get(session.settings) && (session.taskDepth ?? 0) === 0;
 		if (name === "todo")
 			return (!includeYield || session.prewalkArmed === true) && cfgTodoEnabled.get(session.settings);
 		if (name === "glob") return cfgGlobEnabled.get(session.settings);
@@ -756,6 +768,7 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 		if (name === "find") return isFindEnabled(session);
 		if (name === "trace" || name === "flow") return cfgCodemapEnabled.get(session.settings);
 		if (name === "github") return cfgGithubEnabled.get(session.settings);
+		if (name === "watch_pr") return cfgPrWatchEnabled.get(session.settings);
 		if (name === "ast_grep") return cfgAstGrepEnabled.get(session.settings);
 		if (name === "ast_edit") return cfgAstEditEnabled.get(session.settings);
 		if (name === "web_search") return cfgWebSearchEnabled.get(session.settings);

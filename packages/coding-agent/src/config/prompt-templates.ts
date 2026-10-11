@@ -8,6 +8,7 @@ import {
 	parseFrontmatter,
 	prompt,
 } from "@oh-my-pi/pi-utils";
+import type { CommandShellExpansion } from "./command-shell";
 import { jtdToTypeScript } from "../tools/jtd-to-typescript";
 import { parseCommandArgs, substituteArgs } from "../utils/command-args";
 
@@ -183,8 +184,11 @@ export async function loadPromptTemplates(options: LoadPromptTemplatesOptions = 
 /**
  * Expand a prompt template if it matches a template name.
  * Returns the expanded content or the original text if not a template.
+ *
+ * With `shell`, `!`cmd`` snippets are captured as placeholders for the caller to resolve
+ * (see {@link CommandShellExpansion}); without it they stay as written.
  */
-export function expandPromptTemplate(text: string, templates: PromptTemplate[]): string {
+export function expandPromptTemplate(text: string, templates: PromptTemplate[], shell?: CommandShellExpansion): string {
 	if (!text.startsWith("/")) return text;
 
 	const spaceIndex = text.indexOf(" ");
@@ -196,7 +200,9 @@ export function expandPromptTemplate(text: string, templates: PromptTemplate[]):
 		const args = parseCommandArgs(argsString);
 		const argsText = args.join(" ");
 		const usesInlineArgPlaceholders = templateUsesInlineArgPlaceholders(template.content);
-		const substituted = substituteArgs(template.content, args);
+		const origin = template.source.startsWith("(project") ? "project" : "user";
+		const content = shell?.capture(template.content, args, origin, templateName) ?? template.content;
+		const substituted = substituteArgs(content, args);
 		const rendered = prompt.render(substituted, { args, ARGUMENTS: argsText, arguments: argsText });
 		return appendInlineArgsFallback(rendered, argsText, usesInlineArgPlaceholders);
 	}

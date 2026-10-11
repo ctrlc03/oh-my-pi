@@ -1,0 +1,125 @@
+/* ---- session organisation: pinned / working / active / snoozed / settled ---- */
+.sh-org-section {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.sh-org-title {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 6px;
+}
+
+.sh-org-fold {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 0;
+	font: inherit;
+	color: inherit;
+	text-transform: inherit;
+	letter-spacing: inherit;
+	background: transparent;
+	border: 0;
+	cursor: pointer;
+}
+
+.sh-org-fold:disabled {
+	cursor: default;
+}
+
+.sh-org-count {
+	padding: 0 6px;
+	font-size: 11px;
+	color: var(--fg-muted);
+	background: var(--bg-inset);
+	border-radius: 999px;
+}
+
+.sh-org-settings {
+	width: 26px;
+	height: 26px;
+	min-height: 0;
+}
+
+/* A press and hold opens the menu: no text selection or system callout meanwhile. */
+.sh-org-row {
+	-webkit-touch-callout: none;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+.sh-org-row[draggable="true"] {
+	cursor: grab;
+}
+
+.sh-org-row[data-dropping] {
+	box-shadow: 0 -2px 0 0 var(--accent);
+}
+
+.sh-org-row[data-status="settled"] .sh-recent-join,
+.sh-org-row[data-status="snoozed"] .sh-recent-join {
+	opacity: 0.65;
+}
+
+/* Dimmed until the row is hovered or focused. */
+.sh-org-more {
+	flex: none;
+	opacity: 0.55;
+	transition: opacity 120ms ease-out;
+}
+
+.sh-org-row:hover .sh-org-more,
+.sh-org-more:focus-visible {
+	opacity: 1;
+}
+
+.sh-org-undo {
+	position: sticky;
+	bottom: 0;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 8px 10px;
+	font-size: 13px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+}
+
+.sh-org-undo-msg {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-org-menu {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 4px 12px 12px;
+}
+
+.sh-org-menu-item {
+	justify-content: flex-start;
+	min-height: 44px;
+	gap: 10px;
+}
+
+.sh-org-settings-body {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding: 8px 14px 16px;
+}
+
+.sh-org-check {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13.5px;
+}

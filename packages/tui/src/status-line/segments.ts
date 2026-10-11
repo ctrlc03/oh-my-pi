@@ -1037,6 +1037,24 @@ const cacheHitSegment: StatusLineSegment = {
 	},
 };
 
+/** Cache hit share of the last request (not the session), so a prefix lost to a model, prompt or tool change shows at once. */
+const cacheSegment: StatusLineSegment = {
+	id: "cache",
+	render(ctx) {
+		const pct = ctx.lastCacheHitPct;
+		if (pct === null || pct === undefined) return { content: "", visible: false };
+		return {
+			content: [theme.icon.cache, theme.fg("statusLineSpend", `${pct.toFixed(0)}%`)].join(" "),
+			visible: true,
+		};
+	},
+	describe(ctx) {
+		const pct = ctx.lastCacheHitPct;
+		if (pct === null || pct === undefined) return null;
+		return segView([span(`${pct.toFixed(0)}%`, "statusLineSpend")], "cache");
+	},
+};
+
 const sessionNameSegment: StatusLineSegment = {
 	id: "session_name",
 	render(ctx) {
@@ -1328,6 +1346,7 @@ export const SEGMENTS: Record<StatusLineSegmentId, StatusLineSegment> = {
 	cache_read: cacheReadSegment,
 	cache_write: cacheWriteSegment,
 	cache_hit: cacheHitSegment,
+	cache: cacheSegment,
 	session_name: sessionNameSegment,
 	usage: usageSegment,
 	collab: collabSegment,

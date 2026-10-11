@@ -148,6 +148,52 @@ export const cfgCommandsEnableOpencodeProject = register({
 	},
 });
 
+// Honored from the user config, a runtime override, or `--config` only; a project layer cannot enable itself
+// (see `config/command-shell.ts`).
+export const cfgCommandsShellExpansion = register({
+	id: "commands.shellExpansion",
+	type: "enum",
+	values: ["off", "user", "all"] as const,
+	default: "user",
+	ui: {
+		tab: "tasks",
+		group: "Commands & Skills",
+		label: "Shell in Commands",
+		description:
+			"Replace !`cmd` in markdown commands and prompt templates with the command's output. Project command files can run shell: `all` trusts them.",
+		options: [
+			{ value: "off", label: "Off", description: "Leave !`cmd` text as written." },
+			{
+				value: "user",
+				label: "User commands only",
+				description: "Run !`cmd` only from your own command directories, never from a project's.",
+			},
+			{
+				value: "all",
+				label: "User and project commands",
+				description: "Also run !`cmd` from project command files. Enable only for repositories you trust.",
+			},
+		],
+	},
+});
+
+export const cfgCommandsShellTimeoutMs = register({
+	id: "commands.shellTimeoutMs",
+	type: "number",
+	default: 10_000,
+	validate: raw => {
+		if (raw !== undefined && (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0)) {
+			throw new Error(`Expected a positive number of milliseconds, got ${Bun.inspect(raw)}`);
+		}
+	},
+	ui: {
+		tab: "tasks",
+		group: "Commands & Skills",
+		label: "Shell in Commands Timeout (ms)",
+		description: "Longest a !`cmd` snippet in a markdown command may run before its output is replaced by an error",
+	},
+});
+
 const CLAUDE_COMPAT_OPTIONS = [
 	{ value: "off", label: "Off", description: "Do not load anything from Claude Code settings." },
 	{

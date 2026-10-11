@@ -45,6 +45,7 @@ import { cfgExtendedContext } from "../session/context-settings";
 import { cfgGoalEnabled } from "../goals/settings";
 import { cfgPlanEnabled } from "../plan-mode/settings";
 import { describeProfiles, describeSwitch } from "../profiles/command";
+import { runApprovalsCommand } from "../tools/approval-grants";
 
 export function refreshStatusLine(ctx: InteractiveModeContext): void {
 	ctx.statusLine.invalidate();
@@ -360,6 +361,29 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 				return commandConsumed();
 			}
 			await runtime.output(describeSwitch(await runtime.session.profiles.switch(name)));
+			return commandConsumed();
+		},
+	},
+	{
+		name: "approvals",
+		icon: "shield",
+		description: 'List or remove saved tool approvals ("Always allow" / "Deny always" choices)',
+		acpDescription: "List or remove saved tool approvals",
+		acpInputHint: "[list | remove <number|id> | clear [session|project]]",
+		subcommands: [
+			{ name: "list", description: "Show saved approvals" },
+			{ name: "remove", description: "Remove one saved approval", usage: "<number|id>" },
+			{ name: "clear", description: "Remove every saved approval", usage: "[session|project]" },
+		],
+		subcommandOptional: true,
+		allowArgs: true,
+		handle: async (command, runtime) => {
+			const store = runtime.session.extensionRunner?.approvalGrants;
+			await runtime.output(
+				store
+					? runApprovalsCommand(store, command.args, runtime.cwd)
+					: "Saved approvals are unavailable in this session.",
+			);
 			return commandConsumed();
 		},
 	},

@@ -150,6 +150,7 @@ export interface UseBlocksArgs {
 	compact: boolean;
 	onSendToAgent?: (text: string) => void;
 	onEdit?: (entryId: string) => void;
+	onChanges?: (entryId: string) => void;
 }
 
 export interface UseBlocks {
@@ -176,7 +177,15 @@ export interface UseBlocks {
  * Esc, the touch long press with its sheet, swipes (right quotes, left copies), the double-tap
  * copy, and the phone's *Select* mode with its bottom bar.
  */
-export function useBlocks({ blocks, rootRef, active, compact, onSendToAgent, onEdit }: UseBlocksArgs): UseBlocks {
+export function useBlocks({
+	blocks,
+	rootRef,
+	active,
+	compact,
+	onSendToAgent,
+	onEdit,
+	onChanges,
+}: UseBlocksArgs): UseBlocks {
 	const [selection, setSelection] = useState<BlockSelection>(NO_SELECTION);
 	const [selectMode, setSelectMode] = useState(false);
 	const [sheetId, setSheetId] = useState<string | null>(null);
@@ -482,6 +491,7 @@ export function useBlocks({ blocks, rootRef, active, compact, onSendToAgent, onE
 					api={api}
 					canSend={onSendToAgent !== undefined}
 					onEdit={onEdit}
+					onChanges={onChanges}
 					onSelect={() => {
 						setSelectMode(true);
 						setSelection(selectOnly(sheetBlock.id));

@@ -15,6 +15,7 @@ import {
 import { $env } from "@oh-my-pi/pi-utils/env";
 import { isCmdShell, isExecutable, type ShellConfig } from "@oh-my-pi/pi-utils/procmgr";
 import { Settings } from "../config/settings";
+import { prepareSandboxRun, type SandboxEscalation, sandboxDenialNotice } from "../sandbox/run";
 import { type OutputArtifactError, OutputSink, type OutputSummary } from "@oh-my-pi/pi-tui/tools/streaming-output";
 import {
 	resolveOutputMaxColumns,
@@ -61,6 +62,17 @@ export interface BashExecutorOptions {
 	 * enforced by the embedded shell's `git` builtin.
 	 */
 	gitGuard?: boolean;
+	/**
+	 * Sandbox context (`sandbox.mode`): which settings decide the policy (default: the global
+	 * ones), extra workspace roots that stay writable, and a model-requested escalation. A
+	 * command run under a sandbox executes in a fresh shell inside it, so shell state does not
+	 * persist between such commands.
+	 */
+	sandbox?: {
+		settings?: Settings;
+		additionalDirectories?: readonly string[];
+		escalation?: SandboxEscalation;
+	};
 	/**
 	 * Filesystem for `scheme://` paths in this run of the embedded shell (a URL
 	 * `cwd` included). External shells and processes never see it.
@@ -217,6 +229,8 @@ const NATIVE_TIMEOUT_FALLBACK_GRACE_MS = 5_000;
 // leaking the session key in `brokenShellSessions`/`shellSessionQuarantines`
 // (#10308). The backing timer is unref'd so it never keeps the process alive.
 const QUARANTINE_CLEANUP_TIMEOUT_MS = 30_000;
+/** Output kept from a sandboxed command to recognize sandbox denials after it fails. */
+const SANDBOX_TAIL_CHARS = 8_192;
 
 async function retainShellWithLiveBackgroundJobs(shell: Shell): Promise<void> {
 	let live: number;
@@ -546,6 +560,22 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 	if (virtualCwd && (usePty || !options?.filesystem)) {
 		throw new Error(`Working directory ${commandCwd} needs the embedded shell with an injected filesystem`);
 	}
+	// `sandbox.mode`: wrap the command so the shell it runs in (and everything it spawns) starts
+	// under the OS sandbox. A bare `cd` only moves the persistent shell and stays outside.
+	const sandboxRun = prepareSandboxRun({
+		command,
+		cwd: virtualCwd ? process.cwd() : (commandCwd ?? process.cwd()),
+		settings: options?.sandbox?.settings ?? settings,
+		additionalDirectories: options?.sandbox?.additionalDirectories,
+		escalation: options?.sandbox?.escalation,
+		shell: { shell, args },
+	});
+	if (sandboxRun.sandboxed && virtualCwd) {
+		throw new Error(
+			`Working directory ${commandCwd} exists only in the embedded shell, which the sandbox does not cover. Use a host directory, run /sandbox off, or escalate.`,
+		);
+	}
+	const runCommand = sandboxRun.sandboxed && isPersistentShellCdCommand(command) ? command : sandboxRun.command;
 	// Fold the repo's direnv/devenv env into the command + env so devenv tools
 	// land on PATH; the caller's explicit `env` still wins. Thread the caller's
 	// signal + timeout so an aborted / short-timeout call can't hang on a cold
@@ -555,7 +585,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 	// concurrently.
 	const [snapshotPath, preflight] = await Promise.all([
 		bashShell ? getOrCreateSnapshot(shell, shellEnv) : null,
-		applyDirenvPreflight(command, commandCwd ?? process.cwd(), {
+		applyDirenvPreflight(runCommand, commandCwd ?? process.cwd(), {
 			callerEnv: options?.env,
 			signal: options?.signal,
 			timeoutMs: cfgBashDirenvLoadTimeoutMs.get(settings),
@@ -592,6 +622,9 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		maxColumns: resolveOutputMaxColumns(settings),
 		chunkThrottleMs: onChunk || onPreview ? (options?.chunkThrottleMs ?? 50) : 0,
 	});
+	if (sandboxRun.notice) sink.push(`[${sandboxRun.notice}]\n`);
+	// Tail of the output, kept to recognize sandbox denials in a failed command.
+	let sandboxOutputTail = "";
 
 	// sink.push() is synchronous — buffer management, counters, and onChunk
 	// all run inline. File writes (artifact path) are handled asynchronously
@@ -601,6 +634,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 	let decodedImages: ImageContent[] = [];
 	const enqueueChunk = (chunk: string) => {
 		if (!acceptingChunks) return;
+		if (sandboxRun.sandboxed) sandboxOutputTail = (sandboxOutputTail + chunk).slice(-SANDBOX_TAIL_CHARS);
 		const clean = graphics.push(chunk);
 		if (clean) sink.push(clean);
 	};
@@ -838,6 +872,11 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 			}
 		}
 
+		if (sandboxRun.sandboxed && winner.result.exitCode !== 0) {
+			const denial = sandboxDenialNotice(sandboxRun, sandboxOutputTail);
+			if (denial)
+				sink.push(`${sandboxOutputTail.endsWith("\n") || sandboxOutputTail === "" ? "" : "\n"}${denial}\n`);
+		}
 		// Normal completion
 		return {
 			exitCode: winner.result.exitCode,

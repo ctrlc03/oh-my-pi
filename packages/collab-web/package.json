@@ -5,7 +5,10 @@
   "private": true,
   "description": "Browser guest client and local relay tools for omp collab live sessions",
   "homepage": "https://omp.sh",
-  "author": { "name": "Stencil Labs, Inc.", "url": "https://stencil.so" },
+  "author": {
+    "name": "Stencil Labs, Inc.",
+    "url": "https://stencil.so"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -27,7 +30,7 @@
     "mock-host": "bun scripts/mock-host.ts",
     "companion": "bun scripts/companion.ts",
     "relay": "bun scripts/local-relay.ts",
-    "build": "rm -rf dist && bun build ./index.html --outdir=dist --minify --splitting --define process.env.NODE_ENV='\"production\"' --entry-naming=[hash].[ext] --chunk-naming=[hash].[ext] --asset-naming=[hash].[ext] && mv dist/*.html dist/index.html && cp -R public/. dist/ && bun scripts/build-sw.ts",
+    "build": "rm -rf dist && bun build ./index.html --outdir=dist --minify --splitting --metafile=dist/.meta.json --define process.env.NODE_ENV='\"production\"' --entry-naming=[hash].[ext] --chunk-naming=[hash].[ext] --asset-naming=[hash].[ext] && mv dist/*.html dist/index.html && cp -R public/. dist/ && bun scripts/build-assets.ts && bun scripts/build-sw.ts",
     "gen:tool-views": "bun scripts/build-tool-views.ts",
     "prepack": "bun run build",
     "test": "bun test --parallel",
@@ -57,6 +60,8 @@
     "@codemirror/search": "catalog:",
     "@codemirror/state": "catalog:",
     "@codemirror/view": "catalog:",
+    "@excalidraw/excalidraw": "0.18.1",
+    "@excalidraw/mermaid-to-excalidraw": "2.2.2",
     "@lezer/highlight": "catalog:",
     "@oh-my-pi/omp-stats": "catalog:",
     "@oh-my-pi/pi-coding-agent": "catalog:",
@@ -69,6 +74,7 @@
     "jsqr": "catalog:",
     "katex": "catalog:",
     "lucide-react": "catalog:",
+    "mermaid": "^11.12.1",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

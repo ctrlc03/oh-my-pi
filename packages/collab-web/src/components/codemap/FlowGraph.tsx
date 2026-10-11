@@ -1,7 +1,8 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flowToSkeleton } from "../../lib/codemap-scene";
 import type { CodemapFlowDirection, CodemapFlowStep, CodemapNode } from "../../lib/companion";
-import { NodeIcon, nodeSub, PHONE_QUERY, useMedia } from "./shared";
+import { NodeIcon, nodeSub, OpenInCanvas, PHONE_QUERY, useMedia } from "./shared";
 
 const DIRECTIONS: { value: CodemapFlowDirection; label: string }[] = [
 	{ value: "down", label: "Downstream" },
@@ -110,6 +111,12 @@ export function FlowGraph({ steps, direction, onDirection, onFocus }: FlowGraphP
 				<span className="sh-cm-count">
 					{steps.length - 1} step{steps.length === 2 ? "" : "s"}
 				</span>
+				{steps.length > 1 && (
+					<OpenInCanvas
+						title={`Flow from ${steps[0]?.node.label ?? "symbol"}`}
+						build={palette => flowToSkeleton(steps, direction, palette)}
+					/>
+				)}
 			</div>
 			{steps.length < 2 ? (
 				<div className="sh-companion-empty">

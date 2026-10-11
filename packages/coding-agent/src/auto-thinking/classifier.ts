@@ -24,10 +24,10 @@ import { preprocessTinyMessage } from "../tiny/message-preproc";
 
 import { cfgProvidersAutoThinkingMaxEffort } from "../session/settings";
 
-type Level = "low" | "medium" | "high" | "xhigh" | "max";
-type Bucket = "trivial" | "moderate" | "hard";
+export type Level = "low" | "medium" | "high" | "xhigh" | "max";
+export type Bucket = "trivial" | "moderate" | "hard";
 
-const LEVEL_EFFORT: Record<Level, Effort> = {
+export const LEVEL_EFFORT: Record<Level, Effort> = {
 	low: Effort.Low,
 	medium: Effort.Medium,
 	high: Effort.High,
@@ -35,7 +35,7 @@ const LEVEL_EFFORT: Record<Level, Effort> = {
 	max: Effort.Max,
 };
 
-const BUCKET_EFFORT: Record<Bucket, Effort> = {
+export const BUCKET_EFFORT: Record<Bucket, Effort> = {
 	trivial: Effort.Low,
 	moderate: Effort.High,
 	hard: Effort.XHigh,
@@ -49,7 +49,7 @@ const BUCKET_EFFORT: Record<Bucket, Effort> = {
 const QUESTIONS = judgeQuestions(questionFile);
 
 /** Questions for one classification input kind: on-device bucket, full ladder, full ladder with `max`. */
-interface QuestionSet {
+export interface QuestionSet {
 	bucket: ChoiceQuestion<Bucket>;
 	level: ChoiceQuestion<Exclude<Level, "max">>;
 	/** Offers `max`; used only when the target model exposes that tier. */
@@ -70,7 +70,7 @@ function buildQuestionSet(instructions: string, bucketInstructions: string): Que
 	};
 }
 
-const REQUEST_QUESTIONS = buildQuestionSet(QUESTIONS.level.instructions, QUESTIONS.bucket.instructions);
+export const REQUEST_QUESTIONS = buildQuestionSet(QUESTIONS.level.instructions, QUESTIONS.bucket.instructions);
 const SOLUTION_SPACE_QUESTIONS = buildQuestionSet(
 	QUESTIONS.solutionSpace.instructions,
 	renderQuestion(QUESTIONS.solutionSpace, {}).instructions,

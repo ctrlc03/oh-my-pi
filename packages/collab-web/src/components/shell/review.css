@@ -48,6 +48,16 @@
 	resize: vertical;
 }
 
+.sh-review-gen {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	font-size: 12px;
+	color: var(--fg-muted);
+}
+
 .sh-review-draft {
 	display: flex;
 	align-items: center;
@@ -65,6 +75,11 @@
 	border-radius: var(--radius-sm);
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
+}
+
+.sh-review-script {
+	max-height: 240px;
+	overflow: auto;
 }
 
 .sh-review-confirm-actions {

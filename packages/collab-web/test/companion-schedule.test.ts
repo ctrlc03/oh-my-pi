@@ -8,14 +8,18 @@ import {
 	loadSchedules,
 	MAX_SCHEDULES,
 	MISSED_GRACE_MS,
-	nextRunAfter,
 	parseScheduleInput,
 	parseSchedules,
 	type ScheduleNotice,
 	saveSchedules,
 } from "../scripts/companion-schedule";
-import type { Schedule, ScheduleInput, ScheduleWhen } from "../src/lib/schedules";
-import { describeWhen } from "../src/lib/schedules";
+import {
+	describeWhen,
+	nextRunAfter,
+	type Schedule,
+	type ScheduleInput,
+	type ScheduleWhen,
+} from "@oh-my-pi/pi-wire/schedule";
 
 const local = (y: number, m: number, d: number, h = 0, min = 0) => new Date(y, m - 1, d, h, min).getTime();
 const MON_FRI = [1, 2, 3, 4, 5];
@@ -88,6 +92,12 @@ describe("dueState", () => {
 		expect(dueState(schedule(at), at)).toBe("run");
 		expect(dueState(schedule(at), at + MISSED_GRACE_MS)).toBe("run");
 		expect(dueState(schedule(at), at + MISSED_GRACE_MS + 1)).toBe("missed");
+	});
+
+	it("keeps a run-once schedule due however late, and never calls it missed", () => {
+		const at = local(2026, 10, 9, 9);
+		expect(dueState({ ...schedule(at), catchUp: "run-once" }, at + 30 * 24 * 60 * 60 * 1000)).toBe("run");
+		expect(dueState({ ...schedule(at), catchUp: "run-once" }, at - 1)).toBeNull();
 	});
 
 	it("never fires a disabled schedule or one with nothing left", () => {
@@ -219,6 +229,83 @@ describe("scheduler", () => {
 		await h.scheduler.tick();
 		expect(h.started).toHaveLength(0);
 		expect(h.scheduler.list()[0]?.nextRun).toBe(local(2026, 10, 15, 9));
+	});
+
+	it("catches up once, however late, when the schedule says run-once, and records the slot it was due for", async () => {
+		const slot = local(2026, 10, 9, 9);
+		const h = harness([{ ...daily("a", slot), catchUp: "run-once" }]);
+		h.setNow(local(2026, 10, 14, 9, 5));
+		await h.scheduler.tick();
+		await h.scheduler.tick();
+		expect(h.started).toHaveLength(1);
+		const [job] = h.scheduler.list();
+		expect(job?.lastRun).toMatchObject({ instanceId: "inst-1", missedAt: slot });
+		expect(job?.nextRun).toBe(local(2026, 10, 15, 9));
+		expect(h.notices[0]?.title).toContain("caught up");
+	});
+
+	it("does not call an on-time or just-late run a catch-up", async () => {
+		const h = harness([{ ...daily("a", local(2026, 10, 9, 9)), catchUp: "run-once" }]);
+		h.setNow(local(2026, 10, 9, 9, 40));
+		await h.scheduler.tick();
+		expect(h.started).toHaveLength(1);
+		expect(h.scheduler.list()[0]?.lastRun?.missedAt).toBeUndefined();
+	});
+
+	it("leaves a missed run recorded only under the default and the explicit skip policy", async () => {
+		for (const catchUp of [undefined, "skip" as const]) {
+			const h = harness([{ ...daily("a", local(2026, 10, 9, 9)), catchUp }]);
+			h.setNow(local(2026, 10, 12, 9, 5));
+			await h.scheduler.tick();
+			expect(h.started).toHaveLength(0);
+			expect(h.scheduler.list()[0]?.lastRun?.error).toContain("skipped: missed");
+		}
+	});
+
+	it("catches up a missed one-off even days late, then turns it off", async () => {
+		const at = local(2026, 10, 9, 9);
+		const h = harness([{ ...daily("o", at), when: { kind: "once", at }, catchUp: "run-once" }]);
+		h.setNow(local(2026, 10, 13, 9));
+		await h.scheduler.tick();
+		expect(h.started).toHaveLength(1);
+		expect(h.scheduler.list()[0]).toMatchObject({ enabled: false, nextRun: null });
+	});
+
+	it("counts an interval from when it was saved, so a late tick does not shift later slots", async () => {
+		const h = harness([]);
+		const created = await h.scheduler.save({
+			...base,
+			title: "poll",
+			when: { kind: "interval", everyMin: 30 },
+			catchUp: "run-once",
+		});
+		expect(created.when).toEqual({ kind: "interval", everyMin: 30, anchor: local(2026, 10, 9, 9) });
+		expect(created.nextRun).toBe(local(2026, 10, 9, 9, 30));
+		// The computer was off for hours: one catch-up run, then back on the half hours.
+		h.setNow(local(2026, 10, 9, 12, 10));
+		await h.scheduler.tick();
+		expect(h.started).toHaveLength(1);
+		expect(h.scheduler.list()[0]?.nextRun).toBe(local(2026, 10, 9, 12, 30));
+		// Editing around an unchanged interval keeps its phase.
+		const edited = await h.scheduler.save({
+			...base,
+			id: created.id,
+			title: "poll 2",
+			when: { kind: "interval", everyMin: 30 },
+		});
+		expect(edited.when).toMatchObject({ anchor: local(2026, 10, 9, 9) });
+		expect(edited.nextRun).toBe(local(2026, 10, 9, 12, 30));
+	});
+
+	it("schedules a cron in its own time zone", async () => {
+		const h = harness([]);
+		// 09:00 Berlin on 2026-10-10 (a Saturday) is 03:00 in New York.
+		const created = await h.scheduler.save({
+			...base,
+			title: "berlin",
+			when: { kind: "cron", expr: "0 9 * * 1-5", tz: "Europe/Berlin" },
+		});
+		expect(created.nextRun).toBe(Date.UTC(2026, 9, 12, 7, 0));
 	});
 
 	it("turns a once schedule off after it ran or was missed", async () => {

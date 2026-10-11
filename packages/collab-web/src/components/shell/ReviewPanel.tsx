@@ -1,7 +1,7 @@
-import { ExternalLink, GitBranch, GitPullRequest, LoaderCircle, RefreshCw } from "lucide-react";
+import { ExternalLink, GitBranch, GitPullRequest, LoaderCircle, RefreshCw, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useRef, useState } from "react";
-import type { CompanionClient, GitReview } from "../../lib/companion";
+import type { CompanionClient, GitReview, GitText } from "../../lib/companion";
 import { relTime } from "../../lib/format";
 import type { DiffReview } from "../../lib/review-comments";
 import { useRequest } from "../../lib/use-request";
@@ -9,12 +9,21 @@ import type { ToolRenderHost } from "../../tool-render";
 import { TreeFile } from "./WorkingTree";
 import "./review.css";
 
+/** The text the companion is writing for the confirm dialog. */
+type Generation =
+	| { status: "idle" }
+	| { status: "loading" }
+	| { status: "done"; source: GitText["source"]; note?: string }
+	| { status: "error"; message: string };
+
 export interface ReviewPanelProps {
 	client: CompanionClient;
 	instanceId: string;
 	host: ToolRenderHost;
 	/** The companion can open pull requests (`gh` installed and signed in). */
 	canPr: boolean;
+	/** The companion writes commit and pull request text (`git-message`); without it the fields start from the session title. */
+	canGitFlow: boolean;
 	/** The session's agent is mid-turn (the companion refuses writes then) or unknown (null, an omp that predates the field). */
 	busy: boolean | null;
 	/** Session title: the suggested commit message and pull request title. */
@@ -113,7 +122,7 @@ interface ReviewViewProps extends ReviewPanelProps {
 }
 
 function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: ReviewViewProps): ReactNode {
-	const { client, instanceId, host, canPr, busy, title, diffReview } = props;
+	const { client, instanceId, host, canPr, canGitFlow, busy, title, diffReview } = props;
 	const [plan, setPlan] = useState<Step[] | null>(null);
 	const [running, setRunning] = useState<Step | null>(null);
 	const [message, setMessage] = useState(title ?? review.commits[0]?.subject ?? "");
@@ -122,6 +131,9 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 	const [draft, setDraft] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [done, setDone] = useState<{ text: string; url?: string } | null>(null);
+	const [gen, setGen] = useState<Generation>({ status: "idle" });
+	const generation = useRef(0);
+	const touched = useRef({ message: false, title: false, body: false });
 
 	const loadDiff = useCallback((file: string) => client.requestReviewDiff(instanceId, file), [client, instanceId]);
 	const baseName = review.base?.replace(/^origin\//, "") ?? "";
@@ -140,7 +152,59 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 		}
 	};
 
+	const generate = async (steps: Step[]): Promise<void> => {
+		const seq = ++generation.current;
+		setGen({ status: "loading" });
+		try {
+			const text = await client.generateGitText(instanceId, {
+				commit: steps.includes("commit"),
+				pr: steps.includes("pr"),
+			});
+			if (seq !== generation.current) return;
+			// What the person typed while waiting stays.
+			if (text.commit && !touched.current.message) setMessage(text.commit);
+			if (text.prTitle && !touched.current.title) setPrTitle(text.prTitle);
+			if (text.prBody && !touched.current.body) setPrBody(text.prBody);
+			setGen({ status: "done", source: text.source, note: text.note });
+		} catch (err) {
+			if (seq === generation.current) {
+				setGen({ status: "error", message: err instanceof Error ? err.message : String(err) });
+			}
+		}
+	};
+
+	/** Open the confirm dialog for `steps`, with the model's text on its way when the companion writes it. */
+	const begin = (steps: Step[]): void => {
+		setPlan(steps);
+		setDone(null);
+		setError(null);
+		touched.current = { message: false, title: false, body: false };
+		generation.current++;
+		setGen({ status: "idle" });
+		if (canGitFlow && (steps.includes("commit") || steps.includes("pr"))) void generate(steps);
+	};
+
+	/** Write the text again, replacing what was typed. */
+	const regenerate = (steps: Step[]): void => {
+		touched.current = { message: false, title: false, body: false };
+		void generate(steps);
+	};
+
+	const edit = (field: keyof typeof touched.current, value: string): void => {
+		touched.current[field] = true;
+		if (field === "message") setMessage(value);
+		else if (field === "title") setPrTitle(value);
+		else setPrBody(value);
+	};
+
+	const cancel = (): void => {
+		generation.current++;
+		setGen({ status: "idle" });
+		setPlan(null);
+	};
+
 	const run = async (steps: Step[]): Promise<void> => {
+		generation.current++;
 		setPlan(null);
 		setError(null);
 		setDone(null);
@@ -170,6 +234,7 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 
 	const confirmReady =
 		plan !== null &&
+		gen.status !== "loading" &&
 		(!plan.includes("commit") || message.trim().length > 0) &&
 		(!plan.includes("pr") || prTitle.trim().length > 0);
 	const chain = chainSteps(review);
@@ -235,11 +300,7 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 						type="button"
 						className={`sh-btn${action.primary ? " sh-btn-primary" : ""}`}
 						disabled={action.reason !== null || running !== null}
-						onClick={() => {
-							setPlan(action.steps);
-							setDone(null);
-							setError(null);
-						}}
+						onClick={() => begin(action.steps)}
 					>
 						{action.label}
 					</button>
@@ -257,14 +318,40 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 
 			{plan !== null && (
 				<div className="sh-review-confirm" role="group" aria-label="confirm">
+					{gen.status !== "idle" && (
+						<div className="sh-review-gen" role="status">
+							{gen.status === "loading" && (
+								<>
+									<LoaderCircle size={14} className="sh-spin" /> Writing the text from your changes…
+								</>
+							)}
+							{gen.status === "done" && (
+								<span>
+									<Sparkles size={14} />{" "}
+									{gen.source === "model"
+										? "Written by the model from your changes. Edit anything before running."
+										: `The model could not be reached, so this is a template (${gen.note ?? "no reason given"}). Edit before running.`}
+								</span>
+							)}
+							{gen.status === "error" && <span>Could not write the text: {gen.message}</span>}
+							<button
+								type="button"
+								className="sh-btn"
+								disabled={gen.status === "loading"}
+								onClick={() => regenerate(plan)}
+							>
+								<RefreshCw size={13} /> Regenerate
+							</button>
+						</div>
+					)}
 					{plan.includes("commit") && (
 						<label className="sh-field">
 							<span className="sh-field-label">Commit message</span>
 							<textarea
 								className="sh-input sh-review-textarea"
-								rows={3}
+								rows={5}
 								value={message}
-								onChange={e => setMessage(e.currentTarget.value)}
+								onChange={e => edit("message", e.currentTarget.value)}
 							/>
 						</label>
 					)}
@@ -272,15 +359,19 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 						<>
 							<label className="sh-field">
 								<span className="sh-field-label">Pull request title</span>
-								<input className="sh-input" value={prTitle} onChange={e => setPrTitle(e.currentTarget.value)} />
+								<input
+									className="sh-input"
+									value={prTitle}
+									onChange={e => edit("title", e.currentTarget.value)}
+								/>
 							</label>
 							<label className="sh-field">
 								<span className="sh-field-label">Description</span>
 								<textarea
 									className="sh-input sh-review-textarea"
-									rows={4}
+									rows={8}
 									value={prBody}
-									onChange={e => setPrBody(e.currentTarget.value)}
+									onChange={e => edit("body", e.currentTarget.value)}
 								/>
 							</label>
 							<label className="sh-review-draft">
@@ -292,7 +383,7 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 					<div className="sh-field-label">This will run on your computer:</div>
 					<pre className="sh-review-cmd">{plan.map(commands).join("\n")}</pre>
 					<div className="sh-review-confirm-actions">
-						<button type="button" className="sh-btn" onClick={() => setPlan(null)}>
+						<button type="button" className="sh-btn" onClick={cancel}>
 							Cancel
 						</button>
 						<button

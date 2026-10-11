@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Emit `dist/sw.js`: an app-shell service worker that precaches the built client so
- * the installed app opens offline. Runs after `bun build` (see the `build` script).
+ * the installed app opens offline. Runs after `bun build` and build-assets.ts (see the `build` script).
  *
  * The cache name is derived from the precached file names and sizes. Bundles are
  * content-hashed, so any deploy that changes the client changes `sw.js`, which is
@@ -16,12 +16,16 @@
  * `max-age=600`, and a stale copy would pin the previous bundle into the new shell.
  * Requests made with `cache: "no-store"` (the app's own update check) pass through.
  *
+ * The diagram engines (Mermaid, Excalidraw) and Excalidraw's fonts (`excalidraw-assets/`) are not
+ * precached: the worker caches them on first use, so diagrams work offline after being shown once.
+ *
  * It also shows the companion's Web Push notifications (see scripts/companion.ts):
  * a payload's `badge` sets the app icon badge, `reply` adds an inline text-reply action,
  * and a tap routes to the session or to the payload's `open` route. An open window gets
  * an `open-session`, `open-route` or `notification-reply` message, otherwise the app
  * launches with `#open:<instanceId>[&reply=<text>]` or `#<route>`.
  */
+import * as fs from "node:fs";
 import * as path from "node:path";
 
 const dist = path.join(import.meta.dir, "..", "dist");
@@ -31,12 +35,58 @@ const SKIP: Record<string, true> = { "sw.js": true, "og-image.png": true, "robot
 /** How long a launch waits for the network before opening the cached shell. */
 const NAVIGATE_TIMEOUT_MS = 3_000;
 
+/**
+ * Output files only the diagram engines load (Mermaid, Excalidraw and what only they share), from the bundler's
+ * metafile: they total several MB, so they are fetched when a diagram is first drawn instead of at install.
+ * Files the rest of the app also reaches (the entry, other lazy sheets and their shared chunks) stay precached.
+ */
+function diagramOnlyFiles(): Set<string> {
+	const metaPath = path.join(dist, ".meta.json");
+	const meta: { outputs: Record<string, { entryPoint?: string; imports: { path: string }[] }> } = JSON.parse(
+		fs.readFileSync(metaPath, "utf8"),
+	);
+	fs.rmSync(metaPath);
+	const engines = Object.entries(meta.outputs)
+		.filter(
+			([, info]) =>
+				info.entryPoint === "src/lib/mermaid-engine.ts" || info.entryPoint === "src/lib/excalidraw-engine.ts",
+		)
+		.map(([output]) => output);
+	/** Every output reachable from `roots` without entering a `blocked` one. */
+	const reach = (roots: readonly string[], blocked: ReadonlySet<string>): Set<string> => {
+		const seen = new Set<string>();
+		const visit = (output: string): void => {
+			if (seen.has(output) || blocked.has(output)) return;
+			seen.add(output);
+			for (const next of meta.outputs[output]?.imports ?? []) visit(next.path);
+		};
+		for (const root of roots) visit(root);
+		return seen;
+	};
+	// Chunks the bundler splits out of a package's own dynamic imports have entry points too; the app's roots are its sources and the page.
+	const others = Object.entries(meta.outputs)
+		.filter(([output, info]) => {
+			const entry = info.entryPoint;
+			return (
+				entry !== undefined && !engines.includes(output) && (entry === "index.html" || entry.startsWith("src/"))
+			);
+		})
+		.map(([output]) => output);
+	const rest = reach(others, new Set(engines));
+	const lazy = new Set<string>();
+	for (const output of reach(engines, new Set())) {
+		if (!rest.has(output)) lazy.add(output.replace(/^\.\//, ""));
+	}
+	return lazy;
+}
+
+const lazyFiles = diagramOnlyFiles();
 const files: string[] = [];
 const fingerprint = new Bun.CryptoHasher("sha256");
 for (const name of [...new Bun.Glob("*").scanSync({ cwd: dist, onlyFiles: true })].sort()) {
 	if (SKIP[name]) continue;
-	files.push(name);
 	fingerprint.update(`${name}:${Bun.file(path.join(dist, name)).size}\n`);
+	if (!lazyFiles.has(name)) files.push(name);
 }
 if (!files.includes("index.html")) {
 	console.error("build-sw: dist/index.html missing; run the bundle step first");
@@ -88,6 +138,20 @@ function navigate() {
 	return Promise.race([settled, slow]);
 }
 
+const BASE_PATH = new URL("./", self.location).pathname;
+
+/**
+ * Build output fetched after install and cached on first use, so diagrams work offline once shown: the hashed
+ * scripts, styles and fonts at the site root and Excalidraw's own files. Query-less only: a URL with a query is never
+ * stored (nothing else is cached for it), which also keeps the cache to the files this build ships.
+ */
+function isRuntimeAsset(url) {
+	if (url.search !== "" || !url.pathname.startsWith(BASE_PATH)) return false;
+	const rel = url.pathname.slice(BASE_PATH.length);
+	if (rel.startsWith("excalidraw-assets/")) return true;
+	return !rel.includes("/") && (rel.endsWith(".js") || rel.endsWith(".css") || rel.endsWith(".woff2"));
+}
+
 self.addEventListener("fetch", event => {
 	const req = event.request;
 	if (req.method !== "GET" || new URL(req.url).origin !== self.location.origin || req.cache === "no-store") return;
@@ -95,6 +159,20 @@ self.addEventListener("fetch", event => {
 	// room link lives in the fragment, which never reaches the worker.
 	if (req.mode === "navigate") {
 		event.respondWith(navigate());
+		return;
+	}
+	const url = new URL(req.url);
+	if (isRuntimeAsset(url)) {
+		event.respondWith(
+			caches.open(CACHE).then(async cache => {
+				const hit = await cache.match(req);
+				if (hit) return hit;
+				const res = await fetch(req);
+				// Only whole successful answers: a partial (206) one cannot be stored, and an error must not stick.
+				if (res.status === 200 && res.type === "basic") await cache.put(req, res.clone());
+				return res;
+			}),
+		);
 		return;
 	}
 	event.respondWith(caches.open(CACHE).then(cache => cache.match(req, { ignoreSearch: true })).then(hit => hit || fetch(req)));

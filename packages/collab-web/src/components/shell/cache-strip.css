@@ -1,0 +1,88 @@
+/* Cache strip: the last request's cache hit, speed, tokens and cost above the composer.
+ * Token colours only; the composer's side inset keeps it aligned with the message box. */
+
+.sh-cachestrip {
+	flex: none;
+	width: 100%;
+	max-width: var(--chat-width);
+	padding: 0 16px 6px;
+}
+
+.sh-cachestrip-btn {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-width: 0;
+	padding: 3px 4px;
+	font: 400 11.5px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+	background: none;
+	border: 0;
+	border-radius: var(--radius-sm);
+	text-align: left;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.sh-cachestrip-btn:hover {
+	color: var(--fg-muted);
+}
+
+.sh-cachestrip-btn svg {
+	flex: none;
+}
+
+.sh-cachestrip-hit {
+	color: var(--fg-muted);
+}
+
+.sh-cachestrip-btn[data-miss] svg,
+.sh-cachestrip-btn[data-miss] .sh-cachestrip-hit,
+.sh-cachestrip-miss {
+	color: var(--warn);
+}
+
+.sh-cachestrip-miss {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sh-cachestrip-spacer {
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+.sh-cachestrip-cost {
+	flex: none;
+}
+
+.sh-cachestrip-misses {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-cachestrip-missrow {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	font-size: 13px;
+}
+
+.sh-cachestrip-missrow .sh-sheet-faint {
+	font: 400 11.5px / 1.4 var(--font-mono);
+	overflow-wrap: anywhere;
+}
+
+/* Phones keep the hit share, a miss's cause and the cost. */
+@media (max-width: 640px) {
+	.sh-cachestrip-wide {
+		display: none;
+	}
+}

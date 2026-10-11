@@ -27,6 +27,7 @@ import type {
 } from "./host";
 import type { Editor } from "../components/editor";
 import { getSessionAccentAnsi, getSessionAccentHex } from "../theme/session-color";
+import { cacheHitPct } from "../chat/cache-invalidation-marker";
 import { sanitizeHookStatusText, sanitizeStatusText } from "../chrome/shared";
 import { getThemeEpoch, theme } from "../theme";
 import { type CompactionBoundaries, EMPTY_STRING_PARTS, getToolSchemaMetadataRevision } from "./context-usage";
@@ -1878,6 +1879,18 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		return stalePr ?? null;
 	}
 
+	/** Hit percentage of the newest assistant message that carried a prompt, or null before any. */
+	#getLastCacheHitPct(): number | null {
+		const messages = this.session.state.messages;
+		for (let index = messages.length - 1; index >= 0; index--) {
+			const message = messages[index];
+			if (message?.role !== "assistant") continue;
+			const pct = cacheHitPct(message.usage);
+			if (pct !== undefined) return pct;
+		}
+		return null;
+	}
+
 	#getTokensPerSecond(): number | null {
 		// Aggregate tok/s across the main session AND every live vibe worker.
 		// In vibe mode the director is often idle while workers stream, so the
@@ -2528,6 +2541,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		const settings = this.#resolveSettings();
 		const sessionAccentEnabled = settings.sessionAccent !== false;
 		const brandVisible = settings.leftSegments.includes("pi") || settings.rightSegments.includes("pi");
+		const cacheVisible = settings.leftSegments.includes("cache") || settings.rightSegments.includes("cache");
 		const turnElapsedMs = this.getTurnElapsedMs();
 		return {
 			session: this.session,
@@ -2554,6 +2568,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 			stream: this.#streamStatus,
 			recording: this.#recording,
 			usageStats,
+			lastCacheHitPct: cacheVisible ? this.#getLastCacheHitPct() : null,
 			contextPercent,
 			contextTokens,
 			contextWindow,

@@ -5,3 +5,8 @@ declare module "highlightjs-solidity" {
 	export const solidity: LanguageFn;
 	export const yul: LanguageFn;
 }
+
+/** Where Excalidraw looks for its fonts first; set by lib/excalidraw-load.ts. */
+interface Window {
+	EXCALIDRAW_ASSET_PATH?: string;
+}

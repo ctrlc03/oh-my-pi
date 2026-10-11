@@ -1,0 +1,84 @@
+/* ---- editable queued follow-ups: actions on the chip, and the in-place editor ---- */
+.sh-followup-editable {
+	width: 100%;
+}
+
+.sh-followup-editable .sh-followup-text {
+	flex: 1 1 auto;
+}
+
+.sh-followup-actions {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 2px;
+	margin-left: auto;
+}
+
+.sh-followup-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	color: var(--fg-muted);
+	background: transparent;
+	border: 0;
+	border-radius: 999px;
+}
+
+.sh-followup-btn:hover:not(:disabled) {
+	color: var(--fg);
+	background: var(--hover);
+}
+
+.sh-followup-btn:disabled {
+	opacity: 0.4;
+}
+
+.sh-followup-save:not(:disabled) {
+	color: var(--accent);
+}
+
+.sh-followup.sh-followup-editing {
+	align-items: flex-start;
+	width: 100%;
+	height: auto;
+	padding: 6px 6px 6px 10px;
+	border-radius: var(--radius-lg);
+}
+
+.sh-followup-editor {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: 2px 0;
+	font: inherit;
+	line-height: 1.4;
+	color: var(--fg);
+	background: transparent;
+	border: 0;
+	outline: 0;
+	resize: none;
+}
+
+/* On phones the label goes (the icon says it) and the buttons grow to a finger. */
+@media (max-width: 640px) {
+	.sh-followup-editable .sh-followup-label {
+		display: none;
+	}
+}
+
+@media (any-pointer: coarse) {
+	.sh-followup-btn,
+	.sh-followup-editable .sh-followup-remove {
+		width: 32px;
+		height: 32px;
+	}
+
+	.sh-followup.sh-followup-editable,
+	.sh-followup.sh-followup-editing {
+		height: auto;
+		min-height: 40px;
+	}
+}

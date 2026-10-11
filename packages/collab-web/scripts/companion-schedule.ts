@@ -12,62 +12,28 @@ import {
 	MAX_SCHEDULE_COST_USD,
 	MAX_SCHEDULE_PROMPT_CHARS,
 	MAX_SCHEDULE_TITLE_CHARS,
+	nextRunAfter,
+	parseScheduleWhen,
 	type Schedule,
 	type ScheduleInput,
 	type ScheduleRun,
 	type ScheduleWhen,
-} from "../src/lib/schedules";
+} from "@oh-my-pi/pi-wire/schedule";
 import { SAFE_ID_RE } from "./companion-sessions";
 
-/** A run missed while the computer slept still happens when it wakes within this long; later ones are only recorded. */
+/** Under the `skip` policy, a run missed while the computer slept still happens when it wakes within this long; later ones are only recorded. */
 export const MISSED_GRACE_MS = 60 * 60 * 1000;
 export const MAX_SCHEDULES = 50;
-/** Far enough out for any real plan, and inside the range `Date` represents. */
-const MAX_ONCE_AT = Date.UTC(2100, 0, 1);
-const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const MAX_CWD_CHARS = 4096;
 
 /**
- * First trigger strictly after `after`, from local calendar components, so a DST change moves the
- * wall-clock hour rather than the day (a time that does not exist that day runs an hour later,
- * one that happens twice runs at its first occurrence). Null when nothing is left to run.
+ * `run`: due, and either not too late to be worth running or the schedule catches up (`run-once`);
+ * `missed`: due long ago under `skip` (the computer was off or asleep).
  */
-export function nextRunAfter(when: ScheduleWhen, after: number): number | null {
-	if (when.kind === "once") return when.at > after ? when.at : null;
-	const [hours, minutes] = when.time.split(":").map(Number);
-	const from = new Date(after);
-	for (let offset = 0; offset <= 7; offset++) {
-		const candidate = new Date(from.getFullYear(), from.getMonth(), from.getDate() + offset, hours, minutes);
-		if (when.days.includes(candidate.getDay()) && candidate.getTime() > after) return candidate.getTime();
-	}
-	return null;
-}
-
-/** `run`: due, and not too late to be worth running; `missed`: due long ago (the computer was off or asleep). */
 export function dueState(schedule: Schedule, now: number): "run" | "missed" | null {
 	if (!schedule.enabled || schedule.nextRun === null || now < schedule.nextRun) return null;
+	if (schedule.catchUp === "run-once") return "run";
 	return now - schedule.nextRun <= MISSED_GRACE_MS ? "run" : "missed";
-}
-
-function parseWhen(raw: unknown): ScheduleWhen {
-	const when = raw as { kind?: unknown; at?: unknown; time?: unknown; days?: unknown } | null;
-	if (typeof when !== "object" || when === null) throw new Error("invalid schedule time");
-	if (when.kind === "once") {
-		if (typeof when.at !== "number" || !Number.isInteger(when.at) || when.at <= 0 || when.at >= MAX_ONCE_AT)
-			throw new Error("invalid date and time");
-		return { kind: "once", at: when.at };
-	}
-	if (when.kind === "daily") {
-		if (typeof when.time !== "string" || !TIME_RE.test(when.time)) throw new Error("time must be HH:MM");
-		if (
-			!Array.isArray(when.days) ||
-			when.days.length === 0 ||
-			!when.days.every(day => Number.isInteger(day) && day >= 0 && day <= 6)
-		)
-			throw new Error("pick at least one weekday");
-		return { kind: "daily", time: when.time, days: [...new Set<number>(when.days)].sort((a, b) => a - b) };
-	}
-	throw new Error("invalid schedule time");
 }
 
 function optionalFlag(value: unknown, name: string): true | undefined {
@@ -118,6 +84,9 @@ function parseFields(raw: unknown): ScheduleInput {
 			throw new Error("a spend limit needs a new session: a resumed session's cap counts all it has spent");
 	}
 	if (input.enabled !== undefined && typeof input.enabled !== "boolean") throw new Error("invalid enabled");
+	if (input.catchUp !== undefined && input.catchUp !== "skip" && input.catchUp !== "run-once")
+		throw new Error("catch-up must be skip or run-once");
+	if (input.createdBy !== undefined && input.createdBy !== "agent") throw new Error("invalid creator");
 	return {
 		id: input.id,
 		title,
@@ -128,7 +97,9 @@ function parseFields(raw: unknown): ScheduleInput {
 		worktree,
 		sandboxed,
 		maxCostUsd: input.maxCostUsd,
-		when: parseWhen(input.when),
+		when: parseScheduleWhen(input.when),
+		catchUp: input.catchUp === "run-once" ? "run-once" : undefined,
+		createdBy: input.createdBy,
 		enabled: input.enabled !== false,
 	};
 }
@@ -183,6 +154,7 @@ export function parseSchedules(raw: unknown, now: number): Schedule[] {
 						at: lastRun.at,
 						instanceId: typeof lastRun.instanceId === "string" ? lastRun.instanceId : undefined,
 						error: typeof lastRun.error === "string" ? lastRun.error : undefined,
+						missedAt: typeof lastRun.missedAt === "number" ? lastRun.missedAt : undefined,
 					}
 				: undefined;
 		out.push({
@@ -310,6 +282,9 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
 		starting[id] = true;
 		try {
 			const now = options.now();
+			// A slot long past is only started because the schedule catches up.
+			const caughtUp =
+				!manual && found.nextRun !== null && now - found.nextRun > MISSED_GRACE_MS ? found.nextRun : undefined;
 			// Claim the slot first (see above). A manual run leaves a repeating schedule's timetable alone.
 			const once = found.when.kind === "once";
 			const claimed: Schedule =
@@ -330,12 +305,12 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
 			try {
 				const instanceId = await options.start(claimed);
 				options.notify({
-					title: `Scheduled: ${claimed.title} started`,
+					title: `Scheduled: ${claimed.title} ${caughtUp === undefined ? "started" : "started (caught up)"}`,
 					body: `Working in ${path.basename(claimed.cwd) || claimed.cwd}`,
 					instanceId,
 					tag: `schedule:${id}`,
 				});
-				return (await record(id, { at: now, instanceId })) ?? claimed;
+				return (await record(id, { at: now, instanceId, missedAt: caughtUp })) ?? claimed;
 			} catch (err) {
 				const message = errorText(err);
 				options.notify({
@@ -359,18 +334,33 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
 			const existing = input.id === undefined ? undefined : find(input.id);
 			if (input.id !== undefined && !existing) throw new Error("no such schedule");
 			if (!existing && schedules.length >= MAX_SCHEDULES) throw new Error(`at most ${MAX_SCHEDULES} schedules`);
+			// An interval counts from when it was first saved, so slots do not drift by the poll delay; editing around it keeps the phase.
+			const when: ScheduleWhen =
+				input.when.kind === "interval" && input.when.anchor === undefined
+					? {
+							...input.when,
+							anchor:
+								existing?.when.kind === "interval" && existing.when.everyMin === input.when.everyMin
+									? (existing.when.anchor ?? now)
+									: now,
+						}
+					: input.when;
 			const sameTimetable =
 				existing !== undefined &&
 				existing.enabled === input.enabled &&
-				JSON.stringify(existing.when) === JSON.stringify(input.when);
+				JSON.stringify(existing.when) === JSON.stringify(when);
 			const nextRun = !input.enabled
 				? null
 				: existing !== undefined && sameTimetable && existing.nextRun !== null
 					? existing.nextRun
-					: nextRunAfter(input.when, now);
-			if (input.enabled && nextRun === null) throw new Error("that date and time has already passed");
+					: nextRunAfter(when, now);
+			if (input.enabled && nextRun === null)
+				throw new Error(
+					when.kind === "once" ? "that date and time has already passed" : "that schedule never runs",
+				);
 			const next: Schedule = {
 				...input,
+				when,
 				id: existing?.id ?? crypto.randomUUID(),
 				lastRun: existing?.lastRun,
 				nextRun,

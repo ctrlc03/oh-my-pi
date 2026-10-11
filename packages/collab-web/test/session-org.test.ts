@@ -5,6 +5,7 @@ import {
 	autoSettlePr,
 	DAY_MS,
 	emptyOrg,
+	endedSettledKeys,
 	mergeOrg,
 	moveTarget,
 	type OrgDoc,
@@ -129,6 +130,73 @@ describe("merge", () => {
 		const b = withSettings(emptyOrg(), { settleOnPr: true }, T0 + 5);
 		expect(mergeOrg(a, b).settings).toMatchObject({ idleDays: null, settleOnPr: true });
 		expect(mergeOrg(b, a).settings).toMatchObject({ idleDays: null, settleOnPr: true });
+	});
+
+	describe("end on settle", () => {
+		const legacy = (at: number, over: object = {}): OrgDoc => ({
+			entries: {},
+			settings: parseOrg({ settings: { at, idleDays: null, settleOnPr: false, ...over } }).settings,
+		});
+
+		it("is off unless set, and only a boolean counts", () => {
+			expect(emptyOrg().settings.endOnSettle).toBeUndefined();
+			expect(parseOrg({ settings: { at: 1, idleDays: null, settleOnPr: false } }).settings).not.toHaveProperty(
+				"endOnSettle",
+			);
+			expect(parseOrg({ settings: { at: 1, endOnSettle: "yes" } }).settings).not.toHaveProperty("endOnSettle");
+			expect(parseOrg({ settings: { at: 1, endOnSettle: true } }).settings.endOnSettle).toBe(true);
+			expect(parseOrg({ settings: { at: 1, endOnSettle: false } }).settings.endOnSettle).toBe(false);
+		});
+
+		it("is changed with the other settings, which keep their values", () => {
+			const on = withSettings(withSettings(emptyOrg(), { idleDays: 7 }, T0), { endOnSettle: true }, T0 + 1);
+			expect(on.settings).toEqual({ at: T0 + 1, idleDays: 7, settleOnPr: false, endOnSettle: true });
+			const kept = withSettings(on, { idleDays: 14 }, T0 + 2);
+			expect(kept.settings).toEqual({ at: T0 + 2, idleDays: 14, settleOnPr: false, endOnSettle: true });
+			// Absent already means off: switching it off is no change; switching it off after it was on is one.
+			const empty = emptyOrg();
+			expect(withSettings(empty, { endOnSettle: false }, T0)).toBe(empty);
+			const off = withSettings(on, { endOnSettle: false }, T0 + 3);
+			expect(off.settings.endOnSettle).toBe(false);
+			expect(withSettings(off, { endOnSettle: false }, T0 + 4)).toBe(off);
+		});
+
+		it("survives a copy from an older app or computer that dropped it", () => {
+			const mine = withSettings(emptyOrg(), { endOnSettle: true }, T0);
+			// The same time: the copy that kept the field wins.
+			const sameTime = legacy(T0);
+			expect(mergeOrg(mine, sameTime).settings.endOnSettle).toBe(true);
+			expect(mergeOrg(sameTime, mine).settings.endOnSettle).toBe(true);
+			// A newer copy from an app that does not know it: its other settings win, the option stays.
+			const newerLegacy = legacy(T0 + 50, { idleDays: 7 });
+			for (const merged of [mergeOrg(mine, newerLegacy), mergeOrg(newerLegacy, mine)]) {
+				expect(merged.settings).toEqual({ at: T0 + 50, idleDays: 7, settleOnPr: false, endOnSettle: true });
+			}
+			// And it stays off when it was switched off.
+			const mineOff = withSettings(
+				withSettings(emptyOrg(), { endOnSettle: true }, T0),
+				{ endOnSettle: false },
+				T0 + 1,
+			);
+			expect(mergeOrg(mineOff, newerLegacy).settings.endOnSettle).toBe(false);
+		});
+
+		it("a newer copy that has the field wins over an older one, either way round", () => {
+			const off = withSettings(withSettings(emptyOrg(), { endOnSettle: true }, T0), { endOnSettle: false }, T0 + 1);
+			const on = withSettings(off, { endOnSettle: true }, T0 + 5);
+			expect(mergeOrg(off, on).settings.endOnSettle).toBe(true);
+			expect(mergeOrg(on, off).settings.endOnSettle).toBe(true);
+			expect(mergeOrg(on, on)).toEqual(on);
+		});
+
+		it("lists the settled sessions that are not running, never rooms", () => {
+			let doc = applyOrg(emptyOrg(), "ended", { type: "settle" }, T0);
+			doc = applyOrg(doc, "running", { type: "settle" }, T0 + 1);
+			doc = applyOrg(doc, "pinned", { type: "pin" }, T0 + 2);
+			doc = applyOrg(doc, "room:abc", { type: "settle" }, T0 + 3);
+			expect(endedSettledKeys(doc, new Set(["running"]))).toEqual(["ended"]);
+			expect(endedSettledKeys(doc, new Set())).toEqual(["ended", "running"]);
+		});
 	});
 
 	it("an un-settle on one device beats an older settle from another", () => {

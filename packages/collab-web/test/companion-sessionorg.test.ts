@@ -29,7 +29,10 @@ afterEach(async () => {
 	for (const dir of dirs.splice(0)) await fs.rm(dir, { recursive: true, force: true });
 });
 
+const emptyFile = (doc: OrgDoc = emptyOrg()): OrgFile => ({ doc, rev: 0, activity: {}, settled: {}, ending: {} });
+
 const session = (id: string, over: Partial<OrgSession> = {}): OrgSession => ({
+	instanceId: `inst-${id}`,
 	sessionId: id,
 	cwd: `/work/${id}`,
 	startedAt: T0 - DAY_MS,
@@ -38,14 +41,21 @@ const session = (id: string, over: Partial<OrgSession> = {}): OrgSession => ({
 	...over,
 });
 
-function harness(initial?: OrgFile, prDone: Record<string, number> = {}) {
+/** `canEnd`: instance ids the companion started (it leaves any other alone, as the real one does). */
+function harness(initial?: OrgFile, prDone: Record<string, number> = {}, canEnd: readonly string[] = []) {
 	const clock = { now: T0 };
 	const saved: OrgFile[] = [];
 	const settled: SettledSession[] = [];
+	/** Instance ids ended, in order. */
+	const ended: string[] = [];
+	/** What happened, in order: `end <instance>` and `report <sessions>` (the cleanup is offered). */
+	const order: string[] = [];
 	let changes = 0;
+	/** What happens while the end awaits (recording the session, tmux), and whether a fresh listing then shows it busy. */
+	const race: { during?: () => Promise<void>; busy: boolean } = { busy: false };
 	const org = createSessionOrg({
 		now: () => clock.now,
-		initial: initial ?? { doc: emptyOrg(), rev: 0, activity: {}, settled: {} },
+		initial: initial ?? emptyFile(),
 		save: async file => {
 			saved.push(file);
 		},
@@ -56,12 +66,22 @@ function harness(initial?: OrgFile, prDone: Record<string, number> = {}) {
 		},
 		onSettled: sessions => {
 			settled.push(...sessions);
+			order.push(`report ${sessions.map(s => s.sessionId).join(",")}`);
+		},
+		// Like the companion: whatever was awaited before the kill (`race.during`) may change the world, so it looks again.
+		endSession: async (s, stillWanted) => {
+			if (!canEnd.includes(s.instanceId)) return true;
+			await race.during?.();
+			if (race.busy || !stillWanted()) return false;
+			ended.push(s.instanceId);
+			order.push(`end ${s.instanceId}`);
+			return true;
 		},
 		onError: err => {
 			throw err;
 		},
 	});
-	return { org, clock, saved, settled, changes: () => changes };
+	return { org, clock, saved, settled, ended, order, race, changes: () => changes };
 }
 
 describe("sync", () => {
@@ -104,7 +124,7 @@ describe("sync", () => {
 		expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
 
 		await Bun.write(file, "{ not json");
-		expect(await loadOrgFile(file)).toEqual({ doc: emptyOrg(), rev: 0, activity: {}, settled: {} });
+		expect(await loadOrgFile(file)).toEqual({ doc: emptyOrg(), rev: 0, activity: {}, settled: {}, ending: {} });
 		expect((await loadOrgFile(`${file}.missing`)).rev).toBe(0);
 	});
 });
@@ -115,6 +135,7 @@ describe("auto-settle on the computer", () => {
 		rev: 0,
 		activity: {},
 		settled: {},
+		ending: {},
 	});
 
 	it("settles a session that has not worked for the configured days, but not one that works", async () => {
@@ -170,6 +191,7 @@ describe("auto-settle on the computer", () => {
 		rev: 0,
 		activity: {},
 		settled: {},
+		ending: {},
 	});
 
 	it("settles a session whose pull request merged, once per check interval", async () => {
@@ -198,7 +220,7 @@ describe("auto-settle on the computer", () => {
 		let reads = 0;
 		const h = createSessionOrg({
 			now: () => T0,
-			initial: { doc: emptyOrg(), rev: 0, activity: {}, settled: {} },
+			initial: { doc: emptyOrg(), rev: 0, activity: {}, settled: {}, ending: {} },
 			save: async () => {},
 			readPrDone: async () => {
 				reads++;
@@ -206,6 +228,7 @@ describe("auto-settle on the computer", () => {
 			},
 			prAvailable: () => true,
 			onChange: () => {},
+			endSession: async () => true,
 			onError: () => {},
 		});
 		await h.tick([session("a")]);
@@ -265,6 +288,7 @@ describe("settle transitions", () => {
 			rev: 0,
 			activity: {},
 			settled: {},
+			ending: {},
 		});
 		await idle.org.tick([session("quiet")]);
 		idle.clock.now += 4 * DAY_MS;
@@ -272,7 +296,13 @@ describe("settle transitions", () => {
 		expect(idle.settled).toEqual([{ sessionId: "quiet", at: idle.clock.now }]);
 
 		const pr = harness(
-			{ doc: withSettings(emptyOrg(), { settleOnPr: true }, T0 - 100 * DAY_MS), rev: 0, activity: {}, settled: {} },
+			{
+				doc: withSettings(emptyOrg(), { settleOnPr: true }, T0 - 100 * DAY_MS),
+				rev: 0,
+				activity: {},
+				settled: {},
+				ending: {},
+			},
 			{ "/work/done": T0 - 1000 },
 		);
 		await pr.org.tick([session("done")]);
@@ -299,5 +329,216 @@ describe("settle transitions", () => {
 		expect(settleTransitions(doc, {}).events).toEqual([{ sessionId: "old", at: T0 }]);
 		// A marker for a session no longer settled is dropped, so settling it again is news.
 		expect(settleTransitions(emptyOrg(), { old: T0 }).handled).toEqual({});
+	});
+});
+
+describe("ending sessions when they settle", () => {
+	const on = (): OrgFile => emptyFile(withSettings(emptyOrg(), { endOnSettle: true }, T0 - 100 * DAY_MS));
+	const settleA = (doc: OrgDoc, at = T0, key = "a"): OrgDoc => applyOrg(doc, key, { type: "settle" }, at);
+	const live = (key: string, over: Partial<OrgSession> = {}): OrgSession => session(key, over);
+
+	it("ends a session the companion started once it settles, then offers its cleanup", async () => {
+		const h = harness(on(), {}, ["inst-a"]);
+		await h.org.sync(settleA(h.org.file().doc));
+		// Nothing is ended or cleaned until a listing says the session is live and idle.
+		expect(h.order).toEqual([]);
+		await h.org.tick([live("a")]);
+		expect(h.order).toEqual(["end inst-a", "report a"]);
+		expect(h.org.file().ending).toEqual({});
+		// The same listing again does nothing more.
+		await h.org.tick([live("a")]);
+		expect(h.order).toHaveLength(2);
+	});
+
+	it("leaves a session the companion did not start alone, but still offers its cleanup", async () => {
+		const h = harness(on(), {}, []);
+		await h.org.sync(settleA(h.org.file().doc));
+		await h.org.tick([live("a")]);
+		expect(h.ended).toEqual([]);
+		expect(h.settled).toEqual([{ sessionId: "a", at: T0 }]);
+	});
+
+	it("ends only the settled one of several, and ends a vendor agent's host like any other", async () => {
+		const h = harness(on(), {}, ["inst-a", "inst-b", "inst-claude"]);
+		await h.org.sync(settleA(settleA(h.org.file().doc, T0, "claude"), T0 + 1, "a"));
+		const vendor = { ...live("claude"), agent: { id: "claude", name: "Claude Code" } };
+		await h.org.tick([live("a"), live("b"), vendor]);
+		expect(h.ended.sort()).toEqual(["inst-a", "inst-claude"]);
+	});
+
+	it("does nothing while the option is off, and turning it on later does not end what is settled already", async () => {
+		const h = harness(undefined, {}, ["inst-a"]);
+		await h.org.sync(settleA(h.org.file().doc));
+		// Reported at once, as before the option existed.
+		expect(h.settled).toEqual([{ sessionId: "a", at: T0 }]);
+		await h.org.tick([live("a")]);
+		await h.org.sync(withSettings(h.org.file().doc, { endOnSettle: true }, T0 + 5));
+		await h.org.tick([live("a")]);
+		expect(h.ended).toEqual([]);
+	});
+
+	it("waits for a session that is working, asking or of unknown state, then ends it once idle", async () => {
+		const h = harness(on(), {}, ["inst-a"]);
+		await h.org.sync(settleA(h.org.file().doc));
+		await h.org.tick([live("a", { busy: true })]);
+		await h.org.tick([live("a", { inputRequired: true })]);
+		await h.org.tick([live("a", { busy: null })]);
+		expect(h.order).toEqual([]);
+		expect(h.org.file().ending).toEqual({ a: T0 });
+		await h.org.tick([live("a")]);
+		expect(h.order).toEqual(["end inst-a", "report a"]);
+	});
+
+	it("does not end a session the user moved back first, and a fresh settle of it starts over", async () => {
+		const h = harness(on(), {}, ["inst-a"]);
+		const settled = settleA(h.org.file().doc);
+		await h.org.sync(settled);
+		await h.org.tick([live("a", { busy: true })]);
+		await h.org.sync(applyOrg(settled, "a", { type: "unsettle" }, T0 + 10));
+		await h.org.tick([live("a")]);
+		// Un-settled: not ended, and no cleanup for a settle that was undone.
+		expect(h.order).toEqual([]);
+		expect(h.org.file().ending).toEqual({});
+
+		await h.org.sync(applyOrg(h.org.file().doc, "a", { type: "settle" }, T0 + 20));
+		await h.org.tick([live("a")]);
+		expect(h.order).toEqual(["end inst-a", "report a"]);
+		expect(h.settled).toEqual([{ sessionId: "a", at: T0 + 20 }]);
+	});
+
+	it("a settle replaced by another action while it waited is dropped", async () => {
+		const h = harness(on(), {}, ["inst-a"]);
+		await h.org.sync(settleA(h.org.file().doc));
+		await h.org.tick([live("a", { busy: true })]);
+		await h.org.sync(applyOrg(h.org.file().doc, "a", { type: "pin" }, T0 + 10));
+		await h.org.tick([live("a")]);
+		expect(h.ended).toEqual([]);
+	});
+
+	it("does not end again after a restart, and still ends one that settled while working", async () => {
+		const file = await tempFile();
+		const first = harness(on(), {}, ["inst-a", "inst-b"]);
+		await first.org.sync(settleA(settleA(first.org.file().doc, T0, "a"), T0 + 1, "b"));
+		await first.org.tick([live("a"), live("b", { busy: true })]);
+		expect(first.ended).toEqual(["inst-a"]);
+		await saveOrgFile(file, first.saved.at(-1) as OrgFile);
+
+		// The restarted companion: "a" was resumed by the user (still settled), "b" went idle meanwhile.
+		const second = harness(await loadOrgFile(file), {}, ["inst-a", "inst-b"]);
+		await second.org.sync(first.org.file().doc);
+		await second.org.tick([live("a"), live("b")]);
+		expect(second.ended).toEqual(["inst-b"]);
+		await second.org.tick([live("a"), live("b")]);
+		expect(second.ended).toEqual(["inst-b"]);
+	});
+
+	it("forgets a waiting session that is no longer listed, so resuming it later does not end it", async () => {
+		const h = harness(on(), {}, ["inst-a"]);
+		await h.org.sync(settleA(h.org.file().doc));
+		await h.org.tick([]);
+		expect(h.settled).toEqual([{ sessionId: "a", at: T0 }]);
+		await h.org.tick([live("a")]);
+		expect(h.ended).toEqual([]);
+	});
+
+	it("ends sessions settled by the idle rule and by the pull request rule", async () => {
+		const doc = withSettings(emptyOrg(), { idleDays: 3, settleOnPr: true, endOnSettle: true }, T0 - 100 * DAY_MS);
+		const h = harness(emptyFile(doc), { "/work/done": T0 - 1000 }, ["inst-quiet", "inst-done"]);
+		await h.org.tick([live("quiet"), live("done")]);
+		h.clock.now += 4 * DAY_MS;
+		await h.org.tick([live("quiet"), live("done")]);
+		expect(h.ended.sort()).toEqual(["inst-done", "inst-quiet"]);
+	});
+
+	it("stops waiting when the option is turned off, offering the cleanup as before", async () => {
+		const h = harness(on(), {}, ["inst-a"]);
+		await h.org.sync(settleA(h.org.file().doc));
+		await h.org.tick([live("a", { busy: true })]);
+		await h.org.sync(withSettings(h.org.file().doc, { endOnSettle: false }, T0 + 5));
+		await h.org.tick([live("a")]);
+		expect(h.order).toEqual(["report a"]);
+	});
+
+	it("does not end a session whose settle was undone while the end awaited, and ends it on a later settle", async () => {
+		const h = harness(on(), {}, ["inst-a"]);
+		const settled = settleA(h.org.file().doc);
+		await h.org.sync(settled);
+		h.race.during = async () => {
+			await h.org.sync(applyOrg(settled, "a", { type: "unsettle" }, T0 + 10));
+		};
+		await h.org.tick([live("a")]);
+		expect(h.ended).toEqual([]);
+		// Not reported either: nothing settled, so no cleanup; the next listing forgets it.
+		expect(h.order).toEqual([]);
+		await h.org.tick([live("a")]);
+		expect(h.org.file().ending).toEqual({});
+		expect(h.order).toEqual([]);
+		h.race.during = undefined;
+		await h.org.sync(applyOrg(h.org.file().doc, "a", { type: "settle" }, T0 + 20));
+		await h.org.tick([live("a")]);
+		expect(h.order).toEqual(["end inst-a", "report a"]);
+	});
+
+	it("does not end a session a prompt reached while the end awaited, and ends it once idle again", async () => {
+		const h = harness(on(), {}, ["inst-a"]);
+		await h.org.sync(settleA(h.org.file().doc));
+		h.race.during = async () => {
+			h.race.busy = true;
+		};
+		await h.org.tick([live("a")]);
+		expect(h.order).toEqual([]);
+		expect(h.org.file().ending).toEqual({ a: T0 });
+		h.race.during = undefined;
+		h.race.busy = false;
+		await h.org.tick([live("a")]);
+		expect(h.order).toEqual(["end inst-a", "report a"]);
+	});
+
+	it("does not end a session when the option was turned off while the end awaited, and offers the cleanup as before", async () => {
+		const h = harness(on(), {}, ["inst-a"]);
+		await h.org.sync(settleA(h.org.file().doc));
+		h.race.during = async () => {
+			await h.org.sync(withSettings(h.org.file().doc, { endOnSettle: false }, T0 + 5));
+		};
+		await h.org.tick([live("a")]);
+		h.race.during = undefined;
+		await h.org.tick([live("a")]);
+		expect(h.ended).toEqual([]);
+		expect(h.order).toEqual(["report a"]);
+	});
+
+	it("reports a failed end, offers the cleanup and does not retry", async () => {
+		const errors: unknown[] = [];
+		let attempts = 0;
+		const settled: SettledSession[] = [];
+		const org = createSessionOrg({
+			now: () => T0,
+			initial: on(),
+			save: async () => {},
+			readPrDone: async () => null,
+			prAvailable: () => false,
+			onChange: () => {},
+			onSettled: sessions => settled.push(...sessions),
+			endSession: async () => {
+				attempts++;
+				throw new Error("tmux is gone");
+			},
+			onError: err => errors.push(err),
+		});
+		await org.sync(settleA(emptyOrg()));
+		await org.tick([live("a")]);
+		await org.tick([live("a")]);
+		expect(attempts).toBe(1);
+		expect(errors).toHaveLength(1);
+		expect(settled).toEqual([{ sessionId: "a", at: T0 }]);
+	});
+
+	it("keeps what waits in the persisted file, and a file without it loads as nothing waiting", async () => {
+		const h = harness(on(), {}, ["inst-a"]);
+		await h.org.sync(settleA(h.org.file().doc));
+		const saved = JSON.parse(JSON.stringify(h.saved.at(-1)));
+		expect(parseOrgFile(saved).ending).toEqual({ a: T0 });
+		expect(parseOrgFile({ ...saved, ending: { "bad id": 1, b: "x", c: 2 } }).ending).toEqual({ c: 2 });
+		expect(parseOrgFile({ doc: saved.doc, rev: 1, activity: {}, settled: {} }).ending).toEqual({});
 	});
 });

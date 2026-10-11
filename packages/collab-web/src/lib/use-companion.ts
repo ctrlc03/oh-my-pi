@@ -37,6 +37,7 @@ const UNPAIRED: CompanionSnapshot = {
 	canForeign: false,
 	sessionOrgRev: null,
 	canOrderSessions: false,
+	canEndOnSettle: false,
 	transcribe: null,
 	power: null,
 	vapidKey: null,

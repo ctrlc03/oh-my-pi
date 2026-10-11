@@ -2,6 +2,7 @@
 // absent on cross-compiling release runners.
 import { USER_AGENT } from "@oh-my-pi/pi-utils/dirs";
 import { embeddedAddonFiles, type NativeEmbedTarget } from "../../natives/scripts/embed-native";
+import { UPSTREAM_RELEASE_REPO } from "../src/build-identity";
 import { buildDocsIndexPayload } from "./generate-docs-index";
 import { createJsonParsePlugin } from "./json-parse-plugin";
 import { createLegacyPiVirtualModulePlugin } from "./legacy-pi-virtual-module";
@@ -28,6 +29,8 @@ export interface CodingAgentCompileOptions {
 	readonly target?: Bun.Build.CompileTarget;
 	/** Optional unmodified Bun executable used as the standalone runtime template. */
 	readonly executablePath?: string;
+	/** Release stream baked into the binary: `omp update` follows this repository's releases. Omitted → upstream, no tag. */
+	readonly release?: { readonly repo: string; readonly tag: string };
 	/** Match release builds that minify identifiers while retaining names. */
 	readonly minifyIdentifiers?: boolean;
 	/** Disable Bun's built-in Darwin signing before the caller re-signs. */
@@ -51,6 +54,8 @@ export async function compileCodingAgent(options: CodingAgentCompileOptions): Pr
 			files: options.native ? await embeddedAddonFiles(options.native) : {},
 			define: {
 				"process.env.PI_COMPILED": JSON.stringify("true"),
+				"process.env.PI_RELEASE_REPO": JSON.stringify(options.release?.repo ?? UPSTREAM_RELEASE_REPO),
+				"process.env.PI_BUILD_TAG": JSON.stringify(options.release?.tag ?? ""),
 				"process.env.PI_TINY_TRANSFORMERS_VERSION": JSON.stringify(options.transformersVersion),
 				"process.env.PI_DOCS_EMBED": JSON.stringify((await buildDocsIndexPayload()).payload),
 			},

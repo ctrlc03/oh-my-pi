@@ -31,7 +31,16 @@ import {
 	unsupportedProxyMessage,
 	withTimeoutSignal,
 } from "../utils/fetch-timeout";
-import { type BuildAnswer, type BuildPatch, type Fetch, fetchBuild, type UpdateChannel } from "./build-service";
+import { BUILD_TAG, IS_FORK_BUILD, RELEASE_REPO } from "../build-identity";
+import {
+	type BuildAnswer,
+	type BuildPatch,
+	currentBuildHost,
+	type Fetch,
+	fetchBuild,
+	type UpdateChannel,
+} from "./build-service";
+import { compareForkTags, type ForkBuild, fetchLatestForkBuild, forkInstallerHint } from "./fork-release";
 import {
 	DEFAULT_NPM_REGISTRY,
 	loadNpmRegistryResolver,
@@ -2030,6 +2039,7 @@ export async function updateViaShimTakeover(
  * a user recovering from a binary-only release straight back through bun.
  */
 function installerHint(): string {
+	if (IS_FORK_BUILD) return forkInstallerHint(RELEASE_REPO);
 	return process.platform === "win32"
 		? "& ([scriptblock]::Create((irm https://omp.sh/install.ps1))) -Binary"
 		: "curl -fsSL https://omp.sh/install | sh -s -- --binary";
@@ -2070,10 +2080,16 @@ interface UpdateRequest {
 /**
  * Print how the offered `version` relates to the running build. Returns false
  * when there is nothing to install: not newer, and neither `--force` nor a
- * channel switch asks for it.
+ * channel switch asks for it. `offer` overrides the comparison and the printed
+ * name for releases that are not ordered by version alone (fork release tags).
  */
-function announceOffer(version: string, request: UpdateRequest): boolean {
-	const comparison = compareVersions(version, VERSION);
+function announceOffer(
+	version: string,
+	request: UpdateRequest,
+	offer: { comparison?: number; label?: string } = {},
+): boolean {
+	const comparison = offer.comparison ?? compareVersions(version, VERSION);
+	const label = offer.label ?? version;
 	if (comparison <= 0 && !request.force && !request.isChannelSwitch) {
 		const icon = theme?.status?.success ?? "✔";
 		console.log(chalk.green(`${icon} Already up to date`));
@@ -2086,9 +2102,9 @@ function announceOffer(version: string, request: UpdateRequest): boolean {
 			),
 		);
 	} else if (comparison > 0) {
-		console.log(chalk.cyan(`New version available: ${version}`));
+		console.log(chalk.cyan(`New version available: ${label}`));
 	} else {
-		console.log(chalk.yellow(`Forcing reinstall of ${version}`));
+		console.log(chalk.yellow(`Forcing reinstall of ${label}`));
 	}
 	return true;
 }
@@ -2117,6 +2133,35 @@ async function runBinaryUpdate(
 		if (!target) throw targetError;
 		await updateViaBinaryAt(target.path, build, { validateExistingTarget: target.validateExistingTarget });
 		if (request.persistChannel) persistChannel(request.channel);
+	} catch (err) {
+		console.error(chalk.red(`Update failed: ${err}`));
+		process.exit(1);
+	}
+}
+
+/**
+ * Update a fork build from its own GitHub releases. Forks have no build
+ * service and no npm package: the newest `collab-v<semver>-<n>` release of
+ * {@link RELEASE_REPO} is the offer, ordered against the running build's tag
+ * ({@link compareForkTags}), and its asset replaces the binary at the resolved
+ * target. Channels do not apply.
+ */
+async function runForkUpdate(request: UpdateRequest): Promise<void> {
+	let latest: ForkBuild;
+	try {
+		latest = await fetchLatestForkBuild(RELEASE_REPO, (await currentBuildHost()).fileName);
+	} catch (err) {
+		console.error(chalk.red(`Failed to check for updates: ${err}`));
+		process.exit(1);
+	}
+	const offer = { comparison: compareForkTags(latest.tag, BUILD_TAG), label: latest.tag };
+	const forkRequest = { ...request, isChannelSwitch: false, persistChannel: false };
+	if (!announceOffer(latest.build.version, forkRequest, offer) || request.check) return;
+
+	try {
+		const target = await resolveUpdateTarget({ allowPackageManagers: false });
+		if (target.method !== "binary") throw new Error(`Could not resolve a standalone ${APP_NAME} binary in PATH`);
+		await updateViaBinaryAt(target.path, latest.build, { validateExistingTarget: target.validateExistingTarget });
 	} catch (err) {
 		console.error(chalk.red(`Update failed: ${err}`));
 		process.exit(1);
@@ -2253,6 +2298,7 @@ export async function runUpdateCommand(opts: {
 		isChannelSwitch: opts.channel !== undefined && opts.channel !== persistedChannel,
 		persistChannel: opts.channel !== undefined,
 	};
+	if (IS_FORK_BUILD) return await runForkUpdate(request);
 
 	let target: UpdateTarget | undefined;
 	let targetError: unknown;

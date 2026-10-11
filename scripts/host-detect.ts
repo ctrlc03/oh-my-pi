@@ -67,9 +67,15 @@ export function detectHostMusl(): boolean {
 	}
 }
 
-/** Detect whether this x86-64 host can run the modern AVX2 addon. */
+/**
+ * Detect whether this x86-64 host can run the modern AVX2 addon. `OMP_NATIVE_X64_VARIANT=modern|baseline`
+ * overrides detection, so a build host builds the variant a release needs rather than the one it can run.
+ */
 export function detectHostAvx2Support(): boolean {
 	if (process.arch !== "x64") return false;
+	const variant = process.env.OMP_NATIVE_X64_VARIANT?.trim();
+	if (variant === "modern" || variant === "baseline") return variant === "modern";
+	if (variant) throw new Error(`Unknown OMP_NATIVE_X64_VARIANT "${variant}" (expected "modern" or "baseline")`);
 
 	if (process.platform === "linux") {
 		try {

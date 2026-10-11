@@ -53,6 +53,8 @@ export interface OrgMenuProps {
 	/** Whether the idle and pull request rules may settle it; null: the choice is not offered. */
 	autoSettle: boolean | null;
 	limitResetAt: number | null;
+	/** The session has ended while settled: it can only be moved back to active (which resumes it), or picked. */
+	ended: boolean;
 	now: number;
 	onAct(action: OrgAction, message: string): void;
 	onMove(to: number): void;
@@ -74,6 +76,24 @@ export function OrgMenu(props: OrgMenuProps): ReactNode {
 						choices={snoozeChoices(now, props.limitResetAt)}
 						onPick={choice => props.onAct({ type: "snooze", until: choice.until }, `Snoozed ${props.title}`)}
 					/>
+				) : props.ended ? (
+					<>
+						<button
+							type="button"
+							className="sh-btn sh-org-menu-item"
+							onClick={() => props.onAct({ type: "unsettle" }, `Moved ${props.title} back`)}
+						>
+							<ArchiveRestore size={15} />
+							<span className="sh-org-menu-text">
+								Move back to active
+								<span className="sh-org-menu-hint">It ended when it settled; this resumes it</span>
+							</span>
+						</button>
+						<div className="sh-org-menu-sep" role="separator" />
+						<button type="button" className="sh-btn sh-org-menu-item" onClick={props.onSelect}>
+							<ListChecks size={15} /> Select…
+						</button>
+					</>
 				) : (
 					<>
 						{status === "pinned" ? (
@@ -224,6 +244,21 @@ export function OrgSettingsSheet({ org, onClose }: { org: SessionOrgControl; onC
 							onChange={e => org.setSettings({ settleOnPr: e.currentTarget.checked })}
 						/>
 						<span>Settle when the session's pull request merges or closes</span>
+					</label>
+				)}
+				{org.canEndOnSettle && (
+					<label className="sh-org-check sh-org-check-hinted">
+						<input
+							type="checkbox"
+							checked={settings.endOnSettle === true}
+							onChange={e => org.setSettings({ endOnSettle: e.currentTarget.checked })}
+						/>
+						<span className="sh-org-check-text">
+							End sessions when they settle
+							<span className="sh-field-hint">
+								Ends the session on this computer when it settles; open it to resume.
+							</span>
+						</span>
 					</label>
 				)}
 				<span className="sh-field-hint">

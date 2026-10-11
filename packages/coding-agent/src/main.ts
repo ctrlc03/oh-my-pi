@@ -41,8 +41,10 @@ import { processFileArguments } from "./cli/file-processor";
 import { buildInitialMessage } from "./cli/initial-message";
 import { formatKeyHint } from "@oh-my-pi/pi-tui/app-keybindings";
 import type { SessionPickerOptions } from "@oh-my-pi/pi-tui/apps/session-picker";
-import { fetchBuild } from "./cli/build-service";
+import { currentBuildHost, fetchBuild } from "./cli/build-service";
 import { applyStartupCwd } from "./cli/startup-cwd";
+import { BUILD_TAG, IS_FORK_BUILD, RELEASE_REPO } from "./build-identity";
+import { compareForkTags, fetchLatestForkBuild } from "./cli/fork-release";
 import { getLatestRelease, isSourceCheckout, managedInstallName } from "./cli/update-cli";
 import { findConfigFile } from "./config";
 import { ModelRegistry } from "./config/model-registry";
@@ -247,6 +249,13 @@ async function checkForNewVersion(currentVersion: string): Promise<string | unde
 		// "run omp update" would be wrong advice for both.
 		if (isSourceCheckout() || (await managedInstallName(process.execPath))) return;
 		const channel = cfgUpdateChannel.get(settings);
+		// A fork build updates from its own releases, never from the build service or npm.
+		if (IS_FORK_BUILD) {
+			const { tag } = await fetchLatestForkBuild(RELEASE_REPO, (await currentBuildHost()).fileName, {
+				timeoutMs: 5_000,
+			});
+			return compareForkTags(tag, BUILD_TAG) > 0 ? tag : undefined;
+		}
 		// A compiled binary updates from the build service; naming the running
 		// version lets the service prepare the patch `omp update` will then use.
 		const { version } = isCompiledBinary()

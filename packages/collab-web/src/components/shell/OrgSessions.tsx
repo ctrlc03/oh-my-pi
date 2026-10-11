@@ -13,7 +13,7 @@ import {
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CompanionHost, CompanionIdleSession } from "../../lib/companion";
+import type { CompanionHost, CompanionIdleSession, SessionOverview } from "../../lib/companion";
 import type { RecentRoom } from "../../lib/rooms";
 import {
 	applyMany,
@@ -46,6 +46,8 @@ import "./session-org.css";
 
 const UNDO_MS = 7000;
 
+type EndedItem = Extract<OrgItem, { kind: "ended" }>;
+
 export interface OrgSessionsProps {
 	hosts: readonly CompanionHost[];
 	idle: readonly CompanionIdleSession[];
@@ -64,6 +66,15 @@ export interface OrgSessionsProps {
 	onShare(session: CompanionIdleSession): void;
 	onOpenRoom(room: RecentRoom): void;
 	onOpenRoomBeside?: (room: RecentRoom) => void;
+	/** Sessions that ended while settled (the computer ended them when they settled), newest first; the ones still running are not among them. */
+	ended: readonly SessionOverview[];
+	/** The computer can start sessions, so an ended one can be resumed. */
+	canResume: boolean;
+	/**
+	 * Resume an ended session (and open it when `open`); resolves with whether it came back. Called when one is
+	 * opened or moved back to active; shows its own error when it fails.
+	 */
+	onResumeEnded(session: SessionOverview, open: boolean): Promise<boolean>;
 }
 
 /** One undo for the last change, however many sessions it touched: the entries as they were. */
@@ -140,6 +151,7 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 		...hosts.map((host): OrgItem => ({ kind: "host", key: host.sessionId, host })),
 		...idle.map((session): OrgItem => ({ kind: "idle", key: session.sessionId, session })),
 		...rooms.map((room): OrgItem => ({ kind: "room", key: roomOrgKey(room.roomId), room })),
+		...props.ended.map((session): OrgItem => ({ kind: "ended", key: session.sessionId, session })),
 	];
 	const sections = sectionize(items, item => item.key, isWorking, doc, now);
 	const keysOf = (list: readonly OrgItem[]): string[] => list.map(item => item.key);
@@ -160,11 +172,27 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 		return item === undefined ? key : itemTitle(item);
 	};
 	const layout: DropLayout = { pinned, active: org.extras ? activeKeys : null };
+	const endedOf = (keys: readonly string[]): EndedItem[] =>
+		items.filter((item): item is EndedItem => item.kind === "ended" && keys.includes(item.key));
 
-	/** Change the document and offer one Undo for everything the change touched. */
-	const commit = (message: string, run: (doc: OrgDoc, at: number) => OrgDoc): void => {
-		const prev = org.edit(run);
-		if (message !== "" && Object.keys(prev).length > 0) setUndo({ message, prev });
+	/**
+	 * Change the document and offer one Undo for everything the change touched. `resuming`: ended sessions the change
+	 * moves back to active; they are resumed first, and the change waits for it (a refusal leaves them settled).
+	 */
+	const commit = (
+		message: string,
+		run: (doc: OrgDoc, at: number) => OrgDoc,
+		resuming: readonly EndedItem[] = [],
+	): void => {
+		const apply = (): void => {
+			const prev = org.edit(run);
+			if (message !== "" && Object.keys(prev).length > 0) setUndo({ message, prev });
+		};
+		if (resuming.length === 0) apply();
+		else
+			void Promise.all(resuming.map(item => props.onResumeEnded(item.session, false))).then(resumed => {
+				if (resumed.every(Boolean)) apply();
+			});
 	};
 
 	const drag = useOrgDrag({
@@ -173,12 +201,19 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 		onDrop: (key, from, zone: DropZone, index) => {
 			const intent = dropIntent(from, zone, org.extras);
 			if (intent === null) return;
+			const resuming = endedOf([key]);
+			// An ended session only goes back to active, which resumes it: anywhere else it would drop out of the list.
+			if (resuming.length > 0 && intent !== "unsettle") return;
 			const message = intent === "reorder" ? "" : DROP_MESSAGE[intent](titleOf(key));
-			commit(message, (current, at) => dropSession(current, key, from, zone, index, layout, at));
+			commit(message, (current, at) => dropSession(current, key, from, zone, index, layout, at), resuming);
 		},
 		onRange: (action, keys) => {
 			const { action: apply, past } = RANGE[action];
-			commit(bulkMessage(past, keys.map(titleOf)), (current, at) => applyMany(current, keys, apply, at));
+			commit(
+				bulkMessage(past, keys.map(titleOf)),
+				(current, at) => applyMany(current, keys, apply, at),
+				action === "unsettle" ? endedOf(keys) : [],
+			);
 		},
 	});
 	const view = drag.view;
@@ -221,14 +256,22 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 	};
 
 	const act = (item: OrgItem, action: OrgAction, message: string): void => {
-		commit(message, (current, at) => applyOrg(current, item.key, action, at));
+		commit(
+			message,
+			(current, at) => applyOrg(current, item.key, action, at),
+			action.type === "unsettle" ? endedOf([item.key]) : [],
+		);
 		setMenu(null);
 	};
 
 	/** The same change for every picked session, then back to the plain list with its Undo showing. */
 	const actPicked = (action: OrgAction, past: string): void => {
 		const keys = pickedKeys;
-		commit(bulkMessage(past, keys.map(titleOf)), (current, at) => applyMany(current, keys, action, at));
+		commit(
+			bulkMessage(past, keys.map(titleOf)),
+			(current, at) => applyMany(current, keys, action, at),
+			action.type === "unsettle" ? endedOf(keys) : [],
+		);
 		leaveMode();
 	};
 
@@ -260,7 +303,11 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 			quick={quickOf(section)}
 			onQuick={() => {
 				const { action, past } = RANGE[quickOf(section)];
-				commit(bulkMessage(past, [itemTitle(item)]), (current, at) => applyOrg(current, item.key, action, at));
+				commit(
+					bulkMessage(past, [itemTitle(item)]),
+					(current, at) => applyOrg(current, item.key, action, at),
+					action.type === "unsettle" ? endedOf([item.key]) : [],
+				);
 			}}
 			onDrag={drag.begin}
 			onPick={range => pick(item.key, range)}
@@ -270,6 +317,8 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 			onShare={props.onShare}
 			onOpenRoom={props.onOpenRoom}
 			onOpenRoomBeside={props.onOpenRoomBeside}
+			resumable={props.canResume}
+			onResumeEnded={session => void props.onResumeEnded(session, true)}
 		/>
 	);
 
@@ -306,6 +355,8 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 	const allPickedPinned = pickedKeys.length > 0 && pickedKeys.every(key => statusOf(doc, key, now) === "pinned");
 	const allPickedSettled = pickedKeys.length > 0 && pickedKeys.every(key => statusOf(doc, key, now) === "settled");
 	const anyPickedSnoozed = pickedKeys.some(key => statusOf(doc, key, now) === "snoozed");
+	/** An ended session can only be moved back to active (which resumes it): pinning or snoozing it would hide it. */
+	const anyPickedEnded = endedOf(pickedKeys).length > 0;
 
 	const menuStatus = menuItem === undefined ? "active" : statusOf(doc, menuItem.key, now);
 	const menuPlace =
@@ -394,7 +445,7 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 								<button
 									type="button"
 									className="sh-btn"
-									disabled={pickedKeys.length === 0}
+									disabled={pickedKeys.length === 0 || anyPickedEnded}
 									onClick={() =>
 										actPicked(
 											{ type: allPickedPinned ? "unpin" : "pin" },
@@ -408,7 +459,7 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 								<button
 									type="button"
 									className="sh-btn"
-									disabled={pickedKeys.length === 0}
+									disabled={pickedKeys.length === 0 || anyPickedEnded}
 									onClick={() => setSnoozingPicked(true)}
 								>
 									<Moon size={14} /> Snooze
@@ -453,6 +504,7 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 					limitResetAt={
 						menuItem.kind === "host" && menuItem.host.sessionId === currentSessionId ? props.limitResetAt : null
 					}
+					ended={menuItem.kind === "ended"}
 					now={now}
 					onAct={(action, message) => act(menuItem, action, message)}
 					onMove={to => move(menuItem, to)}

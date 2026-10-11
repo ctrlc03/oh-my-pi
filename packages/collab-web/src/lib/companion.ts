@@ -831,8 +831,8 @@ export interface CompanionDiag {
 	/** The companion holds the sleep assertion. */
 	keepAwake: boolean;
 	power: CompanionPower | null;
-	/** `launchd` restarts the companion on demand; a manually started one cannot be restarted from the app. */
-	managed: "launchd" | "manual";
+	/** `launchd` (macOS) or `systemd` (Linux) restarts the companion on demand; a manually started one cannot be restarted from the app. */
+	managed: "launchd" | "systemd" | "manual";
 	/** Devices connected to the room, this one included. */
 	devices: number;
 	/** Oldest first, at most 20. */
@@ -1134,6 +1134,8 @@ export type CompanionReply =
 			sessionOrgRev?: number;
 			/** The companion's session organisation keeps the active order (`rank`) and the per-session auto-settle opt-out. */
 			canOrderSessions?: boolean;
+			/** The companion ends the sessions it started when they settle, if the organisation's `endOnSettle` setting is on. */
+			canEndOnSettle?: boolean;
 			/** The companion can transcribe voice recordings, and with which model; absent when it cannot. */
 			transcribe?: TranscribeInfo;
 			/** Power of the computer; absent off macOS and from companions that predate it. */
@@ -1360,6 +1362,8 @@ export interface CompanionSnapshot {
 	sessionOrgRev: number | null;
 	/** The computer's session organisation keeps the active order and the per-session auto-settle opt-out; older ones drop both. */
 	canOrderSessions: boolean;
+	/** The computer can end the sessions it started when they settle (`endOnSettle`); older ones leave them running. */
+	canEndOnSettle: boolean;
 	/** Voice input on the computer; null when the companion cannot transcribe. */
 	transcribe: TranscribeInfo | null;
 	/** Power of the computer, while the companion reports it. */
@@ -1429,6 +1433,7 @@ export class CompanionClient {
 		canForeign: false,
 		sessionOrgRev: null,
 		canOrderSessions: false,
+		canEndOnSettle: false,
 		transcribe: null,
 		power: null,
 		vapidKey: null,
@@ -2034,6 +2039,7 @@ export class CompanionClient {
 				canForeign: frame.canForeign ?? false,
 				sessionOrgRev: frame.sessionOrgRev ?? null,
 				canOrderSessions: frame.canOrderSessions ?? false,
+				canEndOnSettle: frame.canEndOnSettle ?? false,
 				transcribe: frame.transcribe ?? null,
 				power: frame.power ?? null,
 				vapidKey: frame.vapidKey,

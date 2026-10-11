@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import type { MouseEvent, PointerEvent, ReactNode } from "react";
 import { useEffect, useRef } from "react";
-import type { CompanionHost, CompanionIdleSession } from "../../lib/companion";
+import type { CompanionHost, CompanionIdleSession, SessionOverview } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import type { RecentRoom } from "../../lib/rooms";
 import type { OrgSection } from "../../lib/session-org";
@@ -31,11 +31,14 @@ const LONG_PRESS_SLOP_PX = 10;
 export type OrgItem =
 	| { kind: "host"; key: string; host: CompanionHost }
 	| { kind: "idle"; key: string; session: CompanionIdleSession }
-	| { kind: "room"; key: string; room: RecentRoom };
+	| { kind: "room"; key: string; room: RecentRoom }
+	/** A session that ended while settled (the computer may end it when it settles): listed from its history, resumed when opened. */
+	| { kind: "ended"; key: string; session: SessionOverview };
 
 export function itemTitle(item: OrgItem): string {
 	if (item.kind === "host") return hostTitle(item.host);
 	if (item.kind === "idle") return hostTitle(item.session);
+	if (item.kind === "ended") return hostTitle({ sessionName: item.session.title, cwd: item.session.folder });
 	return item.room.title;
 }
 
@@ -76,6 +79,10 @@ export interface OrgRowProps {
 	onShare(session: CompanionIdleSession): void;
 	onOpenRoom(room: RecentRoom): void;
 	onOpenRoomBeside?: (room: RecentRoom) => void;
+	/** The computer can start sessions, so an ended one can be resumed. */
+	resumable: boolean;
+	/** Open an ended session: it is resumed first. */
+	onResumeEnded(session: SessionOverview): void;
 }
 
 const SETTLED_BY: Record<"user" | "idle" | "pr", string> = { user: "settled", idle: "idle", pr: "pull request done" };
@@ -255,6 +262,29 @@ export function OrgRow(props: OrgRowProps): ReactNode {
 						<span>{relTime(item.session.startedAt)}</span>
 					</span>
 				</div>
+			)}
+			{item.kind === "ended" && (
+				<button
+					type="button"
+					className="sh-recent-join"
+					onClick={() => props.onResumeEnded(item.session)}
+					disabled={joining !== null || props.disabled || !props.resumable}
+					aria-pressed={mode === "select" ? props.selected : undefined}
+					title={`${item.session.folder}: opening it resumes the session`}
+				>
+					<span className="sh-recent-title">
+						<span className="sh-recent-name">{title}</span>
+						{joining === item.key && <LoaderCircle size={13} className="sh-spin" />}
+					</span>
+					<span className="sh-recent-meta">
+						<span className="sh-host-state">ended</span>
+						{props.settledBy && <span className="sh-host-state">{SETTLED_BY[props.settledBy]}</span>}
+						<AgentChip agent={item.session.agent} variant="mark" />
+						{props.autoSettleOff && <AutoSettleOff />}
+						<span className="sh-recent-cwd">{shortenPath(item.session.folder)}</span>
+						<span>{relTime(item.session.endedAt ?? item.session.startedAt)}</span>
+					</span>
+				</button>
 			)}
 			{item.kind === "room" && (
 				<button

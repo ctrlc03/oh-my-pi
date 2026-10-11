@@ -1,7 +1,18 @@
-import { Check, CheckSquare, Copy, FileDiff, FileText, Pencil, Send, Share2, SquareTerminal } from "lucide-react";
+import {
+	Check,
+	CheckSquare,
+	Copy,
+	FileDiff,
+	FileText,
+	Pencil,
+	Send,
+	Share2,
+	SquareTerminal,
+	TextSelect,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
-import { type Block, blockTitle, hasOutput } from "../../lib/blocks";
+import { type Block, blockHasText, blockTitle, hasOutput } from "../../lib/blocks";
 import { Sheet } from "../shell/Sheet";
 import { type BlockApi, type CopyWhat, useFlash } from "./Block";
 
@@ -30,8 +41,9 @@ function SheetRow({
 }
 
 /**
- * A block's actions on a touch screen, opened by a long press: the copies, send to the message box,
- * share, edit (a prompt), and *Select*, which starts the phone's multi-select mode on this block.
+ * A block's actions on a touch screen, opened by a long press: the copies, *Select text* (the block's
+ * text in a sheet the OS can select from), send to the message box, share, edit (a prompt), and
+ * *Select*, which starts the phone's multi-select mode on this block.
  */
 export function BlockSheet({
 	block,
@@ -39,6 +51,7 @@ export function BlockSheet({
 	canSend,
 	onEdit,
 	onChanges,
+	onSelectText,
 	onSelect,
 	onClose,
 }: {
@@ -47,6 +60,7 @@ export function BlockSheet({
 	canSend: boolean;
 	onEdit?: (entryId: string) => void;
 	onChanges?: (entryId: string) => void;
+	onSelectText(): void;
 	onSelect(): void;
 	onClose(): void;
 }): ReactNode {
@@ -92,6 +106,9 @@ export function BlockSheet({
 					done={done === "both"}
 					onClick={() => void copy("both")}
 				/>
+				{blockHasText(block) && (
+					<SheetRow icon={<TextSelect size={16} />} label="Select text" onClick={() => act(onSelectText)} />
+				)}
 				{canSend && (
 					<SheetRow
 						icon={<Send size={16} />}

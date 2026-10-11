@@ -187,8 +187,13 @@ export function Tooltip() {
 			held = null;
 			hide();
 			if (e.pointerType !== "touch" || !e.isPrimary || !(e.target instanceof Element)) return;
-			// Holding in a field is the keyboard's loupe and selection handles, not a request for a tip.
-			if (e.target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]') !== null)
+			// Holding in a field is the keyboard's loupe and selection handles, not a request for a tip; so is
+			// holding in text laid out for the OS to select (`data-native-select`), where the callout must stay.
+			if (
+				e.target.closest(
+					'input, textarea, select, [contenteditable=""], [contenteditable="true"], [data-native-select]',
+				) !== null
+			)
 				return;
 			const el = targetOf(e.target);
 			const content = el === null ? null : readTip(el);

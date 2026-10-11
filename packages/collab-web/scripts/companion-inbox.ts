@@ -31,6 +31,7 @@ export async function buildInbox(
 				instanceId: host.instanceId,
 				title: host.sessionName || path.basename(host.cwd) || "session",
 				cwd: host.cwd,
+				...(host.agent ? { agent: host.agent } : {}),
 			};
 			if (host.inputRequired) {
 				const ask = pendingAsk(entries);

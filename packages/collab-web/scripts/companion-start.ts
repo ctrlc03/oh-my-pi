@@ -15,6 +15,11 @@ import { SAFE_ID_RE } from "./companion-sessions";
 
 const TMUX_FALLBACKS = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"];
 
+/** A vendor agent id: a built-in one, or `custom:<slug>`. Matches what `scripts/foreign/agents.ts` hands out. */
+export const AGENT_ID_RE = /^(?:claude|codex|cursor|grok|opencode|custom:[a-z0-9-]{1,32})$/;
+/** A vendor's own model id (`sonnet`, `gpt-5.1-codex`, `anthropic/claude-sonnet-4-5`, `opus[1m]`): no spaces, no leading dash (it would read as a flag). */
+export const FOREIGN_MODEL_RE = /^[A-Za-z0-9_][\w.:/@+[\]-]{0,199}$/;
+
 /**
  * Config overlay (`omp --config`): host every session this companion starts with control access,
  * and also serve it on the companion's local relay when it runs one.
@@ -65,6 +70,63 @@ export interface TmuxLaunch {
 	maxCostUsd?: number;
 	/** Run on this model (`omp --model provider/id`); validated like a fan-out model selector. */
 	model?: string;
+	/** Run a vendor agent's host (`scripts/foreign/host-main.ts`) instead of omp; `ompBin`, `overlayPath` and `sandbox` then go unused (a vendor agent never runs sandboxed). */
+	foreign?: ForeignLaunch;
+}
+
+/** How the detached host of a foreign agent session is started; see `scripts/foreign/host-main.ts`. */
+export interface ForeignLaunch {
+	/** Runtime that runs the host entry (bun). */
+	bun: string;
+	/** Absolute path of `host-main.ts`. */
+	hostMain: string;
+	/** {@link AGENT_ID_RE}. */
+	agent: string;
+	permission: "supervised" | "full";
+	/** The folder is a worktree the companion created for this session; recorded in the session index. */
+	worktree?: boolean;
+	/** The relay the session's room goes through. */
+	relayUrl?: string;
+	/** The web app's address, the base of the links the session prints. */
+	webUrl?: string;
+	/** Serialized fan-out membership (`{ group, model, agent }`), recorded in the session index. */
+	fanout?: string;
+}
+
+/**
+ * The argv of a foreign host process: every value is a separate positional argument, never part of a shell
+ * string, so an agent id, model or folder cannot become a command.
+ */
+export function foreignHostCommand(
+	foreign: ForeignLaunch,
+	options: {
+		cwd: string;
+		resume?: string;
+		model?: string;
+		maxCostUsd?: number;
+		promptFile?: string;
+		localRelayUrl?: string;
+	},
+): string[] {
+	return [
+		foreign.bun,
+		foreign.hostMain,
+		"--agent",
+		foreign.agent,
+		"--cwd",
+		options.cwd,
+		...(options.resume !== undefined ? ["--resume", options.resume] : []),
+		...(options.model !== undefined ? ["--model", options.model] : []),
+		"--permission",
+		foreign.permission,
+		...(options.maxCostUsd !== undefined ? ["--max-cost", String(options.maxCostUsd)] : []),
+		...(options.promptFile !== undefined ? ["--prompt-file", options.promptFile] : []),
+		...(foreign.worktree ? ["--worktree"] : []),
+		...(foreign.fanout !== undefined ? ["--fanout", foreign.fanout] : []),
+		...(foreign.relayUrl !== undefined ? ["--relay", foreign.relayUrl] : []),
+		...(foreign.webUrl !== undefined ? ["--web", foreign.webUrl] : []),
+		...(options.localRelayUrl !== undefined ? ["--local-relay", options.localRelayUrl] : []),
+	];
 }
 
 /**
@@ -72,7 +134,11 @@ export interface TmuxLaunch {
  * the tmux session name and the realpath of the directory it runs in.
  */
 export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; cwd: string }> {
-	if (launch.model !== undefined && !MODEL_SELECTOR_RE.test(launch.model)) throw new Error("invalid model");
+	const foreign = launch.foreign;
+	if (foreign && (!AGENT_ID_RE.test(foreign.agent) || !["supervised", "full"].includes(foreign.permission)))
+		throw new Error("invalid agent");
+	if (launch.model !== undefined && !(foreign ? FOREIGN_MODEL_RE : MODEL_SELECTOR_RE).test(launch.model))
+		throw new Error("invalid model");
 	if (!path.isAbsolute(launch.cwd) || launch.cwd.includes("\0")) throw new Error("cwd must be an absolute path");
 	if (launch.resume !== undefined && !SAFE_ID_RE.test(launch.resume)) throw new Error("invalid session id");
 	let cwd: string;
@@ -89,33 +155,45 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 			);
 		throw new Error("folder does not exist on this computer");
 	}
-	await writeOverlay(launch.overlayPath, launch.localRelayUrl);
-	const sandbox = launch.sandbox ? await prepareSandbox({ ...launch.sandbox, folder: cwd }) : null;
+	if (!foreign) await writeOverlay(launch.overlayPath, launch.localRelayUrl);
+	const sandbox = !foreign && launch.sandbox ? await prepareSandbox({ ...launch.sandbox, folder: cwd }) : null;
 
 	const name = `omp-${crypto.randomUUID().slice(0, 8)}`;
 	// A tmux server that is already running does not pass our environment on to new sessions.
 	const env = [`PATH=${process.env.PATH ?? ""}`, `HOME=${os.homedir()}`];
 	if (process.env.PI_CONFIG_DIR) env.push(`PI_CONFIG_DIR=${process.env.PI_CONFIG_DIR}`);
-	const command = [
-		...(sandbox?.prefix ?? []),
-		launch.ompBin,
-		"--config",
-		launch.overlayPath,
-		...(sandbox?.ompArgs ?? []),
-		...(launch.resume ? ["-r", launch.resume] : []),
-		...(launch.maxCostUsd !== undefined ? ["--max-cost", String(launch.maxCostUsd)] : []),
-		...(launch.model !== undefined ? ["--model", launch.model] : []),
-	];
 	let promptFile: string | null = null;
-	// tmux format-expands `-c` (`#(cmd)` would run in the tmux server, outside any sandbox), so the folder is never a
-	// tmux argument: the shell enters it from a positional parameter, which tmux passes on untouched.
-	let argv = ["sh", "-c", 'cd -- "$1" || exit 1; shift; exec "$@"', "sh", cwd, ...command];
 	if (launch.prompt !== undefined) {
 		await fs.mkdir(launch.promptDir, { recursive: true, mode: 0o700 });
 		await fs.chmod(launch.promptDir, 0o700);
 		promptFile = path.join(launch.promptDir, `omp-collab-prompt-${crypto.randomUUID()}.txt`);
 		await fs.writeFile(promptFile, launch.prompt, { mode: 0o600 });
-		// The shell reads and deletes the file, then becomes omp; `--` keeps a prompt that starts with `-` or `@` literal.
+	}
+	const command = foreign
+		? foreignHostCommand(foreign, {
+				cwd,
+				resume: launch.resume,
+				model: launch.model,
+				maxCostUsd: launch.maxCostUsd,
+				promptFile: promptFile ?? undefined,
+				localRelayUrl: launch.localRelayUrl,
+			})
+		: [
+				...(sandbox?.prefix ?? []),
+				launch.ompBin,
+				"--config",
+				launch.overlayPath,
+				...(sandbox?.ompArgs ?? []),
+				...(launch.resume ? ["-r", launch.resume] : []),
+				...(launch.maxCostUsd !== undefined ? ["--max-cost", String(launch.maxCostUsd)] : []),
+				...(launch.model !== undefined ? ["--model", launch.model] : []),
+			];
+	// tmux format-expands `-c` (`#(cmd)` would run in the tmux server, outside any sandbox), so the folder is never a
+	// tmux argument: the shell enters it from a positional parameter, which tmux passes on untouched.
+	let argv = ["sh", "-c", 'cd -- "$1" || exit 1; shift; exec "$@"', "sh", cwd, ...command];
+	// A foreign host reads and deletes its prompt file itself (`--prompt-file`). For omp the shell reads and deletes the
+	// file, then becomes omp; `--` keeps a prompt that starts with `-` or `@` literal.
+	if (promptFile !== null && !foreign) {
 		argv = [
 			"sh",
 			"-c",
@@ -140,6 +218,16 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 export async function killTmuxSession(tmux: string, name: string): Promise<void> {
 	const proc = Bun.spawn([tmux, "kill-session", "-t", name], { stdout: "ignore", stderr: "ignore", stdin: "ignore" });
 	await proc.exited;
+}
+
+/** True while the tmux session `name` exists: its host process has not exited. */
+export async function tmuxSessionExists(tmux: string, name: string): Promise<boolean> {
+	const proc = Bun.spawn([tmux, "has-session", "-t", `=${name}`], {
+		stdout: "ignore",
+		stderr: "ignore",
+		stdin: "ignore",
+	});
+	return (await proc.exited) === 0;
 }
 
 /**

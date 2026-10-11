@@ -19,6 +19,7 @@ import { relTime, shortenPath } from "../../lib/format";
 import type { RecentRoom } from "../../lib/rooms";
 import type { OrgSection } from "../../lib/session-org";
 import { HostState, hostTitle, SandboxedChip } from "./CompanionCard";
+import { AgentChip } from "./AgentChip";
 import { FanoutChip } from "./FanoutSheet";
 import type { DragSpec, RangeAction } from "./use-org-drag";
 
@@ -224,6 +225,7 @@ export function OrgRow(props: OrgRowProps): ReactNode {
 							<HostState host={item.host} />
 						)}
 						{props.settledBy && <span className="sh-host-state">{SETTLED_BY[props.settledBy]}</span>}
+						<AgentChip agent={item.host.agent} variant="mark" />
 						{props.autoSettleOff && <AutoSettleOff />}
 						<span className="sh-recent-cwd">{shortenPath(item.host.cwd)}</span>
 						{item.host.participants > 1 && (
@@ -247,6 +249,7 @@ export function OrgRow(props: OrgRowProps): ReactNode {
 						<span className={`sh-host-state${item.session.busy ? " sh-host-state-busy" : ""}`}>
 							{item.session.busy ? "working" : "not sharing"}
 						</span>
+						<AgentChip agent={item.session.agent} variant="mark" />
 						{props.autoSettleOff && <AutoSettleOff />}
 						<span className="sh-recent-cwd">{shortenPath(item.session.cwd)}</span>
 						<span>{relTime(item.session.startedAt)}</span>

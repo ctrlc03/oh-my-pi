@@ -11,8 +11,10 @@
  * state and the open pull request list are canned; starting sessions (./mock-start: in the folders, in new worktrees, or without a
  * project in a real scratch folder under `<--dir>/config/scratch`) and comparing models (best-of-N, see ./mock-fanout) work over a
  * throw-away git repository, and `--session-link` makes opening any session join that room (start
- * `scripts/mock-host.ts`). The worktree settings and the settle cleanup (./mock-settle) run the real code over a throw-away
- * repository too. Every other request is refused. Ctrl+C stops it.
+ * `scripts/mock-host.ts`; `--agent <id>` makes it a vendor agent's session). Vendor agents (./mock-foreign) are canned: some
+ * installed, some needing sign-in or an install, a custom one; installing and saving custom ones works, and sessions can be
+ * started with them, listed and resumed. The worktree settings and the settle cleanup (./mock-settle) run the real code over a
+ * throw-away repository too. Every other request is refused. Ctrl+C stops it.
  */
 
 import * as fs from "node:fs/promises";
@@ -33,6 +35,7 @@ import { CollabSocket } from "../src/lib/socket";
 import { createSessionOrg, loadOrgFile, saveOrgFile } from "./companion-sessionorg";
 import { startLocalRelay } from "./local-relay";
 import { createMockFanout } from "./mock-fanout";
+import { createMockForeign, mockForeignHosts } from "./mock-foreign";
 import { createMockSearch } from "./mock-search";
 import { createMockStart } from "./mock-start";
 import { createMockSettle } from "./mock-settle";
@@ -77,6 +80,7 @@ const hosts: CompanionHost[] = [
 	host(9, "perf-profiling"),
 	host(10, "i18n-strings"),
 	host(11, "ci-cache"),
+	...mockForeignHosts(now),
 ];
 const idle: CompanionIdleSession[] = [
 	{
@@ -117,12 +121,15 @@ const sessionOrg = createSessionOrg({
 	onError: err => console.error(`mock-companion: ${err instanceof Error ? err.message : String(err)}`),
 });
 
+/** The vendor agents and their sessions: live ones are in `hosts`, ended ones are listed and resumed from here. */
+const foreign = createMockForeign({ hosts });
 /** The folders and model-comparison requests, over a throw-away git repository in the state directory. */
 const fanout = await createMockFanout({
 	dir,
 	hosts,
 	onChange: () => broadcast(),
 	sessionLink: flag("--session-link", "") || undefined,
+	foreign,
 });
 /** Starting sessions (in the folders, in new worktrees, or without a project) over real folders; `folders` adds the scratch ones. */
 const starts = createMockStart({
@@ -130,9 +137,10 @@ const starts = createMockStart({
 	hosts,
 	baseFolders: async () => {
 		const reply = await fanout.answer({ t: "folders", reqId: 0 });
-		return reply.t === "folders" ? reply.folders : [];
+		return foreign.folders(reply.t === "folders" ? reply.folders : []);
 	},
 	onChange: () => broadcast(),
+	foreign,
 });
 /** Open pull requests `#` in the composer can mention; only the list is answered, a pull request's detail is not. */
 const MOCK_PRS: GithubItem[] = (
@@ -171,7 +179,7 @@ const MOCK_PRS: GithubItem[] = (
 	url: `https://github.com/example/app/pull/${pr.number}`,
 }));
 /** The all-sessions list and message search, over canned sessions. */
-const search = createMockSearch(hosts);
+const search = createMockSearch(hosts, foreign.searchable);
 
 function hostsFrame(): CompanionReply {
 	return {
@@ -181,6 +189,7 @@ function hostsFrame(): CompanionReply {
 		...fanout.capabilities,
 		...starts.capabilities,
 		...search.capabilities,
+		...foreign.capabilities,
 		...settle.capabilities,
 		canGithub: true,
 		idle,
@@ -220,6 +229,15 @@ socket.onFrame = (frame, fromPeer) => {
 			socket.send({ t: "session-org", reqId: frame.reqId, doc, rev }, fromPeer);
 			broadcast();
 		});
+	else if (foreign.handles(frame))
+		void foreign.answer(frame).then(
+			reply => socket.send(reply, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
 	else if (starts.handles(frame))
 		void starts.answer(frame).then(
 			reply => socket.send(reply, fromPeer),

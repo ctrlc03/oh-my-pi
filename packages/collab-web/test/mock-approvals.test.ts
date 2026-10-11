@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { HostFrame } from "@oh-my-pi/pi-wire";
+import type { HostFrame, SessionPermission } from "@oh-my-pi/pi-wire";
 import { MockApprovals } from "../scripts/mock-approvals";
 
 function setup(guestsCanSaveProject: boolean) {
@@ -56,5 +56,49 @@ describe("MockApprovals", () => {
 		const after = allowed.frames.length;
 		allowed.approvals.prompt("approve bun test b");
 		expect(allowed.frames.length).toBe(after);
+	});
+});
+
+describe("MockApprovals for a vendor agent", () => {
+	function vendor(initial: SessionPermission) {
+		let permission = initial;
+		const frames: HostFrame[] = [];
+		const notices: string[] = [];
+		const approvals = new MockApprovals({
+			sendWriters: frame => frames.push(frame),
+			notice: (_level, message) => notices.push(message),
+			guestsCanSaveProject: true,
+			foreign: { permission: () => permission },
+		});
+		return { approvals, frames, notices, setPermission: (next: SessionPermission) => (permission = next) };
+	}
+
+	it("asks with the vendor's three choices and no project rule", () => {
+		const { approvals, frames } = vendor("supervised");
+		approvals.prompt("approve bun test");
+		const request = frames[0];
+		if (request?.t !== "ui-request" || request.request.kind !== "select")
+			throw new Error("expected a select ui-request");
+		expect(request.request.approval).toEqual({
+			tool: "bash",
+			rule: "bash: bun test",
+			guestProject: false,
+			choices: [
+				{ label: "Approve once", kind: "once" },
+				{ label: "Approve for this session", kind: "session" },
+				{ label: "Deny", kind: "deny" },
+			],
+		});
+		expect(approvals.answer(request.request.reqId, "Approve for this session")).toBe(true);
+	});
+
+	it("approves without asking under full access", () => {
+		const { approvals, frames, notices, setPermission } = vendor("full");
+		approvals.prompt("approve rm -rf build");
+		expect(frames).toEqual([]);
+		expect(notices[0]).toContain("full access");
+		setPermission("supervised");
+		approvals.prompt("approve rm -rf build");
+		expect(frames).toHaveLength(1);
 	});
 });

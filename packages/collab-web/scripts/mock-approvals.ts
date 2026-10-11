@@ -1,13 +1,24 @@
-import type { CollabApprovalChoiceKind, CollabUiApproval, HostFrame } from "@oh-my-pi/pi-wire";
+import type { CollabApprovalChoiceKind, CollabUiApproval, HostFrame, SessionPermission } from "@oh-my-pi/pi-wire";
 
-const LABELS: Record<CollabApprovalChoiceKind, string> = {
-	once: "Allow once",
-	session: "Always allow (this session)",
-	project: "Always allow (this project)",
-	deny: "Deny",
-	"deny-project": "Deny always (this project)",
-};
-const KINDS = Object.keys(LABELS) as CollabApprovalChoiceKind[];
+interface Choice {
+	kind: CollabApprovalChoiceKind;
+	label: string;
+}
+
+/** omp's prompt: its labels and the rules it can save. */
+const OMP_CHOICES: Choice[] = [
+	{ kind: "once", label: "Allow once" },
+	{ kind: "session", label: "Always allow (this session)" },
+	{ kind: "project", label: "Always allow (this project)" },
+	{ kind: "deny", label: "Deny" },
+	{ kind: "deny-project", label: "Deny always (this project)" },
+];
+/** A vendor agent's prompt: its tool permission request, answered once, for the session, or denied. */
+const FOREIGN_CHOICES: Choice[] = [
+	{ kind: "once", label: "Approve once" },
+	{ kind: "session", label: "Approve for this session" },
+	{ kind: "deny", label: "Deny" },
+];
 const DEFAULT_COMMAND = "bun test src/lib/client.test.ts";
 
 interface PendingApproval {
@@ -21,6 +32,8 @@ interface MockApprovalsHost {
 	notice(level: "info" | "warning" | "error", message: string): void;
 	/** Whether a guest's project-scoped choice is honored, as `collab.guestsCanSaveApprovals`. */
 	guestsCanSaveProject: boolean;
+	/** A vendor agent's session: the prompt has its choices, and `full` access approves without asking. */
+	foreign?: { permission(): SessionPermission };
 }
 
 /** The pattern the real host derives for a simple command: program and subcommand, then a wildcard. */
@@ -45,10 +58,12 @@ export class MockApprovals {
 	#pending = new Map<number, PendingApproval>();
 	#allow = { session: [] as string[], project: [] as string[] };
 	#deny: string[] = [];
+	readonly #choices: Choice[];
 	readonly #host: MockApprovalsHost;
 
 	constructor(host: MockApprovalsHost) {
 		this.#host = host;
+		this.#choices = host.foreign ? FOREIGN_CHOICES : OMP_CHOICES;
 	}
 
 	/** Handles an `approve [command]` prompt; false for any other text. */
@@ -57,6 +72,10 @@ export class MockApprovals {
 		if (!match) return false;
 		const command = match[1]?.trim() || DEFAULT_COMMAND;
 		const pattern = patternOf(command);
+		if (this.#host.foreign?.permission() === "full") {
+			this.#host.notice("info", `mock: ${command} approved without asking (full access)`);
+			return true;
+		}
 		if (this.#deny.some(rule => covers(rule, command))) {
 			this.#host.notice("warning", `mock: ${command} refused by a saved deny rule`);
 			return true;
@@ -70,16 +89,18 @@ export class MockApprovals {
 		const approval: CollabUiApproval = {
 			tool: "bash",
 			rule: `bash: ${pattern}`,
-			guestProject: this.#host.guestsCanSaveProject,
-			choices: KINDS.map(kind => ({ label: LABELS[kind], kind })),
+			guestProject: this.#host.foreign ? false : this.#host.guestsCanSaveProject,
+			choices: this.#choices.map(({ kind, label }) => ({ label, kind })),
 		};
 		this.#host.sendWriters({
 			t: "ui-request",
 			request: {
 				kind: "select",
 				reqId,
-				title: `Allow tool: bash\nCommand: ${command}\nRule saved by "always" choices: bash: ${pattern}`,
-				options: KINDS.map(kind => LABELS[kind]),
+				title: this.#host.foreign
+					? `Allow tool: bash\nCommand: ${command}`
+					: `Allow tool: bash\nCommand: ${command}\nRule saved by "always" choices: bash: ${pattern}`,
+				options: this.#choices.map(choice => choice.label),
 				approval,
 			},
 		});
@@ -92,7 +113,7 @@ export class MockApprovals {
 		if (!pending) return false;
 		this.#pending.delete(reqId);
 		this.#host.sendWriters({ t: "ui-request-end", reqId });
-		let kind = KINDS.find(candidate => LABELS[candidate] === value) ?? "deny";
+		let kind = this.#choices.find(choice => choice.label === value)?.kind ?? "deny";
 		if ((kind === "project" || kind === "deny-project") && !this.#host.guestsCanSaveProject) {
 			this.#host.notice(
 				"warning",

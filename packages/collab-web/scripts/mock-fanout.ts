@@ -8,7 +8,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { CompanionHost, CompanionReply, CompanionRequest, RunInfo } from "../src/lib/companion";
+import type { AgentRef, CompanionHost, CompanionReply, CompanionRequest, RunInfo } from "../src/lib/companion";
 import { type FanoutGroup, type FanoutModel, type HostFanout, hostFanout } from "../src/lib/fanout";
 import {
 	compareGroup,
@@ -57,6 +57,8 @@ export async function createMockFanout(options: {
 	onChange(): void;
 	/** Answers every `link` request (opening a started session) with this room link, e.g. from `scripts/mock-host.ts`. */
 	sessionLink?: string;
+	/** Vendor agents' models are offered too, and their sessions started like omp's. */
+	foreign?: { fanoutModels(): FanoutModel[]; agentRef(selector: string): AgentRef | undefined };
 }): Promise<MockFanout> {
 	const repo = path.join(options.dir, "fanout-repo");
 	const worktrees = path.join(options.dir, "worktrees");
@@ -85,12 +87,14 @@ export async function createMockFanout(options: {
 		const n = ++sessions;
 		const instanceId = `fan-${n}-${crypto.randomUUID().slice(0, 6)}`;
 		const cwd = await fs.realpath(input.cwd);
+		const agent = options.foreign?.agentRef(input.model);
 		options.hosts.push({
 			instanceId,
 			sessionId: instanceId,
-			sessionName: `${input.model} · comparison`,
+			sessionName: `${agent ? agent.name : input.model} · comparison`,
 			cwd,
-			model: input.model,
+			model: agent ? input.model.slice(input.model.indexOf("/") + 1) || null : input.model,
+			agent,
 			startedAt: Date.now(),
 			participants: 1,
 			busy: true,
@@ -158,10 +162,18 @@ export async function createMockFanout(options: {
 						folders: [{ cwd: folder, lastActive: Date.now(), sessions: [] }],
 					};
 				case "fanout-models":
-					return { t: "fanout-models", reqId: request.reqId, models: MODELS };
+					return {
+						t: "fanout-models",
+						reqId: request.reqId,
+						models: [...MODELS, ...(options.foreign?.fanoutModels() ?? [])],
+					};
 				case "fanout-start": {
 					const parsed = parseFanoutRequest(request.request);
-					const started = await startFanout(parsed, { worktreesDir: worktrees, launch });
+					const started = await startFanout(parsed, {
+						worktreesDir: worktrees,
+						agentRef: model => options.foreign?.agentRef(model),
+						launch,
+					});
 					groups = withGroup(groups, started);
 					options.onChange();
 					return { t: "fanout-started", reqId: request.reqId, group: started };

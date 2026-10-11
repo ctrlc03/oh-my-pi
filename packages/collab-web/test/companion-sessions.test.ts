@@ -2,7 +2,13 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { lastAssistantSummary, pendingQuestion, recentFolders } from "../scripts/companion-sessions";
+import {
+	findSessionFile,
+	foreignTranscriptsDir,
+	lastAssistantSummary,
+	pendingQuestion,
+	recentFolders,
+} from "../scripts/companion-sessions";
 
 const ask = (id: string, ...questions: string[]) => ({
 	type: "message",
@@ -86,5 +92,23 @@ describe("recentFolders", () => {
 			["id-new", "Renamed"],
 			["id-old", "header title"],
 		]);
+	});
+});
+
+describe("vendor agent transcripts", () => {
+	it("are found by session id beside omp's sessions, and never under them", async () => {
+		const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "companion-foreign-files-")));
+		try {
+			const sessionsDir = path.join(root, "agent", "sessions");
+			await fs.mkdir(sessionsDir, { recursive: true });
+			const flat = path.join(foreignTranscriptsDir(sessionsDir), "codex-fedcba9876543210.jsonl");
+			await Bun.write(flat, `${JSON.stringify({ type: "session", id: "codex-fedcba9876543210" })}\n`);
+			expect(foreignTranscriptsDir(sessionsDir)).toBe(path.join(root, "agent", "collab-foreign", "sessions"));
+			expect(await findSessionFile(sessionsDir, "codex-fedcba9876543210")).toBe(flat);
+			expect(await findSessionFile(sessionsDir, "codex-0000000000000000")).toBeNull();
+			expect(await findSessionFile(sessionsDir, "../../codex-fedcba9876543210")).toBeNull();
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
 	});
 });

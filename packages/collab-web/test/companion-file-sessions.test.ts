@@ -80,6 +80,35 @@ describe("findFileSessions", () => {
 	});
 });
 
+describe("findFileSessions with vendor agent sessions", () => {
+	it("scans the agents' transcripts beside omp's sessions", async () => {
+		const agentDir = path.join(tmp, "two", "agent");
+		const ompDir = path.join(agentDir, "sessions", "folder");
+		const foreignDir = path.join(agentDir, "collab-foreign", "sessions");
+		const project = path.join(tmp, "two", "project");
+		await fs.mkdir(ompDir, { recursive: true });
+		await fs.mkdir(foreignDir, { recursive: true });
+		await fs.mkdir(project, { recursive: true });
+		const write = async (file: string, id: string, entries: unknown[], second: number) => {
+			const header = { type: "session", version: 3, id, timestamp: "2026-10-01T10:00:00.000Z", cwd: project };
+			await fs.writeFile(file, [header, ...entries].map(e => JSON.stringify(e)).join("\n") + "\n");
+			const at = new Date(Date.UTC(2026, 9, 2, 10, 0, second));
+			await fs.utimes(file, at, at);
+		};
+		const edit = [call("a", "edit", { path: "main.ts" }), result("a")];
+		await write(path.join(ompDir, "2026-10-01T10-00-00-000Z_omp-one.jsonl"), "omp-one", edit, 1);
+		await write(path.join(foreignDir, "claude-0123456789abcdef.jsonl"), "claude-0123456789abcdef", edit, 2);
+		await write(path.join(foreignDir, "codex-fedcba9876543210.jsonl"), "codex-fedcba9876543210", [], 3);
+
+		const found = await findFileSessions({
+			sessionsDir: path.join(agentDir, "sessions"),
+			cwd: project,
+			path: "main.ts",
+		});
+		expect(found.map(s => s.sessionId)).toEqual(["claude-0123456789abcdef", "omp-one"]);
+	});
+});
+
 describe("repoRelativeFocus", () => {
 	it("turns absolute paths into repository-relative ones and leaves others for validation", async () => {
 		expect(await repoRelativeFocus(repo, { kind: "file", path: path.join(repo, "src/app.ts") })).toEqual({

@@ -86,17 +86,27 @@ export function ApprovalChoices({ approval, onChoose }: ApprovalChoicesProps): R
 			</button>
 		);
 	};
+	// A host offers the kinds it implements (a vendor agent's only once, session and deny): no empty rows for the rest.
+	const rows: [CollabApprovalChoiceKind, string][][] = [
+		[
+			["once", "sh-approval-allow"],
+			["deny", "sh-approval-deny"],
+		],
+		[
+			["session", ""],
+			["project", ""],
+		],
+		[["deny-project", "sh-approval-deny"]],
+	];
 	return (
 		<div className="sh-ask-options sh-approval">
-			<div className="sh-approval-row">
-				{render("once", "sh-approval-allow")}
-				{render("deny", "sh-approval-deny")}
-			</div>
-			<div className="sh-approval-row">
-				{render("session", "")}
-				{render("project", "")}
-			</div>
-			<div className="sh-approval-row">{render("deny-project", "sh-approval-deny")}</div>
+			{rows
+				.filter(row => row.some(([kind]) => byKind(kind) !== undefined))
+				.map(row => (
+					<div key={row[0]?.[0]} className="sh-approval-row">
+						{row.map(([kind, className]) => render(kind, className))}
+					</div>
+				))}
 		</div>
 	);
 }

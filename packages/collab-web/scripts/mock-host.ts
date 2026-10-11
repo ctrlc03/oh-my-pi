@@ -2,7 +2,7 @@
  * Offline mock collab host: starts the local relay, opens a room as host, and
  * serves the canned fixture session to any collab-web guest that joins.
  *
- *   bun scripts/mock-host.ts [--port 7466] [--local-relay [PORT]] [--many-models]
+ *   bun scripts/mock-host.ts [--port 7466] [--local-relay [PORT]] [--many-models] [--agent <id>]
  *
  * Prints a full join link (guests may prompt and run session controls) and a
  * view link (read-only). Replays a scripted streaming turn on every guest
@@ -14,6 +14,11 @@
  * A writer's prompt `approve [command]` raises a tool-approval ask with the always-allow choices (feature
  * `approval-grants`, see mock-approvals.ts); `MOCK_GUESTS_SAVE_APPROVALS=1` lets guests save project rules.
  *
+ * `--agent <id>` (`claude`, `codex`, `cursor`, `grok`, `opencode`, `custom:<slug>`) presents the session as a vendor
+ * agent's, as a foreign host does: the welcome names the agent and offers the permission mode (feature `permission-mode`,
+ * switched with a `permission` session command), `approve [command]` asks with the vendor's three choices, and the
+ * features omp alone has (profiles, usage limits, cache stats, context items, PR watch) are not offered.
+ *
  * `--local-relay` also serves the room on a second loopback relay (default: the port after
  * `--port`) and puts it in the links as `?local=`, the way omp does with `collab.localRelayUrl`:
  * a guest on this computer joins through it and falls back to the main relay when it is down.
@@ -21,28 +26,22 @@
  */
 
 import type {
+	AgentRef,
 	AgentSnapshot,
 	ContextItemRow,
+	GuestFrame,
 	HostFrame,
 	ImageContent,
 	PromptMention,
 	RewindFilesPlan,
 	SessionCommand,
 	SessionEntry,
+	SessionPermission,
 	SessionState,
 	TextContent,
-	WireFrame,
 	WireModel,
 } from "@oh-my-pi/pi-wire";
-import { generateRoomKey, importRoomKey, open, seal } from "../src/lib/codec";
-import {
-	COLLAB_PROTO,
-	encodeBase64Url,
-	formatCollabLink,
-	generateRoomId,
-	packEnvelope,
-	unpackEnvelope,
-} from "../src/lib/link";
+import { type HelloFrame, RoomHost, type RoomPeer } from "./foreign/room-host";
 import {
 	fixtureAgents,
 	fixtureCommands,
@@ -71,8 +70,6 @@ import { MockPrWatch } from "./mock-pr-watch";
 import { mockReceipts, mockSessionDiff, mockTurnDiff } from "./mock-turn-diff";
 
 const DEFAULT_PORT = 7466;
-/** Local relay peer ids are shifted so both relays share one id space, as omp's host does. */
-const LOCAL_PEER_BASE = 0x4000_0000;
 const STEP_INTERVAL_MS = 40;
 /** What the real host tells guests when a session switch ends their room. */
 const MOCK_SESSION_SWITCH_REASON =
@@ -120,6 +117,28 @@ const limitedAt = argv.indexOf("--limited");
 const mockLimitedSeconds = limitedAt >= 0 ? Number(argv[limitedAt + 1]) || 5400 : Number.NaN;
 /** `--many-models`: offer the full catalogue (250-odd models) instead of the six fixture models. */
 const offeredModels = argv.includes("--many-models") ? manyFixtureModels() : fixtureModels;
+/** Display names of the vendor agents the mock can present; a custom agent shows its slug. */
+const MOCK_AGENT_NAMES: Record<string, string> = {
+	claude: "Claude Code",
+	codex: "Codex",
+	cursor: "Cursor",
+	grok: "Grok",
+	opencode: "OpenCode",
+};
+/** `--agent <id>`: the vendor agent this mock presents; undefined: an omp session. */
+function parseMockAgent(args: string[]): AgentRef | undefined {
+	const at = args.indexOf("--agent");
+	if (at < 0) return undefined;
+	const id = args[at + 1];
+	if (id === undefined || !/^(?:claude|codex|cursor|grok|opencode|custom:[a-z0-9-]{1,32})$/.test(id)) {
+		console.error("mock-host: --agent takes claude, codex, cursor, grok, opencode or custom:<slug>");
+		process.exit(1);
+	}
+	return { id, name: Object.hasOwn(MOCK_AGENT_NAMES, id) ? MOCK_AGENT_NAMES[id]! : id.slice("custom:".length) };
+}
+const mockAgent = parseMockAgent(argv);
+/** How a vendor agent's session answers tool permission requests; `full` approves them all. */
+let permission: SessionPermission = "supervised";
 /** Watched pull requests act out a scripted timeline (feature `pr-watch`): a failing check wakes the session with a log, a comment wakes it again, a merge ends the watch. */
 const mockPrWatch = new MockPrWatch({
 	onState: () => broadcastState(),
@@ -160,13 +179,30 @@ const mockLimits = createMockLimits({
 const relay = startLocalRelay(port);
 let localRelay: LocalRelay | null =
 	localPort === null ? null : startLocalRelay(localPort, { refuseMissingRooms: true });
-const roomId = generateRoomId();
-const rawKey = generateRoomKey();
-const key = await importRoomKey(rawKey);
-const writeToken = crypto.getRandomValues(new Uint8Array(16));
-const writeTokenText = encodeBase64Url(writeToken);
-const link = formatCollabLink(relay.url, roomId, rawKey, writeToken, localRelay?.url);
-const viewLink = formatCollabLink(relay.url, roomId, rawKey, undefined, localRelay?.url);
+const room = new RoomHost({
+	relayUrl: relay.url,
+	localRelayUrl: localRelay?.url,
+	reconnect: false,
+	label: "mock-host",
+	handlers: {
+		onHello: handleHello,
+		onFrame: handleFrame,
+		onPeerLeft: releasePeer,
+		onClosed: (reason, willReconnect) => {
+			if (shuttingDown || willReconnect) return;
+			console.error(`mock-host: relay socket closed (${reason})`);
+			shutdown(1);
+		},
+		onLocalRelay: up =>
+			console.log(
+				up
+					? `mock-host: serving the room on the local relay ${localRelay?.url}`
+					: "mock-host: local relay is down; guests on it must fall back to the main relay",
+			),
+	},
+});
+const link = room.link;
+const viewLink = room.viewLink;
 
 // ── mutable session state ────────────────────────────────────────────────────
 
@@ -174,17 +210,13 @@ const viewLink = formatCollabLink(relay.url, roomId, rawKey, undefined, localRel
 const mockCache = new MockCache();
 /** The tool-approval prompt a guest triggers by typing `approve [command]` (feature `approval-grants`). */
 const mockApprovals = new MockApprovals({
-	sendWriters: frame => {
-		for (const peer of peers.keys()) if (!readOnlyPeers.has(peer)) sendFrame(frame, peer);
-	},
+	sendWriters: frame => room.sendWriters(frame),
 	notice,
 	guestsCanSaveProject: process.env.MOCK_GUESTS_SAVE_APPROVALS === "1",
+	foreign: mockAgent ? { permission: () => permission } : undefined,
 });
 const entries: SessionEntry[] = [...fixtureEntries];
 const agents: AgentSnapshot[] = fixtureAgents.map(agent => ({ ...agent }));
-const peers = new Map<number, string>();
-/** Peers that joined without the write token: their mutating frames are refused, like a real host. */
-const readOnlyPeers = new Set<number>();
 const transcriptBytes = new TextEncoder().encode(subagentTranscriptJsonl);
 const transcriptDecoder = new TextDecoder();
 
@@ -221,39 +253,16 @@ let tick = 0;
 let shuttingDown = false;
 let sessionName = fixtureHeader.title;
 
-// ── sealed transport (order-preserving, mirrors relay-client) ────────────────
-
-const ws = new WebSocket(`${relay.url}/r/${roomId}?role=host`);
-ws.binaryType = "arraybuffer";
-/** Host socket on the local relay; null while it is down or not requested. */
-let localWs: WebSocket | null = null;
-
-let sendChain: Promise<void> = Promise.resolve();
-let recvChain: Promise<void> = Promise.resolve();
+// ── sealed transport (see ./foreign/room-host) ───────────────────────────────
 
 /** Seal and send a frame; peerId 0 broadcasts to both relays, N targets that guest on its relay. */
 function sendFrame(frame: HostFrame, targetPeer = 0): void {
-	sendChain = sendChain
-		.then(async () => {
-			const sealed = await seal(key, frame);
-			if (targetPeer === 0) {
-				for (const socket of [ws, localWs]) {
-					if (socket?.readyState === WebSocket.OPEN) socket.send(packEnvelope(0, sealed));
-				}
-				return;
-			}
-			const socket = targetPeer >= LOCAL_PEER_BASE ? localWs : ws;
-			if (socket?.readyState !== WebSocket.OPEN) return;
-			socket.send(packEnvelope(targetPeer >= LOCAL_PEER_BASE ? targetPeer - LOCAL_PEER_BASE : targetPeer, sealed));
-		})
-		.catch((err: unknown) => {
-			console.error("mock-host: send failed:", err);
-		});
+	room.send(frame, targetPeer);
 }
 
 function buildState(): SessionState {
 	const participants: SessionState["participants"] = [{ name: HOST_DISPLAY_NAME, role: "host" }];
-	for (const name of peers.values()) participants.push({ name, role: "guest" });
+	for (const peer of room.peers.values()) participants.push({ name: peer.name, role: "guest" });
 	const tokens = 51_000 + entries.length * 120;
 	return {
 		isStreaming: streaming,
@@ -287,6 +296,7 @@ function buildState(): SessionState {
 					capped: entries.length * 0.01 >= mockMaxCostUsd,
 				}
 			: undefined,
+		permission: mockAgent ? permission : undefined,
 	};
 }
 
@@ -381,71 +391,68 @@ function cancelReplay(): void {
 // ── guest frame handling ─────────────────────────────────────────────────────
 
 function peerName(fromPeer: number): string {
-	return peers.get(fromPeer) ?? `guest-${fromPeer}`;
+	return room.peers.get(fromPeer)?.name ?? `guest-${fromPeer}`;
 }
 
-function handleHello(name: string, proto: number, token: string | undefined, fromPeer: number): void {
-	if (proto !== COLLAB_PROTO) {
-		sendFrame(
-			{ t: "error", message: `protocol mismatch: host speaks v${COLLAB_PROTO}, guest sent v${proto}` },
-			fromPeer,
-		);
-		return;
-	}
-	const cleanName = name.trim().slice(0, 64) || `guest-${fromPeer}`;
-	peers.set(fromPeer, cleanName);
-	const writer = token === writeTokenText;
-	if (writer) readOnlyPeers.delete(fromPeer);
-	else readOnlyPeers.add(fromPeer);
-	sendFrame(
+function handleHello(peer: RoomPeer, hello: HelloFrame): void {
+	room.sendWelcome(
+		peer,
+		// The mock does not resume deltas: its live entry ids restart at `live-1` with every run.
+		{ ...hello, resume: undefined },
 		{
-			t: "welcome",
-			proto: COLLAB_PROTO,
 			header: fixtureHeader,
 			state: buildState(),
 			agents: agents.map(agent => ({ ...agent })),
-			entryCount: entries.length,
-			readOnly: writer ? undefined : true,
-			models: writer
-				? offeredModels.map(model => ({
-						...model,
-						thinkingLevels: fixtureThinkingLevels[`${model.provider}/${model.id}`] ?? ["off"],
-					}))
-				: undefined,
-			profiles: writer ? fixtureProfiles.map(candidate => ({ ...candidate })) : undefined,
-			features: [
-				"follow-up",
-				"rewind",
-				"commands",
-				"rewind-files",
-				"prompt-model",
-				"context-items",
-				"inspect",
-				"spend-cap",
-				"undo",
-				"profiles",
-				"usage-limits",
-				"cache-stats",
-				"queue-edit",
-				"mentions",
-				"approval-grants",
-				"pr-watch",
-				"turn-diff",
-				"receipts",
-			],
-			commands: writer ? fixtureCommands : undefined,
+			models: offeredModels.map(model => ({
+				...model,
+				thinkingLevels: fixtureThinkingLevels[`${model.provider}/${model.id}`] ?? ["off"],
+			})),
+			profiles: mockAgent ? [] : fixtureProfiles.map(candidate => ({ ...candidate })),
+			agent: mockAgent,
+			features: mockAgent
+				? [
+						"follow-up",
+						"commands",
+						"prompt-model",
+						"approval-grants",
+						"permission-mode",
+						"turn-diff",
+						"rewind",
+						"rewind-files",
+						...(Number.isFinite(mockMaxCostUsd) ? (["spend-cap"] as const) : []),
+					]
+				: [
+						"follow-up",
+						"rewind",
+						"commands",
+						"rewind-files",
+						"prompt-model",
+						"context-items",
+						"inspect",
+						"spend-cap",
+						"undo",
+						"profiles",
+						"usage-limits",
+						"cache-stats",
+						"queue-edit",
+						"mentions",
+						"approval-grants",
+						"pr-watch",
+						"turn-diff",
+						"receipts",
+					],
+			commands: fixtureCommands,
 		},
-		fromPeer,
+		entries,
 	);
-	sendFrame({ t: "snapshot-chunk", entries: [...entries], final: true }, fromPeer);
-	if (writer) sendFrame({ t: "usage-limits", windows: mockLimits.windows(), fetchedAt: Date.now() }, fromPeer);
-	console.log(`mock-host: ${cleanName} joined (peer ${fromPeer})${writer ? "" : " read-only"}`);
+	if (peer.writer) sendFrame({ t: "usage-limits", windows: mockLimits.windows(), fetchedAt: Date.now() }, peer.id);
+	console.log(`mock-host: ${peer.name} joined (peer ${peer.id})${peer.writer ? "" : " read-only"}`);
 	broadcastState();
 }
 
 /** Refuses a read-only peer's mutating frame with an `error` frame, as a real host does. */
 function refuseReadOnly(fromPeer: number): boolean {
-	if (!readOnlyPeers.has(fromPeer)) return false;
+	if (room.peers.get(fromPeer)?.writer !== false) return false;
 	sendFrame({ t: "error", message: "read-only link: this guest cannot control the session" }, fromPeer);
 	return true;
 }
@@ -594,6 +601,20 @@ function handleSessionCmd(
 			}
 			profile = next.name;
 			notice("info", `${who} switched profile to ${next.name}`);
+			broadcastState();
+			break;
+		}
+		case "permission": {
+			if (!mockAgent) {
+				sendFrame({ t: "error", message: "permission: this session has no permission mode" }, fromPeer);
+				break;
+			}
+			if (arg !== "supervised" && arg !== "full") {
+				sendFrame({ t: "error", message: `permission: unknown mode: ${arg ?? "(none)"}` }, fromPeer);
+				break;
+			}
+			permission = arg;
+			notice("info", `${who} set the permission mode to ${arg}`);
 			broadcastState();
 			break;
 		}
@@ -1003,11 +1024,9 @@ function handleFetchTranscript(reqId: number, fromByte: number, fromPeer: number
 	sendFrame({ t: "transcript", reqId, text, newSize: total }, fromPeer);
 }
 
-function handleFrame(frame: WireFrame, fromPeer: number): void {
+function handleFrame(frame: Exclude<GuestFrame, HelloFrame>, peer: RoomPeer): void {
+	const fromPeer = peer.id;
 	switch (frame.t) {
-		case "hello":
-			handleHello(frame.name, frame.proto, frame.writeToken, fromPeer);
-			break;
 		case "prompt":
 			handlePrompt(frame.text, frame.images, frame.deliver, fromPeer, frame.model, frame.thinking, frame.mentions);
 			break;
@@ -1038,81 +1057,19 @@ function handleFrame(frame: WireFrame, fromPeer: number): void {
 	}
 }
 
-function handleControl(text: string, base: number): void {
-	let msg: unknown;
-	try {
-		msg = JSON.parse(text);
-	} catch {
-		return;
-	}
-	if (typeof msg !== "object" || msg === null) return;
-	const control = msg as { t?: unknown; peer?: unknown };
-	if (control.t === "peer-left" && typeof control.peer === "number") releasePeer(control.peer + base);
-}
-
-function releasePeer(peer: number): void {
-	const name = peers.get(peer);
-	peers.delete(peer);
-	readOnlyPeers.delete(peer);
-	if (name) console.log(`mock-host: ${name} left (peer ${peer})`);
+function releasePeer(peer: RoomPeer | undefined, id: number): void {
+	if (peer) console.log(`mock-host: ${peer.name} left (peer ${id})`);
 	broadcastState();
 }
 
-/** Both relays feed one handler; `base` shifts the local relay's peer ids out of the main relay's range. */
-function attach(socket: WebSocket, base: number): void {
-	socket.onmessage = event => {
-		const data: unknown = event.data;
-		if (typeof data === "string") {
-			handleControl(data, base);
-			return;
-		}
-		if (!(data instanceof ArrayBuffer)) return;
-		const envelope = unpackEnvelope(new Uint8Array(data));
-		if (!envelope) return;
-		recvChain = recvChain
-			.then(async () => {
-				const frame = await open(key, envelope.payload);
-				handleFrame(frame, envelope.peerId + base);
-			})
-			.catch((err: unknown) => {
-				console.error("mock-host: dropping undecryptable frame:", err);
-			});
-	};
-}
-
-function connectLocal(): void {
-	if (localRelay === null) return;
-	const socket = new WebSocket(`${localRelay.url}/r/${roomId}?role=host`);
-	socket.binaryType = "arraybuffer";
-	localWs = socket;
-	attach(socket, LOCAL_PEER_BASE);
-	socket.onopen = () => console.log(`mock-host: serving the room on the local relay ${localRelay?.url}`);
-	socket.onclose = () => {
-		if (localWs !== socket) return;
-		localWs = null;
-		console.log("mock-host: local relay is down; guests on it must fall back to the main relay");
-		// Deleting the visited entry while iterating a Map is safe.
-		for (const peer of peers.keys()) if (peer >= LOCAL_PEER_BASE) releasePeer(peer);
-	};
-}
-
-ws.onopen = () => {
+void room.opened.then(() => {
 	console.log("mock collab host ready");
 	console.log(`join link: ${link}`);
 	console.log(`view link (read-only): ${viewLink}`);
 	console.log("paste a link into the collab-web connect screen (bun ./index.html), Ctrl+C stops the host");
 	if (localRelay !== null) console.log("type `local off` / `local on` to stop / restart the local relay");
-};
-
-attach(ws, 0);
-
-ws.onclose = event => {
-	if (shuttingDown) return;
-	console.error(`mock-host: relay socket closed (${event.code} ${event.reason || "no reason"})`);
-	shutdown(1);
-};
-
-connectLocal();
+});
+await room.start();
 
 /** `local off` / `local on`: take the local relay away and bring it back on the same port. */
 async function readCommands(): Promise<void> {
@@ -1124,7 +1081,7 @@ async function readCommands(): Promise<void> {
 			localRelay = null;
 		} else if (command === "local on" && localRelay === null) {
 			localRelay = startLocalRelay(localPort, { refuseMissingRooms: true });
-			connectLocal();
+			room.reconnectLocal();
 		}
 	}
 }
@@ -1151,14 +1108,8 @@ function shutdown(code: number): void {
 	shuttingDown = true;
 	cancelReplay();
 	clearInterval(tickInterval);
-	sendFrame({ t: "bye", reason: "mock host shutting down" });
 	// Let the bye flush through the send chain before tearing the room down.
-	void sendChain.finally(() => {
-		try {
-			ws.close(1000);
-		} catch {
-			// already closing
-		}
+	void room.close("mock host shutting down").finally(() => {
 		relay.stop();
 		localRelay?.stop();
 		process.exit(code);

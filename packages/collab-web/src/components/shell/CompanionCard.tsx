@@ -35,6 +35,8 @@ import type { PushControl } from "../../lib/push";
 import { extractLink } from "../../lib/rooms";
 import type { CompanionHandle } from "../../lib/use-companion";
 import { DiagnosticsSheet } from "./DiagnosticsSheet";
+import { AgentChip } from "./AgentChip";
+import { AgentsEntry } from "./AgentsSheet";
 import { DevicesSheet } from "./DevicesSheet";
 import { FanoutChip, FanoutGroups } from "./FanoutSheet";
 import { InboxEntry } from "./InboxSheet";
@@ -211,6 +213,7 @@ export function CompanionCard({ companion, push, onJoin, onPair, onUnpair }: Com
 											variant="card"
 										/>
 									)}
+									{snap.canForeign && <AgentsEntry client={client} variant="card" />}
 								</>
 							)}
 						</div>
@@ -248,6 +251,7 @@ export function CompanionCard({ companion, push, onJoin, onPair, onUnpair }: Com
 					canStart={snap.canStart}
 					canSearch={snap.canSearch}
 					canGitFlow={snap.canGitFlow}
+					canForeign={snap.canForeign}
 					onOpenHost={open}
 					onOpenLink={onJoin}
 					onClose={() => setStatsSheet(null)}
@@ -324,6 +328,7 @@ export function HostList({
 							<span className="sh-recent-title">
 								<span className="sh-recent-name">{hostTitle(host)}</span>
 								{current && <span className="sh-chip">here</span>}
+								<AgentChip agent={host.agent} />
 								{host.sandboxed && <SandboxedChip />}
 								{host.fanout && <FanoutChip fanout={host.fanout} />}
 								{joining === host.instanceId && <LoaderCircle size={13} className="sh-spin" />}
@@ -377,6 +382,7 @@ export function IdleList({ idle, joining, disabled, onShare }: IdleListProps): R
 						<div className="sh-recent-join sh-idle-info" title={session.cwd}>
 							<span className="sh-recent-title">
 								<span className="sh-recent-name">{hostTitle(session)}</span>
+								<AgentChip agent={session.agent} />
 								{session.sandboxed && <SandboxedChip />}
 							</span>
 							<span className="sh-recent-meta">

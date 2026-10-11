@@ -163,18 +163,37 @@ export function lastAssistantSummary(entries: Entry[]): string | null {
 	return lastAssistantTurn(entries)?.summary ?? null;
 }
 
+/**
+ * Where vendor agent sessions keep their transcripts, beside omp's `sessionsDir` (`<config>/agent/sessions`): one flat file per
+ * session, `<sessionId>.jsonl`, in omp's entry schema. Never under `sessionsDir`, so omp's own resume does not list them.
+ */
+export function foreignTranscriptsDir(sessionsDir: string): string {
+	return path.join(path.dirname(sessionsDir), "collab-foreign", "sessions");
+}
+
 /** Session file path per session id; stable once a session exists. */
 const sessionFiles = new Map<string, string>();
 
+/** The file of an omp session, or of a vendor agent session (see {@link foreignTranscriptsDir}). */
 export async function findSessionFile(sessionsDir: string, sessionId: string): Promise<string | null> {
 	if (!SAFE_ID_RE.test(sessionId)) return null;
 	const cached = sessionFiles.get(sessionId);
 	if (cached && (await Bun.file(cached).exists())) return cached;
 	sessionFiles.delete(sessionId);
 	const glob = new Bun.Glob(`*/*_${sessionId}.jsonl`);
-	for await (const file of glob.scan({ cwd: sessionsDir, absolute: true })) {
-		sessionFiles.set(sessionId, file);
-		return file;
+	try {
+		for await (const file of glob.scan({ cwd: sessionsDir, absolute: true })) {
+			sessionFiles.set(sessionId, file);
+			return file;
+		}
+	} catch (err) {
+		// No sessions folder yet: omp never ran here, but vendor agent sessions may exist.
+		if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+	}
+	const foreign = path.join(foreignTranscriptsDir(sessionsDir), `${sessionId}.jsonl`);
+	if (await Bun.file(foreign).exists()) {
+		sessionFiles.set(sessionId, foreign);
+		return foreign;
 	}
 	return null;
 }
@@ -230,7 +249,8 @@ export interface SessionFile {
 	mtime: number;
 }
 
-async function sessionFilesOf(dir: string): Promise<SessionFile[]> {
+/** Session files of one folder (`.jsonl`, newest first). */
+export async function sessionFilesOf(dir: string): Promise<SessionFile[]> {
 	let names: string[];
 	try {
 		names = await fs.readdir(dir);

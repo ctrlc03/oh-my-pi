@@ -14,6 +14,7 @@
  */
 
 import type {
+	AgentRef,
 	AgentSnapshot,
 	AssistantMessage,
 	CollabCommand,
@@ -188,6 +189,8 @@ export interface GuestSnapshot {
 	models: readonly WireModel[] | null;
 	/** Profiles the host lets this writer switch to; null for view-only guests and hosts that predate `profiles`. The active one is `state.profile`. */
 	profiles: readonly WireProfile[] | null;
+	/** The vendor agent behind the session (Claude Code, Codex, …); null for an omp session and hosts that predate the field. */
+	agent: AgentRef | null;
 	/** Optional host capabilities from the latest welcome; `{}` until welcomed and on hosts that predate the field. */
 	features: Readonly<Partial<Record<CollabFeature, true>>>;
 	/** Slash commands the host lets this writer run (`/name args` as a prompt); `[]` for read-only links and hosts that predate `commands`. */
@@ -341,6 +344,7 @@ export class GuestClient {
 	#readOnly = false;
 	#models: readonly WireModel[] | null = null;
 	#profiles: readonly WireProfile[] | null = null;
+	#agent: AgentRef | null = null;
 	#features: Readonly<Partial<Record<CollabFeature, true>>> = NO_FEATURES;
 	#commands: readonly CollabCommand[] = NO_COMMANDS;
 	#rewindPreview: RewindPreview | null = null;
@@ -808,6 +812,7 @@ export class GuestClient {
 				this.#readOnly = frame.readOnly === true;
 				this.#models = frame.models ?? null;
 				this.#profiles = frame.profiles ?? null;
+				this.#agent = frame.agent ?? null;
 				this.#features = featureMap(frame.features);
 				this.#commands = frame.commands ?? NO_COMMANDS;
 				this.#clearUiRequests();
@@ -1220,6 +1225,7 @@ export class GuestClient {
 			queued: this.#queue,
 			models: this.#models,
 			profiles: this.#profiles,
+			agent: this.#agent,
 			features: this.#features,
 			commands: this.#commands,
 			followUps: this.#state?.followUps ?? NO_FOLLOW_UPS,

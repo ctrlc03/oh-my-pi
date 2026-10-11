@@ -61,7 +61,11 @@ export interface MockSearch {
 	answer(request: CompanionRequest): CompanionReply;
 }
 
-export function createMockSearch(hosts: readonly CompanionHost[]): MockSearch {
+export function createMockSearch(
+	hosts: readonly CompanionHost[],
+	/** More sessions, ended ones of the vendor agents. */
+	extra: () => { overview: SessionOverview; messages: CannedMessage[] }[] = () => [],
+): MockSearch {
 	const now = Date.now();
 	const everyone = (): { overview: SessionOverview; messages: CannedMessage[] }[] => [
 		...hosts.map((host, n) => ({
@@ -79,6 +83,7 @@ export function createMockSearch(hosts: readonly CompanionHost[]): MockSearch {
 				models: host.model === null ? [] : [host.model],
 				instanceId: host.instanceId,
 				live: "host" as const,
+				agent: host.agent,
 			},
 			messages: LIVE_MESSAGES,
 		})),
@@ -98,6 +103,7 @@ export function createMockSearch(hosts: readonly CompanionHost[]): MockSearch {
 			},
 			messages: session.messages,
 		})),
+		...extra(),
 	];
 	return {
 		capabilities: { canSearch: true },
@@ -130,6 +136,7 @@ export function createMockSearch(hosts: readonly CompanionHost[]): MockSearch {
 						time: now - (at + 1) * 60_000,
 						instanceId: overview.instanceId,
 						live: overview.live,
+						agent: overview.agent,
 					});
 				});
 			}

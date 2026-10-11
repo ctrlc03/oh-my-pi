@@ -1,6 +1,7 @@
 import type { CollabCommand, SessionCommand, SessionEntry, WireModel } from "@oh-my-pi/pi-wire";
 import {
 	Activity,
+	Bot,
 	Brain,
 	CalendarClock,
 	Copy,
@@ -46,6 +47,7 @@ import { setThemePreference, type ThemePreference, useThemePreference } from "..
 import type { CompanionHandle } from "../../lib/use-companion";
 import { usableCommands } from "../../lib/slash-menu";
 import { CommandPalette } from "./CommandPalette";
+import { AgentsSheet } from "./AgentsSheet";
 import { DevicesSheet } from "./DevicesSheet";
 import { DiagnosticsSheet } from "./DiagnosticsSheet";
 import { InboxSheet } from "./InboxSheet";
@@ -115,7 +117,7 @@ export interface PaletteHostProps {
 	onOpenAllSessions(initial: { mode: "sessions" | "messages"; query: string }): void;
 }
 
-type CompanionTool = "start" | "inbox" | "schedules" | "diagnostics" | "devices";
+type CompanionTool = "start" | "inbox" | "schedules" | "diagnostics" | "devices" | "agents";
 
 const THEMES: readonly { value: ThemePreference; label: string; Icon: LucideIcon }[] = [
 	{ value: "system", label: "Follow the system theme", Icon: Monitor },
@@ -398,6 +400,15 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 					icon: CalendarClock,
 					run: () => setTool("schedules"),
 				});
+			if (snap.canForeign)
+				list.push({
+					id: "app:agents",
+					title: "Agents: Claude Code, Codex, Cursor and more",
+					section: "Computer",
+					keywords: ["claude", "codex", "cursor", "grok", "opencode", "acp", "vendor", "install", "login"],
+					icon: Bot,
+					run: () => setTool("agents"),
+				});
 		}
 		if (control !== null) {
 			for (const model of control.models) {
@@ -471,6 +482,7 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 			)}
 			{tool === "diagnostics" && toolClient !== null && <DiagnosticsSheet client={toolClient} onClose={closeTool} />}
 			{tool === "devices" && toolClient !== null && <DevicesSheet client={toolClient} onClose={closeTool} />}
+			{tool === "agents" && toolClient !== null && <AgentsSheet client={toolClient} onClose={closeTool} />}
 		</>
 	);
 }

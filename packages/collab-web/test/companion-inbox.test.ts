@@ -146,3 +146,45 @@ describe("buildInbox", () => {
 		]);
 	});
 });
+
+describe("a vendor agent's session", () => {
+	let root: string;
+	const sessionId = "claude-0123456789abcdef";
+	const claude = { id: "claude", name: "Claude Code" };
+
+	beforeAll(async () => {
+		root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "companion-inbox-foreign-")));
+		const transcripts = path.join(root, "agent", "collab-foreign", "sessions");
+		await fs.mkdir(transcripts, { recursive: true });
+		const lines = [user(60_000), ask("q", 30_000, [{ question: "Which branch?", options: [{ label: "main" }] }])];
+		await fs.writeFile(
+			path.join(transcripts, `${sessionId}.jsonl`),
+			`${lines.map(line => JSON.stringify(line)).join("\n")}\n`,
+		);
+	});
+
+	afterAll(async () => {
+		await fs.rm(root, { recursive: true, force: true });
+	});
+
+	it("is listed with its agent and the question its transcript holds", async () => {
+		const sessionsDir = path.join(root, "agent", "sessions");
+		const items = await buildInbox(
+			[host("claude", { sessionId, inputRequired: true, agent: claude })],
+			id => readSessionTail(sessionsDir, id),
+			NOW,
+		);
+		expect(items).toEqual([
+			{
+				instanceId: "inst-claude",
+				title: "Session claude",
+				cwd: "/work/claude",
+				agent: claude,
+				kind: "input",
+				text: "Which branch?",
+				options: ["main"],
+				at: NOW - 30_000,
+			},
+		]);
+	});
+});

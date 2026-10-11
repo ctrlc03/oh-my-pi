@@ -3,7 +3,7 @@
  * companion for, and what the next draft keeps after a session was started in the background.
  */
 
-import type { CompanionClient } from "./companion";
+import type { CompanionClient, ForeignPermission } from "./companion";
 import { scratchLabel } from "./scratch";
 
 /** `cwd` of a draft without a project: the companion makes a folder for the session. */
@@ -19,6 +19,12 @@ export interface StartDraft {
 	/** The worktree's branch name; empty for the default. */
 	branch: string;
 	prompt: string;
+	/** Id of the vendor agent to run (`claude`, `custom:<slug>`, …); null: omp. */
+	agent: string | null;
+	/** A vendor model id of `agent`; empty: the agent's default. Ignored for omp. */
+	model: string;
+	/** How a foreign session answers tool-permission requests. Ignored for omp. */
+	permission: ForeignPermission;
 }
 
 /** What `CompanionClient.startSession` is asked for. */
@@ -30,6 +36,10 @@ export interface StartTarget {
 	worktree?: { branch?: string };
 	/** A session without a project; `hint` names its folder. */
 	scratch?: { hint?: string };
+	/** Vendor agent id; absent: omp. */
+	agent?: string;
+	model?: string;
+	permission?: ForeignPermission;
 }
 
 export type StartOptions = NonNullable<Parameters<CompanionClient["startSession"]>[1]>;
@@ -53,6 +63,9 @@ export function newSessionTarget(draft: StartDraft): StartTarget {
 		sandboxed: draft.sandboxed,
 		worktree: draft.worktree && !isProjectless(draft.cwd) ? { branch: draft.branch.trim() || undefined } : undefined,
 		scratch: draft.cwd === NO_PROJECT ? { hint } : undefined,
+		...(draft.agent === null
+			? {}
+			: { agent: draft.agent, model: draft.model || undefined, permission: draft.permission }),
 	};
 }
 
@@ -63,6 +76,9 @@ export function startOptions(target: StartTarget, extra: { prompt?: string; forc
 		sandboxed: target.sandboxed || undefined,
 		worktree: target.worktree,
 		scratch: target.scratch,
+		agent: target.agent,
+		model: target.model,
+		permission: target.permission,
 		prompt: extra.prompt,
 		force: extra.force || undefined,
 	};

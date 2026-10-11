@@ -82,6 +82,51 @@
 	overflow: auto;
 }
 
+.sh-settle-result {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 10px 12px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-settle-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+}
+
+.sh-settle-status {
+	flex: none;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.sh-settle-ok {
+	color: var(--ok);
+}
+
+.sh-settle-failed {
+	color: var(--err);
+}
+
+.sh-settle-timeout {
+	color: var(--warn);
+}
+
+.sh-settle-skipped {
+	color: var(--fg-muted);
+}
+
+.sh-settle-name {
+	min-width: 0;
+	font: 400 12px / 1.4 var(--font-mono);
+	overflow-wrap: anywhere;
+}
+
 .sh-review-confirm-actions {
 	display: flex;
 	justify-content: flex-end;

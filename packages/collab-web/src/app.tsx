@@ -479,6 +479,7 @@ function Session({
 			client: companionClient,
 			live: companion?.snap.phase === "live",
 			orgRev: companion?.snap.sessionOrgRev ?? null,
+			orderSessions: companion?.snap.canOrderSessions === true,
 		},
 		rooms,
 	);

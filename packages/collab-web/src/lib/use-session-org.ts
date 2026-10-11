@@ -4,12 +4,15 @@ import type { RecentRoom } from "./rooms";
 import {
 	applyOrg,
 	autoSettleIdle,
+	changedEntries,
 	mergeOrg,
 	type OrgAction,
 	type OrgDoc,
+	type OrgEntry,
 	type OrgSettings,
 	parseOrg,
 	pruneOrg,
+	restoreEntries,
 	roomOrgKey,
 	sameOrg,
 	withSettings,
@@ -27,6 +30,15 @@ export interface SessionOrgControl {
 	/** The document is kept on the paired computer and follows the user across devices. */
 	synced: boolean;
 	act(key: string, action: OrgAction): void;
+	/**
+	 * Change the document with `edit` (given the document and the clock); resolves to the entries it changed as
+	 * they were, for {@link restore}. Empty when nothing changed.
+	 */
+	edit(edit: (doc: OrgDoc, now: number) => OrgDoc): Record<string, OrgEntry | null>;
+	/** Put entries back as {@link edit} reported them. */
+	restore(prev: Readonly<Record<string, OrgEntry | null>>): void;
+	/** The active order and the per-session auto-settle choice are kept: always on this device, and with a paired computer only when it keeps them too. */
+	extras: boolean;
 	setSettings(patch: Partial<Pick<OrgSettings, "idleDays" | "settleOnPr">>): void;
 }
 
@@ -35,6 +47,8 @@ export interface SessionOrgSource {
 	/** The computer answers, and keeps a document ({@link CompanionSnapshot.sessionOrgRev}). */
 	live: boolean;
 	orgRev: number | null;
+	/** The computer keeps the active order and the auto-settle choice ({@link CompanionSnapshot.canOrderSessions}). */
+	orderSessions: boolean;
 }
 
 /**
@@ -45,7 +59,7 @@ export interface SessionOrgSource {
  * computer applies it.
  */
 export function useSessionOrg(source: SessionOrgSource, rooms: readonly RecentRoom[]): SessionOrgControl {
-	const { client, live, orgRev } = source;
+	const { client, live, orgRev, orderSessions } = source;
 	const [doc, setDoc] = useState<OrgDoc>(() => parseOrg(readJson(STORAGE_KEY)));
 	const [now, setNow] = useState(() => Date.now());
 	const docRef = useRef(doc);
@@ -105,11 +119,25 @@ export function useSessionOrg(source: SessionOrgSource, rooms: readonly RecentRo
 		(key: string, action: OrgAction): void => change(applyOrg(docRef.current, key, action, Date.now())),
 		[change],
 	);
+	const edit = useCallback(
+		(run: (doc: OrgDoc, at: number) => OrgDoc): Record<string, OrgEntry | null> => {
+			const next = run(docRef.current, Date.now());
+			const prev = changedEntries(docRef.current, next);
+			change(next);
+			return prev;
+		},
+		[change],
+	);
+	const restore = useCallback(
+		(prev: Readonly<Record<string, OrgEntry | null>>): void =>
+			change(restoreEntries(docRef.current, prev, Date.now())),
+		[change],
+	);
 	const setSettings = useCallback(
 		(patch: Partial<Pick<OrgSettings, "idleDays" | "settleOnPr">>): void =>
 			change(withSettings(docRef.current, patch, Date.now())),
 		[change],
 	);
 
-	return { doc, now, synced, act, setSettings };
+	return { doc, now, synced, act, edit, restore, extras: !synced || orderSessions, setSettings };
 }

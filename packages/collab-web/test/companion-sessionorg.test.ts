@@ -8,10 +8,13 @@ import {
 	type OrgFile,
 	type OrgSession,
 	ORG_PR_CHECK_MS,
+	parseOrgFile,
 	parsePrDone,
+	type SettledSession,
+	settleTransitions,
 	saveOrgFile,
 } from "../scripts/companion-sessionorg";
-import { applyOrg, DAY_MS, emptyOrg, statusOf, withSettings } from "../src/lib/session-org";
+import { applyOrg, DAY_MS, emptyOrg, type OrgDoc, statusOf, withSettings } from "../src/lib/session-org";
 
 const T0 = Date.UTC(2026, 9, 10, 12);
 const dirs: string[] = [];
@@ -38,10 +41,11 @@ const session = (id: string, over: Partial<OrgSession> = {}): OrgSession => ({
 function harness(initial?: OrgFile, prDone: Record<string, number> = {}) {
 	const clock = { now: T0 };
 	const saved: OrgFile[] = [];
+	const settled: SettledSession[] = [];
 	let changes = 0;
 	const org = createSessionOrg({
 		now: () => clock.now,
-		initial: initial ?? { doc: emptyOrg(), rev: 0, activity: {} },
+		initial: initial ?? { doc: emptyOrg(), rev: 0, activity: {}, settled: {} },
 		save: async file => {
 			saved.push(file);
 		},
@@ -50,11 +54,14 @@ function harness(initial?: OrgFile, prDone: Record<string, number> = {}) {
 		onChange: () => {
 			changes++;
 		},
+		onSettled: sessions => {
+			settled.push(...sessions);
+		},
 		onError: err => {
 			throw err;
 		},
 	});
-	return { org, clock, saved, changes: () => changes };
+	return { org, clock, saved, settled, changes: () => changes };
 }
 
 describe("sync", () => {
@@ -97,7 +104,7 @@ describe("sync", () => {
 		expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
 
 		await Bun.write(file, "{ not json");
-		expect(await loadOrgFile(file)).toEqual({ doc: emptyOrg(), rev: 0, activity: {} });
+		expect(await loadOrgFile(file)).toEqual({ doc: emptyOrg(), rev: 0, activity: {}, settled: {} });
 		expect((await loadOrgFile(`${file}.missing`)).rev).toBe(0);
 	});
 });
@@ -107,6 +114,7 @@ describe("auto-settle on the computer", () => {
 		doc: withSettings(emptyOrg(), { idleDays: days }, T0 - 100 * DAY_MS),
 		rev: 0,
 		activity: {},
+		settled: {},
 	});
 
 	it("settles a session that has not worked for the configured days, but not one that works", async () => {
@@ -161,6 +169,7 @@ describe("auto-settle on the computer", () => {
 		doc: withSettings(emptyOrg(), { settleOnPr: true }, T0 - 100 * DAY_MS),
 		rev: 0,
 		activity: {},
+		settled: {},
 	});
 
 	it("settles a session whose pull request merged, once per check interval", async () => {
@@ -189,7 +198,7 @@ describe("auto-settle on the computer", () => {
 		let reads = 0;
 		const h = createSessionOrg({
 			now: () => T0,
-			initial: { doc: emptyOrg(), rev: 0, activity: {} },
+			initial: { doc: emptyOrg(), rev: 0, activity: {}, settled: {} },
 			save: async () => {},
 			readPrDone: async () => {
 				reads++;
@@ -219,5 +228,76 @@ describe("parsePrDone", () => {
 		expect(parsePrDone([])).toBeNull();
 		expect(parsePrDone({})).toBeNull();
 		expect(parsePrDone([{ state: "MERGED", mergedAt: "nonsense" }])).toBeNull();
+	});
+});
+
+describe("settle transitions", () => {
+	const settledBy = (doc = emptyOrg(), key = "a", at = T0): OrgDoc => applyOrg(doc, key, { type: "settle" }, at);
+
+	it("reports a settle from a device once, not when the same document arrives again", async () => {
+		const h = harness();
+		const phone = settledBy();
+		await h.org.sync(phone);
+		await h.org.sync(phone);
+		// Another device that already merged it sends the same entry back.
+		await h.org.sync(applyOrg(phone, "b", { type: "pin" }, T0 + 1));
+		expect(h.settled).toEqual([{ sessionId: "a", at: T0 }]);
+	});
+
+	it("reports a re-settle after an un-settle, and each session on its own", async () => {
+		const h = harness();
+		await h.org.sync(settledBy());
+		const undone = applyOrg(h.org.file().doc, "a", { type: "unsettle" }, T0 + 10);
+		await h.org.sync(undone);
+		expect(h.settled).toHaveLength(1);
+		await h.org.sync(applyOrg(undone, "a", { type: "settle" }, T0 + 20));
+		await h.org.sync(applyOrg(h.org.file().doc, "b", { type: "settle" }, T0 + 30));
+		expect(h.settled).toEqual([
+			{ sessionId: "a", at: T0 },
+			{ sessionId: "a", at: T0 + 20 },
+			{ sessionId: "b", at: T0 + 30 },
+		]);
+	});
+
+	it("reports the idle auto-settle and the pull request auto-settle", async () => {
+		const idle = harness({
+			doc: withSettings(emptyOrg(), { idleDays: 3 }, T0 - 100 * DAY_MS),
+			rev: 0,
+			activity: {},
+			settled: {},
+		});
+		await idle.org.tick([session("quiet")]);
+		idle.clock.now += 4 * DAY_MS;
+		await idle.org.tick([session("quiet")]);
+		expect(idle.settled).toEqual([{ sessionId: "quiet", at: idle.clock.now }]);
+
+		const pr = harness(
+			{ doc: withSettings(emptyOrg(), { settleOnPr: true }, T0 - 100 * DAY_MS), rev: 0, activity: {}, settled: {} },
+			{ "/work/done": T0 - 1000 },
+		);
+		await pr.org.tick([session("done")]);
+		await pr.org.tick([session("done")]);
+		expect(pr.settled).toEqual([{ sessionId: "done", at: T0 }]);
+	});
+
+	it("does not report again after a restart: the handled marker is persisted with the document", async () => {
+		const file = await tempFile();
+		const first = harness();
+		await first.org.sync(settledBy());
+		await saveOrgFile(file, first.saved.at(-1) as OrgFile);
+
+		const second = harness(await loadOrgFile(file));
+		await second.org.sync(settledBy());
+		await second.org.tick([session("a")]);
+		expect(first.settled).toHaveLength(1);
+		expect(second.settled).toEqual([]);
+	});
+
+	it("treats what is settled in a file from before settle cleanup as handled, and ignores rooms", () => {
+		const doc = settledBy(settledBy(emptyOrg(), "old"), "room:abc", T0 + 1);
+		expect(parseOrgFile({ doc, rev: 3, activity: {} }).settled).toEqual({ old: T0 });
+		expect(settleTransitions(doc, {}).events).toEqual([{ sessionId: "old", at: T0 }]);
+		// A marker for a session no longer settled is dropped, so settling it again is news.
+		expect(settleTransitions(emptyOrg(), { old: T0 }).handled).toEqual({});
 	});
 });

@@ -11,8 +11,10 @@ import {
 	type GitFlowFile,
 	parseGitFlowFile,
 	parseGitFlowSettings,
+	projectSettleStatuses,
 	projectSetupStatuses,
 	replaceSettings,
+	runWorktreeSettle,
 	runWorktreeSetup,
 	setupHash,
 	sweepWorktrees,
@@ -112,6 +114,7 @@ describe("parseGitFlowSettings", () => {
 				branchPrefix: "feature",
 				worktreesDir: `~/wt/../trees`,
 				setupScript: "  bun install  ",
+				settleScript: "  cargo clean ",
 				cleanup: { mode: "inactive", days: 30 },
 				messageModel: "",
 			},
@@ -121,6 +124,7 @@ describe("parseGitFlowSettings", () => {
 			branchPrefix: "feature/",
 			worktreesDir: path.join(os.homedir(), "trees"),
 			setupScript: "bun install",
+			settleScript: "cargo clean",
 			cleanup: { mode: "inactive", days: 30 },
 			messageModel: DEFAULT_GIT_FLOW_SETTINGS.messageModel,
 		});
@@ -139,6 +143,7 @@ describe("parseGitFlowSettings", () => {
 			{ cleanup: { mode: "merged", days: 0 } },
 			{ messageModel: "--thinking" },
 			{ setupScript: "x".repeat(3_000) },
+			{ settleScript: "x".repeat(3_000) },
 		]) {
 			expect(() => parseGitFlowSettings({ ...good, ...bad }, true)).toThrow("invalid");
 		}
@@ -148,7 +153,12 @@ describe("parseGitFlowSettings", () => {
 describe("worktree locations", () => {
 	it("keeps the folder worktrees were made under removable after the location changes", () => {
 		const defaultDir = path.join(tmp, "default");
-		const first: GitFlowFile = { settings: DEFAULT_GIT_FLOW_SETTINGS, previousDirs: [], trustedSetups: {} };
+		const first: GitFlowFile = {
+			settings: DEFAULT_GIT_FLOW_SETTINGS,
+			previousDirs: [],
+			trustedSetups: {},
+			trustedSettles: {},
+		};
 		const moved = replaceSettings(
 			first,
 			{ ...DEFAULT_GIT_FLOW_SETTINGS, worktreesDir: path.join(tmp, "elsewhere") },
@@ -273,7 +283,12 @@ describe("runWorktreeSetup", () => {
 
 describe("approving a repository's setup script", () => {
 	const script = "echo hi\n";
-	const base: GitFlowFile = { settings: DEFAULT_GIT_FLOW_SETTINGS, previousDirs: [], trustedSetups: {} };
+	const base: GitFlowFile = {
+		settings: DEFAULT_GIT_FLOW_SETTINGS,
+		previousDirs: [],
+		trustedSetups: {},
+		trustedSettles: {},
+	};
 
 	async function withScript<T>(body: string, use: () => Promise<T>): Promise<T> {
 		await fs.mkdir(path.join(repo, ".omp"), { recursive: true });
@@ -443,5 +458,133 @@ describe("createWorktreeSweeper", () => {
 			},
 			() => undefined,
 		);
+	});
+});
+
+describe("settle cleanup of a worktree", () => {
+	const none = {};
+	const writeScript = async (body: string): Promise<string> => {
+		await fs.mkdir(path.join(repo, ".omp"), { recursive: true });
+		await fs.writeFile(path.join(repo, ".omp", "worktree-settle"), body);
+		return setupHash(body);
+	};
+	const clearScript = () => fs.rm(path.join(repo, ".omp"), { recursive: true, force: true });
+	afterEach(clearScript);
+
+	it("runs in the tree with its environment, and does nothing without a command", async () => {
+		const created = await createWorktree(repo, trees, "settle-env");
+		const run = await runWorktreeSettle(created, {
+			command: 'echo "$OMP_WORKTREE_PATH $OMP_WORKTREE_BRANCH $OMP_REPO_ROOT"; pwd',
+			trusted: none,
+		});
+		expect(run.unapproved).toBeNull();
+		expect(run.outcome).toMatchObject({ source: "settings", status: "ok", code: 0 });
+		expect(run.outcome?.output).toBe(`${created.path} settle-env ${created.root}\n${created.path}`);
+
+		expect(await runWorktreeSettle(created, { command: "", trusted: none })).toEqual({
+			outcome: null,
+			unapproved: null,
+		});
+	});
+
+	it("runs the repository's script only once the user approved exactly its content", async () => {
+		const created = await createWorktree(repo, trees, "settle-gate");
+		const hash = await writeScript("echo project\n");
+		const base = { command: "echo settings" };
+
+		// Not approved: the companion's command runs, the script is reported for review and never run.
+		const unapproved = await runWorktreeSettle(created, { ...base, trusted: none });
+		expect(unapproved.outcome).toMatchObject({ source: "settings", output: "settings" });
+		expect(unapproved.unapproved?.hash).toBe(hash);
+		expect(await runWorktreeSettle(created, { command: "", trusted: none })).toMatchObject({
+			outcome: null,
+		});
+
+		// Approved: the script runs instead of the command.
+		const approved = await runWorktreeSettle(created, { ...base, trusted: { [repo]: hash } });
+		expect(approved).toMatchObject({
+			outcome: { source: "project", status: "ok", output: "project" },
+			unapproved: null,
+		});
+
+		// Edited after approval (a pull, an agent): the approval no longer applies.
+		await writeScript("echo pwned\n");
+		const changed = await runWorktreeSettle(created, { ...base, trusted: { [repo]: hash } });
+		expect(changed.outcome).toMatchObject({ source: "settings", output: "settings" });
+		expect(changed.unapproved?.script).toBe("echo pwned\n");
+	});
+
+	it("reports a failing command with the end of its output, without terminal colours, and never rejects", async () => {
+		const created = await createWorktree(repo, trees, "settle-fail");
+		const run = await runWorktreeSettle(created, {
+			command: "printf '\\033[31mred\\033[0m\\n'; echo boom >&2; exit 4",
+			trusted: none,
+		});
+		expect(run.outcome).toMatchObject({ status: "failed", code: 4 });
+		expect(run.outcome?.output).toContain("red");
+		expect(run.outcome?.output).toContain("boom");
+		expect(run.outcome?.output).not.toContain("\u001b");
+
+		const long = await runWorktreeSettle(created, {
+			command: "yes line | head -n 5000",
+			trusted: none,
+		});
+		expect(long.outcome?.status).toBe("ok");
+		expect(long.outcome?.output.length).toBeLessThanOrEqual(4_000);
+
+		// A tree that is gone cannot start a command.
+		const missing = await runWorktreeSettle(
+			{ ...created, path: path.join(created.path, "gone") },
+			{ command: "true", trusted: none },
+		);
+		expect(missing.outcome).toMatchObject({ status: "failed", code: null });
+	});
+
+	it("stops a command that outlives the timeout, and what it started", async () => {
+		const created = await createWorktree(repo, trees, "settle-timeout");
+		const started = Date.now();
+		const run = await runWorktreeSettle(created, {
+			command: "echo started; sleep 30 & sleep 30; echo unreachable",
+			trusted: none,
+			timeoutMs: 300,
+		});
+		expect(Date.now() - started).toBeLessThan(5_000);
+		expect(run.outcome).toMatchObject({ status: "timeout", code: null });
+		expect(run.outcome?.output).toContain("started");
+		expect(run.outcome?.output).not.toContain("unreachable");
+	});
+
+	it("approves a settle script separately from the setup script", async () => {
+		const script = "echo bye\n";
+		await writeScript(script);
+		const base: GitFlowFile = {
+			settings: DEFAULT_GIT_FLOW_SETTINGS,
+			previousDirs: [],
+			trustedSetups: {},
+			trustedSettles: {},
+		};
+		const known = new Set([repo]);
+		const approved = await applySetupTrust(base, known, { root: repo, hash: setupHash(script), kind: "settle" });
+		expect(approved.trustedSettles).toEqual({ [repo]: setupHash(script) });
+		expect(approved.trustedSetups).toEqual({});
+		expect(await projectSettleStatuses(approved, [])).toEqual([
+			{ root: repo, script, hash: setupHash(script), trusted: true, approved: true },
+		]);
+		expect(await projectSetupStatuses(approved, [])).toEqual([]);
+
+		// There is no setup script in the repository to approve with that hash.
+		await expect(applySetupTrust(base, known, { root: repo, hash: setupHash(script) })).rejects.toThrow(
+			"no setup script",
+		);
+		await expect(applySetupTrust(base, known, { root: repo, hash: "x", kind: "other" })).rejects.toThrow("invalid");
+		await expect(
+			applySetupTrust(base, new Set(), { root: repo, hash: setupHash(script), kind: "settle" }),
+		).rejects.toThrow("unknown");
+		const withdrawn = await applySetupTrust(approved, known, { root: repo, hash: null, kind: "settle" });
+		expect(withdrawn.trustedSettles).toEqual({});
+
+		const parsed = parseGitFlowFile({ trustedSettles: { [repo]: setupHash(script), relative: setupHash(script) } });
+		expect(parsed.trustedSettles).toEqual({ [repo]: setupHash(script) });
+		expect(replaceSettings(parsed, DEFAULT_GIT_FLOW_SETTINGS, "/d").trustedSettles).toEqual(parsed.trustedSettles);
 	});
 });

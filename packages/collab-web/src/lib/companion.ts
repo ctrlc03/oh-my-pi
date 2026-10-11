@@ -208,6 +208,8 @@ export interface GitFlowSettings {
 	worktreesDir: string | null;
 	/** Shell command run once in each new worktree; a repository's own `.omp/worktree-setup` runs instead only once approved. Empty: none. */
 	setupScript: string;
+	/** Shell command run in a worktree the companion created when its session settles; a repository's own `.omp/worktree-settle` runs instead only once approved. Empty: none. Companions that predate it omit it (and `GitFlowSettingsReply.settleCleanup`). */
+	settleScript: string;
 	/** `merged`: remove a worktree once its pull request merged; `inactive`: once untouched for `days`. Never one with uncommitted changes or a running omp. */
 	cleanup: { mode: "off" | "merged" | "inactive"; days: number };
 	/** Model id or role (`@smol`) for the text. */
@@ -228,8 +230,29 @@ export interface WorktreeSetupStatus {
 
 export interface GitSettingsOptions {
 	settings?: GitFlowSettings;
-	trust?: { root: string; hash: string | null };
+	/** `kind` picks the script: the repository's `.omp/worktree-setup` (default) or `.omp/worktree-settle`. */
+	trust?: { root: string; hash: string | null; kind?: "setup" | "settle" };
 	sweep?: boolean;
+}
+
+/** What the settle command last did in one worktree. */
+export interface SettleCleanupResult {
+	/** The worktree folder. */
+	path: string;
+	branch: string;
+	/** The session whose settling ran it. */
+	sessionId: string;
+	/** The companion's command, or the repository's approved `.omp/worktree-settle`. */
+	source: "settings" | "project";
+	/** `skipped`: nothing ran, because a sandboxed session worked in the folder (see `output`). */
+	status: "ok" | "failed" | "timeout" | "skipped";
+	/** Exit code; null when it timed out, was skipped or never started. */
+	code: number | null;
+	/** ms since epoch. */
+	startedAt: number;
+	durationMs: number;
+	/** The end of what it printed (stdout and stderr), bounded. */
+	output: string;
 }
 
 export interface GitFlowSettingsReply {
@@ -240,6 +263,8 @@ export interface GitFlowSettingsReply {
 	swept?: string[];
 	/** Repository setup scripts the companion has met: approved ones, and ones a start did not run for lack of approval. */
 	projects: WorktreeSetupStatus[];
+	/** Present on companions that run `settleScript`: the repository `.omp/worktree-settle` scripts they have met (approved the same way as setup scripts), and the latest result per worktree, newest first. */
+	settleCleanup?: { projects: WorktreeSetupStatus[]; results: SettleCleanupResult[] };
 }
 
 export type GithubKind = "issue" | "pr";
@@ -852,6 +877,9 @@ export type CompanionRequest =
 	 * Start omp in `cwd` (resuming session `resume` when given), hosting with control access;
 	 * `sandboxed`: file read/search/edit tools only, with writes confined to `cwd` (needs `canSandbox`);
 	 * `worktree` (new sessions inside a git repository only): run on a new branch in its own git worktree.
+	 * `scratch` (new sessions only, needs `canScratch`): run in a fresh folder under the computer's omp config dir instead of `cwd`
+	 * (send an empty `cwd`); `hint`, the start of the first prompt, names it. `prompt` (needs `canBackgroundStart`) is the first
+	 * message omp works on as soon as it is up, so the session need not be opened to begin.
 	 * Resuming a session another omp has open is refused (an error with `openElsewhere`) unless `force`;
 	 * a session that is already hosting is answered with its host.
 	 */
@@ -862,6 +890,8 @@ export type CompanionRequest =
 			resume?: string;
 			sandboxed?: boolean;
 			worktree?: { branch?: string };
+			scratch?: { hint?: string };
+			prompt?: string;
 			force?: boolean;
 	  }
 	/** Make an idle session host collab; answered with a `link`. */
@@ -880,7 +910,7 @@ export type CompanionRequest =
 	| { t: "worktree-remove"; reqId: number; path: string }
 	/** Commit message (`commit`) and / or pull request title and body (`pr`) written by a model from the changes, for the person to edit; answered with `git-message` (needs `canGitFlow`). */
 	| { t: "git-message"; reqId: number; instanceId: string; commit: boolean; pr: boolean }
-	/** Read (no `settings`) or replace the worktree and git flow settings; `trust` approves (`hash` of the script that was shown) or withdraws (`hash` null) a repository's `.omp/worktree-setup`; `sweep` also runs the worktree cleanup now; answered with `git-settings` (needs `canGitFlow`). */
+	/** Read (no `settings`) or replace the worktree and git flow settings; `trust` approves (`hash` of the script that was shown) or withdraws (`hash` null) a repository's `.omp/worktree-setup` (or, with `kind: "settle"`, `.omp/worktree-settle`); `sweep` also runs the worktree cleanup now; answered with `git-settings` (needs `canGitFlow`). */
 	| ({ t: "git-settings"; reqId: number } & GitSettingsOptions)
 	/** Models `omp` can run (needs `canFanout`). */
 	| { t: "fanout-models"; reqId: number }
@@ -1021,8 +1051,14 @@ export type CompanionReply =
 			canRun?: boolean;
 			/** The companion answers `session-search`. */
 			canSearch?: boolean;
+			/** `start` takes `scratch`: a session without a project, in a fresh folder under the omp config dir. */
+			canScratch?: boolean;
+			/** `start` takes `prompt` (delivered at launch) and tells simultaneous starts in one folder apart: sessions can be started in the background. */
+			canBackgroundStart?: boolean;
 			/** Revision of the computer's session organisation (pin, snooze, settle); present when it keeps one. A new number means fetch it again. */
 			sessionOrgRev?: number;
+			/** The companion's session organisation keeps the active order (`rank`) and the per-session auto-settle opt-out. */
+			canOrderSessions?: boolean;
 			/** The companion can transcribe voice recordings, and with which model; absent when it cannot. */
 			transcribe?: TranscribeInfo;
 			/** Power of the computer; absent off macOS and from companions that predate it. */
@@ -1238,8 +1274,14 @@ export interface CompanionSnapshot {
 	canRun: boolean;
 	/** The companion answers `session-search` (message search across sessions). */
 	canSearch: boolean;
+	/** The companion can start a session without a project (`start` with `scratch`). */
+	canScratch: boolean;
+	/** The companion can start sessions in the background (`start` with `prompt`). */
+	canBackgroundStart: boolean;
 	/** Revision of the computer's session organisation document; null when the companion keeps none. */
 	sessionOrgRev: number | null;
+	/** The computer's session organisation keeps the active order and the per-session auto-settle opt-out; older ones drop both. */
+	canOrderSessions: boolean;
 	/** Voice input on the computer; null when the companion cannot transcribe. */
 	transcribe: TranscribeInfo | null;
 	/** Power of the computer, while the companion reports it. */
@@ -1304,7 +1346,10 @@ export class CompanionClient {
 		canDownload: false,
 		canRun: false,
 		canSearch: false,
+		canScratch: false,
+		canBackgroundStart: false,
 		sessionOrgRev: null,
+		canOrderSessions: false,
 		transcribe: null,
 		power: null,
 		vapidKey: null,
@@ -1709,10 +1754,19 @@ export class CompanionClient {
 	/**
 	 * Start omp in `cwd` (resuming session `resume`); resolves with its host `instanceId` once it is listed.
 	 * `worktree` (new sessions only): work on a new branch in its own git worktree instead of `cwd`.
+	 * `scratch` (needs `canScratch`): no project; `cwd` is ignored and the computer makes a folder named after `scratch.hint`.
+	 * `prompt` (needs `canBackgroundStart`): the first message, sent as soon as omp is up.
 	 */
 	async startSession(
 		cwd: string,
-		options: { resume?: string; sandboxed?: boolean; worktree?: { branch?: string }; force?: boolean } = {},
+		options: {
+			resume?: string;
+			sandboxed?: boolean;
+			worktree?: { branch?: string };
+			scratch?: { hint?: string };
+			prompt?: string;
+			force?: boolean;
+		} = {},
 	): Promise<string> {
 		const timeout = options.worktree ? WORKTREE_START_TIMEOUT_MS : START_TIMEOUT_MS;
 		return (await this.#call({ t: "start", cwd, ...options }, "started", timeout)).instanceId;
@@ -1871,7 +1925,10 @@ export class CompanionClient {
 				canRun: frame.canRun ?? false,
 				canGitFlow: frame.canGitFlow ?? false,
 				canSearch: frame.canSearch ?? false,
+				canScratch: frame.canScratch ?? false,
+				canBackgroundStart: frame.canBackgroundStart ?? false,
 				sessionOrgRev: frame.sessionOrgRev ?? null,
+				canOrderSessions: frame.canOrderSessions ?? false,
 				transcribe: frame.transcribe ?? null,
 				power: frame.power ?? null,
 				vapidKey: frame.vapidKey,

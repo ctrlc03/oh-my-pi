@@ -1,5 +1,7 @@
 /** Small pure formatting helpers shared across collab-web components. */
 
+import { scratchLabel } from "./scratch";
+
 /** HTML-escape text destined for `dangerouslySetInnerHTML`. */
 export function escapeHtml(s: string): string {
 	return s
@@ -78,9 +80,11 @@ export function fmtPercent(p: number | null | undefined): string {
 	return `${Math.round(Math.min(100, Math.max(0, p)))}%`;
 }
 
-/** Home-relative, middle-elided path: "~/…/packages/collab-web". */
+/** Home-relative, middle-elided path: "~/…/packages/collab-web"; a scratch session's folder reads "Scratch · convert pngs". */
 export function shortenPath(p: string): string {
 	if (typeof p !== "string" || p.length === 0) return "";
+	const scratch = scratchLabel(p);
+	if (scratch !== null) return scratch;
 	let out = p.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
 	const segs = out.split("/");
 	if (segs.length > 4) out = `${segs[0]}/…/${segs.slice(-2).join("/")}`;

@@ -2,7 +2,13 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { SANDBOX_EXEC, type SandboxPaths, sandboxedPids, sandboxProfile } from "../scripts/companion-sandbox";
+import {
+	COMPANION_RUN_DIR,
+	SANDBOX_EXEC,
+	type SandboxPaths,
+	sandboxedPids,
+	sandboxProfile,
+} from "../scripts/companion-sandbox";
 
 const canRun = process.platform === "darwin" && (await Bun.file(SANDBOX_EXEC).exists());
 
@@ -77,6 +83,17 @@ describe.skipIf(!canRun)("sandboxProfile under sandbox-exec", () => {
 		expect(await sandboxed(`cat ${q(path.join(paths.folder, "notes.txt"))}`)).toBe(0);
 		expect(await sandboxed(`cat ${q(path.join(paths.home, ".ssh", "id_ed25519"))}`)).not.toBe(0);
 		expect(await sandboxed(`cat ${q(paths.companionState)}`)).not.toBe(0);
+	});
+
+	it("keeps the folder start prompts are handed over in unreadable and unwritable, while the rest of run/ stays writable", async () => {
+		const handOver = path.join(paths.configDir, COMPANION_RUN_DIR);
+		await fs.mkdir(handOver, { recursive: true });
+		await fs.writeFile(path.join(handOver, "omp-collab-prompt-1.txt"), "do the thing\n");
+		expect(await sandboxed(`cat ${q(path.join(handOver, "omp-collab-prompt-1.txt"))}`)).not.toBe(0);
+		expect(await sandboxed(`echo swapped > ${q(path.join(handOver, "omp-collab-prompt-1.txt"))}`)).not.toBe(0);
+		expect(await sandboxed(`touch ${q(path.join(handOver, "omp-collab-prompt-2.txt"))}`)).not.toBe(0);
+		expect(await Bun.file(path.join(handOver, "omp-collab-prompt-1.txt")).text()).toBe("do the thing\n");
+		expect(await sandboxed(`touch ${q(path.join(paths.configDir, "run", "other.pid"))}`)).toBe(0);
 	});
 });
 

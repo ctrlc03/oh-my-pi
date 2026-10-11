@@ -54,6 +54,11 @@ export interface TmuxLaunch {
 	resume?: string;
 	/** Run omp sandboxed to `cwd` with file tools only; `folder` is filled in with the resolved cwd. */
 	sandbox?: Omit<SandboxLaunch, "folder">;
+	/**
+	 * Folder (`<config dir>/run/collab-companion`, see `COMPANION_RUN_DIR`) the first-message file is handed over in: private to the
+	 * companion, and denied to every sandbox, so a sandboxed session cannot swap a later start's prompt.
+	 */
+	promptDir: string;
 	/** First message omp works on as soon as it is up (`omp … -- <prompt>`); handed over through a file, because tmux refuses commands over ~16 KB. */
 	prompt?: string;
 	/** Stop the session at a safe point once it has spent this many USD (`omp --max-cost`). */
@@ -106,7 +111,9 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 	// tmux argument: the shell enters it from a positional parameter, which tmux passes on untouched.
 	let argv = ["sh", "-c", 'cd -- "$1" || exit 1; shift; exec "$@"', "sh", cwd, ...command];
 	if (launch.prompt !== undefined) {
-		promptFile = path.join(os.tmpdir(), `omp-collab-prompt-${crypto.randomUUID()}.txt`);
+		await fs.mkdir(launch.promptDir, { recursive: true, mode: 0o700 });
+		await fs.chmod(launch.promptDir, 0o700);
+		promptFile = path.join(launch.promptDir, `omp-collab-prompt-${crypto.randomUUID()}.txt`);
 		await fs.writeFile(promptFile, launch.prompt, { mode: 0o600 });
 		// The shell reads and deletes the file, then becomes omp; `--` keeps a prompt that starts with `-` or `@` literal.
 		argv = [
@@ -133,4 +140,39 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 export async function killTmuxSession(tmux: string, name: string): Promise<void> {
 	const proc = Bun.spawn([tmux, "kill-session", "-t", name], { stdout: "ignore", stderr: "ignore", stdin: "ignore" });
 	await proc.exited;
+}
+
+/**
+ * Runs the tasks of one key one after another, those of different keys at once. A start waits for "the new host in this
+ * folder": two starts in the same folder at the same time would both claim the first host to appear.
+ */
+export function createKeyedLock(): <T>(key: string, task: () => Promise<T>) => Promise<T> {
+	const tails = new Map<string, Promise<unknown>>();
+	return async (key, task) => {
+		const previous = tails.get(key) ?? Promise.resolve();
+		const run = previous.then(task);
+		const tail = run.then(
+			() => undefined,
+			() => undefined,
+		);
+		tails.set(key, tail);
+		try {
+			return await run;
+		} finally {
+			if (tails.get(key) === tail) tails.delete(key);
+		}
+	};
+}
+
+/** Longest first prompt a `start` request may carry. */
+export const MAX_START_PROMPT_CHARS = 20_000;
+
+/** The `prompt` of a `start` request: its trimmed text, or undefined when there is none. */
+export function parseStartPrompt(value: unknown): string | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "string" || value.includes("\0")) throw new Error("invalid prompt");
+	const prompt = value.trim();
+	if (prompt.length > MAX_START_PROMPT_CHARS)
+		throw new Error(`the prompt is over ${MAX_START_PROMPT_CHARS} characters`);
+	return prompt === "" ? undefined : prompt;
 }

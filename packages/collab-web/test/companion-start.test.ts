@@ -58,6 +58,7 @@ describe.skipIf(tmuxBin === null)("launchInTmux with a real tmux", () => {
 			tmux: wrapper,
 			ompBin: fakeOmp,
 			overlayPath: path.join(root, "overlay.yml"),
+			promptDir: path.join(root, "run"),
 			cwd: folder,
 			resume: "abc123",
 			prompt: "-- fix #(touch pwned) $HOME",
@@ -74,6 +75,9 @@ describe.skipIf(tmuxBin === null)("launchInTmux with a real tmux", () => {
 			"[-- fix #(touch pwned) $HOME]",
 		]);
 		expect(await Bun.file(path.join(root, "pwned")).exists()).toBe(false);
+		// The prompt went through a file in the private hand-off folder, which the shell deleted.
+		expect((await fs.stat(path.join(root, "run"))).mode & 0o777).toBe(0o700);
+		expect(await fs.readdir(path.join(root, "run"))).toEqual([]);
 	});
 
 	it("passes a per-run spend limit as --max-cost, before the prompt", async () => {
@@ -82,6 +86,7 @@ describe.skipIf(tmuxBin === null)("launchInTmux with a real tmux", () => {
 			tmux: wrapper,
 			ompBin: fakeOmp,
 			overlayPath: path.join(root, "overlay.yml"),
+			promptDir: path.join(root, "run"),
 			cwd: root,
 			prompt: "fix it",
 			maxCostUsd: 1.5,
@@ -98,6 +103,7 @@ describe.skipIf(tmuxBin === null)("launchInTmux with a real tmux", () => {
 			tmux: wrapper,
 			ompBin: fakeOmp,
 			overlayPath: path.join(root, "overlay.yml"),
+			promptDir: path.join(root, "run"),
 			cwd: root,
 			prompt: "fix it",
 			model: "anthropic/claude-sonnet-4-5",
@@ -111,6 +117,7 @@ describe.skipIf(tmuxBin === null)("launchInTmux with a real tmux", () => {
 				tmux: wrapper,
 				ompBin: fakeOmp,
 				overlayPath: path.join(root, "overlay.yml"),
+				promptDir: path.join(root, "run"),
 				cwd: root,
 				model: "--yolo",
 			}),

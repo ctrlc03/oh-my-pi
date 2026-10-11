@@ -21,19 +21,22 @@ export const DEFAULT_GIT_FLOW_SETTINGS: GitFlowSettings = {
 	branchPrefix: DEFAULT_BRANCH_PREFIX,
 	worktreesDir: null,
 	setupScript: "",
+	settleScript: "",
 	cleanup: { mode: "off", days: 14 },
 	messageModel: DEFAULT_MESSAGE_MODEL,
 };
 
 /**
  * What the file holds: the settings, the folders worktrees were once created under (so moving the
- * location keeps old ones removable), and the repository setup scripts the user approved.
+ * location keeps old ones removable), and the repository scripts the user approved.
  */
 export interface GitFlowFile {
 	settings: GitFlowSettings;
 	previousDirs: string[];
 	/** Repository root to the SHA-256 of the `.omp/worktree-setup` the user approved there. */
 	trustedSetups: Record<string, string>;
+	/** Repository root to the SHA-256 of the `.omp/worktree-settle` the user approved there. */
+	trustedSettles: Record<string, string>;
 }
 
 const MAX_PREFIX_CHARS = 40;
@@ -43,6 +46,7 @@ const MAX_MODEL_CHARS = 100;
 const MAX_PREVIOUS_DIRS = 20;
 const MAX_INACTIVE_DAYS = 365;
 const SETUP_TIMEOUT_MS = 5 * 60_000;
+const SETTLE_OUTPUT_CHARS = 4_000;
 const SETUP_OUTPUT_CHARS = 800;
 const GH_TIMEOUT_MS = 30_000;
 const DAY_MS = 86_400_000;
@@ -51,6 +55,8 @@ const MAX_SWEEP = 100;
 export const SWEEP_INTERVAL_MS = 10 * 60_000;
 /** Repositories may carry their own setup; it runs in place of the companion's setting only once the user approved it. */
 export const PROJECT_SETUP_FILE = path.join(".omp", "worktree-setup");
+/** Repositories may carry their own settle cleanup; same approval as the setup script. */
+export const PROJECT_SETTLE_FILE = path.join(".omp", "worktree-settle");
 const MAX_PROJECT_SCRIPT_CHARS = 20_000;
 /** Repositories whose setup script the user can have approved at once. */
 const MAX_TRUSTED = 200;
@@ -76,6 +82,7 @@ export function parseGitFlowSettings(raw: unknown, strict: boolean): GitFlowSett
 		branchPrefix: pick("branchPrefix", readPrefix, defaults.branchPrefix),
 		worktreesDir: pick("worktreesDir", readDir, defaults.worktreesDir),
 		setupScript: pick("setupScript", readScript, defaults.setupScript),
+		settleScript: pick("settleScript", readScript, defaults.settleScript),
 		cleanup: pick("cleanup", readCleanup, defaults.cleanup),
 		messageModel: pick("messageModel", readModel, defaults.messageModel),
 	};
@@ -124,26 +131,32 @@ function readModel(input: unknown): string | undefined {
 	return model.length <= MAX_MODEL_CHARS && /^[A-Za-z0-9@][\w.:/@+-]*$/.test(model) ? model : undefined;
 }
 
+/** Approvals from untrusted JSON: absolute repository roots with a SHA-256, at most {@link MAX_TRUSTED}. */
+function readApprovals(raw: unknown): Record<string, string> {
+	const entries = typeof raw === "object" && raw !== null ? Object.entries(raw) : [];
+	return Object.fromEntries(
+		entries
+			.filter(([root, hash]) => path.isAbsolute(root) && typeof hash === "string" && /^[0-9a-f]{64}$/.test(hash))
+			.slice(0, MAX_TRUSTED),
+	);
+}
+
 export function parseGitFlowFile(raw: unknown): GitFlowFile {
 	const file = (typeof raw === "object" && raw !== null ? raw : {}) as {
 		settings?: unknown;
 		previousDirs?: unknown;
 		trustedSetups?: unknown;
+		trustedSettles?: unknown;
 	};
 	const previous = Array.isArray(file.previousDirs) ? file.previousDirs : [];
-	const trusted =
-		typeof file.trustedSetups === "object" && file.trustedSetups !== null ? Object.entries(file.trustedSetups) : [];
 	return {
 		settings: parseGitFlowSettings(file.settings, false),
 		previousDirs: previous.flatMap(dir => {
 			const parsed = readDir(dir);
 			return typeof parsed === "string" ? [parsed] : [];
 		}),
-		trustedSetups: Object.fromEntries(
-			trusted
-				.filter(([root, hash]) => path.isAbsolute(root) && typeof hash === "string" && /^[0-9a-f]{64}$/.test(hash))
-				.slice(0, MAX_TRUSTED),
-		),
+		trustedSetups: readApprovals(file.trustedSetups),
+		trustedSettles: readApprovals(file.trustedSettles),
 	};
 }
 
@@ -176,7 +189,12 @@ export function replaceSettings(file: GitFlowFile, settings: GitFlowSettings, de
 	const before = effectiveWorktreesDir(file.settings, defaultDir);
 	const moved = before !== effectiveWorktreesDir(settings, defaultDir);
 	const previousDirs = moved ? [before, ...file.previousDirs.filter(dir => dir !== before)] : file.previousDirs;
-	return { settings, previousDirs: previousDirs.slice(0, MAX_PREVIOUS_DIRS), trustedSetups: file.trustedSetups };
+	return {
+		settings,
+		previousDirs: previousDirs.slice(0, MAX_PREVIOUS_DIRS),
+		trustedSetups: file.trustedSetups,
+		trustedSettles: file.trustedSettles,
+	};
 }
 
 // ── setup script ─────────────────────────────────────────────────────────────
@@ -211,18 +229,28 @@ export function setupHash(script: string): string {
 	return createHash("sha256").update(script).digest("hex");
 }
 
-/** The repository's setup script; null when it has none, cannot be read, or is over {@link MAX_PROJECT_SCRIPT_CHARS}. */
-export async function readProjectSetup(root: string): Promise<ProjectSetup | null> {
+/** The repository's script at `file` (relative to `root`); null when it has none, cannot be read, or is over {@link MAX_PROJECT_SCRIPT_CHARS}. */
+async function readProjectScript(root: string, file: string): Promise<ProjectSetup | null> {
 	try {
-		const file = Bun.file(path.join(root, PROJECT_SETUP_FILE));
-		if (file.size > MAX_PROJECT_SCRIPT_CHARS * 4) return null;
-		const script = await file.text();
+		const source = Bun.file(path.join(root, file));
+		if (source.size > MAX_PROJECT_SCRIPT_CHARS * 4) return null;
+		const script = await source.text();
 		return script.length > MAX_PROJECT_SCRIPT_CHARS || script.includes("\0")
 			? null
 			: { root, hash: setupHash(script), script };
 	} catch {
 		return null;
 	}
+}
+
+/** The repository's setup script; null when it has none, cannot be read, or is over {@link MAX_PROJECT_SCRIPT_CHARS}. */
+export function readProjectSetup(root: string): Promise<ProjectSetup | null> {
+	return readProjectScript(root, PROJECT_SETUP_FILE);
+}
+
+/** The repository's `.omp/worktree-settle`, under the same limits as the setup script. */
+export function readProjectSettle(root: string): Promise<ProjectSetup | null> {
+	return readProjectScript(root, PROJECT_SETTLE_FILE);
 }
 
 /**
@@ -285,49 +313,173 @@ export interface ProjectSetupStatus {
 	approved: boolean;
 }
 
-/** Status of every repository with an approval and of `waiting` ones (whose script a start left unused). */
-export async function projectSetupStatuses(
-	file: GitFlowFile,
+async function scriptStatuses(
+	approvals: Readonly<Record<string, string>>,
+	read: (root: string) => Promise<ProjectSetup | null>,
 	waiting: Iterable<string>,
 ): Promise<ProjectSetupStatus[]> {
-	const roots = [...new Set([...Object.keys(file.trustedSetups), ...waiting])];
+	const roots = [...new Set([...Object.keys(approvals), ...waiting])];
 	return Promise.all(
 		roots.map(async root => {
-			const project = await readProjectSetup(root);
-			const approved = Object.hasOwn(file.trustedSetups, root);
+			const project = await read(root);
+			const approved = Object.hasOwn(approvals, root);
 			return {
 				root,
 				script: project?.script ?? null,
 				hash: project?.hash ?? null,
-				trusted: project !== null && approved && file.trustedSetups[root] === project.hash,
+				trusted: project !== null && approved && approvals[root] === project.hash,
 				approved,
 			};
 		}),
 	);
 }
 
+/** Status of every repository with an approval and of `waiting` ones (whose script a start left unused). */
+export function projectSetupStatuses(file: GitFlowFile, waiting: Iterable<string>): Promise<ProjectSetupStatus[]> {
+	return scriptStatuses(file.trustedSetups, readProjectSetup, waiting);
+}
+
+/** {@link projectSetupStatuses} for `.omp/worktree-settle`: `waiting` are repositories a settle left unused. */
+export function projectSettleStatuses(file: GitFlowFile, waiting: Iterable<string>): Promise<ProjectSetupStatus[]> {
+	return scriptStatuses(file.trustedSettles, readProjectSettle, waiting);
+}
+
 /**
  * The file after the user approved (`hash`) or withdrew approval (`null`) for a repository's setup
- * script. An approval needs the repository to be one `known` or already approved, and `hash` to
- * still be the script's content, so what runs is what was shown.
+ * script (`kind` `settle`: its settle script). An approval needs the repository to be one `known`
+ * or already approved, and `hash` to still be the script's content, so what runs is what was shown.
  * @throws Error when the request is invalid, the script changed or is gone.
  */
 export async function applySetupTrust(
 	file: GitFlowFile,
 	known: ReadonlySet<string>,
-	change: { root: unknown; hash: unknown },
+	change: { root: unknown; hash: unknown; kind?: unknown },
 ): Promise<GitFlowFile> {
-	const { root, hash } = change;
-	if (typeof root !== "string" || !path.isAbsolute(root) || (hash !== null && typeof hash !== "string"))
+	const { root, hash, kind } = change;
+	if (
+		typeof root !== "string" ||
+		!path.isAbsolute(root) ||
+		(hash !== null && typeof hash !== "string") ||
+		(kind !== undefined && kind !== "setup" && kind !== "settle")
+	)
 		throw new Error("invalid request");
-	const others = Object.entries(file.trustedSetups).filter(([key]) => key !== root);
-	if (hash === null) return { ...file, trustedSetups: Object.fromEntries(others) };
-	if (!known.has(root) && !Object.hasOwn(file.trustedSetups, root)) throw new Error("unknown repository");
-	const project = await readProjectSetup(root);
-	if (project === null) throw new Error("the repository has no setup script to approve");
+	const settle = kind === "settle";
+	const field = settle ? "trustedSettles" : "trustedSetups";
+	const approvals = file[field];
+	const others = Object.entries(approvals).filter(([key]) => key !== root);
+	if (hash === null) return { ...file, [field]: Object.fromEntries(others) };
+	if (!known.has(root) && !Object.hasOwn(approvals, root)) throw new Error("unknown repository");
+	const project = await (settle ? readProjectSettle(root) : readProjectSetup(root));
+	if (project === null) throw new Error(`the repository has no ${settle ? "settle" : "setup"} script to approve`);
 	if (project.hash !== hash) throw new Error("the script changed; review it again");
 	if (others.length >= MAX_TRUSTED) throw new Error("too many approved repositories; withdraw some first");
-	return { ...file, trustedSetups: Object.fromEntries([...others, [root, hash]]) };
+	return { ...file, [field]: Object.fromEntries([...others, [root, hash]]) };
+}
+
+// ── settle cleanup ───────────────────────────────────────────────────────────
+
+export interface SettleOptions {
+	/** `settings.settleScript`. */
+	command: string;
+	/** The user's approvals of `.omp/worktree-settle`: repository root to the hash of the script they approved. */
+	trusted: Readonly<Record<string, string>>;
+	timeoutMs?: number;
+}
+
+export interface SettleOutcome {
+	source: "settings" | "project";
+	status: "ok" | "failed" | "timeout";
+	/** Exit code; null when it timed out or could not start. */
+	code: number | null;
+	startedAt: number;
+	durationMs: number;
+	/** The end of stdout and stderr together, without terminal colours. */
+	output: string;
+}
+
+export interface SettleRun {
+	/** Null when there was nothing to run. */
+	outcome: SettleOutcome | null;
+	/** The repository's script, when it has one this run did not use because the user has not approved this exact content. */
+	unapproved: ProjectSetup | null;
+}
+
+const ANSI_RE = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+/** After the command ends, how long to wait for output still held open by something it left running. */
+const OUTPUT_GRACE_MS = 1_000;
+
+/** Append what `stream` yields to `tail`, keeping only its last {@link SETTLE_OUTPUT_CHARS} characters. */
+async function collectTail(stream: ReadableStream<Uint8Array>, tail: { text: string }): Promise<void> {
+	const decoder = new TextDecoder();
+	for await (const chunk of stream)
+		tail.text = (tail.text + decoder.decode(chunk, { stream: true })).slice(-SETTLE_OUTPUT_CHARS);
+}
+
+/**
+ * Run the settle cleanup of a worktree whose session settled, in the tree with `OMP_WORKTREE_PATH`,
+ * `OMP_WORKTREE_BRANCH` and `OMP_REPO_ROOT` set (`tree.root` is the repository the tree belongs to):
+ * the repository's `.omp/worktree-settle` when the user approved exactly its current content, else the
+ * companion's command; a repository script that is not approved is reported as `unapproved`, never run.
+ * Never rejects: a failing or timing-out command is an outcome. The command runs in its own process group,
+ * so a timeout also ends what it started.
+ */
+export async function runWorktreeSettle(
+	tree: { root: string; path: string; branch: string },
+	options: SettleOptions,
+): Promise<SettleRun> {
+	const project = await readProjectSettle(tree.root);
+	const useProject =
+		project !== null && Object.hasOwn(options.trusted, tree.root) && options.trusted[tree.root] === project.hash;
+	const unapproved = project !== null && !useProject ? project : null;
+	const script = useProject ? project.script : options.command;
+	if (!script) return { outcome: null, unapproved };
+	const source = useProject ? "project" : "settings";
+	const startedAt = Date.now();
+	const finish = (status: SettleOutcome["status"], code: number | null, output: string): SettleRun => ({
+		outcome: {
+			source,
+			status,
+			code,
+			startedAt,
+			durationMs: Date.now() - startedAt,
+			output: output.replace(ANSI_RE, "").trim(),
+		},
+		unapproved,
+	});
+	let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
+	try {
+		proc = Bun.spawn(["sh", "-c", script, ...(useProject ? [path.join(tree.root, PROJECT_SETTLE_FILE)] : [])], {
+			cwd: tree.path,
+			stdout: "pipe",
+			stderr: "pipe",
+			stdin: "ignore",
+			detached: true,
+			env: {
+				...process.env,
+				OMP_WORKTREE_PATH: tree.path,
+				OMP_WORKTREE_BRANCH: tree.branch,
+				OMP_REPO_ROOT: tree.root,
+			},
+		});
+	} catch (err) {
+		return finish("failed", null, err instanceof Error ? err.message : String(err));
+	}
+	let timedOut = false;
+	const timer = setTimeout(() => {
+		timedOut = true;
+		try {
+			process.kill(-proc.pid, "SIGKILL");
+		} catch {
+			proc.kill("SIGKILL");
+		}
+	}, options.timeoutMs ?? SETUP_TIMEOUT_MS);
+	const tail = { text: "" };
+	const reading = Promise.all([collectTail(proc.stdout, tail), collectTail(proc.stderr, tail)]);
+	const code = await proc.exited;
+	clearTimeout(timer);
+	await Promise.race([reading, Bun.sleep(OUTPUT_GRACE_MS)]);
+	if (timedOut) return finish("timeout", null, tail.text);
+	return finish(code === 0 ? "ok" : "failed", code, tail.text);
 }
 
 // ── pull request state and cleanup ───────────────────────────────────────────

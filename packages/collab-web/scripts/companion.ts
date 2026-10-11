@@ -111,6 +111,7 @@ import {
 	effectiveWorktreesDir,
 	loadGitFlowFile,
 	parseGitFlowSettings,
+	projectSettleStatuses,
 	projectSetupStatuses,
 	replaceSettings,
 	runWorktreeSetup,
@@ -131,6 +132,8 @@ import {
 	recentFolders,
 	SAFE_ID_RE,
 } from "./companion-sessions";
+import { COMPANION_RUN_DIR } from "./companion-sandbox";
+import { createSettleCleanup, loadSettleState, saveSettleState } from "./companion-settle";
 import { createSessionLister } from "./companion-list";
 import { preferredRelayPort, startCompanionRelay } from "./companion-local-relay";
 import { restartCompanion, updateOmp } from "./companion-maintain";
@@ -152,7 +155,15 @@ import {
 import { startScheduleIpc } from "./companion-schedule-ipc";
 import { createSessionOrg, ghSessionPrDone, loadOrgFile, saveOrgFile } from "./companion-sessionorg";
 import { createSpendMonitor, parseSpendLimits, parseSpendState, type SpendState, withLimits } from "./companion-spend";
-import { canSandbox, findTmux, killTmuxSession, launchInTmux } from "./companion-start";
+import { createScratchFolder } from "./companion-scratch";
+import {
+	canSandbox,
+	createKeyedLock,
+	findTmux,
+	killTmuxSession,
+	launchInTmux,
+	parseStartPrompt,
+} from "./companion-start";
 import {
 	compareGroup,
 	createModelCatalog,
@@ -190,6 +201,8 @@ const ompBin = process.env.OMP_BIN || Bun.which("omp") || path.join(os.homedir()
 /** How long `start` waits for the new omp to appear in `omp collab list`. */
 const START_WAIT_MS = 45_000;
 const START_POLL_MS = 1_000;
+/** Starts in one folder run one at a time: each waits for "the new host in this folder" to appear. */
+const startLock = createKeyedLock();
 /** How often schedules are checked for being due, independent of the host poll. */
 const SCHEDULE_TICK_MS = 15_000;
 
@@ -536,6 +549,30 @@ async function setupWorktree(
 	console.error(`companion: ${unapproved.root} has a .omp/worktree-setup that is not approved; it was not run`);
 }
 
+/** Repositories whose `.omp/worktree-settle` a settle left unused because the user has not approved it; listed in the worktree settings for review. */
+const unapprovedSettles = new Set<string>();
+
+const settleStatePath = path.join(path.dirname(statePath), "collab-companion-settle.json");
+
+/** Runs the user's cleanup command in a worktree when its session settles; see ./companion-settle. */
+const settleCleanup = createSettleCleanup({
+	initial: await loadSettleState(settleStatePath),
+	save: state => saveSettleState(settleStatePath, state),
+	flow: () => gitFlow,
+	dirs: () => worktreeLocations(gitFlow, worktreesDir),
+	listing: async () =>
+		(await loadSessions()).hosts.map(host => ({
+			sessionId: host.sessionId,
+			cwd: host.cwd,
+			sandboxed: host.sandboxed === true,
+		})),
+	onUnapproved: root => {
+		unapprovedSettles.add(root);
+		console.error(`companion: ${root} has a .omp/worktree-settle that is not approved; it was not run`);
+	},
+	onError: err => console.error(`companion: worktree settle cleanup failed: ${errorText(err)}`),
+});
+
 const sessionOrgPath = path.join(path.dirname(statePath), "collab-companion-sessionorg.json");
 
 /** Pin / snooze / settle state every device syncs through, and the auto-settle rules; see ./companion-sessionorg. */
@@ -546,6 +583,8 @@ const sessionOrg = createSessionOrg({
 	readPrDone: ghSessionPrDone,
 	prAvailable: canCreatePr,
 	onChange: () => void refresh(),
+	// Never awaited: a cleanup command must not hold up the settle (or the sync that carried it).
+	onSettled: sessions => void settleCleanup.run(sessions),
 	onError: err => console.error(`companion: session organisation failed: ${errorText(err)}`),
 });
 
@@ -714,7 +753,10 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canRun: process.platform !== "win32",
 		canDownload: true,
 		canSearch: true,
+		canScratch: extras.canStart,
+		canBackgroundStart: extras.canStart,
 		sessionOrgRev: sessionOrg.file().rev,
+		canOrderSessions: true,
 		transcribe: extras.transcribe ?? undefined,
 		power: power ?? undefined,
 	};
@@ -838,43 +880,83 @@ async function startSession(
 	try {
 		// A failing setup (an install that breaks) discards the tree below, like a session that cannot start.
 		if (created) await setupWorktree(created, sandboxed);
-		const before = new Set((await loadSessions()).hosts.map(h => h.instanceId));
-		const spawnedAt = Date.now();
-		const launched = await launchInTmux({
-			tmux,
-			ompBin,
-			overlayPath,
-			localRelayUrl,
-			cwd: created?.path ?? cwd,
-			resume,
-			sandbox,
-			prompt,
-			maxCostUsd,
-			model,
-		});
-		while (Date.now() < spawnedAt + START_WAIT_MS) {
-			await Bun.sleep(START_POLL_MS);
-			let hosts: CompanionHost[];
-			try {
-				hosts = (await loadSessions()).hosts;
-			} catch {
-				continue;
-			}
-			for (const host of hosts) {
-				if (before.has(host.instanceId)) continue;
-				const hostCwd = await fs.realpath(host.cwd).catch(() => host.cwd);
-				const resumed = resume !== undefined && host.sessionId.startsWith(resume);
-				if (resumed || (hostCwd === launched.cwd && host.startedAt >= spawnedAt - 1_000)) {
-					await refresh();
-					return host.instanceId;
+		const launchCwd = created?.path ?? cwd;
+		// Sticky, and before omp starts: no cleanup command ever runs in a tree a sandboxed agent could write.
+		if (sandboxed) await settleCleanup.recordSandboxed(launchCwd);
+		const lockKey = await fs.realpath(launchCwd).catch(() => launchCwd);
+		return await startLock(lockKey, async () => {
+			const before = new Set((await loadSessions()).hosts.map(h => h.instanceId));
+			const spawnedAt = Date.now();
+			const launched = await launchInTmux({
+				tmux,
+				ompBin,
+				overlayPath,
+				promptDir: path.join(configDir, COMPANION_RUN_DIR),
+				localRelayUrl,
+				cwd: launchCwd,
+				resume,
+				sandbox,
+				prompt,
+				maxCostUsd,
+				model,
+			});
+			while (Date.now() < spawnedAt + START_WAIT_MS) {
+				await Bun.sleep(START_POLL_MS);
+				let hosts: CompanionHost[];
+				try {
+					hosts = (await loadSessions()).hosts;
+				} catch {
+					continue;
+				}
+				for (const host of hosts) {
+					if (before.has(host.instanceId)) continue;
+					const hostCwd = await fs.realpath(host.cwd).catch(() => host.cwd);
+					const resumed = resume !== undefined && host.sessionId.startsWith(resume);
+					if (resumed || (hostCwd === launched.cwd && host.startedAt >= spawnedAt - 1_000)) {
+						// Where this session works is how its settle finds its worktree later; never from a session file.
+						await settleCleanup
+							.recordSession(host.sessionId, launched.cwd)
+							.catch(err =>
+								console.error(`companion: remembering session ${host.sessionId} failed: ${errorText(err)}`),
+							);
+						await refresh();
+						return host.instanceId;
+					}
 				}
 			}
-		}
-		await killTmuxSession(tmux, launched.name);
-		throw new Error("omp did not start hosting in time");
+			await killTmuxSession(tmux, launched.name);
+			throw new Error("omp did not start hosting in time");
+		});
 	} catch (err) {
 		// The branch and worktree only exist for this session.
 		if (created) await discardWorktree(created);
+		throw err;
+	}
+}
+
+/**
+ * The `start` request: `scratch` starts a new session without a project in a fresh folder under the config dir
+ * (see ./companion-scratch); a start that fails leaves no empty folder behind, and no start ever deletes one that holds files.
+ */
+async function startFromRequest(frame: Extract<CompanionRequest, { t: "start" }>): Promise<string> {
+	const prompt = parseStartPrompt(frame.prompt);
+	if (frame.scratch === undefined)
+		return await startSession(frame.cwd, frame.resume, frame.sandboxed, frame.worktree, frame.force, prompt);
+	if (
+		typeof frame.scratch !== "object" ||
+		frame.scratch === null ||
+		(frame.scratch.hint !== undefined && typeof frame.scratch.hint !== "string")
+	) {
+		throw new Error("invalid request");
+	}
+	if (frame.resume !== undefined || frame.worktree !== undefined)
+		throw new Error("a session without a project is new and has no worktree");
+	if (frame.sandboxed === true && !sandboxAvailable) throw new Error("sandboxed sessions need macOS sandbox-exec");
+	const folder = await createScratchFolder({ configDir, hint: frame.scratch.hint });
+	try {
+		return await startSession(folder, undefined, frame.sandboxed, undefined, undefined, prompt);
+	} catch (err) {
+		await fs.rmdir(folder).catch(() => undefined);
 		throw err;
 	}
 }
@@ -1210,7 +1292,7 @@ socket.onFrame = (frame, fromPeer) => {
 			respond(frame.reqId, async () => ({
 				t: "started",
 				reqId: frame.reqId,
-				instanceId: await startSession(frame.cwd, frame.resume, frame.sandboxed, frame.worktree, frame.force),
+				instanceId: await startFromRequest(frame),
 			}));
 			return;
 		case "share":
@@ -1272,11 +1354,20 @@ socket.onFrame = (frame, fromPeer) => {
 		case "git-settings":
 			respond(frame.reqId, async () => {
 				if (frame.settings !== undefined) {
-					gitFlow = replaceSettings(gitFlow, parseGitFlowSettings(frame.settings, true), worktreesDir);
+					// An app that predates the settle command sends no `settleScript`: it keeps what is set.
+					const next = {
+						...frame.settings,
+						settleScript: frame.settings.settleScript ?? gitFlow.settings.settleScript,
+					};
+					gitFlow = replaceSettings(gitFlow, parseGitFlowSettings(next, true), worktreesDir);
 					await saveGitFlowFile(gitFlowPath, gitFlow);
 				}
 				if (frame.trust !== undefined) {
-					gitFlow = await applySetupTrust(gitFlow, unapprovedSetups, frame.trust);
+					gitFlow = await applySetupTrust(
+						gitFlow,
+						frame.trust.kind === "settle" ? unapprovedSettles : unapprovedSetups,
+						frame.trust,
+					);
 					await saveGitFlowFile(gitFlowPath, gitFlow);
 				}
 				const swept = frame.sweep === true ? await worktreeSweeper.tick(true) : null;
@@ -1287,6 +1378,10 @@ socket.onFrame = (frame, fromPeer) => {
 					worktreesDir: effectiveWorktreesDir(gitFlow.settings, worktreesDir),
 					swept: swept?.removed.map(removed => removed.path),
 					projects: await projectSetupStatuses(gitFlow, unapprovedSetups),
+					settleCleanup: {
+						projects: await projectSettleStatuses(gitFlow, unapprovedSettles),
+						results: await settleCleanup.results(),
+					},
 				};
 			});
 			return;

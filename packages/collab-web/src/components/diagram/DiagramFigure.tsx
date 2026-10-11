@@ -1,8 +1,10 @@
 import { Code, LoaderCircle, Maximize2, RefreshCw, TriangleAlert } from "lucide-react";
-import type { KeyboardEvent, ReactNode } from "react";
-import { useState } from "react";
+import type { CSSProperties, KeyboardEvent, ReactNode, RefObject } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { openDiagram } from "../../lib/diagram-store";
 import type { DiagramKind } from "../../lib/diagrams";
+import { READABLE_SCALE } from "../../lib/diagrams";
+import { standaloneSvg, svgSize } from "../../lib/svg";
 import "./diagram.css";
 import { type DiagramState, useDiagram } from "./use-diagram";
 
@@ -35,12 +37,61 @@ export function SourceBlock({ kind, source }: { kind: DiagramKind; source: strin
 			<button
 				type="button"
 				className="tr-copy"
-				aria-label="copy code"
+				aria-label="Copy code"
 				onClick={copy}
 				data-copied={copied ? "" : undefined}
 			/>
 		</div>
 	);
+}
+
+/**
+ * The rendering sized for the page: its natural size in pixels, with the numbers the stylesheet sizes it by
+ * (shrink to the column but not below the readable zoom; a tall one not past a screen height). A rendering
+ * without a `viewBox` keeps the engine's own sizing.
+ */
+function sizedSvg(kind: DiagramKind, svg: string): { html: string; style: CSSProperties | undefined } {
+	const size = svgSize(svg);
+	if (size === null) return { html: svg, style: undefined };
+	const style = {
+		"--dg-w": size.width,
+		"--dg-ratio": size.width / size.height,
+		"--dg-floor": READABLE_SCALE[kind],
+	} as CSSProperties;
+	return { html: standaloneSvg(svg, size), style };
+}
+
+/**
+ * Marks `data-more` on the frame of a scrolling drawing with the sides that have more to see (`start`, `end`,
+ * `start end`), so the stylesheet can fade those edges: a cut-off drawing then reads as scrollable.
+ */
+function useScrollCue(art: unknown): {
+	frame: RefObject<HTMLDivElement | null>;
+	scroller: RefObject<HTMLDivElement | null>;
+} {
+	const frame = useRef<HTMLDivElement>(null);
+	const scroller = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		const node = scroller.current;
+		const outer = frame.current;
+		if (node === null || outer === null) return;
+		const update = (): void => {
+			const sides: string[] = [];
+			if (node.scrollLeft > 1) sides.push("start");
+			if (node.scrollLeft + node.clientWidth < node.scrollWidth - 1) sides.push("end");
+			outer.dataset.more = sides.join(" ");
+		};
+		update();
+		node.addEventListener("scroll", update, { passive: true });
+		const observer = new ResizeObserver(update);
+		observer.observe(node);
+		for (const child of node.children) observer.observe(child);
+		return () => {
+			node.removeEventListener("scroll", update);
+			observer.disconnect();
+		};
+	}, [art]);
+	return { frame, scroller };
 }
 
 /** One diagram in a reply: the rendering, or the source with a note when it cannot be shown. */
@@ -54,6 +105,8 @@ export function DiagramFigureView({
 	onRetry,
 }: DiagramFigureViewProps): ReactNode {
 	const ready = state.status === "ready";
+	const art = useMemo(() => (state.status === "ready" ? sizedSvg(kind, state.svg) : null), [kind, state]);
+	const cue = useScrollCue(art);
 	const failed = state.status === "error" || state.status === "unavailable";
 	const onKey = (e: KeyboardEvent<HTMLDivElement>): void => {
 		if (e.key === "Enter" || e.key === " ") {
@@ -73,18 +126,18 @@ export function DiagramFigureView({
 								className="tr-diagram-btn"
 								onClick={onToggleSource}
 								aria-pressed={showSource}
-								title={showSource ? "show the diagram" : "show the source"}
+								title={showSource ? "Show the diagram" : "Show the source"}
 							>
-								<Code size={13} /> <span className="tr-diagram-btn-label">Source</span>
+								<Code size={14} /> <span>Source</span>
 							</button>
-							<button type="button" className="tr-diagram-btn" onClick={onOpen} title="open full screen">
-								<Maximize2 size={13} /> <span className="tr-diagram-btn-label">Open</span>
+							<button type="button" className="tr-diagram-btn" onClick={onOpen} title="Open full screen">
+								<Maximize2 size={14} /> <span>Open</span>
 							</button>
 						</>
 					)}
 					{state.status === "unavailable" && (
 						<button type="button" className="tr-diagram-btn" onClick={onRetry}>
-							<RefreshCw size={13} /> <span className="tr-diagram-btn-label">Retry</span>
+							<RefreshCw size={14} /> <span>Retry</span>
 						</button>
 					)}
 				</span>
@@ -94,16 +147,20 @@ export function DiagramFigureView({
 					<LoaderCircle size={14} className="sh-spin" /> Rendering the diagram…
 				</div>
 			)}
-			{state.status === "ready" && !showSource && (
-				<div
-					className="tr-diagram-svg"
-					role="button"
-					tabIndex={0}
-					aria-label={`open the ${KIND_LABEL[kind]} diagram full screen`}
-					onClick={onOpen}
-					onKeyDown={onKey}
-					dangerouslySetInnerHTML={{ __html: state.svg }}
-				/>
+			{art !== null && !showSource && (
+				<div className="tr-diagram-frame" ref={cue.frame}>
+					<div
+						className="tr-diagram-svg"
+						ref={cue.scroller}
+						role="button"
+						tabIndex={0}
+						aria-label={`Open the ${KIND_LABEL[kind]} diagram full screen`}
+						style={art.style}
+						onClick={onOpen}
+						onKeyDown={onKey}
+						dangerouslySetInnerHTML={{ __html: art.html }}
+					/>
+				</div>
 			)}
 			{(showSource || failed) && <SourceBlock kind={kind} source={source} />}
 			{failed && (

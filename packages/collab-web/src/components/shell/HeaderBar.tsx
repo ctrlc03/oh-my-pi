@@ -5,6 +5,7 @@ import { memo, useCallback } from "react";
 import type { ConnectionPhase, ContextItemsInfo } from "../../lib/client";
 import { fmtPercent, shortenPath } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
+import { shortcutKeys, useOverrides } from "../../lib/shortcuts";
 import type { SessionUsage } from "../../lib/usage";
 import { OmpMark } from "./OmpMark";
 import { SessionSheet } from "./SessionSheet";
@@ -132,6 +133,7 @@ export const HeaderBar = memo(function HeaderBar({
 	exportMarkdown,
 	push,
 }: HeaderBarProps): ReactNode {
+	useOverrides();
 	// The live name first: `header.title` is the session file's title as of joining.
 	const title = state?.sessionName ?? header?.title ?? "session";
 	const closeSheet = useCallback(() => setSheetOpen(false), [setSheetOpen]);
@@ -157,13 +159,14 @@ export const HeaderBar = memo(function HeaderBar({
 								: "sh-btn sh-btn-icon sh-sidebar-toggle"
 						}
 						onClick={onToggleSidebar}
-						title={sidebarAlert ? "sessions · one needs input" : sidebarOpen ? "hide sessions" : "show sessions"}
+						title={sidebarAlert ? "Sessions · one needs input" : sidebarOpen ? "Hide sessions" : "Show sessions"}
+						data-shortcut={shortcutKeys("sidebar")}
 						aria-label={
 							sidebarAlert
-								? "sessions, another session needs input"
+								? "Sessions, another session needs input"
 								: sidebarOpen
-									? "hide sessions"
-									: "show sessions"
+									? "Hide sessions"
+									: "Show sessions"
 						}
 						aria-pressed={sidebarOpen}
 					>
@@ -188,8 +191,8 @@ export const HeaderBar = memo(function HeaderBar({
 							<span
 								className="sh-sandboxed-mark"
 								role="img"
-								aria-label="sandboxed"
-								title="sandboxed: file tools only, edits stay in its folder"
+								aria-label="Sandboxed"
+								data-tip="Sandboxed: file tools only, edits stay in its folder"
 							>
 								<ShieldCheck size={12} />
 							</span>
@@ -199,21 +202,27 @@ export const HeaderBar = memo(function HeaderBar({
 				</button>
 			</div>
 			<div className="sh-header-right">
-				<span className={`sh-status sh-status-${phase}`} title={`connection: ${phase}`}>
+				<span
+					className={`sh-status sh-status-${phase}`}
+					data-tip={`Connection: ${PHASE_LABEL[phase].toLowerCase()}`}
+				>
 					<span className={`sh-dot sh-dot-${phase}`} />
 					{PHASE_LABEL[phase]}
 				</span>
 				{readOnly && (
-					<span className="sh-chip" title="you joined with a read-only link — watching only">
-						read-only
+					<span className="sh-chip" data-tip="You joined with a read-only link: watching only">
+						Read-only
 					</span>
 				)}
-				{state?.model && <span className="sh-chip sh-chip-meta">{state.model.name}</span>}
-				{state?.thinkingLevel && <span className="sh-chip sh-chip-meta">{state.thinkingLevel}</span>}
+				{/* The composer shows model and thinking level, except where a read-only guest has none. */}
+				{readOnly && state?.model && <span className="sh-chip sh-chip-meta">{state.model.name}</span>}
+				{readOnly && state?.thinkingLevel && <span className="sh-chip sh-chip-meta">{state.thinkingLevel}</span>}
 				{pct != null && (
 					<span
 						className={pct > 80 ? "sh-gauge sh-gauge-warn" : "sh-gauge"}
-						title={`context · ${fmtPercent(pct)}`}
+						role="img"
+						aria-label={`Context ${fmtPercent(pct)} full`}
+						data-tip={`Context ${fmtPercent(pct)} full`}
 					>
 						<span className="sh-gauge-track">
 							<span className="sh-gauge-fill" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
@@ -222,12 +231,14 @@ export const HeaderBar = memo(function HeaderBar({
 					</span>
 				)}
 				{state && state.participants.length > 0 && (
-					<span className="sh-avatars">
+					<span className="sh-avatars" role="group" aria-label="People in this session">
 						{state.participants.map((p, i) => (
 							<span
 								key={`${p.name}:${i}`}
 								className={p.role === "host" ? "sh-avatar sh-avatar-host" : "sh-avatar"}
-								title={`${p.name} · ${p.role}${p.readOnly ? " · view-only" : ""}`}
+								role="img"
+								aria-label={`${p.name}, ${p.role}${p.readOnly ? ", view-only" : ""}`}
+								data-tip={`${p.name} · ${p.role}${p.readOnly ? " · view-only" : ""}`}
 							>
 								{(p.name[0] ?? "?").toUpperCase()}
 							</span>
@@ -239,8 +250,9 @@ export const HeaderBar = memo(function HeaderBar({
 					type="button"
 					className={searchOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
 					onClick={onToggleSearch}
-					title="find in session"
-					aria-label="find in session"
+					title="Find in session"
+					data-shortcut={shortcutKeys("find")}
+					aria-label="Find in session"
 					aria-pressed={searchOpen}
 				>
 					<Search size={16} />
@@ -250,8 +262,8 @@ export const HeaderBar = memo(function HeaderBar({
 						type="button"
 						className="sh-btn sh-btn-icon"
 						onClick={onOpenEditor}
-						title="editor"
-						aria-label="editor"
+						title="Editor"
+						aria-label="Editor"
 					>
 						<SquareCode size={16} />
 					</button>
@@ -261,8 +273,8 @@ export const HeaderBar = memo(function HeaderBar({
 						type="button"
 						className="sh-btn sh-btn-icon sh-codemap-toggle"
 						onClick={onOpenCodemap}
-						title="code map"
-						aria-label="code map"
+						title="Code map"
+						aria-label="Code map"
 					>
 						<Waypoints size={16} />
 					</button>
@@ -271,8 +283,8 @@ export const HeaderBar = memo(function HeaderBar({
 					type="button"
 					className={railOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
 					onClick={onToggleRail}
-					title={railOpen ? "hide agents" : "show agents"}
-					aria-label={railOpen ? "hide agents" : "show agents"}
+					title={railOpen ? "Hide agents" : "Show agents"}
+					aria-label={`${railOpen ? "Hide" : "Show"} agents${subCount > 0 ? `, ${subCount} active` : ""}`}
 				>
 					<PanelRight size={16} />
 					{subCount > 0 && <span className="sh-badge">{subCount}</span>}
@@ -281,8 +293,8 @@ export const HeaderBar = memo(function HeaderBar({
 					type="button"
 					className="sh-btn sh-btn-icon sh-leave"
 					onClick={onLeave}
-					title="leave session"
-					aria-label="leave session"
+					title="Leave session"
+					aria-label="Leave session"
 				>
 					<LogOut size={16} />
 				</button>
@@ -290,7 +302,7 @@ export const HeaderBar = memo(function HeaderBar({
 					type="button"
 					className="sh-btn sh-btn-icon sh-mobile-only"
 					onClick={() => setSheetOpen(true)}
-					aria-label="session details"
+					aria-label="Session details"
 				>
 					<Ellipsis size={18} />
 				</button>

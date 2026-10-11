@@ -26,6 +26,34 @@ const HINTS: Record<CollabApprovalChoiceKind, string> = {
 };
 
 /**
+ * The prompt's title: its first line is the question, the lines after it are details. A detail written
+ * `Label: value` shows the value in mono, so a command or a rule reads as code.
+ */
+export function AskTitle({ title }: { title: string }): ReactNode {
+	const [head = "", ...details] = title.split("\n");
+	return (
+		<div className="sh-ask-title">
+			<div className="sh-ask-headline">{head}</div>
+			{details.map((line, index) => {
+				const split = line.indexOf(": ");
+				return (
+					<div key={`${index}:${line}`} className="sh-ask-detail">
+						{split < 0 ? (
+							line
+						) : (
+							<>
+								<span className="sh-ask-detail-label">{line.slice(0, split)}</span>
+								<code className="sh-ask-detail-value">{line.slice(split + 2)}</code>
+							</>
+						)}
+					</div>
+				);
+			})}
+		</div>
+	);
+}
+
+/**
  * Tool-approval answer for a host with feature `approval-grants`: allow once, "always" for the session or the
  * project, deny, deny always. A project-scoped choice a guest may not save (`guestProject: false`) stays visible
  * but disabled, so the reason is on screen rather than the button silently missing.
@@ -51,7 +79,9 @@ export function ApprovalChoices({ approval, onChoose }: ApprovalChoicesProps): R
 				<span className="sh-ask-option-marker">{ICONS[kind]}</span>
 				<span className="sh-ask-option-copy">
 					<span className="sh-ask-option-label">{choice.label}</span>
-					<span className="sh-ask-option-description">{HINTS[kind]}</span>
+					<span className="sh-ask-option-description">
+						{locked ? "Guests cannot save project rules here" : HINTS[kind]}
+					</span>
 				</span>
 			</button>
 		);

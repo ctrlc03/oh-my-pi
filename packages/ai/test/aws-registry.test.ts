@@ -80,6 +80,29 @@ describe("AWS provider availability", () => {
 		}
 	});
 
+	test("treats shared files it may not stat (a sandbox hiding ~/.aws) as absent", async () => {
+		const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "aws-registry-denied-"));
+		const hidden = path.join(tmp, "hidden");
+		try {
+			await fs.mkdir(hidden);
+			await Bun.write(path.join(hidden, "credentials"), "[default]\naws_access_key_id = a\n");
+			// stat inside a directory without search permission fails with EACCES, like a sandbox's EPERM.
+			await fs.chmod(hidden, 0o000);
+			await withEnv(
+				{
+					...EMPTY_AWS_ENV,
+					AWS_SHARED_CREDENTIALS_FILE: path.join(hidden, "credentials"),
+					AWS_CONFIG_FILE: path.join(hidden, "config"),
+					AWS_EC2_METADATA_DISABLED: "true",
+				},
+				async () => expect(getEnvApiKey("bedrock-mantle")).toBeUndefined(),
+			);
+		} finally {
+			await fs.chmod(hidden, 0o700);
+			await removeWithRetries(tmp);
+		}
+	});
+
 	test("loads implicit default config profiles only when AWS_SDK_LOAD_CONFIG is enabled", async () => {
 		const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "aws-registry-load-config-"));
 		try {

@@ -96,12 +96,12 @@ export function ChangesSheet({
 								? "Working tree"
 								: "Branch review"}
 				</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 					<X size={16} />
 				</button>
 			</div>
 			{tree !== null && (
-				<div className="sh-tabs" role="tablist" aria-label="changes view">
+				<div className="sh-tabs" role="tablist" aria-label="Changes view">
 					<button
 						type="button"
 						role="tab"
@@ -148,7 +148,7 @@ export function ChangesSheet({
 				<AgentEdits changes={changes} host={host} />
 			)}
 			{review !== null && count > 0 && (
-				<div className="sh-review-bar" role="group" aria-label="review">
+				<div className="sh-review-bar" role="group" aria-label="Review">
 					{discarding ? (
 						<>
 							<span className="sh-review-bar-text">

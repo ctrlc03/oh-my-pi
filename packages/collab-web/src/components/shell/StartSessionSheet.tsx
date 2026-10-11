@@ -102,17 +102,17 @@ export function StartSessionSheet({
 		return <FanoutCompareSheet client={client} groupId={group.id} onOpen={onOpen} onClose={onClose} />;
 
 	return (
-		<Sheet label="start a session" onClose={onClose}>
+		<Sheet label="Start a session" onClose={onClose}>
 			<div className="sh-sheet-head">
 				{folder !== null && starting === null ? (
-					<button type="button" className="sh-btn sh-btn-icon" onClick={() => setFolder(null)} aria-label="back">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={() => setFolder(null)} aria-label="Back">
 						<ChevronLeft size={16} />
 					</button>
 				) : null}
 				<div className="sh-sheet-title sh-start-title">
 					{folder === null ? "Start a session" : folderName(folder.cwd)}
 				</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 					<X size={16} />
 				</button>
 			</div>
@@ -164,15 +164,15 @@ export function StartSessionSheet({
 							className="sh-input sh-input-mono"
 							value={branch}
 							onChange={e => setBranch(e.currentTarget.value)}
-							placeholder="branch name (default <prefix><date>-<id>)"
-							aria-label="worktree branch name"
+							placeholder="Branch name (default: <prefix><date>-<id>)"
+							aria-label="Worktree branch name"
 							autoCapitalize="off"
 							autoCorrect="off"
 							spellCheck={false}
 						/>
 					)}
 					<label className="sh-start-prompt">
-						<span className="sh-field-label">First prompt (optional)</span>
+						<span className="sh-field-label">First prompt{fan ? "" : " (optional)"}</span>
 						<textarea
 							className="sh-input sh-start-prompt-input"
 							value={prompt}
@@ -221,8 +221,8 @@ export function StartSessionSheet({
 						</button>
 					)}
 					{folder.sessions.length > 0 && (
-						<section className="sh-switch-section" aria-label="resume a session">
-							<h2 className="sh-recents-title">Resume</h2>
+						<section className="sh-switch-section" aria-label="Resume a session">
+							<h2 className="sh-recents-title">Resume a session</h2>
 							<ul className="sh-recents-list">
 								{folder.sessions.map(session => (
 									<li key={session.id} className="sh-recent">
@@ -279,7 +279,7 @@ function FolderList({
 		return <div className="sh-companion-empty">No folders yet. Run omp once in a project to list it here.</div>;
 	}
 	return (
-		<section className="sh-switch-section" aria-label="folders">
+		<section className="sh-switch-section" aria-label="Folders">
 			<h2 className="sh-recents-title">Pick a folder</h2>
 			<ul className="sh-recents-list">
 				{state.value.map(folder => (

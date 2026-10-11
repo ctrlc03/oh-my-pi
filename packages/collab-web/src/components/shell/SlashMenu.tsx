@@ -125,7 +125,7 @@ export function useSlashMenu({
 
 	const menu = shown ? (
 		<div className="sh-slash">
-			<div className="sh-slash-list" role="listbox" id={listId} aria-label="slash commands">
+			<div className="sh-slash-list" role="listbox" id={listId} aria-label="Slash commands">
 				{items.map((item, i) => {
 					const on = i === index;
 					return (

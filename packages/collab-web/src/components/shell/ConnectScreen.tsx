@@ -109,7 +109,7 @@ export function ConnectScreen({
 					/>
 				)}
 				{rooms.length > 0 && (
-					<section className="sh-connect-card sh-recents" aria-label="recent sessions">
+					<section className="sh-connect-card sh-recents" aria-label="Recent sessions">
 						<h2 className="sh-recents-title">Recent sessions</h2>
 						<ul className="sh-recents-list">
 							{rooms.map(room => (
@@ -122,7 +122,7 @@ export function ConnectScreen({
 									>
 										<span className="sh-recent-title">
 											<span className="sh-recent-name">{room.title}</span>
-											{room.readOnly && <Eye size={13} aria-label="view-only" />}
+											{room.readOnly && <Eye size={13} aria-label="View-only" />}
 										</span>
 										<span className="sh-recent-meta">
 											{room.cwd && <span className="sh-recent-cwd">{shortenPath(room.cwd)}</span>}
@@ -133,8 +133,7 @@ export function ConnectScreen({
 										type="button"
 										className="sh-btn sh-btn-icon"
 										onClick={() => onForget(room.roomId)}
-										aria-label={`forget ${room.title}`}
-										title="forget"
+										aria-label={`Forget ${room.title}`}
 									>
 										<X size={15} />
 									</button>
@@ -153,7 +152,11 @@ export function ConnectScreen({
 					</div>
 					<div className="sh-connect-quick">
 						{canPaste && (
-							<button type="button" className="sh-btn sh-btn-primary" onClick={() => void paste()}>
+							<button
+								type="button"
+								className={link.trim() === "" ? "sh-btn sh-btn-primary" : "sh-btn"}
+								onClick={() => void paste()}
+							>
 								<ClipboardPaste size={16} /> Paste link
 							</button>
 						)}
@@ -194,7 +197,12 @@ export function ConnectScreen({
 						/>
 					</label>
 					{shown && <div className="sh-connect-error">{shown}</div>}
-					<button className="sh-btn sh-connect-submit" type="submit">
+					<button
+						className={
+							link.trim() === "" ? "sh-btn sh-connect-submit" : "sh-btn sh-btn-primary sh-connect-submit"
+						}
+						type="submit"
+					>
 						Connect <ArrowRight size={14} />
 					</button>
 					<div className="sh-connect-foot">

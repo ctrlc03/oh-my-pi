@@ -238,7 +238,7 @@ export function useMentionMenu({ client, text, caret, enabled, sources, onPick }
 				className="sh-slash-list"
 				role="listbox"
 				id={listId}
-				aria-label={sessionQuery ? "sessions" : "pull requests"}
+				aria-label={sessionQuery ? "Sessions" : "Pull requests"}
 			>
 				{rows.map((row, i) => {
 					const on = i === index;
@@ -261,7 +261,7 @@ export function useMentionMenu({ client, text, caret, enabled, sources, onPick }
 							)}
 							<span className="sh-mention-label">{row.label}</span>
 							{row.detail && <span className="sh-slash-desc">{row.detail}</span>}
-							<span className="sh-slash-tag">{mentionToken(row.mention)}</span>
+							<span className="sh-slash-tag sh-mention-tag">{mentionToken(row.mention)}</span>
 						</button>
 					);
 				})}

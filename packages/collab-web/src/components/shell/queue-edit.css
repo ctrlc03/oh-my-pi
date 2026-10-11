@@ -69,16 +69,21 @@
 	}
 }
 
+/* Touch: every action is a full 44px finger, and the editor is 16px so iOS does not zoom into it. */
 @media (any-pointer: coarse) {
-	.sh-followup-btn,
-	.sh-followup-editable .sh-followup-remove {
-		width: 32px;
-		height: 32px;
+	.sh-followup .sh-followup-btn,
+	.sh-followup .sh-followup-remove {
+		width: 44px;
+		height: 44px;
 	}
 
-	.sh-followup.sh-followup-editable,
-	.sh-followup.sh-followup-editing {
+	.sh-followups .sh-followup {
 		height: auto;
-		min-height: 40px;
+		min-height: 46px;
+		padding-right: 0;
+	}
+
+	.sh-followup-editor {
+		font-size: 16px;
 	}
 }

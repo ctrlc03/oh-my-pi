@@ -122,12 +122,12 @@ export function QrScanner({ onLink, onClose }: QrScannerProps): ReactNode {
 	}, []);
 
 	return createPortal(
-		<div className="sh-scan" role="dialog" aria-label="scan join QR code">
+		<div className="sh-scan" role="dialog" aria-label="Scan join QR code">
 			<video ref={videoRef} className="sh-scan-video" playsInline muted />
 			<div className="sh-scan-frame" aria-hidden />
 			<div className="sh-scan-top">
 				<span>Scan the QR code from /collab</span>
-				<button type="button" className="sh-btn sh-btn-icon sh-scan-close" onClick={onClose} aria-label="close">
+				<button type="button" className="sh-btn sh-btn-icon sh-scan-close" onClick={onClose} aria-label="Close">
 					<X size={18} />
 				</button>
 			</div>

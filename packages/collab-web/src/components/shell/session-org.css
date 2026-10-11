@@ -64,7 +64,7 @@
 	opacity: 0.65;
 }
 
-/* Dimmed until the row is hovered or focused. */
+/* Dimmed until the row is hovered or focused; touch screens have no hover, so it stays clear there. */
 .sh-org-more {
 	flex: none;
 	opacity: 0.55;
@@ -74,6 +74,12 @@
 .sh-org-row:hover .sh-org-more,
 .sh-org-more:focus-visible {
 	opacity: 1;
+}
+
+@media (hover: none) {
+	.sh-org-more {
+		opacity: 1;
+	}
 }
 
 .sh-org-undo {

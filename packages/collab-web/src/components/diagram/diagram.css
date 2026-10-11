@@ -28,6 +28,10 @@
 	color: var(--fg-muted);
 }
 
+.tr-diagram-kind {
+	letter-spacing: 0.02em;
+}
+
 .tr-diagram-actions {
 	display: inline-flex;
 	gap: 2px;
@@ -39,7 +43,7 @@
 	gap: 5px;
 	min-height: 28px;
 	padding: 0 8px;
-	font: 500 11px / 1 var(--font-ui);
+	font: 500 12px / 1 var(--font-ui);
 	color: var(--fg-muted);
 	background: none;
 	border: 0;
@@ -53,6 +57,12 @@
 	background: var(--hover);
 }
 
+.tr-diagram-btn:focus-visible,
+.tr-diagram-svg:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: -2px;
+}
+
 .tr-diagram-wait {
 	display: flex;
 	align-items: center;
@@ -62,18 +72,61 @@
 	color: var(--fg-muted);
 }
 
+/*
+ * The drawing at its natural size: it shrinks to the column, but not below the readable zoom of its kind
+ * (--dg-floor), and a tall one not past about a screen (--dg-max-h); what does not fit scrolls. `margin: auto`
+ * centres a narrow drawing and, unlike centred text, leaves a wide one scrollable from its left edge.
+ */
+.tr-diagram-frame {
+	position: relative;
+}
+
+/* The edges that have more to scroll to fade into the figure's background. */
+.tr-diagram-frame::before,
+.tr-diagram-frame::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 28px;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 120ms ease-out;
+}
+
+.tr-diagram-frame::before {
+	left: 0;
+	background: linear-gradient(to right, var(--bg-inset), transparent);
+}
+
+.tr-diagram-frame::after {
+	right: 0;
+	background: linear-gradient(to left, var(--bg-inset), transparent);
+}
+
+.tr-diagram-frame[data-more~="start"]::before,
+.tr-diagram-frame[data-more~="end"]::after {
+	opacity: 1;
+}
+
 .tr-diagram-svg {
+	--dg-max-h: min(60vh, 560px);
+	max-height: min(72vh, 640px);
 	padding: 12px;
-	overflow-x: auto;
-	text-align: center;
+	overflow: auto;
 	cursor: zoom-in;
 	line-height: 0;
 }
 
 .tr-diagram-svg svg {
-	display: inline-block;
-	max-width: 100%;
+	display: block;
+	margin: 0 auto;
+	max-width: none;
 	height: auto;
+	width: max(
+		calc(var(--dg-w) * var(--dg-floor) * 1px),
+		min(100%, calc(var(--dg-w) * 1px), calc(var(--dg-max-h) * var(--dg-ratio)))
+	);
 }
 
 /* A code block inside the figure sits flush: the figure already has the frame. */
@@ -99,13 +152,14 @@
 	margin-top: 2px;
 }
 
-@media (max-width: 640px) {
-	.tr-diagram-btn {
-		min-height: 36px;
-		padding: 0 10px;
+/* Touch: the figure's buttons are real targets. */
+@media (any-pointer: coarse) {
+	.tr-diagram-bar {
+		padding-block: 0;
 	}
-	.tr-diagram-btn-label {
-		display: none;
+	.tr-diagram-btn {
+		min-height: 44px;
+		padding: 0 12px;
 	}
 }
 
@@ -174,11 +228,79 @@
 
 /* ---- viewer sheet ---- */
 
+/* Title and close on one row, the actions between them; on a phone they take a row of their own. */
+.sh-diagram-head {
+	align-items: center;
+	flex-wrap: wrap;
+	justify-content: flex-start;
+}
+
+.sh-diagram-head .sh-sheet-title {
+	flex: 1;
+	padding-top: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .sh-diagram-actions {
 	display: inline-flex;
+	flex: none;
 	flex-wrap: wrap;
+	align-items: center;
 	justify-content: flex-end;
 	gap: 6px;
+	/* Between the title and the close button. */
+	order: 1;
+}
+
+.sh-diagram-close {
+	order: 2;
+}
+
+.sh-diagram-action,
+.sh-diagram-actions .sh-download .sh-btn:not(.sh-btn-icon) {
+	gap: 6px;
+	white-space: nowrap;
+}
+
+.sh-diagram-action[aria-pressed="true"] {
+	color: var(--fg);
+	background: var(--selected);
+}
+
+.sh-diagram-action:focus-visible,
+.sh-diagram-close:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
+}
+
+@media (any-pointer: coarse) {
+	.sh-diagram-action,
+	.sh-diagram-actions .sh-download .sh-btn,
+	.sh-diagram-close,
+	.sh-pz-controls .sh-btn {
+		min-width: 44px;
+		min-height: 44px;
+	}
+}
+
+.sh-diagram-actions .sh-btn-primary:disabled {
+	opacity: 0.55;
+}
+
+@media (max-width: 640px) {
+	.sh-diagram-actions {
+		order: 3;
+		flex: 1 0 100%;
+		justify-content: flex-start;
+		gap: 3px;
+	}
+	.sh-diagram-action {
+		gap: 4px;
+		padding-inline: 6px;
+		font-size: 13px;
+	}
 }
 
 .sh-diagram-source,
@@ -249,7 +371,7 @@
 	gap: 10px;
 }
 
-.sh-mmd-source {
+.sh-input.sh-mmd-source {
 	min-height: 0;
 	height: 100%;
 	resize: none;

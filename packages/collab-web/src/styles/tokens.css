@@ -19,7 +19,7 @@
 	/* text */
 	--fg: #f7eff6;
 	--fg-muted: #c0aec0;
-	--fg-faint: #8a7a8d;
+	--fg-faint: #978798;
 	--fg-inverse: #170f16;
 
 	/* accent: one pink; orchid only as its gradient partner */
@@ -113,7 +113,8 @@
 	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
 	--shadow-card: 0 1px 2px rgba(10, 3, 10, 0.5);
-	--shadow-float: 0 1px 0 rgba(255, 236, 249, 0.06) inset, 0 10px 30px rgba(10, 3, 10, 0.45), 0 2px 6px rgba(10, 3, 10, 0.3);
+	--shadow-float:
+		0 1px 0 rgba(255, 236, 249, 0.06) inset, 0 10px 30px rgba(10, 3, 10, 0.45), 0 2px 6px rgba(10, 3, 10, 0.3);
 	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(219, 39, 119, 0.3);
 	--shadow-overlay: 0 32px 80px rgba(10, 3, 10, 0.65), 0 1px 0 rgba(255, 236, 249, 0.07) inset;
 	--rail-mobile-shadow: -12px 0 32px rgba(10, 3, 10, 0.6);
@@ -125,6 +126,13 @@
 
 	/* scroll-edge fade: masks read alpha only, so the stop color is irrelevant */
 	--fade-bottom: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
+}
+
+/* Finger-sized header controls (44px) need the bar, and everything offset by it, to clear them. */
+@media (any-pointer: coarse) {
+	:root {
+		--topbar-h: 60px;
+	}
 }
 
 /* Light theme — explicit override (toggle writes data-theme="light"). */
@@ -141,8 +149,8 @@
 	--selected: rgba(90, 20, 70, 0.075);
 
 	--fg: #2a1825;
-	--fg-muted: #6c5468;
-	--fg-faint: #9b8597;
+	--fg-muted: #5f4a5c;
+	--fg-faint: #766178;
 	--fg-inverse: #fff;
 
 	--accent-a: #e2479d;
@@ -157,10 +165,10 @@
 	--ambient-a: rgba(219, 39, 119, 0.08);
 	--ambient-b: rgba(139, 70, 230, 0.05);
 
-	--ok: #12a36b;
+	--ok: #0b7a4f;
 	--live: #12a36b;
-	--warn: #c77c02;
-	--err: #dc3a40;
+	--warn: #9a5b00;
+	--err: #c4262d;
 
 	--border: rgba(90, 20, 70, 0.09);
 	--border-strong: rgba(90, 20, 70, 0.16);
@@ -230,8 +238,8 @@
 		--selected: rgba(90, 20, 70, 0.075);
 
 		--fg: #2a1825;
-		--fg-muted: #6c5468;
-		--fg-faint: #9b8597;
+		--fg-muted: #5f4a5c;
+		--fg-faint: #766178;
 		--fg-inverse: #fff;
 
 		--accent-a: #e2479d;
@@ -246,10 +254,10 @@
 		--ambient-a: rgba(219, 39, 119, 0.08);
 		--ambient-b: rgba(139, 70, 230, 0.05);
 
-		--ok: #12a36b;
+		--ok: #0b7a4f;
 		--live: #12a36b;
-		--warn: #c77c02;
-		--err: #dc3a40;
+		--warn: #9a5b00;
+		--err: #c4262d;
 
 		--border: rgba(90, 20, 70, 0.09);
 		--border-strong: rgba(90, 20, 70, 0.16);

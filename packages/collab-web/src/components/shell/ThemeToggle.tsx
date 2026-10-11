@@ -1,4 +1,4 @@
-import { type LucideIcon, Monitor, Moon, Sun } from "lucide-react";
+import { type LucideIcon, Moon, Sun, SunMoon } from "lucide-react";
 import { type ThemePreference, useThemePreference } from "../../lib/theme";
 
 const NEXT_PREFERENCE: Record<ThemePreference, ThemePreference> = {
@@ -8,7 +8,7 @@ const NEXT_PREFERENCE: Record<ThemePreference, ThemePreference> = {
 };
 
 const PREFERENCE_ICON: Record<ThemePreference, LucideIcon> = {
-	system: Monitor,
+	system: SunMoon,
 	light: Sun,
 	dark: Moon,
 };

@@ -233,6 +233,17 @@ button.sh-tasks-agent-row:hover {
 	}
 }
 
+@media (any-pointer: coarse) {
+	.sh-tasks-btn {
+		min-height: 44px;
+	}
+
+	button.sh-tasks-agent-row {
+		min-height: 44px;
+		align-items: center;
+	}
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.sh-tasks-meter::after {
 		transition: none;

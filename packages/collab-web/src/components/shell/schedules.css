@@ -114,9 +114,23 @@
 }
 
 .sh-sched-day {
+	position: relative;
 	height: 30px;
 	padding: 0 12px;
 	cursor: pointer;
+}
+
+/* The chips stay slim; on touch screens their hit area grows to a finger. */
+@media (any-pointer: coarse) {
+	.sh-sched-days {
+		gap: 10px 6px;
+	}
+
+	.sh-sched-day::after {
+		content: "";
+		position: absolute;
+		inset: -7px -2px;
+	}
 }
 
 .sh-sched-day-on {
@@ -127,10 +141,17 @@
 
 .sh-sched-interval {
 	display: flex;
+	align-items: center;
 	gap: 6px;
 }
 
-.sh-sched-interval .sh-input:first-child {
+.sh-sched-every {
+	flex: none;
+	font-size: 13px;
+	color: var(--fg-muted);
+}
+
+.sh-sched-interval input.sh-input {
 	flex: 1;
 	min-width: 0;
 }

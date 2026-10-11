@@ -109,7 +109,7 @@ export function whenOf(draft: WhenDraft): { when: ScheduleWhen } | { error: stri
 const KIND_LABELS: Record<ScheduleWhen["kind"], string> = {
 	once: "Once",
 	daily: "Daily",
-	interval: "Every…",
+	interval: "Interval",
 	cron: "Cron",
 };
 
@@ -135,7 +135,7 @@ export function ScheduleWhenEditor({ draft, canCron, onChange }: ScheduleWhenEdi
 	return (
 		<div className="sh-sched-field">
 			<span className="sh-field-label">Repeat</span>
-			<div className="sh-segmented sh-segmented-wrap" role="radiogroup" aria-label="repeat">
+			<div className="sh-segmented sh-segmented-wrap" role="radiogroup" aria-label="Repeat">
 				{kinds.map(kind => (
 					<button
 						key={kind}
@@ -155,7 +155,7 @@ export function ScheduleWhenEditor({ draft, canCron, onChange }: ScheduleWhenEdi
 					type="datetime-local"
 					value={draft.at}
 					onChange={e => set({ at: e.currentTarget.value })}
-					aria-label="date and time"
+					aria-label="Date and time"
 				/>
 			)}
 			{draft.kind === "daily" && (
@@ -165,9 +165,9 @@ export function ScheduleWhenEditor({ draft, canCron, onChange }: ScheduleWhenEdi
 						type="time"
 						value={draft.time}
 						onChange={e => set({ time: e.currentTarget.value })}
-						aria-label="time of day"
+						aria-label="Time of day"
 					/>
-					<div className="sh-sched-days" role="group" aria-label="weekdays">
+					<div className="sh-sched-days" role="group" aria-label="Weekdays">
 						{DAY_ORDER.map(day => (
 							<button
 								key={day}
@@ -186,19 +186,20 @@ export function ScheduleWhenEditor({ draft, canCron, onChange }: ScheduleWhenEdi
 			)}
 			{draft.kind === "interval" && (
 				<div className="sh-sched-interval">
+					<span className="sh-sched-every">Every</span>
 					<input
 						className="sh-input"
 						value={draft.every}
 						onChange={e => set({ every: e.currentTarget.value })}
 						inputMode="decimal"
 						autoComplete="off"
-						aria-label="interval length"
+						aria-label="Interval length"
 					/>
 					<select
 						className="sh-input"
 						value={draft.unit}
 						onChange={e => set({ unit: e.currentTarget.value as WhenDraft["unit"] })}
-						aria-label="interval unit"
+						aria-label="Interval unit"
 					>
 						<option value="min">minutes</option>
 						<option value="h">hours</option>
@@ -218,9 +219,9 @@ export function ScheduleWhenEditor({ draft, canCron, onChange }: ScheduleWhenEdi
 						autoComplete="off"
 						autoCorrect="off"
 						spellCheck={false}
-						aria-label="cron expression"
+						aria-label="Cron expression"
 					/>
-					<div className="sh-sched-days" role="group" aria-label="cron examples">
+					<div className="sh-sched-days" role="group" aria-label="Cron examples">
 						{CRON_PRESETS.map(preset => (
 							<button
 								key={preset.expr}
@@ -241,7 +242,7 @@ export function ScheduleWhenEditor({ draft, canCron, onChange }: ScheduleWhenEdi
 						autoCapitalize="none"
 						autoComplete="off"
 						spellCheck={false}
-						aria-label="time zone"
+						aria-label="Time zone"
 					/>
 					<datalist id="sh-sched-zones">
 						{ZONE_NAMES.map(name => (
@@ -269,7 +270,7 @@ export function ScheduleWhenEditor({ draft, canCron, onChange }: ScheduleWhenEdi
 function WhenPreview({ when, tz }: { when: ScheduleWhen; tz: string | undefined }): ReactNode {
 	const runs = nextRuns(when, Date.now(), 3);
 	return (
-		<div className="sh-sched-preview" aria-label="next runs">
+		<div className="sh-sched-preview" aria-label="Next runs">
 			<span className="sh-sched-preview-title">{describeWhen(when)}</span>
 			{runs.length === 0 ? (
 				<span className="sh-sched-preview-line">Never runs again.</span>

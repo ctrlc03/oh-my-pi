@@ -139,7 +139,7 @@ export function SplitPane({
 				<span className="sh-title sh-split-title" title={cwd ?? title}>
 					{title}
 				</span>
-				<span className={`sh-status sh-status-${snap.phase}`} title={`connection: ${snap.phase}`}>
+				<span className={`sh-status sh-status-${snap.phase}`} title={`Connection: ${snap.phase}`}>
 					<span className={`sh-dot sh-dot-${snap.phase}`} />
 					{status}
 				</span>
@@ -149,8 +149,8 @@ export function SplitPane({
 						type="button"
 						className="sh-btn sh-btn-icon"
 						onClick={() => onMakeMain(link)}
-						aria-label="open as main session"
-						title="open as main session"
+						aria-label="Open as main session"
+						title="Open as main session"
 					>
 						<Maximize2 size={15} />
 					</button>
@@ -158,8 +158,8 @@ export function SplitPane({
 						type="button"
 						className="sh-btn sh-btn-icon"
 						onClick={onClose}
-						aria-label="close pane"
-						title="close pane"
+						aria-label="Close pane"
+						title="Close pane"
 					>
 						<X size={16} />
 					</button>

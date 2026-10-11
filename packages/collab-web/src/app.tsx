@@ -38,6 +38,7 @@ import { CacheStrip } from "./components/shell/CacheStrip";
 import { TaskProgress } from "./components/shell/TaskProgress";
 import { Toasts } from "./components/shell/Toasts";
 import { UpdateBar } from "./components/shell/UpdateBar";
+import { Tooltip } from "./components/shell/Tooltip";
 import { ShortcutsSheet } from "./components/shell/ShortcutsSheet";
 import { UsageSheet } from "./components/shell/UsageSheet";
 import { TimelineSheet } from "./components/shell/TimelineSheet";
@@ -357,6 +358,7 @@ export function App(): ReactNode {
 	return (
 		<>
 			<UpdateBar />
+			<Tooltip />
 			<FixItHost
 				client={companionClient}
 				live={companionPhase === "live"}

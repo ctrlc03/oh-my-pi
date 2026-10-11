@@ -124,7 +124,7 @@ function ChangeFile({ file, open, viewed, side, review, onToggle, onViewed }: Ch
 					type="button"
 					className="sh-btn sh-btn-icon sh-tc-viewed"
 					aria-pressed={viewed}
-					aria-label={viewed ? "mark as not viewed" : "mark as viewed"}
+					aria-label={viewed ? "Mark as not viewed" : "Mark as viewed"}
 					title={viewed ? "Viewed" : "Mark as viewed"}
 					onClick={onViewed}
 				>
@@ -213,7 +213,7 @@ function ChangesPanel({ view, sessionId, info, files, onSendToAgent, heading }: 
 						</span>
 					)}
 					{wide && (
-						<div className="sh-segmented sh-tc-layout" role="radiogroup" aria-label="diff layout">
+						<div className="sh-segmented sh-tc-layout" role="radiogroup" aria-label="Diff layout">
 							<button
 								type="button"
 								role="radio"
@@ -264,7 +264,7 @@ function ChangesPanel({ view, sessionId, info, files, onSendToAgent, heading }: 
 				)}
 			</div>
 			{review !== null && count > 0 && (
-				<div className="sh-review-bar" role="group" aria-label="review">
+				<div className="sh-review-bar" role="group" aria-label="Review">
 					{discarding ? (
 						<>
 							<span className="sh-review-bar-text">
@@ -385,7 +385,7 @@ function ReceiptsPanel({ receipts, onOpenTurn }: ReceiptsPanelProps): ReactNode 
 			)}
 			{empty && <div className="sh-companion-empty">Nothing recorded yet.</div>}
 			{receipts.files.length > 0 && (
-				<section className="sh-tc-section" aria-label="files changed">
+				<section className="sh-tc-section" aria-label="Files changed">
 					<h3 className="sh-tc-heading">Files changed</h3>
 					<ul className="sh-tc-list">
 						{receipts.files.map((file, i) => (
@@ -399,7 +399,7 @@ function ReceiptsPanel({ receipts, onOpenTurn }: ReceiptsPanelProps): ReactNode 
 				</section>
 			)}
 			{receipts.commands.length > 0 && (
-				<section className="sh-tc-section" aria-label="commands run">
+				<section className="sh-tc-section" aria-label="Commands run">
 					<h3 className="sh-tc-heading">Commands</h3>
 					<ul className="sh-tc-list">
 						{receipts.commands.map((command, i) => (
@@ -412,7 +412,7 @@ function ReceiptsPanel({ receipts, onOpenTurn }: ReceiptsPanelProps): ReactNode 
 				</section>
 			)}
 			{receipts.approvals.length > 0 && (
-				<section className="sh-tc-section" aria-label="approvals">
+				<section className="sh-tc-section" aria-label="Approvals">
 					<h3 className="sh-tc-heading">Approvals</h3>
 					<ul className="sh-tc-list">
 						{receipts.approvals.map((approval, i) => (
@@ -425,7 +425,7 @@ function ReceiptsPanel({ receipts, onOpenTurn }: ReceiptsPanelProps): ReactNode 
 				</section>
 			)}
 			{receipts.subagents.length > 0 && (
-				<section className="sh-tc-section" aria-label="subagents">
+				<section className="sh-tc-section" aria-label="Subagents">
 					<h3 className="sh-tc-heading">Subagents</h3>
 					<ul className="sh-tc-list">
 						{receipts.subagents.map((agent, i) => (
@@ -569,15 +569,17 @@ export function TurnChangesSheet({
 		<Sheet label="what the agent changed" size="full" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">{tab === "receipts" ? "Receipts" : "Changes"}</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={ask} aria-label="refresh" title="Refresh">
-					<RefreshCw size={16} />
-				</button>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
-					<X size={16} />
-				</button>
+				<span className="sh-sheet-head-actions">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={ask} aria-label="Refresh" title="Refresh">
+						<RefreshCw size={16} />
+					</button>
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close" title="Close">
+						<X size={16} />
+					</button>
+				</span>
 			</div>
 			{tabs.length > 1 && (
-				<div className="sh-tabs" role="tablist" aria-label="changes view">
+				<div className="sh-tabs" role="tablist" aria-label="Changes view">
 					{tabs.map(entry => (
 						<button
 							key={entry.id}
@@ -598,7 +600,7 @@ export function TurnChangesSheet({
 						type="button"
 						className="sh-btn sh-btn-icon"
 						disabled={index <= 0}
-						aria-label="previous turn"
+						aria-label="Previous turn"
 						onClick={() => setPickedId(turns[index - 1]?.id ?? null)}
 					>
 						<ChevronRight size={16} className="sh-tc-flip" />
@@ -610,7 +612,7 @@ export function TurnChangesSheet({
 						type="button"
 						className="sh-btn sh-btn-icon"
 						disabled={index >= turns.length - 1}
-						aria-label="next turn"
+						aria-label="Next turn"
 						onClick={() => setPickedId(turns[index + 1]?.id ?? null)}
 					>
 						<ChevronRight size={16} />

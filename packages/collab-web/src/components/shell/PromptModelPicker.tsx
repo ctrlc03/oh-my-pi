@@ -1,5 +1,5 @@
 import type { WireModel } from "@oh-my-pi/pi-wire";
-import { Replace } from "lucide-react";
+import { ArrowRightLeft } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 import { useCallback, useState } from "react";
 import type { PromptModelChoice } from "../../lib/client";
@@ -45,15 +45,15 @@ export function PromptModelPicker({
 				disabled={disabled}
 				aria-haspopup="dialog"
 				aria-expanded={anchor !== null}
-				aria-label={label ? `next message runs on ${label}` : "pick a model for the next message only"}
-				title={label ? `next message only: ${label}` : "pick a model for the next message only"}
+				aria-label={label ? `Next message runs on ${label}` : "Pick a model for the next message only"}
+				title={label ? `Next message only: ${label}` : "Pick a model for the next message only"}
 			>
-				<Replace size={13} aria-hidden />
+				<ArrowRightLeft size={14} aria-hidden />
 				{label && <span className="sh-pill-text">{label}</span>}
 			</button>
 			{anchor !== null && (
 				<Sheet label="model for the next message" anchor={anchor} onClose={close}>
-					<div className="sh-model-list" role="group" aria-label="model for the next message">
+					<div className="sh-model-list" role="group" aria-label="Model for the next message">
 						<div className="sh-model-provider">Next message only</div>
 						<button
 							type="button"
@@ -68,7 +68,7 @@ export function PromptModelPicker({
 						</button>
 					</div>
 					{chosen && levels.length > 0 && (
-						<div className="sh-model-list" role="radiogroup" aria-label="thinking level for the next message">
+						<div className="sh-model-list" role="radiogroup" aria-label="Thinking level for the next message">
 							<div className="sh-model-provider">Thinking</div>
 							{[undefined, ...levels].map(level => {
 								const on = choice?.thinking === level;

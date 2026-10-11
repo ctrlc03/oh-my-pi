@@ -164,7 +164,7 @@ export function SessionsSheet({
 	}
 
 	return (
-		<Sheet label="all sessions" size="wide" onClose={onClose}>
+		<Sheet label="All sessions" size="wide" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">All sessions</div>
 				<span className="sh-stats-head-actions">
@@ -174,8 +174,7 @@ export function SessionsSheet({
 							className="sh-btn sh-btn-icon"
 							onClick={() => setSettingsOpen(open => !open)}
 							aria-pressed={settingsOpen}
-							aria-label="worktree settings"
-							title="worktree settings"
+							aria-label="Worktree settings"
 						>
 							<GitBranch size={15} />
 						</button>
@@ -185,12 +184,11 @@ export function SessionsSheet({
 						className="sh-btn sh-btn-icon"
 						onClick={reload}
 						disabled={loading}
-						aria-label="refresh"
-						title="refresh"
+						aria-label="Refresh"
 					>
 						{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>
@@ -199,7 +197,7 @@ export function SessionsSheet({
 			{canGitFlow === true && settingsOpen && <WorktreeSettings client={client} />}
 			{error && <div className="sh-connect-error">{error}</div>}
 			{canSearch === true && (
-				<div className="sh-segmented" role="radiogroup" aria-label="search in">
+				<div className="sh-segmented sh-segmented-fill" role="radiogroup" aria-label="Search in">
 					<button
 						type="button"
 						role="radio"
@@ -228,7 +226,7 @@ export function SessionsSheet({
 					value={messages ? msgQuery : query}
 					onChange={e => (messages ? setMsgQuery : setQuery)(e.currentTarget.value)}
 					placeholder={messages ? "Search what was said" : "Search title or folder"}
-					aria-label={messages ? "search messages" : "search sessions"}
+					aria-label={messages ? "Search messages" : "Search sessions"}
 					autoCapitalize="off"
 					autoCorrect="off"
 					spellCheck={false}
@@ -268,17 +266,19 @@ export function SessionsSheet({
 			) : sessions.length === 0 ? (
 				<div className="sh-companion-empty">{q ? "No session matches." : "No sessions yet."}</div>
 			) : (
-				<div className={loading ? "sh-stats-body sh-stats-stale" : "sh-stats-body"}>
+				<div className={loading ? "sh-stats-body sh-stats-cols sh-stats-stale" : "sh-stats-body sh-stats-cols"}>
 					{[...groups].map(([folder, group]) => (
 						<section key={folder} className="sh-switch-section" aria-label={folder}>
 							<h2 className="sh-recents-title sh-stats-group" title={folder}>
 								<span className="sh-recent-cwd">{shortenPath(folder)}</span>
-								<span className="sh-stats-group-cost">{fmtCost(group.cost)}</span>
+								{group.sessions.length > 1 && (
+									<span className="sh-stats-group-cost">{fmtCost(group.cost)}</span>
+								)}
 							</h2>
 							{group.sessions.every(session => session.worktree === true && session.live === undefined) && (
 								<div className="sh-review-worktree">
 									{removing === folder ? (
-										<div className="sh-review-confirm" role="group" aria-label="confirm">
+										<div className="sh-review-confirm" role="group" aria-label="Confirm">
 											<div className="sh-field-label">This will run on your computer:</div>
 											<pre className="sh-review-cmd">git worktree remove {folder}</pre>
 											<div className="sh-field-hint">

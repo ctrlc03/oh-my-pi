@@ -96,12 +96,12 @@ export function PaneSheet({ client, instanceId, onClose }: PaneSheetProps): Reac
 						className="sh-btn sh-btn-icon"
 						onClick={() => void capture()}
 						disabled={loading}
-						aria-label="refresh terminal"
-						title="refresh"
+						aria-label="Refresh terminal"
+						title="Refresh"
 					>
 						<RefreshCw size={15} className={loading ? "sh-spin" : undefined} />
 					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>

@@ -49,7 +49,7 @@ export function LazyCodemapSheet(props: CodemapSheetProps): ReactNode {
 		<Sheet label="code map" size="wide" onClose={props.onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Code map</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={props.onClose} aria-label="close">
+				<button type="button" className="sh-btn sh-btn-icon" onClick={props.onClose} aria-label="Close">
 					<X size={16} />
 				</button>
 			</div>

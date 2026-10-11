@@ -91,7 +91,7 @@ export function DiagnosticsSheet({ client, onClose }: DiagnosticsSheetProps): Re
 	const events = mergeEvents(appEvents, diag?.events ?? [], reading?.skewMs ?? 0).slice(0, EVENTS_SHOWN);
 
 	return (
-		<Sheet label="diagnostics" size="wide" onClose={onClose}>
+		<Sheet label="Diagnostics" size="wide" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Diagnostics</div>
 				<span className="sh-stats-head-actions">
@@ -100,12 +100,11 @@ export function DiagnosticsSheet({ client, onClose }: DiagnosticsSheetProps): Re
 						className="sh-btn sh-btn-icon"
 						onClick={reload}
 						disabled={loading}
-						aria-label="refresh"
-						title="refresh"
+						aria-label="Refresh"
 					>
 						{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>
@@ -130,14 +129,14 @@ export function DiagnosticsSheet({ client, onClose }: DiagnosticsSheetProps): Re
 				)
 			) : (
 				<div className={loading ? "sh-stats-body sh-stats-stale" : "sh-stats-body"}>
-					<section className="sh-stats-section" aria-label="computer">
+					<section className="sh-stats-section" aria-label="Computer">
 						<h2 className="sh-recents-title">Computer</h2>
 						<dl className="sh-diag-list">
 							<Row label="Companion">
 								{reading.diag.version ?? "unknown"}
 								{reading.diag.dirty && <span className="sh-chip">modified</span>}
 							</Row>
-							<Row label="omp">{reading.diag.omp ?? "not answering"}</Row>
+							<Row label="Omp">{reading.diag.omp ?? "not answering"}</Row>
 							<Row label="Uptime">{fmtDuration(reading.diag.uptimeMs)}</Row>
 							<Row label="Started by">{reading.diag.managed === "launchd" ? "launchd" : "hand"}</Row>
 							<Row label="Keep awake">{reading.diag.keepAwake ? "held" : "not held"}</Row>
@@ -149,14 +148,14 @@ export function DiagnosticsSheet({ client, onClose }: DiagnosticsSheetProps): Re
 							<Row label="Devices">{reading.diag.devices}</Row>
 						</dl>
 					</section>
-					<section className="sh-stats-section" aria-label="connection">
+					<section className="sh-stats-section" aria-label="Connection">
 						<h2 className="sh-recents-title">Connection</h2>
 						<dl className="sh-diag-list">
 							<Row label="App build">{APP_BUILD}</Row>
 							<Row label="Round trip">{fmtDuration(reading.rttMs)}</Row>
 						</dl>
 					</section>
-					<section className="sh-stats-section" aria-label="recent events">
+					<section className="sh-stats-section" aria-label="Recent events">
 						<h2 className="sh-recents-title">Recent events</h2>
 						{events.length === 0 ? (
 							<div className="sh-field-hint">Nothing yet.</div>
@@ -179,7 +178,7 @@ export function DiagnosticsSheet({ client, onClose }: DiagnosticsSheetProps): Re
 						)}
 					</section>
 					{reading.diag.errors.length > 0 && (
-						<section className="sh-stats-section" aria-label="request errors">
+						<section className="sh-stats-section" aria-label="Request errors">
 							<h2 className="sh-recents-title">Request errors</h2>
 							<ul className="sh-diag-events">
 								{[...reading.diag.errors].reverse().map(error => (
@@ -194,7 +193,7 @@ export function DiagnosticsSheet({ client, onClose }: DiagnosticsSheetProps): Re
 							</ul>
 						</section>
 					)}
-					<section className="sh-stats-section" aria-label="maintenance">
+					<section className="sh-stats-section" aria-label="Maintenance">
 						<h2 className="sh-recents-title">Maintenance</h2>
 						<div className="sh-card-actions">
 							<button

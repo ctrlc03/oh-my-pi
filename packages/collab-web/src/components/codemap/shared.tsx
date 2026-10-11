@@ -118,7 +118,7 @@ export function OpenInCanvas({ title, build, className = "sh-btn" }: OpenInCanva
 			type="button"
 			className={className}
 			onClick={() => openCanvas(title, "codemap", { kind: "skeleton", elements: build(graphPalette()) })}
-			title="draw this graph on an editable canvas"
+			title="Draw this graph on an editable canvas"
 		>
 			<PenLine size={14} /> Open in canvas
 		</button>

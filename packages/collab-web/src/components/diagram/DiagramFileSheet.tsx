@@ -1,16 +1,17 @@
-import { LoaderCircle, Pencil, RefreshCw, Save, X } from "lucide-react";
+import { LoaderCircle, Pencil, RefreshCw, Save } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CompanionClient, FileContent } from "../../lib/companion";
 import { FileChangedError } from "../../lib/companion";
 import { openCanvas } from "../../lib/diagram-store";
-import { diagramFileKind } from "../../lib/diagrams";
+import { diagramFileKind, READABLE_SCALE } from "../../lib/diagrams";
 import { parseScene } from "../../lib/excalidraw-scene";
 import { standaloneSvg, svgSize } from "../../lib/svg";
 import { useRequest } from "../../lib/use-request";
 import { DownloadButton } from "../shell/DownloadButton";
 import { Sheet } from "../shell/Sheet";
 import { type CanvasSave, CanvasSheet } from "./CanvasSheet";
+import { DiagramHead } from "./DiagramHead";
 import { PanZoom } from "./PanZoom";
 import { useDiagram } from "./use-diagram";
 
@@ -59,14 +60,7 @@ export function DiagramFileSheet({
 	}
 	return (
 		<Sheet label="diagram file" size="full" onClose={onClose}>
-			<div className="sh-sheet-head">
-				<div className="sh-sheet-title sh-file-path" title={path}>
-					{baseName(path)}
-				</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
-					<X size={16} />
-				</button>
-			</div>
+			<DiagramHead title={baseName(path)} titleHint={path} onClose={onClose} />
 			{state.status === "loading" && (
 				<div className="sh-companion-empty sh-file-status">
 					<LoaderCircle size={14} className="sh-spin" /> Loading…
@@ -127,14 +121,7 @@ function SceneFile(props: LoadedFileProps): ReactNode {
 	if (file.text === null || (parsed !== null && !parsed.ok)) {
 		return (
 			<Sheet label="diagram file" size="full" onClose={onClose}>
-				<div className="sh-sheet-head">
-					<div className="sh-sheet-title sh-file-path" title={path}>
-						{baseName(path)}
-					</div>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
-						<X size={16} />
-					</button>
-				</div>
+				<DiagramHead title={baseName(path)} titleHint={path} onClose={onClose} />
 				<div className="sh-connect-error">
 					{file.text === null
 						? "Binary file, not shown."
@@ -198,44 +185,35 @@ function MermaidFile(props: LoadedFileProps): ReactNode {
 
 	return (
 		<Sheet label="diagram file" size="full" onClose={requestClose}>
-			<div className="sh-sheet-head">
-				<div className="sh-sheet-title sh-file-path" title={path}>
-					{baseName(path)}
-					{dirty && <span className="sh-ide-dot sh-ide-dot-on" aria-label="unsaved" />}
-				</div>
-				<span className="sh-diagram-actions">
-					{writable && (
-						<button
-							type="button"
-							className="sh-btn sh-btn-primary"
-							onClick={() => void save()}
-							disabled={!dirty || busy}
-							title={`save ${baseName(path)}`}
-						>
-							{busy ? <LoaderCircle size={15} className="sh-spin" /> : <Save size={15} />}{" "}
-							<span className="sh-btn-label">Save</span>
-						</button>
-					)}
+			<DiagramHead title={baseName(path)} titleHint={path} onClose={requestClose}>
+				{writable && (
 					<button
 						type="button"
-						className="sh-btn"
-						onClick={() =>
-							openCanvas(`Edit ${baseName(path)}`, baseName(path).replace(/\.[^.]+$/, ""), {
-								kind: "mermaid",
-								source: text,
-							})
-						}
-						disabled={ready === null}
-						title="edit on the canvas: the result is sent to the agent or downloaded, not saved over this file"
+						className="sh-btn sh-btn-primary sh-diagram-action"
+						onClick={() => void save()}
+						disabled={!dirty || busy}
+						title={`Save ${baseName(path)}`}
 					>
-						<Pencil size={14} /> <span className="sh-btn-label">Canvas</span>
+						{busy ? <LoaderCircle size={15} className="sh-spin" /> : <Save size={15} />}{" "}
+						<span className="sh-diagram-action-label">Save</span>
 					</button>
-					<DownloadButton client={client} instanceId={instanceId} path={path} />
-					<button type="button" className="sh-btn sh-btn-icon" onClick={requestClose} aria-label="close">
-						<X size={16} />
-					</button>
-				</span>
-			</div>
+				)}
+				<button
+					type="button"
+					className="sh-btn sh-diagram-action"
+					onClick={() =>
+						openCanvas(`Edit ${baseName(path)}`, baseName(path).replace(/\.[^.]+$/, ""), {
+							kind: "mermaid",
+							source: text,
+						})
+					}
+					disabled={ready === null}
+					title="Edit on the canvas: the result is sent to the agent or downloaded, not saved over this file"
+				>
+					<Pencil size={15} /> <span className="sh-diagram-action-label">Canvas</span>
+				</button>
+				<DownloadButton client={client} instanceId={instanceId} path={path} label="Download" />
+			</DiagramHead>
 			{saver.reason !== undefined && <div className="sh-file-note">{saver.reason}</div>}
 			{props.file.truncated && (
 				<div className="sh-file-note">Showing the start of the file only: it is larger than the viewer reads.</div>
@@ -275,7 +253,7 @@ function MermaidFile(props: LoadedFileProps): ReactNode {
 						</div>
 					)}
 					{ready !== null && (
-						<PanZoom size={size}>
+						<PanZoom size={size} readableScale={READABLE_SCALE.mermaid}>
 							<div className="sh-diagram-art" dangerouslySetInnerHTML={{ __html: display }} />
 						</PanZoom>
 					)}

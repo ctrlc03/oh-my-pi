@@ -82,7 +82,7 @@ export function FollowUps({
 								}
 								value={open.text}
 								rows={Math.min(6, Math.max(2, open.text.split("\n").length))}
-								aria-label="edit queued follow-up"
+								aria-label="Edit queued follow-up"
 								spellCheck={false}
 								onChange={e => setEditing({ id, text: e.target.value })}
 								onKeyDown={onEditorKey}
@@ -92,8 +92,8 @@ export function FollowUps({
 									type="button"
 									className="sh-followup-btn"
 									onClick={() => setEditing(null)}
-									aria-label="cancel editing"
-									title="cancel (Esc)"
+									aria-label="Cancel editing"
+									title="Cancel (Esc)"
 								>
 									<X size={14} />
 								</button>
@@ -102,8 +102,8 @@ export function FollowUps({
 									className="sh-followup-btn sh-followup-save"
 									onClick={save}
 									disabled={open.text.trim() === ""}
-									aria-label="save queued follow-up"
-									title="save (Enter)"
+									aria-label="Save queued follow-up"
+									title="Save (Enter)"
 								>
 									<Check size={14} />
 								</button>
@@ -128,8 +128,8 @@ export function FollowUps({
 										className="sh-followup-btn"
 										onClick={() => setEditing({ id, text: queuedText })}
 										disabled={!actionable}
-										aria-label="edit queued follow-up"
-										title="edit this follow-up"
+										aria-label="Edit queued follow-up"
+										title="Edit this follow-up"
 									>
 										<Pencil size={13} />
 									</button>
@@ -141,8 +141,8 @@ export function FollowUps({
 											className="sh-followup-btn"
 											onClick={() => client.moveQueuedFollowUp(id, i - 1)}
 											disabled={!actionable || i === 0}
-											aria-label="move queued follow-up earlier"
-											title="run it sooner"
+											aria-label="Move queued follow-up earlier"
+											title="Run it sooner"
 										>
 											<ChevronUp size={14} />
 										</button>
@@ -151,8 +151,8 @@ export function FollowUps({
 											className="sh-followup-btn"
 											onClick={() => client.moveQueuedFollowUp(id, i + 1)}
 											disabled={!actionable || i === followUps.length - 1}
-											aria-label="move queued follow-up later"
-											title="run it later"
+											aria-label="Move queued follow-up later"
+											title="Run it later"
 										>
 											<ChevronDown size={14} />
 										</button>
@@ -161,8 +161,8 @@ export function FollowUps({
 											className="sh-followup-btn"
 											onClick={() => client.steerQueuedFollowUp(id)}
 											disabled={!actionable}
-											aria-label="send queued follow-up into the running turn"
-											title="send it into the running turn now"
+											aria-label="Send queued follow-up into the running turn"
+											title="Send it into the running turn now"
 										>
 											<Zap size={13} />
 										</button>
@@ -173,8 +173,8 @@ export function FollowUps({
 									className="sh-followup-remove"
 									onClick={() => client.sendSessionCommand("unqueue", queuedText)}
 									disabled={!live}
-									aria-label="remove queued follow-up"
-									title="remove from the queue"
+									aria-label="Remove queued follow-up"
+									title="Remove from the queue"
 								>
 									<X size={12} />
 								</button>

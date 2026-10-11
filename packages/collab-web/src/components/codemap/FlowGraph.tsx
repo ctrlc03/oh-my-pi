@@ -94,7 +94,7 @@ export function FlowGraph({ steps, direction, onDirection, onFocus }: FlowGraphP
 	return (
 		<div className="sh-cm-flow">
 			<div className="sh-cm-flow-bar">
-				<div className="sh-segmented" role="radiogroup" aria-label="flow direction">
+				<div className="sh-segmented" role="radiogroup" aria-label="Flow direction">
 					{DIRECTIONS.map(d => (
 						<button
 							key={d.value}
@@ -147,7 +147,7 @@ export function FlowGraph({ steps, direction, onDirection, onFocus }: FlowGraphP
 							))}
 						</svg>
 						{columns.map((indices, hop) => (
-							<ol key={hop} className="sh-cm-flow-col" aria-label={`hop ${hop}`}>
+							<ol key={hop} className="sh-cm-flow-col" aria-label={`Hop ${hop}`}>
 								{indices.map(index => {
 									const step = steps[index];
 									return step ? (

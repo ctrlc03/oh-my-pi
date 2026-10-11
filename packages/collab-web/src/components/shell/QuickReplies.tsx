@@ -60,7 +60,7 @@ export function QuickReplies({ disabled, onPick }: QuickRepliesProps): ReactNode
 									setChanging(reply);
 									setDraft(reply);
 								}}
-								aria-label={`edit ${reply}`}
+								aria-label={`Edit ${reply}`}
 								title={reply}
 							>
 								{reply}
@@ -72,7 +72,7 @@ export function QuickReplies({ disabled, onPick }: QuickRepliesProps): ReactNode
 									update(replies.filter(r => r !== reply));
 									if (reply === changing) stopChanging();
 								}}
-								aria-label={`remove ${reply}`}
+								aria-label={`Remove ${reply}`}
 							>
 								<X size={13} />
 							</button>
@@ -87,13 +87,14 @@ export function QuickReplies({ disabled, onPick }: QuickRepliesProps): ReactNode
 						placeholder={changing === null ? "New saved prompt" : "Change saved prompt"}
 						maxLength={MAX_QUICK_REPLY_CHARS}
 						enterKeyHint="done"
-						aria-label={changing === null ? "new saved prompt" : "saved prompt text"}
+						aria-label={changing === null ? "New saved prompt" : "Saved prompt text"}
 					/>
 					<button
 						type="submit"
 						className="sh-btn sh-btn-icon"
 						disabled={!draft.trim()}
-						aria-label={changing === null ? "add" : "save"}
+						aria-label={changing === null ? "Add saved prompt" : "Save change"}
+						title={changing === null ? "Add saved prompt" : "Save change"}
 					>
 						{changing === null ? <Plus size={16} /> : <Check size={16} />}
 					</button>
@@ -101,7 +102,8 @@ export function QuickReplies({ disabled, onPick }: QuickRepliesProps): ReactNode
 						type="button"
 						className="sh-btn sh-btn-icon"
 						onClick={changing === null ? () => setEditing(false) : stopChanging}
-						aria-label={changing === null ? "done editing saved prompts" : "cancel change"}
+						aria-label={changing === null ? "Done editing saved prompts" : "Cancel change"}
+						title={changing === null ? "Done editing saved prompts" : "Cancel change"}
 					>
 						{changing === null ? <Check size={16} /> : <X size={16} />}
 					</button>
@@ -111,7 +113,7 @@ export function QuickReplies({ disabled, onPick }: QuickRepliesProps): ReactNode
 	}
 
 	return (
-		<div className="sh-quick">
+		<div className="sh-quick sh-quick-bar">
 			<div className="sh-quick-row">
 				{replies.map(reply => (
 					<button
@@ -125,16 +127,16 @@ export function QuickReplies({ disabled, onPick }: QuickRepliesProps): ReactNode
 						<span className="sh-quick-text">{reply}</span>
 					</button>
 				))}
-				<button
-					type="button"
-					className="sh-quick-chip sh-quick-chip-icon"
-					onClick={() => setEditing(true)}
-					aria-label="edit saved prompts"
-					title="edit saved prompts"
-				>
-					<Pencil size={13} />
-				</button>
 			</div>
+			<button
+				type="button"
+				className="sh-quick-chip sh-quick-chip-icon"
+				onClick={() => setEditing(true)}
+				aria-label="Edit saved prompts"
+				title="Edit saved prompts"
+			>
+				<Pencil size={14} />
+			</button>
 		</div>
 	);
 }

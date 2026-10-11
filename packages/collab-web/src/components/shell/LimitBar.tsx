@@ -36,7 +36,7 @@ export function LimitsSheet({
 		<Sheet label="usage limits" size="wide" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Usage limits</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 					<X size={16} />
 				</button>
 			</div>
@@ -47,7 +47,7 @@ export function LimitsSheet({
 					onRefresh={() => onSessionCommand("usage-limits", "refresh")}
 				/>
 				{models !== null && models.length > 0 && (
-					<section className="sh-stats-section" aria-label="switch model">
+					<section className="sh-stats-section" aria-label="Switch model">
 						<h2 className="sh-recents-title">Switch model now</h2>
 						<ModelList
 							models={models}
@@ -106,14 +106,18 @@ export function LimitBar({
 			</div>
 			<div className="sh-limit-bar-actions">
 				{!readOnly && armed !== undefined && (
-					<button type="button" className="sh-btn" onClick={() => onSessionCommand("resume-cancel")}>
+					<button
+						type="button"
+						className="sh-btn sh-limit-bar-lead"
+						onClick={() => onSessionCommand("resume-cancel")}
+					>
 						<X size={14} aria-hidden /> Cancel resume
 					</button>
 				)}
 				{!readOnly && armed === undefined && canResumeAtReset(limited, now) && (
 					<button
 						type="button"
-						className="sh-btn sh-btn-primary"
+						className="sh-btn sh-btn-primary sh-limit-bar-lead"
 						onClick={() => onSessionCommand("resume-at-reset")}
 					>
 						<Play size={14} aria-hidden /> Resume at reset

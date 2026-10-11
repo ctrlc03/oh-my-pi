@@ -1,15 +1,17 @@
-import { Check, Code, Copy, Download, FileImage, LoaderCircle, Pencil, RefreshCw, X } from "lucide-react";
+import { Check, Code, Copy, Download, FileImage, LoaderCircle, Pencil, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { svgBlob, svgToPngBlob } from "../../lib/diagram-export";
 import { openCanvas } from "../../lib/diagram-store";
 import type { DiagramKind } from "../../lib/diagrams";
+import { READABLE_SCALE } from "../../lib/diagrams";
 import { saveBlob } from "../../lib/download";
 import { parseScene } from "../../lib/excalidraw-scene";
 import { standaloneSvg, svgSize } from "../../lib/svg";
 import { pageBackground } from "../../lib/theme-tokens";
 import { Sheet } from "../shell/Sheet";
 import { KIND_LABEL, SourceBlock } from "./DiagramFigure";
+import { DiagramHead } from "./DiagramHead";
 import { PanZoom } from "./PanZoom";
 import { useDiagram } from "./use-diagram";
 
@@ -64,56 +66,44 @@ export function DiagramViewer({ kind, source, onClose }: DiagramViewerProps): Re
 
 	return (
 		<Sheet label={`${KIND_LABEL[kind]} diagram`} size="full" onClose={onClose}>
-			<div className="sh-sheet-head">
-				<div className="sh-sheet-title">{KIND_LABEL[kind]} diagram</div>
-				<span className="sh-diagram-actions">
-					<button
-						type="button"
-						className="sh-btn sh-btn-icon"
-						onClick={() => setShowSource(shown => !shown)}
-						aria-pressed={showSource}
-						aria-label="toggle source"
-						title={showSource ? "show the diagram" : "show the source"}
-					>
-						<Code size={15} />
-					</button>
-					<button
-						type="button"
-						className="sh-btn sh-btn-icon"
-						onClick={copy}
-						aria-label="copy source"
-						title="copy source"
-					>
-						{copied ? <Check size={15} /> : <Copy size={15} />}
-					</button>
-					<button
-						type="button"
-						className="sh-btn sh-btn-icon"
-						onClick={() => void save("svg")}
-						disabled={ready === null || busy !== null}
-						aria-label="download SVG"
-						title="download SVG"
-					>
-						{busy === "svg" ? <LoaderCircle size={15} className="sh-spin" /> : <Download size={15} />}
-					</button>
-					<button
-						type="button"
-						className="sh-btn sh-btn-icon"
-						onClick={() => void save("png")}
-						disabled={ready === null || busy !== null}
-						aria-label="download PNG"
-						title="download PNG"
-					>
-						{busy === "png" ? <LoaderCircle size={15} className="sh-spin" /> : <FileImage size={15} />}
-					</button>
-					<button type="button" className="sh-btn sh-diagram-edit" onClick={edit} title="edit on the canvas">
-						<Pencil size={14} /> <span className="sh-btn-label">Edit</span>
-					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
-						<X size={16} />
-					</button>
-				</span>
-			</div>
+			<DiagramHead title={`${KIND_LABEL[kind]} diagram`} onClose={onClose}>
+				<button
+					type="button"
+					className="sh-btn sh-diagram-action"
+					onClick={() => setShowSource(shown => !shown)}
+					aria-pressed={showSource}
+					title={showSource ? "Show the diagram" : "Show the source"}
+				>
+					<Code size={15} /> <span className="sh-diagram-action-label">Source</span>
+				</button>
+				<button type="button" className="sh-btn sh-diagram-action" onClick={copy} title="Copy the source">
+					{copied ? <Check size={15} /> : <Copy size={15} />}{" "}
+					<span className="sh-diagram-action-label">{copied ? "Copied" : "Copy"}</span>
+				</button>
+				<button
+					type="button"
+					className="sh-btn sh-diagram-action"
+					onClick={() => void save("svg")}
+					disabled={ready === null || busy !== null}
+					title="Download as SVG"
+				>
+					{busy === "svg" ? <LoaderCircle size={15} className="sh-spin" /> : <Download size={15} />}{" "}
+					<span className="sh-diagram-action-label">SVG</span>
+				</button>
+				<button
+					type="button"
+					className="sh-btn sh-diagram-action"
+					onClick={() => void save("png")}
+					disabled={ready === null || busy !== null}
+					title="Download as PNG"
+				>
+					{busy === "png" ? <LoaderCircle size={15} className="sh-spin" /> : <FileImage size={15} />}{" "}
+					<span className="sh-diagram-action-label">PNG</span>
+				</button>
+				<button type="button" className="sh-btn sh-diagram-action" onClick={edit} title="Edit on the canvas">
+					<Pencil size={15} /> <span className="sh-diagram-action-label">Edit</span>
+				</button>
+			</DiagramHead>
 			{problem !== null && <div className="sh-connect-error">{problem}</div>}
 			{state.status === "loading" && (
 				<div className="sh-companion-empty sh-file-status">
@@ -141,7 +131,7 @@ export function DiagramViewer({ kind, source, onClose }: DiagramViewerProps): Re
 						<SourceBlock kind={kind} source={source} />
 					</div>
 				) : (
-					<PanZoom size={size}>
+					<PanZoom size={size} readableScale={READABLE_SCALE[kind]}>
 						<div className="sh-diagram-art" dangerouslySetInnerHTML={{ __html: display }} />
 					</PanZoom>
 				))}

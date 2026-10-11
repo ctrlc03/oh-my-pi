@@ -58,7 +58,7 @@ export function InboxSheet({ client, onOpenHost, onClose }: InboxSheetProps): Re
 	const loading = state.status === "loading";
 
 	return (
-		<Sheet label="inbox" onClose={onClose}>
+		<Sheet label="Inbox" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Inbox</div>
 				<span className="sh-stats-head-actions">
@@ -67,12 +67,11 @@ export function InboxSheet({ client, onOpenHost, onClose }: InboxSheetProps): Re
 						className="sh-btn sh-btn-icon"
 						onClick={reload}
 						disabled={loading}
-						aria-label="refresh"
-						title="refresh"
+						aria-label="Refresh"
 					>
 						{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>
@@ -166,8 +165,7 @@ function InboxRow({ item, busy, disabled, onOpen, onDismiss }: InboxRowProps): R
 						className="sh-btn sh-btn-icon"
 						onClick={onDismiss}
 						disabled={disabled}
-						aria-label={`dismiss ${item.title}`}
-						title="dismiss"
+						aria-label={`Dismiss ${item.title}`}
 					>
 						<X size={14} />
 					</button>
@@ -182,7 +180,7 @@ function InboxRow({ item, busy, disabled, onOpen, onDismiss }: InboxRowProps): R
 							className="sh-quick-chip"
 							disabled={disabled}
 							onClick={() => onOpen({ answer: { question, option } })}
-							title={`open and answer: ${option}`}
+							title={`Open and answer: ${option}`}
 						>
 							<span className="sh-quick-text">{option}</span>
 						</button>
@@ -195,7 +193,7 @@ function InboxRow({ item, busy, disabled, onOpen, onDismiss }: InboxRowProps): R
 					value={reply}
 					onChange={e => setReply(e.currentTarget.value)}
 					placeholder="Reply…"
-					aria-label={`reply to ${item.title}`}
+					aria-label={`Reply to ${item.title}`}
 					enterKeyHint="send"
 					disabled={disabled}
 				/>
@@ -203,8 +201,7 @@ function InboxRow({ item, busy, disabled, onOpen, onDismiss }: InboxRowProps): R
 					type="submit"
 					className="sh-btn sh-btn-icon"
 					disabled={disabled || !reply.trim()}
-					aria-label={`send reply to ${item.title}`}
-					title="open the session and send"
+					aria-label={`Send reply to ${item.title}`}
 				>
 					<SendHorizontal size={15} />
 				</button>
@@ -231,8 +228,7 @@ export function InboxEntry({ client, count, onOpenHost, variant }: InboxEntryPro
 				type="button"
 				className={variant === "card" ? "sh-btn sh-card-action" : "sh-btn sh-btn-icon"}
 				onClick={() => setOpen(true)}
-				aria-label={count > 0 ? `inbox, ${count} waiting` : "inbox"}
-				title="inbox"
+				aria-label={count > 0 ? `Inbox, ${count} waiting` : "Inbox"}
 			>
 				<Inbox size={15} />
 				{variant === "card" && " Inbox"}

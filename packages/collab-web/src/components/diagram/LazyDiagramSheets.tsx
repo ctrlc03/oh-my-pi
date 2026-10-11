@@ -1,7 +1,8 @@
-import { LoaderCircle, RefreshCw, X } from "lucide-react";
+import { LoaderCircle, RefreshCw } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { Sheet } from "../shell/Sheet";
+import { DiagramHead } from "./DiagramHead";
 import type { DiagramSheetsProps } from "./DiagramSheets";
 
 type DiagramSheetsComponent = ComponentType<DiagramSheetsProps>;
@@ -46,12 +47,7 @@ export function LazyDiagramSheets(props: DiagramSheetsProps): ReactNode {
 	if (loadedSheet !== null) return <loadedSheet.Sheet {...props} />;
 	return (
 		<Sheet label="diagram" size="full" onClose={props.onClose}>
-			<div className="sh-sheet-head">
-				<div className="sh-sheet-title">Diagram</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={props.onClose} aria-label="close">
-					<X size={16} />
-				</button>
-			</div>
+			<DiagramHead title="Diagram" onClose={props.onClose} />
 			{error === null ? (
 				<div className="sh-companion-empty sh-file-status">
 					<LoaderCircle size={14} className="sh-spin" /> Loading…

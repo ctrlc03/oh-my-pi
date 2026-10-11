@@ -13,6 +13,8 @@ const src = path.join(root, "src");
 
 const HEAVY = /^(mermaid|@excalidraw\/[\w-]+)(\/|$)/;
 const ENGINES = ["lib/mermaid-engine.ts", "lib/excalidraw-engine.ts"];
+/** Excalidraw's stylesheet for the dev server: CSS only, and never part of a production build. */
+const DEV_STYLES = "lib/excalidraw-dev-css.ts";
 
 const sources = [...new Bun.Glob("**/*.{ts,tsx}").scanSync({ cwd: src })].map(file => ({
 	file,
@@ -34,7 +36,7 @@ describe("diagram engines stay lazy", () => {
 	it("imports the heavy packages at run time only from the two engine modules", () => {
 		const offenders: string[] = [];
 		for (const { file, text } of sources) {
-			if (ENGINES.includes(file)) continue;
+			if (ENGINES.includes(file) || file === DEV_STYLES) continue;
 			for (const { statement, specifier } of staticImports(text)) {
 				if (HEAVY.test(specifier) && !/^(import|export)\s+type\b/.test(statement))
 					offenders.push(`${file}: ${statement}`);

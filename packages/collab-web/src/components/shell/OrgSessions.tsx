@@ -160,7 +160,7 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 
 	const block = (title: string, section: Exclude<keyof OrgSections<OrgItem>, "settled">): ReactNode =>
 		sections[section].length === 0 ? null : (
-			<section className="sh-org-section" aria-label={title.toLowerCase()}>
+			<section className="sh-org-section" aria-label={title}>
 				<h3 className="sh-recents-title sh-org-title">{title}</h3>
 				<ul className="sh-recents-list">{sections[section].map(item => row(item, section))}</ul>
 			</section>
@@ -173,7 +173,7 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 			{block("Active", "active")}
 			{block("Snoozed", "snoozed")}
 			{items.length > 0 && (
-				<section className="sh-org-section" aria-label="settled">
+				<section className="sh-org-section" aria-label="Settled">
 					<h3 className="sh-recents-title sh-org-title">
 						<button
 							type="button"
@@ -194,8 +194,7 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 							type="button"
 							className="sh-btn sh-btn-icon sh-org-settings"
 							onClick={() => setOrganising(true)}
-							aria-label="auto-settle settings"
-							title="auto-settle"
+							aria-label="Auto-settle settings"
 						>
 							<SlidersHorizontal size={14} />
 						</button>
@@ -391,13 +390,14 @@ function OrgRow(props: OrgRowProps): ReactNode {
 				<div className="sh-recent-join sh-idle-info" title={item.session.cwd}>
 					<span className="sh-recent-title">
 						<span className="sh-recent-name">{title}</span>
-						<span className="sh-chip">not sharing</span>
 						{item.session.sandboxed && <SandboxedChip />}
 					</span>
 					<span className="sh-recent-meta">
 						{props.wake && <span className="sh-host-state">snoozed {props.wake}</span>}
 						{props.settledBy && <span className="sh-host-state">{SETTLED_BY[props.settledBy]}</span>}
-						{item.session.busy && <span className="sh-host-state sh-host-state-busy">working</span>}
+						<span className={`sh-host-state${item.session.busy ? " sh-host-state-busy" : ""}`}>
+							{item.session.busy ? "working" : "not sharing"}
+						</span>
 						<span className="sh-recent-cwd">{shortenPath(item.session.cwd)}</span>
 						<span>{relTime(item.session.startedAt)}</span>
 					</span>
@@ -425,17 +425,16 @@ function OrgRow(props: OrgRowProps): ReactNode {
 			{item.kind === "idle" && (
 				<button
 					type="button"
-					className="sh-btn sh-idle-share"
+					className="sh-btn sh-btn-icon"
 					onClick={() => props.onShare(item.session)}
 					disabled={joining !== null || disabled}
-					aria-label={`share ${title}`}
+					aria-label={`Share ${title}`}
 				>
 					{joining === item.session.instanceId ? (
-						<LoaderCircle size={14} className="sh-spin" />
+						<LoaderCircle size={15} className="sh-spin" />
 					) : (
-						<Share2 size={14} />
+						<Share2 size={15} />
 					)}
-					Share
 				</button>
 			)}
 			{item.kind === "host" && props.onOpenHostBeside !== undefined && (
@@ -444,8 +443,7 @@ function OrgRow(props: OrgRowProps): ReactNode {
 					className="sh-btn sh-btn-icon"
 					onClick={() => props.onOpenHostBeside?.(item.host)}
 					disabled={joining !== null || disabled || current}
-					aria-label={`open ${title} beside`}
-					title="open beside"
+					aria-label={`Open ${title} beside`}
 				>
 					<PanelRight size={15} />
 				</button>
@@ -456,8 +454,7 @@ function OrgRow(props: OrgRowProps): ReactNode {
 					className="sh-btn sh-btn-icon"
 					onClick={() => props.onOpenRoomBeside?.(item.room)}
 					disabled={joining !== null}
-					aria-label={`open ${title} beside`}
-					title="open beside"
+					aria-label={`Open ${title} beside`}
 				>
 					<PanelRight size={15} />
 				</button>
@@ -466,8 +463,7 @@ function OrgRow(props: OrgRowProps): ReactNode {
 				type="button"
 				className="sh-btn sh-btn-icon sh-org-more"
 				onClick={props.onMenu}
-				aria-label={`organise ${title}`}
-				title="pin, snooze or settle"
+				aria-label={`Pin, snooze or settle ${title}`}
 				aria-haspopup="dialog"
 			>
 				<Ellipsis size={15} />
@@ -496,7 +492,7 @@ function OrgMenu(props: OrgMenuProps): ReactNode {
 		<Sheet label={`organise ${props.title}`} onClose={props.onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">{props.title}</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={props.onClose} aria-label="close">
+				<button type="button" className="sh-btn sh-btn-icon" onClick={props.onClose} aria-label="Close">
 					<X size={16} />
 				</button>
 			</div>
@@ -589,10 +585,10 @@ function OrgMenu(props: OrgMenuProps): ReactNode {
 function OrgSettingsSheet({ org, onClose }: { org: SessionOrgControl; onClose(): void }): ReactNode {
 	const { settings } = org.doc;
 	return (
-		<Sheet label="auto-settle" onClose={onClose}>
+		<Sheet label="Auto-settle" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Auto-settle</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 					<X size={16} />
 				</button>
 			</div>

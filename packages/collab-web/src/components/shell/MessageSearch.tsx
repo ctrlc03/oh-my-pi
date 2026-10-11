@@ -167,7 +167,7 @@ function OpenChoice({ hit, canStart, working, disabled, onShare, onResume }: Ope
 	const spinner = working ? <LoaderCircle size={14} className="sh-spin" /> : null;
 	if (hit.live === "idle" && hit.instanceId !== undefined) {
 		return (
-			<div className="sh-msg-open" role="group" aria-label="open session">
+			<div className="sh-msg-open" role="group" aria-label="Open session">
 				<div className="sh-field-hint">
 					This session is running on your computer but not shared. Sharing starts hosting it with control access,
 					then opens it at this message.
@@ -179,7 +179,7 @@ function OpenChoice({ hit, canStart, working, disabled, onShare, onResume }: Ope
 		);
 	}
 	return (
-		<div className="sh-msg-open" role="group" aria-label="open session">
+		<div className="sh-msg-open" role="group" aria-label="Open session">
 			<div className="sh-field-hint">
 				{canStart
 					? "This session has ended. Resuming starts omp for it on your computer, then opens it at this message."

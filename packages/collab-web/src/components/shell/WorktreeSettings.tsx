@@ -16,7 +16,7 @@ export function WorktreeSettings({ client }: { client: CompanionClient }): React
 	const load = useCallback(() => client.gitSettings(), [client]);
 	const { state, reload } = useRequest(load);
 	return (
-		<section className="sh-stats-section" aria-label="worktree settings">
+		<section className="sh-stats-section" aria-label="Worktree settings">
 			<h2 className="sh-recents-title">Git worktrees</h2>
 			{state.status === "loading" && (
 				<div className="sh-companion-empty sh-file-status">
@@ -80,7 +80,7 @@ function WorktreeForm({ client, saved }: { client: CompanionClient; saved: GitFl
 					value={draft.branchPrefix}
 					onChange={e => set({ branchPrefix: e.currentTarget.value })}
 					placeholder="omp/"
-					aria-label="branch name prefix"
+					aria-label="Branch name prefix"
 					autoCapitalize="off"
 					autoCorrect="off"
 					spellCheck={false}
@@ -97,7 +97,7 @@ function WorktreeForm({ client, saved }: { client: CompanionClient; saved: GitFl
 					value={draft.worktreesDir ?? ""}
 					onChange={e => set({ worktreesDir: e.currentTarget.value.trim() === "" ? null : e.currentTarget.value })}
 					placeholder="default"
-					aria-label="worktree folder"
+					aria-label="Worktree folder"
 					autoCapitalize="off"
 					autoCorrect="off"
 					spellCheck={false}
@@ -115,7 +115,7 @@ function WorktreeForm({ client, saved }: { client: CompanionClient; saved: GitFl
 					value={draft.setupScript}
 					onChange={e => set({ setupScript: e.currentTarget.value })}
 					placeholder="bun install"
-					aria-label="worktree setup script"
+					aria-label="Worktree setup script"
 					autoCapitalize="off"
 					autoCorrect="off"
 					spellCheck={false}
@@ -127,7 +127,7 @@ function WorktreeForm({ client, saved }: { client: CompanionClient; saved: GitFl
 				</span>
 			</label>
 			{current.projects.map(project => (
-				<div key={project.root} className="sh-field" aria-label={`setup script of ${project.root}`}>
+				<div key={project.root} className="sh-field" aria-label={`Setup script of ${project.root}`}>
 					<span className="sh-field-label">Repository setup script · {project.root}</span>
 					{project.script !== null && (
 						<pre className="sh-review-cmd sh-review-script" tabIndex={0}>
@@ -169,7 +169,7 @@ function WorktreeForm({ client, saved }: { client: CompanionClient; saved: GitFl
 			))}
 			<div className="sh-field">
 				<span className="sh-field-label">Remove worktrees</span>
-				<div className="sh-segmented" role="radiogroup" aria-label="worktree cleanup">
+				<div className="sh-segmented" role="radiogroup" aria-label="Worktree cleanup">
 					{CLEANUP_MODES.map(({ mode, label }) => (
 						<button
 							key={mode}
@@ -196,7 +196,7 @@ function WorktreeForm({ client, saved }: { client: CompanionClient; saved: GitFl
 							onChange={e =>
 								set({ cleanup: { ...draft.cleanup, days: Math.trunc(Number(e.currentTarget.value)) || 1 } })
 							}
-							aria-label="days unused"
+							aria-label="Days unused"
 						/>
 						days
 					</label>
@@ -218,7 +218,7 @@ function WorktreeForm({ client, saved }: { client: CompanionClient; saved: GitFl
 					value={draft.messageModel}
 					onChange={e => set({ messageModel: e.currentTarget.value })}
 					placeholder="@smol"
-					aria-label="commit text model"
+					aria-label="Commit text model"
 					autoCapitalize="off"
 					autoCorrect="off"
 					spellCheck={false}

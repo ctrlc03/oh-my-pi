@@ -520,9 +520,9 @@ export function IdeSheet({
 					type="button"
 					className={treeOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
 					onClick={() => setTreeOpen(open => !open)}
-					aria-label={treeOpen ? "hide files" : "show files"}
+					aria-label={treeOpen ? "Hide files" : "Show files"}
 					aria-pressed={treeOpen}
-					title="files"
+					title="Files"
 				>
 					<PanelLeft size={16} />
 				</button>
@@ -537,8 +537,8 @@ export function IdeSheet({
 								if (view !== null) void definitionAt(view.state.selection.main.head);
 							}}
 							disabled={active === undefined}
-							aria-label="go to definition"
-							title="go to definition (F12, or Cmd/Ctrl+click)"
+							aria-label="Go to definition"
+							title="Go to definition (F12, or Cmd/Ctrl+click)"
 						>
 							<LocateFixed size={16} />
 						</button>
@@ -549,8 +549,8 @@ export function IdeSheet({
 							className="sh-btn sh-btn-icon"
 							onClick={sendSelection}
 							disabled={active === undefined}
-							aria-label="ask the agent about the selection"
-							title="ask the agent about the selection"
+							aria-label="Ask the agent about the selection"
+							title="Ask the agent about the selection"
 						>
 							<MessageSquarePlus size={16} />
 						</button>
@@ -563,7 +563,7 @@ export function IdeSheet({
 							type="button"
 							className="sh-btn"
 							onClick={() => openDiagramFile(active.request)}
-							title="open the saved file in the canvas"
+							title="Open the saved file in the canvas"
 						>
 							<PenLine size={14} />
 							<span>Canvas</span>
@@ -575,7 +575,7 @@ export function IdeSheet({
 							className="sh-btn sh-ide-save"
 							onClick={() => void save(active.path)}
 							disabled={!active.dirty || active.saving}
-							title="save (Cmd/Ctrl+S)"
+							title="Save (Cmd/Ctrl+S)"
 						>
 							{active.saving ? <LoaderCircle size={14} className="sh-spin" /> : <Save size={14} />}
 							<span>Save</span>
@@ -587,20 +587,20 @@ export function IdeSheet({
 							className={docked ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
 							onClick={() => dock.onDockedChange(!docked)}
 							aria-pressed={docked}
-							aria-label={docked ? "show as a sheet" : "open beside the transcript"}
-							title={docked ? "show as a sheet" : "open beside the transcript"}
+							aria-label={docked ? "Show as a sheet" : "Open beside the transcript"}
+							title={docked ? "Show as a sheet" : "Open beside the transcript"}
 						>
 							{docked ? <PanelRightClose size={16} /> : <PanelRight size={16} />}
 						</button>
 					)}
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>
 			</div>
 			<div className="sh-ide-body" data-tree={treeOpen ? "open" : "closed"} data-wide={wide ? "true" : "false"}>
 				{treeOpen && (
-					<aside className="sh-ide-tree" aria-label="files">
+					<aside className="sh-ide-tree" aria-label="Files">
 						{treeState.status === "loading" && (
 							<div className="sh-companion-empty sh-file-status">
 								<LoaderCircle size={14} className="sh-spin" /> Listing files…
@@ -652,7 +652,7 @@ export function IdeSheet({
 									type="button"
 									className="sh-ide-tab-close"
 									onClick={() => closeTab(tab.path)}
-									aria-label={`close ${baseName(tab.path)}`}
+									aria-label={`Close ${baseName(tab.path)}`}
 									data-dirty={tab.dirty ? "true" : "false"}
 								>
 									<span className="sh-ide-dot" aria-hidden />
@@ -791,12 +791,12 @@ function DefinitionList({
 }): ReactNode {
 	const { word, hits, error } = definition;
 	return (
-		<div className="sh-ide-defs" role="dialog" aria-label={`definitions of ${word}`}>
+		<div className="sh-ide-defs" role="dialog" aria-label={`Definitions of ${word}`}>
 			<div className="sh-ide-defs-head">
 				<span>
 					Definitions of <code>{word}</code>
 				</span>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close definitions">
+				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close definitions">
 					<X size={14} />
 				</button>
 			</div>
@@ -876,7 +876,7 @@ function QuickOpen({
 					setIndex(0);
 				}}
 				onKeyDown={onKey}
-				aria-label="go to file"
+				aria-label="Go to file"
 				autoComplete="off"
 				spellCheck={false}
 			/>
@@ -961,7 +961,7 @@ const TreeView = memo(function TreeView({
 						title={path}
 					>
 						<span className="sh-ide-tree-name">{baseName(path)}</span>
-						{dirty[path] === true && <span className="sh-ide-dot sh-ide-dot-on" aria-label="unsaved" />}
+						{dirty[path] === true && <span className="sh-ide-dot sh-ide-dot-on" aria-label="Unsaved" />}
 					</button>
 				</li>
 			))}

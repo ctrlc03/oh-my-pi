@@ -49,7 +49,7 @@ export function LazyIdeSheet(props: IdeSheetProps): ReactNode {
 		<>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Editor</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={props.onClose} aria-label="close">
+				<button type="button" className="sh-btn sh-btn-icon" onClick={props.onClose} aria-label="Close">
 					<X size={16} />
 				</button>
 			</div>

@@ -216,6 +216,39 @@
 	font-family: var(--font-mono);
 }
 
+/* Open, Share and Resume line up down a list whatever the word. */
+.sh-stats-body .sh-idle-share {
+	min-width: 92px;
+}
+
+/* The settings that follow the numbers (spend and GitHub alerts) read as their own sections. */
+.sh-sheet > .sh-stats-body + .sh-stats-section,
+.sh-sheet > .sh-stats-section + .sh-stats-section {
+	padding-top: 16px;
+	border-top: 1px solid var(--border);
+}
+
+/* A wide sheet (iPad landscape, desktop) lists the folders in two columns: one row per line would
+ * leave the eye a full sheet width between a session's name and its Open button. */
+@media (min-width: 1000px) {
+	.sh-stats-cols {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		align-items: start;
+		gap: 16px 28px;
+	}
+}
+
+/* A range or mode picker spans the sheet: segments share the width instead of crowding the left. */
+.sh-segmented-fill {
+	display: flex;
+}
+
+.sh-segmented-fill .sh-segment {
+	flex: 1;
+	justify-content: center;
+}
+
 .sh-stats-models {
 	display: flex;
 	flex-wrap: wrap;
@@ -253,7 +286,7 @@
 /* Buttons share each row evenly, so a wrapped one spans the card instead of
  * hanging alone at the left. */
 .sh-card-actions .sh-card-action {
-	flex: 1 1 auto;
+	flex: 1 1 124px;
 	padding: 0 10px;
 }
 

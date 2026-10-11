@@ -57,7 +57,7 @@ export function FixItHost({ client, live, canFixIt, canStart, onOpenHost, onOpen
 				<span className="sh-sheet-title">
 					Fix it · {target.repo}#{target.number}
 				</span>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={close} aria-label="close" title="close">
+				<button type="button" className="sh-btn sh-btn-icon" onClick={close} aria-label="Close" title="Close">
 					<X size={15} />
 				</button>
 			</div>

@@ -59,7 +59,7 @@ export function UsageSheet({ client, canGithub, limits, onClose }: UsageSheetPro
 	};
 
 	return (
-		<Sheet label="usage" size="wide" onClose={onClose}>
+		<Sheet label="Usage" size="wide" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Usage</div>
 				<span className="sh-stats-head-actions">
@@ -68,18 +68,17 @@ export function UsageSheet({ client, canGithub, limits, onClose }: UsageSheetPro
 						className="sh-btn sh-btn-icon"
 						onClick={reload}
 						disabled={loading}
-						aria-label="refresh"
-						title="refresh"
+						aria-label="Refresh"
 					>
 						{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>
 			</div>
 			{limits !== undefined && <LimitWindows {...limits} />}
-			<div className="sh-segmented" role="radiogroup" aria-label="time range">
+			<div className="sh-segmented sh-segmented-fill" role="radiogroup" aria-label="Time range">
 				{RANGES.map(r => (
 					<button
 						key={r.value}
@@ -110,10 +109,10 @@ export function UsageSheet({ client, canGithub, limits, onClose }: UsageSheetPro
 			) : (
 				<div className={loading ? "sh-stats-body sh-stats-stale" : "sh-stats-body"}>
 					<Headline report={report} />
-					<section className="sh-stats-section" aria-label="usage over time">
+					<section className="sh-stats-section" aria-label="Usage over time">
 						<div className="sh-stats-section-head">
 							<h2 className="sh-recents-title">Over time</h2>
-							<div className="sh-segmented" role="radiogroup" aria-label="chart metric">
+							<div className="sh-segmented" role="radiogroup" aria-label="Chart metric">
 								{METRICS.map(m => (
 									<button
 										key={m.value}
@@ -154,11 +153,12 @@ export function UsageSheet({ client, canGithub, limits, onClose }: UsageSheetPro
 					/>
 					{report.overall.unpricedRequests > 0 && (
 						<div className="sh-field-hint">
-							{report.overall.unpricedRequests} request{report.overall.unpricedRequests === 1 ? "" : "s"} have no
-							known price (subscription models) and count as $0.
+							{report.overall.unpricedRequests} request
+							{report.overall.unpricedRequests === 1 ? " has" : "s have"} no known price (subscription models)
+							and {report.overall.unpricedRequests === 1 ? "counts" : "count"} as $0.
 						</div>
 					)}
-					{report.syncedAt > 0 && <div className="sh-stats-foot">synced {relTime(report.syncedAt)}</div>}
+					{report.syncedAt > 0 && <div className="sh-stats-foot">Synced {relTime(report.syncedAt)}</div>}
 				</div>
 			)}
 			<SpendAlerts client={client} />

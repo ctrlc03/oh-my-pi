@@ -11,9 +11,11 @@ export interface BannersProps {
 
 export function Banners({ phase, endedReason, loading, onRejoin, onNewLink }: BannersProps): ReactNode {
 	const progress = loading && loading.total > 0 ? ` ${Math.floor((loading.received / loading.total) * 100)}%` : "";
+	// The header's status chip already says this wherever it fits; the banner carries it on phones and the load percentage.
+	const bannerClass = progress ? "sh-banner sh-banner-progress" : "sh-banner";
 	if (phase === "connecting" || phase === "waiting") {
 		return (
-			<div className="sh-banner" role="status">
+			<div className={bannerClass} role="status">
 				<span className="sh-banner-dot" />
 				{phase === "connecting" ? "Connecting to relay…" : `Joining session…${progress}`}
 			</div>
@@ -21,7 +23,7 @@ export function Banners({ phase, endedReason, loading, onRejoin, onNewLink }: Ba
 	}
 	if (phase === "reconnecting") {
 		return (
-			<div className="sh-banner" role="status">
+			<div className={bannerClass} role="status">
 				<span className="sh-banner-dot" />
 				{`Reconnecting…${progress}`}
 			</div>
@@ -29,7 +31,7 @@ export function Banners({ phase, endedReason, loading, onRejoin, onNewLink }: Ba
 	}
 	if (phase === "ended") {
 		return (
-			<div className="sh-ended" role="alertdialog" aria-label="session ended">
+			<div className="sh-ended" role="alertdialog" aria-label="Session ended">
 				<div className="sh-ended-card">
 					<div className="sh-ended-title">Session ended</div>
 					{endedReason && <div className="sh-ended-reason">{endedReason}</div>}

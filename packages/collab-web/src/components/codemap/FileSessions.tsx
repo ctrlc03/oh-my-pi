@@ -29,7 +29,7 @@ export interface FileSessionsProps {
 export function FileSessions(props: FileSessionsProps): ReactNode {
 	const [open, setOpen] = useState(false);
 	return (
-		<section className="sh-cm-sessions" aria-label="sessions that changed this file">
+		<section className="sh-cm-sessions" aria-label="Sessions that changed this file">
 			<button type="button" className="sh-sheet-link" onClick={() => setOpen(o => !o)} aria-expanded={open}>
 				Sessions that changed this file
 				{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}

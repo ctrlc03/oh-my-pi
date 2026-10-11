@@ -67,7 +67,7 @@ export function useTurnUndo(
 				<Redo2 size={13} />
 				Redo
 			</button>
-			<button type="button" className="sh-toast-close" onClick={() => setDismissed(turnUndo)} title="dismiss">
+			<button type="button" className="sh-toast-close" onClick={() => setDismissed(turnUndo)} title="Dismiss">
 				<X size={12} />
 			</button>
 		</div>

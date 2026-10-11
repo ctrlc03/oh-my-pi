@@ -240,6 +240,10 @@
 
 - ``!`cmd` `` in a markdown command or prompt template of your own (`~/.omp/commands`, `~/.claude/commands`, `~/.config/opencode/commands`, `~/.omp/agent/prompts`, …) now runs as shell and is replaced by its output; before, the text was sent literally. Commands from a project, a Claude marketplace plugin or an omp extension package never run shell by default. To keep the old behaviour set `commands.shellExpansion: off` (`omp config set commands.shellExpansion off`); to also run project and plugin commands set it to `all`.
 
+### Fixed
+
+- Collab guests now see every provider's models in the model picker. The host sent at most 200 models, sorted by provider name after the recently used ones, so a large catalog early in the alphabet (Amazon Bedrock lists over 200) pushed out every model from later providers that had not been used recently, such as Anthropic's Sonnet. The limit is now 1000, and providers are ordered by their most recently used model.
+
 ## [18.8.9] - 2026-10-10
 - Collab guests with a full link can run one prompt on another model, and optionally another thinking level, without switching the session's (`prompt.model` as `provider/id` from `welcome.models`, `prompt.thinking` from that model's `welcome.models[].thinkingLevels`; feature `prompt-model`). The host refuses models it does not offer and levels the model rejects, applies the choice for the run the prompt starts (a queued follow-up on its own, a steer on the running turn), and puts the session's model and thinking level back when the session settles, without a transcript entry or settings write.
 - `AgentSession.promptCustomMessage` takes `modelOverride` (a `Model` and optional thinking level) to run one prompt on another model; `getAvailableEffortSelectors` takes an optional model.

@@ -8,6 +8,26 @@
 	white-space: nowrap;
 }
 
+/* The detail (PR title, folder) takes the spare width; the typed token trails it and gives way first. */
+.sh-mention-label + .sh-slash-desc {
+	flex: 1 1 auto;
+}
+
+.sh-mention-tag {
+	flex: 0 1 auto;
+	max-width: 40%;
+	overflow: hidden;
+	font-family: var(--font-mono);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+	.sh-mention-tag {
+		display: none;
+	}
+}
+
 .sh-mention-status {
 	padding: 8px 10px;
 	font-size: 12.5px;

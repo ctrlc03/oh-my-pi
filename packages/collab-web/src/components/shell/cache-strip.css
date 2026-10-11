@@ -15,8 +15,9 @@
 	width: 100%;
 	min-width: 0;
 	padding: 3px 4px;
+	position: relative;
 	font: 400 11.5px / 1.4 var(--font-mono);
-	color: var(--fg-faint);
+	color: var(--fg-muted);
 	background: none;
 	border: 0;
 	border-radius: var(--radius-sm);
@@ -26,7 +27,16 @@
 }
 
 .sh-cachestrip-btn:hover {
-	color: var(--fg-muted);
+	color: var(--fg);
+}
+
+/* The strip stays slim; on touch screens its hit area grows to a full finger. */
+@media (any-pointer: coarse) {
+	.sh-cachestrip-btn::after {
+		content: "";
+		position: absolute;
+		inset: -10px 0;
+	}
 }
 
 .sh-cachestrip-btn svg {
@@ -34,7 +44,7 @@
 }
 
 .sh-cachestrip-hit {
-	color: var(--fg-muted);
+	color: var(--fg);
 }
 
 .sh-cachestrip-btn[data-miss] svg,
@@ -56,6 +66,14 @@
 
 .sh-cachestrip-cost {
 	flex: none;
+	color: var(--fg);
+}
+
+.sh-cachestrip-wide + .sh-cachestrip-wide::before,
+.sh-cachestrip-wide + .sh-cachestrip-cost::before {
+	content: "·";
+	margin-right: 8px;
+	color: var(--fg-faint);
 }
 
 .sh-cachestrip-misses {
@@ -85,4 +103,18 @@
 	.sh-cachestrip-wide {
 		display: none;
 	}
+
+	.sh-cachestrip-wide + .sh-cachestrip-cost::before {
+		content: none;
+	}
+}
+
+/* Values wrap between items, never inside one. */
+.sh-cachestrip-rows dd {
+	column-gap: 14px;
+	row-gap: 2px;
+}
+
+.sh-cachestrip-rows .sh-sheet-mono {
+	white-space: nowrap;
 }

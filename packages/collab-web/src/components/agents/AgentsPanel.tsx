@@ -75,12 +75,16 @@ const AgentRow = memo(function AgentRow(props: {
 				<span className="ag-row-name">{agent.displayName}</span>
 				<span className="ag-chip">{agent.kind}</span>
 			</span>
-			<span className="ag-row-activity">{activityLine(agent, p, lifecycle, now)}</span>
-			<span className="ag-row-meta">
-				{p ? <span>{fmtTokens(p.tokens)} tok</span> : null}
-				{p ? <span>{fmtCost(p.cost)}</span> : null}
-				<span className="ag-row-meta-when">{relTime(agent.lastActivity)}</span>
+			<span className="ag-row-activity">
+				<span className="ag-row-activity-text">{activityLine(agent, p, lifecycle, now)}</span>
+				<span className="ag-row-when">{relTime(agent.lastActivity)}</span>
 			</span>
+			{p ? (
+				<span className="ag-row-meta">
+					<span>{fmtTokens(p.tokens)} tok</span>
+					<span>{fmtCost(p.cost)}</span>
+				</span>
+			) : null}
 		</button>
 	);
 });
@@ -197,7 +201,7 @@ export const AgentsPanel = memo(function AgentsPanel(props: {
 							type="button"
 							className="ag-fold-action"
 							onClick={clearInactive}
-							title="hide parked and aborted subagents on this device"
+							title="Hide parked and aborted subagents on this device"
 						>
 							Clear
 						</button>
@@ -207,7 +211,7 @@ export const AgentsPanel = memo(function AgentsPanel(props: {
 							type="button"
 							className="ag-fold-action"
 							onClick={() => save({})}
-							title="show cleared subagents again"
+							title="Show cleared subagents again"
 						>
 							{sorted.hidden} cleared · Show
 						</button>

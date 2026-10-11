@@ -142,7 +142,7 @@ export function PrFiles({ client, instanceId, number, url, onSendToAgent, canSub
 				</div>
 			)}
 			{(review !== null || canSubmit) && (
-				<div className="sh-prr-bar" role="group" aria-label="review">
+				<div className="sh-prr-bar" role="group" aria-label="Review">
 					<span className="sh-prr-count">
 						{count} comment{count === 1 ? "" : "s"}
 					</span>
@@ -152,7 +152,7 @@ export function PrFiles({ client, instanceId, number, url, onSendToAgent, canSub
 							className="sh-btn"
 							disabled={count === 0}
 							onClick={() => onSendToAgent(prReviewPrompt(number, comments))}
-							title="put these comments into the message box, to edit and send"
+							title="Put these comments into the message box, to edit and send"
 						>
 							<SendHorizontal size={15} /> Send to agent
 						</button>

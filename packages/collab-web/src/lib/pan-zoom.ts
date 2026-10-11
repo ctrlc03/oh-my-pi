@@ -48,6 +48,19 @@ export function fitView(content: Size, viewport: Size, padding = 16): View {
 	};
 }
 
+/**
+ * The view a diagram opens in: all of it when that keeps it at least `minScale` (the smallest zoom at which its
+ * text is still readable), otherwise at `minScale` with the start of the diagram in view, to be panned.
+ * An axis that fits is centred; one that does not starts `padding` pixels in from the top or left.
+ */
+export function openingView(content: Size, viewport: Size, minScale: number, padding = 16): View {
+	const fit = fitView(content, viewport, padding);
+	if (fit.scale >= minScale) return fit;
+	const place = (extent: number, room: number): number =>
+		extent * minScale + 2 * padding <= room ? (room - extent * minScale) / 2 : padding;
+	return { x: place(content.width, viewport.width), y: place(content.height, viewport.height), scale: minScale };
+}
+
 /** Zoom by `factor` keeping the content point under `anchor` (viewport coordinates) where it is. */
 export function zoomAt(view: View, factor: number, anchor: Point): View {
 	const scale = clampScale(view.scale * factor);

@@ -113,12 +113,12 @@ export function CompanionCard({ companion, push, onJoin, onPair, onUnpair }: Com
 
 	const shown = companion.error ?? error ?? push.error;
 	return (
-		<section className="sh-connect-card sh-recents sh-companion" aria-label="sessions on your computer">
+		<section className="sh-connect-card sh-recents sh-companion" aria-label="Sessions on your computer">
 			<div className="sh-companion-head">
 				<h2 className="sh-recents-title">
 					<Laptop size={14} />
 					{snap.machine ?? "Your computer"}
-					<span className={`sh-dot${live ? " sh-dot-live" : ""}`} aria-label={live ? "online" : "offline"} />
+					<span className={`sh-dot${live ? " sh-dot-live" : ""}`} aria-label={live ? "Online" : "Offline"} />
 				</h2>
 				<span className="sh-companion-actions">
 					<PushButton push={push} />
@@ -127,8 +127,7 @@ export function CompanionCard({ companion, push, onJoin, onPair, onUnpair }: Com
 							type="button"
 							className="sh-btn sh-btn-icon"
 							onClick={() => setDiagnosing(true)}
-							aria-label="diagnostics"
-							title="diagnostics"
+							aria-label="Open diagnostics"
 						>
 							<Activity size={15} />
 						</button>
@@ -137,8 +136,7 @@ export function CompanionCard({ companion, push, onJoin, onPair, onUnpair }: Com
 						type="button"
 						className="sh-btn sh-btn-icon"
 						onClick={onUnpair}
-						aria-label="unpair this computer"
-						title="unpair"
+						aria-label="Unpair this computer"
 					>
 						<Unlink size={15} />
 					</button>
@@ -265,10 +263,10 @@ export function PushButton({ push }: { push: PushControl }): ReactNode {
 	const on = push.status === "on";
 	const label =
 		push.status === "denied"
-			? "notifications are blocked in settings"
+			? "Notifications are blocked in settings"
 			: on
-				? "turn notifications off"
-				: "notify me when a session needs input or finishes";
+				? "Turn notifications off"
+				: "Notify me when a session needs input or finishes";
 	return (
 		<button
 			type="button"
@@ -277,7 +275,6 @@ export function PushButton({ push }: { push: PushControl }): ReactNode {
 			disabled={push.status === "busy" || push.status === "denied"}
 			aria-label={label}
 			aria-pressed={on}
-			title={label}
 		>
 			{push.status === "busy" ? (
 				<LoaderCircle size={15} className="sh-spin" />
@@ -348,8 +345,7 @@ export function HostList({
 								className="sh-btn sh-btn-icon"
 								onClick={() => onOpenBeside(host)}
 								disabled={joining !== null || disabled || current}
-								aria-label={`open ${hostTitle(host)} beside`}
-								title="open beside"
+								aria-label={`Open ${hostTitle(host)} beside`}
 							>
 								<PanelRight size={15} />
 							</button>
@@ -373,7 +369,7 @@ export interface IdleListProps {
 export function IdleList({ idle, joining, disabled, onShare }: IdleListProps): ReactNode {
 	if (idle.length === 0) return null;
 	return (
-		<section className="sh-idle" aria-label="sessions not sharing">
+		<section className="sh-idle" aria-label="Sessions not sharing">
 			<h3 className="sh-recents-title">Not sharing</h3>
 			<ul className="sh-recents-list">
 				{idle.map(session => (
@@ -394,7 +390,7 @@ export function IdleList({ idle, joining, disabled, onShare }: IdleListProps): R
 							className="sh-btn sh-idle-share"
 							onClick={() => onShare(session)}
 							disabled={joining !== null || disabled}
-							aria-label={`share ${hostTitle(session)}`}
+							aria-label={`Share ${hostTitle(session)}`}
 						>
 							{joining === session.instanceId ? (
 								<LoaderCircle size={14} className="sh-spin" />
@@ -420,7 +416,7 @@ export function HostState({ host }: { host: CompanionHost }): ReactNode {
 
 export function SandboxedChip(): ReactNode {
 	return (
-		<span className="sh-chip sh-chip-sandboxed" title="sandboxed: file tools only, edits stay in its folder">
+		<span className="sh-chip sh-chip-sandboxed" title="Sandboxed: file tools only, edits stay in its folder">
 			<ShieldCheck size={11} /> sandboxed
 		</span>
 	);

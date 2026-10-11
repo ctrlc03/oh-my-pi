@@ -177,7 +177,7 @@ export function BlockShell({
 		>
 			<div className="tr-block-gutter" data-block-select aria-hidden={!known || undefined}>
 				{known && (
-					<span className="tr-block-check" role="checkbox" aria-checked={selected} aria-label="select block">
+					<span className="tr-block-check" role="checkbox" aria-checked={selected} aria-label="Select block">
 						{selected && <Check size={11} strokeWidth={3} />}
 					</span>
 				)}
@@ -215,19 +215,19 @@ export function ToolBlockHead({ id, state, meta }: { id: string; state: ToolHead
 				type="button"
 				className="tr-block-toggle"
 				aria-expanded={state.open}
-				aria-label={state.open ? "collapse" : "expand"}
+				aria-label={state.open ? "Collapse" : "Expand"}
 				onClick={state.toggle}
 			>
 				<ChevronRight size={13} className={`tr-chev${state.open ? " tr-chev--open" : ""}`} />
 			</button>
 			{state.status === "run" ? (
-				<span className="tv-spin" role="img" aria-label="running" />
+				<span className="tv-spin" role="img" aria-label="Running" />
 			) : state.status === "pending" ? (
-				<span className="tr-mark tr-mark--pending" role="img" aria-label="no result yet" />
+				<span className="tr-mark tr-mark--pending" role="img" aria-label="No result yet" />
 			) : failed ? (
-				<X size={13} className="tr-mark tr-mark--err" role="img" aria-label="failed" />
+				<X size={13} className="tr-mark tr-mark--err" role="img" aria-label="Failed" />
 			) : (
-				<Check size={13} className="tr-mark tr-mark--ok" role="img" aria-label="succeeded" />
+				<Check size={13} className="tr-mark tr-mark--ok" role="img" aria-label="Succeeded" />
 			)}
 			<span className="tr-block-label" title={meta.command ?? state.intent}>
 				{meta.command !== null ? (

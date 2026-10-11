@@ -65,7 +65,7 @@ export function ContextItems({ info, canPrune, onSessionCommand }: ContextItemsP
 											onSessionCommand("context-prune", item.id);
 										}}
 										disabled={pruning !== null}
-										aria-label={`prune ${item.label} from the context`}
+										aria-label={`Prune ${item.label} from the context`}
 										title="Prune from the context"
 									>
 										<Scissors size={14} />

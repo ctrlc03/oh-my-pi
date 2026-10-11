@@ -69,7 +69,7 @@ const SCOPES: readonly { scope: PaletteScope | null; label: string }[] = [
 ];
 
 const PLACEHOLDER: Record<PaletteScope | "all", string> = {
-	all: "Search actions, commands, sessions, messages",
+	all: "Search actions, sessions, messages",
 	actions: "Search actions",
 	commands: "Search slash commands",
 	sessions: "Search sessions",
@@ -464,7 +464,7 @@ export function CommandPalette({
 						aria-expanded
 						aria-controls={listId}
 						aria-activedescendant={flat.length > 0 ? `${listId}-${current}` : undefined}
-						aria-label="search actions, commands, sessions and messages"
+						aria-label="Search actions, commands, sessions and messages"
 						autoCapitalize="off"
 						autoCorrect="off"
 						autoComplete="off"
@@ -474,7 +474,7 @@ export function CommandPalette({
 					/>
 					{waiting && <LoaderCircle size={14} className="sh-spin" />}
 				</label>
-				<div className="sh-palette-scopes" role="group" aria-label="search in">
+				<div className="sh-palette-scopes" role="group" aria-label="Search in">
 					{SCOPES.map(item => (
 						<button
 							key={item.label}
@@ -494,7 +494,7 @@ export function CommandPalette({
 				{remote.error !== null && (
 					<div className="sh-palette-note">Your computer's search failed: {remote.error}</div>
 				)}
-				<ul className="sh-palette-list" id={listId} role="listbox" aria-label="results">
+				<ul className="sh-palette-list" id={listId} role="listbox" aria-label="Results">
 					{groups.map(group => (
 						<li key={group.label} role="presentation" className="sh-palette-section">
 							<div className="sh-palette-group" role="presentation">

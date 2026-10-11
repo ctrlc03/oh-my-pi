@@ -157,17 +157,17 @@ export function FanoutPicker({
 		<div className="sh-fan-picker">
 			{error && <div className="sh-connect-error">{error}</div>}
 			<div className="sh-field-label">
-				Models ({picked.length} of {MIN_FANOUT_MODELS}–{MAX_FANOUT_MODELS})
+				Models ({picked.length} chosen, pick {MIN_FANOUT_MODELS}–{MAX_FANOUT_MODELS})
 			</div>
 			{picked.length > 0 && (
-				<ul className="sh-fan-picked" aria-label="chosen models">
+				<ul className="sh-fan-picked" aria-label="Chosen models">
 					{picked.map(selector => (
 						<li key={selector}>
 							<button
 								type="button"
 								className="sh-chip sh-fan-chip"
 								onClick={() => toggle(selector)}
-								aria-label={`remove ${selector}`}
+								aria-label={`Remove ${selector}`}
 							>
 								{selector} <X size={11} />
 							</button>
@@ -176,11 +176,11 @@ export function FanoutPicker({
 				</ul>
 			)}
 			<input
-				className="sh-input sh-input-mono"
+				className="sh-input"
 				value={filter}
 				onChange={e => setFilter(e.currentTarget.value)}
-				placeholder="filter models"
-				aria-label="filter models"
+				placeholder="Filter models"
+				aria-label="Filter models"
 				autoCapitalize="off"
 				autoCorrect="off"
 				spellCheck={false}
@@ -197,7 +197,7 @@ export function FanoutPicker({
 			) : shown.length === 0 ? (
 				<div className="sh-companion-empty">No model matches.</div>
 			) : (
-				<ul className="sh-fan-models" aria-label="models">
+				<ul className="sh-fan-models" aria-label="Models">
 					{shown.map(model => {
 						const on = picked.includes(model.selector);
 						return (
@@ -227,8 +227,8 @@ export function FanoutPicker({
 					value={budget}
 					onChange={e => setBudget(e.currentTarget.value)}
 					inputMode="decimal"
-					placeholder="no limit"
-					aria-label="total budget in USD"
+					placeholder="No limit"
+					aria-label="Total budget in USD"
 					aria-invalid={!budgetValid || undefined}
 				/>
 				<span className="sh-field-hint">
@@ -252,7 +252,7 @@ export function FanoutPicker({
 				onClick={() => void start()}
 				disabled={!ready}
 			>
-				<GitCompareArrows size={16} /> Start {picked.length >= MIN_FANOUT_MODELS ? picked.length : "N"} sessions
+				<GitCompareArrows size={16} /> Start {picked.length >= MIN_FANOUT_MODELS ? `${picked.length} ` : ""}sessions
 			</button>
 			{prompt.trim() === "" && (
 				<div className="sh-field-hint">Write the prompt first: every session gets the same one.</div>
@@ -278,10 +278,10 @@ export function FanoutSheet({ target, prompt, onClose }: FanoutSheetProps): Reac
 	if (group !== null)
 		return <FanoutCompareSheet client={target.client} groupId={group.id} onOpen={target.onOpen} onClose={onClose} />;
 	return (
-		<Sheet label="try on several models" onClose={onClose}>
+		<Sheet label="Try on several models" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Try on several models</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 					<X size={16} />
 				</button>
 			</div>
@@ -385,7 +385,7 @@ export function FanoutCompareSheet({ client, groupId, onOpen, onClose }: FanoutC
 	};
 
 	return (
-		<Sheet label="compare models" size="wide" onClose={onClose}>
+		<Sheet label="Compare models" size="wide" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Compare models</div>
 				<button
@@ -393,12 +393,12 @@ export function FanoutCompareSheet({ client, groupId, onOpen, onClose }: FanoutC
 					className="sh-btn sh-btn-icon"
 					onClick={reload}
 					disabled={state.status === "loading"}
-					aria-label="refresh"
-					title="refresh"
+					aria-label="Refresh"
+					title="Refresh"
 				>
 					<RefreshCw size={15} className={state.status === "loading" ? "sh-spin" : undefined} />
 				</button>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 					<X size={16} />
 				</button>
 			</div>
@@ -505,12 +505,12 @@ function RunRow({
 				<div className="sh-fan-error">{run.error}</div>
 			) : (
 				<div className="sh-fan-stats">
-					<span title="spend so far">
+					<span title="Spend so far">
 						{run.costUsd === null ? "$–" : fmtCost(run.costUsd)}
 						{run.maxCostUsd !== null && <span className="sh-sheet-faint"> / {fmtCost(run.maxCostUsd)}</span>}
 					</span>
 					{run.files !== null && (
-						<span title="changed files against the base branch">
+						<span title="Changed files against the base branch">
 							{run.files} file{run.files === 1 ? "" : "s"}{" "}
 							<span className="sh-fan-added">+{run.added ?? 0}</span>{" "}
 							<span className="sh-fan-removed">−{run.removed ?? 0}</span>
@@ -546,7 +546,7 @@ function RunRow({
 						className="sh-btn sh-btn-primary"
 						onClick={onKeep}
 						disabled={busy || !live}
-						title={live ? undefined : "its session has ended"}
+						title={live ? undefined : "Its session has ended"}
 					>
 						<Trophy size={14} /> Keep this one
 					</button>
@@ -657,7 +657,7 @@ export function FanoutPill({
 /** On a session row: the model a best-of-N comparison runs it on. */
 export function FanoutChip({ fanout }: { fanout: HostFanout }): ReactNode {
 	return (
-		<span className="sh-chip sh-fan-row-chip" title="started by a model comparison">
+		<span className="sh-chip sh-fan-row-chip" title="Started by a model comparison">
 			<GitCompareArrows size={11} /> {fanout.model}
 		</span>
 	);
@@ -685,7 +685,7 @@ export function FanoutGroups({
 	return (
 		<>
 			{groups.length > 0 && (
-				<section className="sh-fan-groups" aria-label="model comparisons">
+				<section className="sh-fan-groups" aria-label="Model comparisons">
 					{groups.map(([id, models]) => (
 						<button
 							key={id}

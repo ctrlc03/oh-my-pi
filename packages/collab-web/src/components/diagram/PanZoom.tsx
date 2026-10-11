@@ -2,26 +2,29 @@ import { Maximize, Minus, Plus } from "lucide-react";
 import type { KeyboardEvent, PointerEvent, ReactNode } from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Point, Size, View } from "../../lib/pan-zoom";
-import { fitView, panBy, pinchView, wheelFactor, zoomAt } from "../../lib/pan-zoom";
+import { fitView, openingView, panBy, pinchView, wheelFactor, zoomAt } from "../../lib/pan-zoom";
 
 const BUTTON_STEP = 1.4;
 
 export interface PanZoomProps {
 	/** Natural size of the content, in CSS pixels. */
 	size: Size;
+	/** Smallest zoom the opening view may use: a diagram too wide for it opens at this zoom, to be panned, instead of shrinking its text. */
+	readableScale: number;
 	children: ReactNode;
 }
 
 /**
  * A pan/zoom surface: drag to pan, wheel or trackpad pinch to zoom at the cursor, two fingers to pinch and pan
- * on touch, double-click or the fit button to fit it back, +/- buttons or keys. It fits the content to the
- * surface until the first gesture, so it stays fitted while the sheet resizes (rotation, on-screen keyboard).
+ * on touch, double-click or the fit button to fit all of it, +/- buttons or keys. It opens on the content (all
+ * of it, or its start at the readable zoom) until the first gesture, so it stays put while the sheet resizes
+ * (rotation, on-screen keyboard).
  */
-export function PanZoom({ size, children }: PanZoomProps): ReactNode {
+export function PanZoom({ size, readableScale, children }: PanZoomProps): ReactNode {
 	const surface = useRef<HTMLDivElement>(null);
 	const [view, setView] = useState<View>({ x: 0, y: 0, scale: 1 });
-	// Whether the user has moved the view: until then a resize refits.
-	const moved = useRef(false);
+	// Which view a resize restores: null once the user has moved the view.
+	const following = useRef<"opening" | "fit" | null>("opening");
 	const pointers = useRef(new Map<number, Point>());
 
 	const viewport = (): Size => {
@@ -29,23 +32,26 @@ export function PanZoom({ size, children }: PanZoomProps): ReactNode {
 		return { width: box?.width ?? 0, height: box?.height ?? 0 };
 	};
 	const fit = useCallback((): void => {
-		moved.current = false;
+		following.current = "fit";
 		setView(fitView(size, viewport()));
 	}, [size]);
 
 	useLayoutEffect(() => {
 		const node = surface.current;
 		if (!node) return;
-		fit();
-		const observer = new ResizeObserver(() => {
-			if (!moved.current) setView(fitView(size, viewport()));
-		});
+		const restore = (): void => {
+			if (following.current === "opening") setView(openingView(size, viewport(), readableScale));
+			else if (following.current === "fit") setView(fitView(size, viewport()));
+		};
+		following.current = "opening";
+		restore();
+		const observer = new ResizeObserver(restore);
 		observer.observe(node);
 		return () => observer.disconnect();
-	}, [fit, size]);
+	}, [readableScale, size]);
 
 	const change = (next: (view: View) => View): void => {
-		moved.current = true;
+		following.current = null;
 		setView(next);
 	};
 	const local = (clientX: number, clientY: number): Point => {
@@ -122,7 +128,7 @@ export function PanZoom({ size, children }: PanZoomProps): ReactNode {
 				className="sh-pz-surface"
 				tabIndex={0}
 				role="application"
-				aria-label="diagram: drag to pan, scroll or pinch to zoom"
+				aria-label="Diagram: drag to pan, scroll or pinch to zoom"
 				onPointerDown={onPointerDown}
 				onPointerMove={onPointerMove}
 				onPointerUp={onPointerEnd}
@@ -146,26 +152,18 @@ export function PanZoom({ size, children }: PanZoomProps): ReactNode {
 					type="button"
 					className="sh-btn sh-btn-icon"
 					onClick={() => zoomFromCenter(1 / BUTTON_STEP)}
-					aria-label="zoom out"
-					title="zoom out"
+					aria-label="Zoom out"
 				>
 					<Minus size={15} />
 				</button>
-				<button
-					type="button"
-					className="sh-btn sh-btn-icon"
-					onClick={fit}
-					aria-label="fit to screen"
-					title="fit to screen"
-				>
+				<button type="button" className="sh-btn sh-btn-icon" onClick={fit} aria-label="Fit to screen">
 					<Maximize size={15} />
 				</button>
 				<button
 					type="button"
 					className="sh-btn sh-btn-icon"
 					onClick={() => zoomFromCenter(BUTTON_STEP)}
-					aria-label="zoom in"
-					title="zoom in"
+					aria-label="Zoom in"
 				>
 					<Plus size={15} />
 				</button>

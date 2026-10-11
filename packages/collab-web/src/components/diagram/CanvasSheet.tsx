@@ -1,5 +1,5 @@
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { Download, FileImage, LoaderCircle, RefreshCw, Save, SendHorizontal, X } from "lucide-react";
+import { Download, FileImage, LoaderCircle, RefreshCw, Save, SendHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CanvasSource } from "../../lib/diagram-store";
@@ -10,6 +10,7 @@ import { MAX_INLINE_BYTES } from "../../lib/files";
 import { useSystemTheme } from "../../lib/theme";
 import { Sheet } from "../shell/Sheet";
 import { buildCanvasInit, type CanvasInit, type ExcalidrawEngine } from "./canvas-data";
+import { DiagramHead } from "./DiagramHead";
 
 /** Room kept under the inline limit for the fence and file name the composer wraps the scene text in. */
 const FENCE_ALLOWANCE = 512;
@@ -152,62 +153,58 @@ export function CanvasSheet({ title, name, source, onAttach, save, onClose }: Ca
 	const sketching = source.kind === "blank";
 	return (
 		<Sheet label="canvas" size="full" onClose={requestClose}>
-			<div className="sh-sheet-head">
-				<div className="sh-sheet-title">{title}</div>
-				<span className="sh-diagram-actions">
-					{ready !== null && onAttach !== null && (
-						<button
-							type="button"
-							className="sh-btn sh-btn-primary"
-							onClick={() => void send(ready.engine)}
-							disabled={busy !== null || !drawn || api === null}
-							title="attach the drawing and its scene to your message"
-						>
-							{busy === "send" ? <LoaderCircle size={15} className="sh-spin" /> : <SendHorizontal size={15} />}{" "}
-							<span className="sh-btn-label">{sketching ? "Done" : "Send to agent"}</span>
-						</button>
-					)}
-					{ready !== null && save?.run != null && (
-						<button
-							type="button"
-							className="sh-btn sh-btn-primary"
-							onClick={() => void writeBack(ready.engine)}
-							disabled={busy !== null || !dirty || api === null}
-							title={`save ${save.fileName}`}
-						>
-							{busy === "save" ? <LoaderCircle size={15} className="sh-spin" /> : <Save size={15} />}{" "}
-							<span className="sh-btn-label">{saved && !dirty ? "Saved" : "Save"}</span>
-						</button>
-					)}
-					{ready !== null && (
-						<>
-							<button
-								type="button"
-								className="sh-btn sh-btn-icon"
-								onClick={() => void download(ready.engine, "scene")}
-								disabled={busy !== null || api === null}
-								aria-label="download the scene"
-								title={`download ${save?.fileName ?? `${name}.excalidraw`}`}
-							>
-								<Download size={15} />
-							</button>
-							<button
-								type="button"
-								className="sh-btn sh-btn-icon"
-								onClick={() => void download(ready.engine, "png")}
-								disabled={busy !== null || api === null || !drawn}
-								aria-label="download PNG"
-								title="download PNG"
-							>
-								<FileImage size={15} />
-							</button>
-						</>
-					)}
-					<button type="button" className="sh-btn sh-btn-icon" onClick={requestClose} aria-label="close">
-						<X size={16} />
+			<DiagramHead title={title} onClose={requestClose}>
+				{ready !== null && onAttach !== null && (
+					<button
+						type="button"
+						className="sh-btn sh-btn-primary sh-diagram-action"
+						onClick={() => void send(ready.engine)}
+						disabled={busy !== null || !drawn || api === null}
+						title={
+							drawn
+								? "Attach the drawing and its scene to your message"
+								: "Draw something first, then attach it to your message"
+						}
+					>
+						{busy === "send" ? <LoaderCircle size={15} className="sh-spin" /> : <SendHorizontal size={15} />}{" "}
+						<span className="sh-diagram-action-label">{sketching ? "Add to message" : "Send to agent"}</span>
 					</button>
-				</span>
-			</div>
+				)}
+				{ready !== null && save?.run != null && (
+					<button
+						type="button"
+						className="sh-btn sh-btn-primary sh-diagram-action"
+						onClick={() => void writeBack(ready.engine)}
+						disabled={busy !== null || !dirty || api === null}
+						title={`Save ${save.fileName}`}
+					>
+						{busy === "save" ? <LoaderCircle size={15} className="sh-spin" /> : <Save size={15} />}{" "}
+						<span className="sh-diagram-action-label">{saved && !dirty ? "Saved" : "Save"}</span>
+					</button>
+				)}
+				{ready !== null && (
+					<>
+						<button
+							type="button"
+							className="sh-btn sh-diagram-action"
+							onClick={() => void download(ready.engine, "scene")}
+							disabled={busy !== null || api === null || !drawn}
+							title={`Download ${save?.fileName ?? `${name}.excalidraw`}`}
+						>
+							<Download size={15} /> <span className="sh-diagram-action-label">Scene</span>
+						</button>
+						<button
+							type="button"
+							className="sh-btn sh-diagram-action"
+							onClick={() => void download(ready.engine, "png")}
+							disabled={busy !== null || api === null || !drawn}
+							title="Download as PNG"
+						>
+							<FileImage size={15} /> <span className="sh-diagram-action-label">PNG</span>
+						</button>
+					</>
+				)}
+			</DiagramHead>
 			{save !== undefined && save.run === null && save.reason !== undefined && (
 				<div className="sh-file-note">{save.reason}</div>
 			)}

@@ -211,7 +211,7 @@ export function ForceMap({ map, onFocus }: ForceMapProps): ReactNode {
 					</div>
 				) : (
 					box && (
-						<svg className="sh-cm-map-svg" viewBox={box} role="img" aria-label="folder map">
+						<svg className="sh-cm-map-svg" viewBox={box} role="img" aria-label="Folder map">
 							<Scene
 								map={map}
 								bodies={layout.bodies}
@@ -230,8 +230,8 @@ export function ForceMap({ map, onFocus }: ForceMapProps): ReactNode {
 						type="button"
 						className="sh-btn sh-btn-icon"
 						onClick={() => zoomAt(1.4, viewport.width / 2, viewport.height / 2)}
-						aria-label="zoom in"
-						title="zoom in"
+						aria-label="Zoom in"
+						title="Zoom in"
 					>
 						<Plus size={16} />
 					</button>
@@ -239,8 +239,8 @@ export function ForceMap({ map, onFocus }: ForceMapProps): ReactNode {
 						type="button"
 						className="sh-btn sh-btn-icon"
 						onClick={() => zoomAt(1 / 1.4, viewport.width / 2, viewport.height / 2)}
-						aria-label="zoom out"
-						title="zoom out"
+						aria-label="Zoom out"
+						title="Zoom out"
 					>
 						<Minus size={16} />
 					</button>
@@ -248,8 +248,8 @@ export function ForceMap({ map, onFocus }: ForceMapProps): ReactNode {
 						type="button"
 						className="sh-btn sh-btn-icon"
 						onClick={() => setCamera(home)}
-						aria-label="fit to view"
-						title="fit to view"
+						aria-label="Fit to view"
+						title="Fit to view"
 					>
 						<Maximize size={15} />
 					</button>

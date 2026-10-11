@@ -99,7 +99,7 @@ export function FocusGraph({ view, onFocus, onOpenFile }: FocusGraphProps): Reac
 					stacked={stacked}
 					onFocus={onFocus}
 				/>
-				<section className="sh-cm-card" ref={card} aria-label="focus">
+				<section className="sh-cm-card" ref={card} aria-label="Focus">
 					<div className="sh-cm-card-head">
 						<NodeIcon node={view.focus} size={18} />
 						<span className="sh-cm-card-title">{view.focus.label}</span>

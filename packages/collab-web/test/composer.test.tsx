@@ -68,7 +68,7 @@ describe("Composer host UI requests", () => {
 
 		const submit = { found: false, disabled: false };
 		new HTMLRewriter()
-			.on('button[title="submit response"]', {
+			.on('button[title="Submit response"]', {
 				element(el) {
 					submit.found = true;
 					submit.disabled = el.hasAttribute("disabled");
@@ -97,7 +97,7 @@ describe("Composer follow-ups", () => {
 	}
 
 	it("offers 'After turn' only while the agent works on a host that supports it", () => {
-		const after = "send when this turn ends (Alt+Enter)";
+		const after = "Send when this turn ends (Alt+Enter)";
 		expect(buttons(renderToStaticMarkup(<Composer {...idle} followUp working />))).toContain(after);
 		expect(buttons(renderToStaticMarkup(<Composer {...idle} followUp working={false} />))).not.toContain(after);
 		expect(buttons(renderToStaticMarkup(<Composer {...idle} followUp={false} working />))).not.toContain(after);
@@ -109,10 +109,8 @@ describe("Composer follow-ups", () => {
 		);
 		expect(html).toContain("run the tests");
 		expect(html).toContain("then commit");
-		expect(html).toContain("\u00d71</span>");
-		const all = renderToStaticMarkup(
-			<Composer {...idle} followUp followUps={["a", "b"]} queuedMessageCount={2} />,
-		);
+		expect(html).toContain('aria-label="1 message queued"');
+		const all = renderToStaticMarkup(<Composer {...idle} followUp followUps={["a", "b"]} queuedMessageCount={2} />);
 		expect(all).not.toContain("sh-queued");
 	});
 

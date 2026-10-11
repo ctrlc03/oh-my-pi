@@ -271,9 +271,9 @@ function subscribeOverrides(listener: () => void): () => void {
 	};
 }
 
-/** The reader's overrides, re-rendering when they change (here or in another tab). */
+/** The reader's overrides, re-rendering when they change (here or in another tab); a server render reads the same stored value. */
 export function useOverrides(): Overrides {
-	return useSyncExternalStore(subscribeOverrides, currentOverrides);
+	return useSyncExternalStore(subscribeOverrides, currentOverrides, currentOverrides);
 }
 
 /** What a modifier key reports as `KeyboardEvent.key`: pressing one alone is not a combo. */
@@ -377,3 +377,8 @@ export function adjacentRoom<T extends { roomId: string; title: string }>(
 
 /** ⌘ is the shortcut modifier on Apple platforms (iPad included); everywhere else it is Ctrl. */
 export const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+
+/** The keycaps of shortcut `id` as it is bound now; a control's `data-shortcut` shows them in its tooltip. Re-render with `useOverrides` to follow a remap. */
+export function shortcutKeys(id: ShortcutId): string {
+	return formatCombo(effectiveKeys(id), IS_MAC);
+}

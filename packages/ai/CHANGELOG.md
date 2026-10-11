@@ -95,6 +95,9 @@
 - Fixed invalid `auth.accountPolicies` entries referring to unavailable accounts from preventing startup, account selection, or login; such entries are now skipped with a warning.
 - Fixed Factory Droid Claude turns with thinking disabled from replaying unsupported earlier thinking blocks, and aligned high-effort Sonnet 5.5 thinking behavior with the native client.
 - Fixed side requests for GPT-6 Responses and Codex models from losing prompt-cache context or applying unsupported reasoning-effort configuration changes.
+### Fixed
+
+- omp no longer crashes at startup when it may not look at `~/.aws` (for example in the collab companion's sandbox, which hides it): an AWS credentials or config file whose details cannot be read now counts as absent.
 
 ## [18.8.9] - 2026-10-10
 

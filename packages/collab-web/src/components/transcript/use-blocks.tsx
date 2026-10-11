@@ -1,4 +1,4 @@
-import type { MouseEvent, PointerEvent, ReactNode, RefObject } from "react";
+import type { MouseEvent, PointerEvent, ReactNode, RefObject, SyntheticEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -35,6 +35,7 @@ import { IS_MAC, shortcutFires } from "../../lib/shortcuts";
 import { focusedPane } from "../../lib/use-split";
 import { type BlockApi, type BlocksContextValue, COPIED_MS } from "./Block";
 import { BlockSheet } from "./BlockSheet";
+import { BlockTextSheet } from "./BlockTextSheet";
 import { SelectionBar } from "./SelectionBar";
 
 /** Held this long without moving, a touch opens the block's actions. */
@@ -74,6 +75,14 @@ function useNoHover(): boolean {
 function hasTextSelection(): boolean {
 	const selection = window.getSelection();
 	return selection !== null && !selection.isCollapsed && selection.toString() !== "";
+}
+
+/**
+ * An event from inside a `data-native-select` region (the block text sheet): the OS owns the press there, and
+ * React bubbles it to the transcript root even though the sheet is portaled out of it.
+ */
+function inNativeSelect(e: SyntheticEvent): boolean {
+	return e.target instanceof Element && e.target.closest("[data-native-select]") !== null;
 }
 
 /** After a long press opened the sheet: the click that follows the finger lifting is dropped, so it cannot land on the backdrop. */
@@ -189,6 +198,7 @@ export function useBlocks({
 	const [selection, setSelection] = useState<BlockSelection>(NO_SELECTION);
 	const [selectMode, setSelectMode] = useState(false);
 	const [sheetId, setSheetId] = useState<string | null>(null);
+	const [textId, setTextId] = useState<string | null>(null);
 	const [copied, setCopied] = useState<ReadonlySet<string>>(new Set());
 	const noHover = useNoHover();
 
@@ -200,6 +210,7 @@ export function useBlocks({
 	useEffect(() => {
 		setSelection(current => pruneSelection(current, blocks));
 		setSheetId(current => (current !== null && !blocks.some(block => block.id === current) ? null : current));
+		setTextId(current => (current !== null && !blocks.some(block => block.id === current) ? null : current));
 	}, [blocks]);
 
 	const copiedTimer = useRef<number | undefined>(undefined);
@@ -337,6 +348,7 @@ export function useBlocks({
 
 	const rootProps: UseBlocks["rootProps"] = {
 		onClick(e) {
+			if (inNativeSelect(e)) return;
 			if (Date.now() - swipedAt.current < CLICK_GRACE_MS) return;
 			const target = e.target;
 			if (!(target instanceof Element)) return;
@@ -356,6 +368,7 @@ export function useBlocks({
 			if (e.shiftKey) window.getSelection()?.removeAllRanges();
 		},
 		onPointerDown(e) {
+			if (inNativeSelect(e)) return;
 			cancelPress();
 			if (e.pointerType === "mouse" || !e.isPrimary) return;
 			const target = e.target;
@@ -397,6 +410,7 @@ export function useBlocks({
 			}, LONG_PRESS_MS);
 		},
 		onPointerMove(e) {
+			if (inNativeSelect(e)) return;
 			const held = touch.current;
 			if (held === null) return;
 			const dx = e.clientX - held.x;
@@ -431,6 +445,7 @@ export function useBlocks({
 			else held.element.removeAttribute("data-swipe-armed");
 		},
 		onPointerUp(e) {
+			if (inNativeSelect(e)) return;
 			const held = touch.current;
 			endTouch();
 			if (held === null) return;
@@ -463,6 +478,7 @@ export function useBlocks({
 		},
 		onPointerCancel: endTouch,
 		onContextMenu(e) {
+			if (inNativeSelect(e)) return;
 			// The long press that opened the sheet must not also open the browser's own menu.
 			if (Date.now() - menuAt.current < MENU_GRACE_MS) e.preventDefault();
 		},
@@ -481,6 +497,7 @@ export function useBlocks({
 	);
 
 	const sheetBlock = sheetId === null ? undefined : byId.get(sheetId);
+	const textBlock = textId === null ? undefined : byId.get(textId);
 	const chosenCount = selection.ids.size;
 	const showBar = selectMode || (chosenCount > 0 && (noHover || chosenCount > 1));
 	const overlay = (
@@ -491,12 +508,21 @@ export function useBlocks({
 					api={api}
 					canSend={onSendToAgent !== undefined}
 					onEdit={onEdit}
+					onSelectText={() => setTextId(sheetBlock.id)}
 					onChanges={onChanges}
 					onSelect={() => {
 						setSelectMode(true);
 						setSelection(selectOnly(sheetBlock.id));
 					}}
 					onClose={() => setSheetId(null)}
+				/>
+			)}
+			{textBlock !== undefined && (
+				<BlockTextSheet
+					block={textBlock}
+					text={blocksMarkdown([liveBlock(textBlock, active)])}
+					api={api}
+					onClose={() => setTextId(null)}
 				/>
 			)}
 			{showBar &&

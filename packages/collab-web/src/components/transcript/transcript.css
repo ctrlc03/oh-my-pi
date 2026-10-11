@@ -1137,6 +1137,39 @@
 	opacity: 0.4;
 }
 
+/* ---- text sheet: a block's text, selectable with the OS's own handles ---- */
+
+.tr-textsheet {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	gap: 12px;
+	min-height: 0;
+}
+
+.tr-textsheet-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	padding: 12px;
+	overflow: auto;
+	overscroll-behavior: contain;
+	font-size: 14px;
+	color: var(--fg);
+	background: var(--bg-overlay);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	-webkit-user-select: text;
+	user-select: text;
+	-webkit-touch-callout: default;
+}
+
+/* Touch: 16px text, the size a finger reads and aims at. */
+@media (any-pointer: coarse) {
+	.tr-textsheet-body {
+		font-size: 16px;
+	}
+}
+
 .tr-selbar {
 	position: fixed;
 	bottom: 12px;

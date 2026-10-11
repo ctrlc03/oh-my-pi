@@ -3,6 +3,7 @@ import type { SessionEntry, ToolResultMessage } from "@oh-my-pi/pi-wire";
 import {
 	type Block,
 	blockCommand,
+	blockHasText,
 	blockOutput,
 	blocksMarkdown,
 	blocksQuote,
@@ -251,6 +252,22 @@ describe("multi-block copy", () => {
 		};
 		expect(blockCommand(run)).toBe("bun test\nread src/a.ts");
 		expect(blockOutput(run)).toContain("file text");
+	});
+});
+
+describe("Select text", () => {
+	it("is offered for every block that has text to copy", () => {
+		const folded: Block = {
+			kind: "run",
+			id: "tools:c1",
+			entryId: "a1",
+			tools: blocksOf(entries).filter(block => block.kind === "tool"),
+		};
+		expect([...blocksOf(entries), folded].map(blockHasText)).toEqual([true, true, true, true, true, true]);
+	});
+
+	it("is not offered where copying gives nothing", () => {
+		expect(blocksOf([prompt("u", "  ")]).map(blockHasText)).toEqual([false]);
 	});
 });
 

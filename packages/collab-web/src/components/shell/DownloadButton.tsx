@@ -71,8 +71,8 @@ export function DownloadButton({ client, instanceId, path, label }: DownloadButt
 				className={label === undefined ? "sh-btn sh-btn-icon" : "sh-btn"}
 				onClick={() => void start()}
 				disabled={running}
-				aria-label={label === undefined ? "download file" : undefined}
-				title="download the file as saved on the computer"
+				aria-label={label === undefined ? "Download file" : undefined}
+				title="Download the file as saved on the computer"
 			>
 				{running ? <LoaderCircle size={15} className="sh-spin" /> : <Download size={15} />}
 				{label !== undefined && <span>{label}</span>}
@@ -84,8 +84,8 @@ export function DownloadButton({ client, instanceId, path, label }: DownloadButt
 						type="button"
 						className="sh-btn sh-btn-icon"
 						onClick={() => abort.current?.abort()}
-						aria-label="cancel download"
-						title="cancel"
+						aria-label="Cancel download"
+						title="Cancel"
 					>
 						<X size={14} />
 					</button>

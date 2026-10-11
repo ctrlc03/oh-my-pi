@@ -61,10 +61,10 @@ kbd {
 	font-family: var(--font-mono);
 }
 
+/* The outline follows each element's own radius, so pills stay pills when focused. */
 :focus-visible {
 	outline: 2px solid var(--ring);
 	outline-offset: 2px;
-	border-radius: 4px;
 }
 
 input,
@@ -76,10 +76,10 @@ textarea {
 	background: var(--accent-muted);
 }
 
-/* subtle scrollbars */
+/* subtle scrollbars: a faint thumb that still reads on every surface */
 * {
 	scrollbar-width: thin;
-	scrollbar-color: var(--border-strong) transparent;
+	scrollbar-color: color-mix(in srgb, var(--fg-faint) 55%, transparent) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -88,7 +88,7 @@ textarea {
 }
 
 *::-webkit-scrollbar-thumb {
-	background: var(--border-strong);
+	background: color-mix(in srgb, var(--fg-faint) 55%, transparent);
 	border: 2px solid transparent;
 	background-clip: padding-box;
 	border-radius: 999px;

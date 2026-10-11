@@ -28,7 +28,7 @@ export function FileRestoreBar({ restore, working, readOnly, onUndo }: FileResto
 				<Undo2 size={13} />
 				Undo restore
 			</button>
-			<button type="button" className="sh-toast-close" onClick={() => setDismissed(restore)} title="dismiss">
+			<button type="button" className="sh-toast-close" onClick={() => setDismissed(restore)} title="Dismiss">
 				<X size={12} />
 			</button>
 		</div>

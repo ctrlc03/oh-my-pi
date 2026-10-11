@@ -94,7 +94,7 @@ export function DevicesSheet({ client, onClose }: DevicesSheetProps): ReactNode 
 
 	const loading = state.status === "loading";
 	return (
-		<Sheet label="devices" onClose={onClose}>
+		<Sheet label="Devices" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Devices</div>
 				<span className="sh-devices-head-actions">
@@ -103,12 +103,11 @@ export function DevicesSheet({ client, onClose }: DevicesSheetProps): ReactNode 
 						className="sh-btn sh-btn-icon"
 						onClick={reload}
 						disabled={loading}
-						aria-label="refresh"
-						title="refresh"
+						aria-label="Refresh"
 					>
 						{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>
@@ -120,7 +119,7 @@ export function DevicesSheet({ client, onClose }: DevicesSheetProps): ReactNode 
 					</div>
 				) : null
 			) : (
-				<ul className="sh-devices-list" aria-label="paired devices">
+				<ul className="sh-devices-list" aria-label="Paired devices">
 					{list.devices.map(device => (
 						<li key={device.id} className="sh-device">
 							{editing?.id === device.id ? (
@@ -131,7 +130,7 @@ export function DevicesSheet({ client, onClose }: DevicesSheetProps): ReactNode 
 										value={editing.name}
 										onChange={e => setEditing({ id: device.id, name: e.target.value })}
 										maxLength={40}
-										aria-label="device name"
+										aria-label="Device name"
 										autoComplete="off"
 										spellCheck={false}
 									/>
@@ -139,8 +138,7 @@ export function DevicesSheet({ client, onClose }: DevicesSheetProps): ReactNode 
 										type="submit"
 										className="sh-btn sh-btn-icon"
 										disabled={busy || editing.name.trim() === ""}
-										aria-label="save name"
-										title="save"
+										aria-label="Save name"
 									>
 										<Check size={15} />
 									</button>
@@ -148,8 +146,7 @@ export function DevicesSheet({ client, onClose }: DevicesSheetProps): ReactNode 
 										type="button"
 										className="sh-btn sh-btn-icon"
 										onClick={() => setEditing(null)}
-										aria-label="cancel"
-										title="cancel"
+										aria-label="Cancel"
 									>
 										<X size={15} />
 									</button>
@@ -171,8 +168,7 @@ export function DevicesSheet({ client, onClose }: DevicesSheetProps): ReactNode 
 										className="sh-btn sh-btn-icon"
 										onClick={() => setEditing({ id: device.id, name: device.name })}
 										disabled={busy}
-										aria-label={`rename ${device.name}`}
-										title="rename"
+										aria-label={`Rename ${device.name}`}
 									>
 										<Pencil size={15} />
 									</button>
@@ -181,8 +177,7 @@ export function DevicesSheet({ client, onClose }: DevicesSheetProps): ReactNode 
 										className="sh-btn sh-btn-icon"
 										onClick={() => remove(device)}
 										disabled={busy}
-										aria-label={`remove ${device.name}`}
-										title="remove"
+										aria-label={`Remove ${device.name}`}
 									>
 										<Trash2 size={15} />
 									</button>
@@ -243,7 +238,7 @@ function InvitePanel({ invite, busy, onRenew, onDone }: InvitePanelProps): React
 	};
 
 	return (
-		<section className="sh-invite" aria-label="pair a new device">
+		<section className="sh-invite" aria-label="Pair a new device">
 			{expired ? (
 				<div className="sh-companion-empty">This code expired.</div>
 			) : (
@@ -259,7 +254,7 @@ function InvitePanel({ invite, busy, onRenew, onDone }: InvitePanelProps): React
 						readOnly
 						value={invite.url}
 						onFocus={e => e.currentTarget.select()}
-						aria-label="pairing link"
+						aria-label="Pairing link"
 					/>
 				</>
 			)}
@@ -300,7 +295,7 @@ function QrSvg({ text }: { text: string }): ReactNode {
 			viewBox={`0 0 ${size} ${size}`}
 			shapeRendering="crispEdges"
 			role="img"
-			aria-label="pairing QR code"
+			aria-label="Pairing QR code"
 		>
 			<rect className="sh-qr-paper" width={size} height={size} />
 			<path className="sh-qr-ink" d={path} />

@@ -266,8 +266,8 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 					className="sh-btn sh-btn-icon"
 					onClick={onRefresh}
 					disabled={refreshing || running !== null}
-					aria-label="refresh review"
-					title="refresh"
+					aria-label="Refresh review"
+					title="Refresh"
 				>
 					{refreshing ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 				</button>
@@ -317,7 +317,7 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 			)}
 
 			{plan !== null && (
-				<div className="sh-review-confirm" role="group" aria-label="confirm">
+				<div className="sh-review-confirm" role="group" aria-label="Confirm">
 					{gen.status !== "idle" && (
 						<div className="sh-review-gen" role="status">
 							{gen.status === "loading" && (
@@ -415,7 +415,7 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 			)}
 
 			{review.commits.length > 0 && (
-				<section className="sh-switch-section" aria-label="branch commits">
+				<section className="sh-switch-section" aria-label="Branch commits">
 					<h2 className="sh-recents-title">Commits on {review.branch ?? "HEAD"}</h2>
 					<ul className="sh-commits">
 						{review.commits.map(commit => (

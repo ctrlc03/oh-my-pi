@@ -8,13 +8,13 @@ import {
 	type LucideIcon,
 	LogOut,
 	MessageSquare,
-	Monitor,
 	Moon,
 	Pencil,
 	Redo2,
 	Rows3,
 	Share2,
 	Sun,
+	SunMoon,
 	Undo2,
 	X,
 } from "lucide-react";
@@ -38,7 +38,7 @@ import { Sheet } from "./Sheet";
 import type { TurnUndoControl } from "./TurnUndo";
 
 const THEMES: readonly { value: ThemePreference; label: string; Icon: LucideIcon }[] = [
-	{ value: "system", label: "System", Icon: Monitor },
+	{ value: "system", label: "System", Icon: SunMoon },
 	{ value: "light", label: "Light", Icon: Sun },
 	{ value: "dark", label: "Dark", Icon: Moon },
 ];
@@ -235,13 +235,13 @@ export function SessionSheet({
 								type="button"
 								className="sh-btn sh-btn-icon"
 								onClick={() => setRenaming(title)}
-								aria-label="rename session"
-								title="rename session"
+								aria-label="Rename session"
+								title="Rename session"
 							>
 								<Pencil size={15} />
 							</button>
 						)}
-						<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+						<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 							<X size={16} />
 						</button>
 					</span>
@@ -259,7 +259,7 @@ export function SessionSheet({
 								setRenaming(null);
 							}
 						}}
-						aria-label="session name"
+						aria-label="Session name"
 						placeholder="Session name"
 						enterKeyHint="done"
 						maxLength={200}
@@ -289,7 +289,7 @@ export function SessionSheet({
 								openPalette();
 							}}
 						>
-							Actions, commands, sessions, messages
+							Actions, sessions and messages
 							<ChevronRight size={14} />
 						</button>
 					</dd>
@@ -332,13 +332,14 @@ export function SessionSheet({
 						current={state?.model}
 						onChange={spec => onSessionCommand("model", spec)}
 						onDone={() => setPickerOpen(false)}
+						autoFocus
 					/>
 				)}
 				{canControl && levels.length > 0 && (
 					<div className="sh-sheet-row">
 						<dt>Thinking</dt>
 						<dd>
-							<div className="sh-segmented sh-segmented-wrap" role="radiogroup" aria-label="thinking level">
+							<div className="sh-segmented sh-segmented-wrap" role="radiogroup" aria-label="Thinking level">
 								{levels.map(level => (
 									<button
 										key={level}
@@ -513,7 +514,7 @@ export function SessionSheet({
 				<div className="sh-sheet-row">
 					<dt>View</dt>
 					<dd>
-						<div className="sh-segmented" role="radiogroup" aria-label="transcript view">
+						<div className="sh-segmented" role="radiogroup" aria-label="Transcript view">
 							{VIEWS.map(view => (
 								<button
 									key={view.label}
@@ -533,7 +534,7 @@ export function SessionSheet({
 					<div className="sh-sheet-row">
 						<dt>Keep</dt>
 						<dd>
-							<div className="sh-segmented" role="radiogroup" aria-label="turns shown on this device">
+							<div className="sh-segmented" role="radiogroup" aria-label="Turns shown on this device">
 								{TRIM_CHOICES.map(keep => (
 									<button
 										key={keep ?? "all"}
@@ -544,8 +545,8 @@ export function SessionSheet({
 										onClick={() => onKeepTurnsChange(keep)}
 										title={
 											keep === null
-												? "show the whole session"
-												: `show only the last ${keep} turn${keep === 1 ? "" : "s"} on this device`
+												? "Show the whole session"
+												: `Show only the last ${keep} turn${keep === 1 ? "" : "s"} on this device`
 										}
 									>
 										{keep === null ? "All" : `Last ${keep}`}
@@ -556,7 +557,7 @@ export function SessionSheet({
 					</div>
 				)}
 				<div className="sh-sheet-row">
-					<dt>Enter</dt>
+					<dt>Enter key</dt>
 					<dd>
 						<div className="sh-segmented" role="radiogroup" aria-label="Enter while the agent is working">
 							{ENTER_CHOICES.map(choice => (
@@ -727,7 +728,7 @@ export function SessionSheet({
 				<div className="sh-sheet-row">
 					<dt>Theme</dt>
 					<dd>
-						<div className="sh-segmented" role="radiogroup" aria-label="theme">
+						<div className="sh-segmented" role="radiogroup" aria-label="Theme">
 							{THEMES.map(({ value, label, Icon }) => (
 								<button
 									key={value}

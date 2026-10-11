@@ -201,3 +201,52 @@
 		display: flex;
 	}
 }
+
+/* Touch screens: finger-sized scope chips and rows, and a field iOS will not zoom into. */
+@media (any-pointer: coarse) {
+	.sh-palette-field {
+		height: 44px;
+		font-size: 16px;
+	}
+
+	/* The chips stay slim so they fit one row; their hit area grows to a finger. */
+	.sh-palette-scopes {
+		gap: 10px 6px;
+	}
+
+	.sh-palette-scope {
+		position: relative;
+		min-height: 34px;
+		padding: 0 12px;
+		font-size: 13px;
+	}
+
+	.sh-palette-scope::after {
+		content: "";
+		position: absolute;
+		inset: -5px -2px;
+	}
+
+	.sh-palette-row {
+		min-height: 44px;
+	}
+}
+
+/* Phones: the five scope chips stay on one row and scroll sideways instead of dropping one onto a second row. */
+@media (max-width: 640px) {
+	.sh-palette-scopes {
+		flex-wrap: nowrap;
+		margin: -6px -2px;
+		padding: 6px 2px;
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+
+	.sh-palette-scopes::-webkit-scrollbar {
+		display: none;
+	}
+
+	.sh-palette-scope {
+		flex: none;
+	}
+}

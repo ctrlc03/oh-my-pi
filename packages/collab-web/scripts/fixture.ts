@@ -44,6 +44,59 @@ export const fixtureModels: WireModel[] = [
 	{ id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "google", contextWindow: 1_000_000 },
 ];
 
+/**
+ * `--many-models`: what a host with a full model catalogue offers: 219 `amazon-bedrock` models listed ahead of the
+ * session's own provider, and 25 more `anthropic` ones, so the picker has to find "Sonnet" among 250-odd rows.
+ */
+export function manyFixtureModels(): WireModel[] {
+	const families = [
+		["anthropic.claude-sonnet-4-5", "Claude Sonnet 4.5"],
+		["anthropic.claude-opus-4-1", "Claude Opus 4.1"],
+		["anthropic.claude-haiku-4-5", "Claude Haiku 4.5"],
+		["anthropic.claude-3-7-sonnet", "Claude 3.7 Sonnet"],
+		["anthropic.claude-3-5-sonnet", "Claude 3.5 Sonnet"],
+		["amazon.nova-pro", "Nova Pro"],
+		["amazon.nova-lite", "Nova Lite"],
+		["amazon.nova-micro", "Nova Micro"],
+		["meta.llama3-3-70b-instruct", "Llama 3.3 70B Instruct"],
+		["meta.llama4-maverick-17b-instruct", "Llama 4 Maverick 17B Instruct"],
+		["mistral.mistral-large", "Mistral Large"],
+		["cohere.command-r-plus", "Command R+"],
+		["deepseek.r1", "DeepSeek R1"],
+	] as const;
+	const regions = ["us", "eu", "apac", "global", "us-gov", "ca"] as const;
+	const bedrock: WireModel[] = [];
+	for (const [region, regionIndex] of regions.map((r, i) => [r, i] as const)) {
+		for (const [id, name] of families) {
+			for (const version of ["v1:0", "v2:0", "v3:0"]) {
+				if (bedrock.length >= 219) break;
+				if ((id.length + regionIndex + version.length) % 3 === 0) continue;
+				bedrock.push({
+					id: `${region}.${id}-${version}`,
+					name: `${name} (${region.toUpperCase()} ${version.slice(0, 2)})`,
+					provider: "amazon-bedrock",
+					contextWindow: 200_000,
+				});
+			}
+		}
+	}
+	for (let i = 0; bedrock.length < 219; i++) {
+		bedrock.push({
+			id: `us.anthropic.claude-extra-${i}-v1:0`,
+			name: `Claude Extra ${i} (US v1)`,
+			provider: "amazon-bedrock",
+			contextWindow: 200_000,
+		});
+	}
+	const anthropic: WireModel[] = Array.from({ length: 25 }, (_, i) => ({
+		id: `claude-sonnet-3-${i}`,
+		name: `Claude Sonnet 3.${i}`,
+		provider: "anthropic",
+		contextWindow: 200_000,
+	}));
+	return [...bedrock, ...fixtureModels, ...anthropic];
+}
+
 /** Thinking levels each mock model accepts, keyed `provider/id`; a model absent here accepts only "off". */
 export const fixtureThinkingLevels: Record<string, string[]> = {
 	"anthropic/claude-haiku-4-5": ["off", "low", "medium", "high"],

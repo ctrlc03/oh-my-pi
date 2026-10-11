@@ -539,7 +539,7 @@ export class GuestClient {
 	 */
 	#sendQueued(prompt: QueuedPrompt): void {
 		if (prompt.model !== undefined && !Object.hasOwn(this.#features, "prompt-model")) {
-			this.#pushNotice("error", "prompt not sent: this host cannot run a prompt on another model");
+			this.#pushNotice("error", "Prompt not sent: this host cannot run a prompt on another model");
 			return;
 		}
 		this.#socket.send({
@@ -741,7 +741,7 @@ export class GuestClient {
 				this.#end(`failed to apply session snapshot: ${err instanceof Error ? err.message : String(err)}`);
 				return;
 			}
-			this.#pushNotice("error", `failed to apply ${frame.t} frame`);
+			this.#pushNotice("error", `Failed to apply a ${frame.t} frame`);
 			this.#commit();
 		}
 	}
@@ -1148,23 +1148,23 @@ export class GuestClient {
 				this.#pushNotice(event.level, event.message);
 				break;
 			case "auto_retry_start":
-				this.#pushNotice("info", `retry ${event.attempt}/${event.maxAttempts}: ${event.errorMessage}`);
+				this.#pushNotice("info", `Retry ${event.attempt}/${event.maxAttempts}: ${event.errorMessage}`);
 				break;
 			case "auto_retry_end":
-				if (!event.success) this.#pushNotice("error", event.finalError ?? "retry failed");
+				if (!event.success) this.#pushNotice("error", event.finalError ?? "Retry failed");
 				break;
 			case "auto_compaction_start":
-				this.#pushNotice("info", `compacting context (${event.reason})`);
+				this.#pushNotice("info", `Compacting context (${event.reason})`);
 				break;
 			case "auto_compaction_end":
 				if (!event.skipped) {
 					this.#pushNotice(
 						"info",
 						event.aborted
-							? "compaction aborted"
+							? "Compaction aborted"
 							: event.errorMessage
-								? `compaction failed: ${event.errorMessage}`
-								: "context compacted",
+								? `Compaction failed: ${event.errorMessage}`
+								: "Context compacted",
 					);
 				}
 				break;

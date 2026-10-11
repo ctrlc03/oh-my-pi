@@ -37,12 +37,12 @@ export function FileSheet({ client, instanceId, path, line, onClose }: FileSheet
 						className="sh-btn sh-btn-icon"
 						onClick={reload}
 						disabled={state.status === "loading"}
-						aria-label="reload file"
-						title="reload"
+						aria-label="Reload file"
+						title="Reload"
 					>
 						<RefreshCw size={15} className={state.status === "loading" ? "sh-spin" : undefined} />
 					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>

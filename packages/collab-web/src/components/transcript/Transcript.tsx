@@ -1,5 +1,5 @@
 import type { AssistantMessage, ImageContent, SessionEntry, TextContent, ToolResultMessage } from "@oh-my-pi/pi-wire";
-import { ArrowDown, ArrowUp, Check, CheckCircle2, ChevronRight, Copy, FileDiff, Pencil, Share2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronRight, Copy, FileDiff, Pencil, Share2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ActiveTool, ConnectionPhase } from "../../lib/client";
@@ -108,7 +108,7 @@ function Row({
 	alsoEntries,
 	children,
 }: {
-	kind: "user" | "assistant" | "custom" | "marker";
+	kind: "user" | "assistant" | "custom";
 	gutter: ReactNode;
 	title?: string;
 	/** Session entry this row renders; search scrolls to it. */
@@ -145,7 +145,7 @@ function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean })
 		<div className="tr-think">
 			<button type="button" className="tr-think-head" onClick={() => setOpen(v => !v)}>
 				<ChevronRight size={11} className={`tr-chev${open ? " tr-chev--open" : ""}`} />
-				thinking{redacted ? " · redacted" : ""}
+				Thinking{redacted ? " · redacted" : ""}
 			</button>
 			{open && <div className="tr-think-body">{redacted ? "(redacted by provider)" : text}</div>}
 		</div>
@@ -178,40 +178,56 @@ function MsgContent({ content }: { content: string | readonly (TextContent | Ima
 	);
 }
 
-/** A finished background job: one status line per job; the delivered output only on request. */
+/**
+ * A finished background job: a collapsed card row like a tool call (status mark, what finished, how
+ * long it took); the delivered output only on request.
+ */
 function AsyncResultRow({ entry }: { entry: Extract<SessionEntry, { type: "custom_message" }> }): ReactNode {
 	const [open, setOpen] = useState(false);
 	const jobs = asyncResultJobs(entry.details);
+	const first = jobs[0];
+	const durationMs = jobs.reduce<number | null>(
+		(total, job) => (job.durationMs === null ? total : Math.max(total ?? 0, job.durationMs)),
+		null,
+	);
 	return (
 		<Row kind="custom" gutter="" title={entry.timestamp} entryId={entry.id}>
-			<div className="tr-job-done">
-				{jobs.map((job, i) => (
-					<div key={`${job.id}-${i}`} className="tr-job-done-row">
-						<CheckCircle2 size={13} className="tr-job-done-icon" />
-						<span>Background job completed</span>
-						{job.type !== null && <span className="tr-job-done-dim">[{job.type}]</span>}
-						<span className="tr-job-done-id">{job.label ?? job.id}</span>
-						{job.durationMs !== null && <span className="tr-job-done-dim">({fmtDuration(job.durationMs)})</span>}
+			<BlockShell id={null} kind="tool">
+				<div className="tv-card">
+					<div className="tr-block-head tr-block-head--tool">
+						<button
+							type="button"
+							className="tr-block-toggle"
+							aria-expanded={open}
+							aria-label={open ? "Hide job output" : "Show job output"}
+							onClick={() => setOpen(value => !value)}
+						>
+							<ChevronRight size={13} className={`tr-chev${open ? " tr-chev--open" : ""}`} />
+						</button>
+						<Check size={13} className="tr-mark tr-mark--ok" role="img" aria-label="Completed" />
+						<span className="tr-block-label">
+							<span className="tr-block-name">job</span>
+							<span className="tr-block-sum">
+								{first === undefined ? (
+									<span>output delivered</span>
+								) : (
+									<>
+										<span className="tv-pattern">{first.label ?? first.id}</span>
+										{first.type !== null && <span className="tv-faint">{first.type}</span>}
+										<span>{jobs.length > 1 ? `+${jobs.length - 1} more completed` : "completed"}</span>
+									</>
+								)}
+							</span>
+						</span>
+						{durationMs !== null && <span className="tr-block-time">{fmtDuration(durationMs)}</span>}
 					</div>
-				))}
-				<button
-					type="button"
-					className="tr-job-done-toggle"
-					aria-expanded={open}
-					onClick={() => setOpen(value => !value)}
-				>
-					<ChevronRight
-						size={12}
-						className={open ? "tr-job-done-chev tr-job-done-chev--open" : "tr-job-done-chev"}
-					/>
-					{open ? "Hide output" : jobs.length === 0 ? "Background job output" : "Show output"}
-				</button>
-				{open && (
-					<div className="tr-job-done-body">
-						<MsgContent content={entry.content} />
-					</div>
-				)}
-			</div>
+					{open && (
+						<div className="tv-body tr-job-body">
+							<MsgContent content={entry.content} />
+						</div>
+					)}
+				</div>
+			</BlockShell>
 		</Row>
 	);
 }
@@ -303,8 +319,8 @@ function PromptActions({
 					type="button"
 					className="tr-act tr-changes"
 					onClick={() => onChanges(entryId)}
-					aria-label="changes in this turn"
-					title="changes in this turn"
+					aria-label="Changes in this turn"
+					title="Changes in this turn"
 				>
 					<FileDiff size={13} />
 				</button>
@@ -314,8 +330,8 @@ function PromptActions({
 					type="button"
 					className="tr-act tr-edit"
 					onClick={() => onEdit(entryId)}
-					aria-label="edit and resend"
-					title="edit and resend"
+					aria-label="Edit and resend"
+					title="Edit and resend"
 				>
 					<Pencil size={13} />
 				</button>
@@ -388,7 +404,7 @@ function TurnActions({
 
 /** Which model gave a reply when it was not the session's (a per-prompt choice or a fallback). */
 function ModelNote({ model }: { model: string }): ReactNode {
-	return <div className="tr-model">answered by {model}</div>;
+	return <div className="tr-model">Answered by {model}</div>;
 }
 
 interface EntryRowProps {
@@ -513,26 +529,30 @@ const EntryRow = memo(function EntryRow({
 		case "compaction":
 			return (
 				<div className="tr-divider" title={entry.shortSummary ?? entry.summary}>
-					<span>context compacted · {fmtTokens(entry.tokensBefore)} tokens</span>
+					<span>Context compacted · {fmtTokens(entry.tokensBefore)} tokens</span>
 				</div>
 			);
 		case "branch_summary":
 			return (
 				<div className="tr-divider" title={entry.summary}>
-					<span>branch summary</span>
+					<span>Branch summary</span>
 				</div>
 			);
 		case "model_change":
 			return (
-				<Row kind="marker" gutter="" title={entry.timestamp}>
-					<span className="tr-marker">model → {entry.model}</span>
-				</Row>
+				<div className="tr-divider tr-divider--marker" title={entry.timestamp}>
+					<span>
+						Model changed to <span className="tr-marker">{entry.model}</span>
+					</span>
+				</div>
 			);
 		case "thinking_level_change":
 			return (
-				<Row kind="marker" gutter="" title={entry.timestamp}>
-					<span className="tr-marker">thinking → {entry.thinkingLevel ?? "off"}</span>
-				</Row>
+				<div className="tr-divider tr-divider--marker" title={entry.timestamp}>
+					<span>
+						Thinking level set to <span className="tr-marker">{entry.thinkingLevel ?? "off"}</span>
+					</span>
+				</div>
 			);
 		default:
 			// unknown entry types from newer hosts — skip tolerantly
@@ -775,29 +795,53 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	 */
 	const ownTopRef = useRef<number | null>(null);
 
+	/**
+	 * Follow the tail while bottom-locked. The scroll event this raises is not the reader's: rows
+	 * can grow again before it is delivered (a diagram finishing its render), and measured against
+	 * the grown content it would read as scrolling away and release the lock.
+	 */
+	const follow = (force = false): void => {
+		const el = rootRef.current;
+		if (el === null) return;
+		const before = el.scrollTop;
+		followTranscriptTail(el, lockRef, force);
+		if (lockRef.current && el.scrollTop !== before) ownTopRef.current = el.scrollTop;
+	};
+
 	// Follow the tail while bottom-locked; releasing/re-arming happens in onScroll.
 	useEffect(() => {
-		const el = rootRef.current;
-		if (el !== null) followTranscriptTail(el, lockRef);
+		follow();
 	}, [entries, stream, activeTools, working, queued]);
 
 	// A shrinking viewport (mobile keyboard, rotation, composer growth) keeps a
 	// bottom-locked reader on the latest message instead of stranding them mid-scroll.
+	// So does a row that grows after it mounted (a diagram that finishes rendering, an image that loads).
 	useEffect(() => {
 		const el = rootRef.current;
 		if (el === null || typeof ResizeObserver === "undefined") return;
-		const observer = new ResizeObserver(() => followTranscriptTail(el, lockRef));
-		observer.observe(el);
-		return () => observer.disconnect();
+		const resize = new ResizeObserver(() => follow());
+		resize.observe(el);
+		for (const child of el.children) resize.observe(child);
+		const mounts = new MutationObserver(records => {
+			for (const record of records) {
+				for (const node of record.addedNodes) {
+					if (node instanceof Element) resize.observe(node);
+				}
+			}
+		});
+		mounts.observe(el, { childList: true });
+		return () => {
+			resize.disconnect();
+			mounts.disconnect();
+		};
 	}, []);
 
 	// A `live` transition (initial connect or reconnect) jumps to the latest message
 	// regardless of the prior scroll position. Absent for the agent drawer's compact transcript.
 	useEffect(() => {
-		const el = rootRef.current;
-		if (phase !== "live" || el === null) return;
+		if (phase !== "live") return;
 		setPinnedStart(null);
-		followTranscriptTail(el, lockRef, true);
+		follow(true);
 	}, [phase]);
 
 	// Keep the reader's content in place when earlier rows mount above it, and on
@@ -991,7 +1035,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		if (el === null) return;
 		setPinnedStart(null);
 		setAway(false);
-		followTranscriptTail(el, lockRef, true);
+		follow(true);
 	};
 
 	// Keys for this transcript: jump to the latest message, copy the last reply, edit the last prompt.
@@ -1134,11 +1178,11 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		>
 			<BlocksContext.Provider value={blockUi.context}>
 				{settled && entries.length === 0 && stream === null && !working && (
-					<div className="tr-empty">no activity yet</div>
+					<div className="tr-empty">No activity yet</div>
 				)}
 				{start > floor && (
 					<button type="button" className="tr-earlier" onClick={showEarlier}>
-						show {(start - floor).toLocaleString("en-US")} earlier
+						Show {(start - floor).toLocaleString("en-US")} earlier {start - floor === 1 ? "entry" : "entries"}
 					</button>
 				)}
 				{start === floor && trimmed !== undefined && trimmed.hiddenTurns > 0 && (
@@ -1222,7 +1266,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 				)}
 				{quietTurn && (
 					<Row kind="assistant" gutter="agent">
-						<div className="tr-shimmer">thinking…</div>
+						<div className="tr-shimmer">Thinking…</div>
 					</Row>
 				)}
 				{queued?.map(prompt => (
@@ -1244,8 +1288,8 @@ export function Transcript(props: TranscriptProps): ReactNode {
 								type="button"
 								className="tr-queued-cancel"
 								onClick={() => onCancelQueued?.(prompt.id)}
-								aria-label="cancel queued prompt"
-								title="cancel — not sent yet"
+								aria-label="Cancel queued prompt"
+								title="Cancel — not sent yet"
 							>
 								<X size={13} />
 							</button>
@@ -1254,8 +1298,14 @@ export function Transcript(props: TranscriptProps): ReactNode {
 				))}
 				{away && (
 					<div className="tr-jump-dock">
-						<button type="button" className="tr-jump" onClick={jumpToLatest}>
-							<ArrowDown size={14} /> Latest
+						<button
+							type="button"
+							className="tr-jump"
+							onClick={jumpToLatest}
+							aria-label="Jump to latest"
+							title="Jump to latest"
+						>
+							<ArrowDown size={14} aria-hidden /> <span className="tr-jump-label">Latest</span>
 						</button>
 					</div>
 				)}

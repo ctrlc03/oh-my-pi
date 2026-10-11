@@ -197,7 +197,7 @@ export function SchedulesSheet({ client, canSandbox, canCron, onOpenHost, onClos
 		<Sheet label="schedules" onClose={onClose}>
 			<div className="sh-sheet-head">
 				{draft !== null && busy !== "save" ? (
-					<button type="button" className="sh-btn sh-btn-icon" onClick={() => setDraft(null)} aria-label="back">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={() => setDraft(null)} aria-label="Back">
 						<ChevronLeft size={16} />
 					</button>
 				) : null}
@@ -211,13 +211,13 @@ export function SchedulesSheet({ client, canSandbox, canCron, onOpenHost, onClos
 							className="sh-btn sh-btn-icon"
 							onClick={reload}
 							disabled={loading}
-							aria-label="refresh"
-							title="refresh"
+							aria-label="Refresh"
+							title="Refresh"
 						>
 							{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 						</button>
 					)}
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>
@@ -249,7 +249,7 @@ export function SchedulesSheet({ client, canSandbox, canCron, onOpenHost, onClos
 					) : list.length === 0 ? (
 						<div className="sh-companion-empty">No schedules yet.</div>
 					) : (
-						<ul className="sh-sched-list" aria-label="schedules">
+						<ul className="sh-sched-list" aria-label="Schedules">
 							{list.map(schedule => (
 								<ScheduleRow
 									key={schedule.id}
@@ -363,8 +363,8 @@ function ScheduleRow({
 					onClick={onToggle}
 					disabled={disabled}
 					aria-pressed={schedule.enabled}
-					aria-label={`${schedule.enabled ? "turn off" : "turn on"} ${schedule.title}`}
-					title={schedule.enabled ? "turn off" : "turn on"}
+					aria-label={`${schedule.enabled ? "Turn off" : "Turn on"} ${schedule.title}`}
+					title={schedule.enabled ? "Turn off" : "Turn on"}
 				>
 					<CalendarClock size={15} />
 				</button>
@@ -389,8 +389,8 @@ function ScheduleRow({
 						className="sh-btn sh-btn-icon"
 						onClick={onEdit}
 						disabled={disabled}
-						aria-label={`edit ${schedule.title}`}
-						title="edit"
+						aria-label={`Edit ${schedule.title}`}
+						title="Edit"
 					>
 						<Pencil size={15} />
 					</button>
@@ -399,14 +399,14 @@ function ScheduleRow({
 						className="sh-btn sh-btn-icon"
 						onClick={() => onConfirm("delete")}
 						disabled={disabled}
-						aria-label={`delete ${schedule.title}`}
-						title="delete"
+						aria-label={`Delete ${schedule.title}`}
+						title="Delete"
 					>
 						<Trash2 size={15} />
 					</button>
 				</div>
 			) : (
-				<div className="sh-sched-confirm" role="group" aria-label="confirm">
+				<div className="sh-sched-confirm" role="group" aria-label="Confirm">
 					<span className="sh-field-hint">
 						{confirming === "run"
 							? `Starts omp in ${schedule.mode === "resume" ? "the chosen session of " : ""}${folderName(schedule.cwd)} now${schedule.sandboxed ? ", sandboxed" : ""} and sends the prompt. It costs money.`
@@ -525,7 +525,7 @@ function ScheduleEditor({
 			</label>
 			<div className="sh-sched-field">
 				<span className="sh-field-label">Session</span>
-				<div className="sh-segmented" role="radiogroup" aria-label="session">
+				<div className="sh-segmented" role="radiogroup" aria-label="Session">
 					{(["new", "resume"] as const).map(mode => (
 						<button
 							key={mode}
@@ -549,7 +549,7 @@ function ScheduleEditor({
 							className="sh-input"
 							value={draft.sessionId}
 							onChange={e => set({ sessionId: e.currentTarget.value })}
-							aria-label="session to resume"
+							aria-label="Session to resume"
 						>
 							<option value="">Pick a session…</option>
 							{sessions.map(session => (
@@ -564,7 +564,7 @@ function ScheduleEditor({
 			{canCron && (
 				<div className="sh-sched-field">
 					<span className="sh-field-label">If the computer was off at the time</span>
-					<div className="sh-segmented sh-segmented-wrap" role="radiogroup" aria-label="missed runs">
+					<div className="sh-segmented sh-segmented-wrap" role="radiogroup" aria-label="Missed runs">
 						{(["skip", "run-once"] as const).map(policy => (
 							<button
 								key={policy}
@@ -673,8 +673,8 @@ export function SchedulesEntry({ client, canSandbox, canCron, onOpenHost, varian
 				type="button"
 				className={variant === "card" ? "sh-btn sh-card-action" : "sh-btn sh-btn-icon"}
 				onClick={() => setOpen(true)}
-				aria-label="schedules"
-				title="schedules"
+				aria-label="Schedules"
+				title="Schedules"
 			>
 				<CalendarClock size={15} />
 				{variant === "card" && " Schedules"}

@@ -39,7 +39,7 @@ import { FollowUps } from "./FollowUps";
 import { type MentionSources, useMentionMenu } from "./MentionMenu";
 import { ModelControls } from "./ModelControls";
 import { FanoutPill, type FanoutTarget } from "./FanoutSheet";
-import { ApprovalChoices } from "./ApprovalChoices";
+import { ApprovalChoices, AskTitle } from "./ApprovalChoices";
 import { modelOfChoice, PromptModelPicker } from "./PromptModelPicker";
 import { QuickReplies } from "./QuickReplies";
 import { useSlashMenu } from "./SlashMenu";
@@ -205,7 +205,7 @@ function AskEditor({ prefill, onSubmit }: AskEditorProps): ReactNode {
 					type="button"
 					className="sh-btn sh-btn-primary"
 					onClick={() => onSubmit(draft)}
-					title="submit response"
+					title="Submit response"
 				>
 					<SendHorizontal size={16} /> <span className="sh-btn-label">Submit</span>
 				</button>
@@ -567,7 +567,7 @@ export const Composer = memo(function Composer({
 		return (
 			<div className="sh-composer sh-composer-ask">
 				{handsFree.status}
-				<div className="sh-ask-title">{uiRequest.title}</div>
+				<AskTitle title={uiRequest.title} />
 				{uiRequest.kind === "select" && approvalGrants && uiRequest.approval ? (
 					<ApprovalChoices
 						approval={uiRequest.approval}
@@ -615,9 +615,10 @@ export const Composer = memo(function Composer({
 							className="sh-btn sh-btn-stop"
 							onClick={() => client.sendAbort()}
 							disabled={!live}
-							title="stop the current turn"
+							aria-label="Stop the current turn"
+							title="Stop the current turn"
 						>
-							<Square size={11} /> <span className="sh-btn-label">Stop</span>
+							<Square size={11} /> Stop
 						</button>
 					)}
 				</div>
@@ -626,7 +627,7 @@ export const Composer = memo(function Composer({
 	}
 
 	return (
-		<div className="sh-composer">
+		<div className={readOnly ? "sh-composer sh-composer-readonly" : "sh-composer"}>
 			{canPrompt && !text && <QuickReplies disabled={!live} onPick={reply => send(reply)} />}
 			<FollowUps
 				client={client}
@@ -646,7 +647,7 @@ export const Composer = memo(function Composer({
 								type="button"
 								className="sh-attachment-remove"
 								onClick={() => setImages(prev => prev.filter((_, j) => j !== i))}
-								aria-label={`remove attachment ${i + 1}`}
+								aria-label={`Remove attachment ${i + 1}`}
 							>
 								<X size={12} />
 							</button>
@@ -667,7 +668,7 @@ export const Composer = memo(function Composer({
 								type="button"
 								className="sh-file-remove"
 								onClick={() => setFiles(prev => prev.filter(f => f.id !== file.id))}
-								aria-label={`remove ${file.name}`}
+								aria-label={`Remove ${file.name}`}
 							>
 								<X size={12} />
 							</button>
@@ -698,35 +699,37 @@ export const Composer = memo(function Composer({
 								e.target.value = "";
 							}}
 						/>
-						<button
-							type="button"
-							className="sh-btn sh-btn-icon sh-attach"
-							onClick={() => fileRef.current?.click()}
-							disabled={!canType || (images.length >= MAX_ATTACHMENTS && files.length >= MAX_FILES)}
-							aria-label="attach images or files"
-							title="attach images or files"
-						>
-							<Paperclip size={16} />
-						</button>
-						<button
-							type="button"
-							className="sh-btn sh-btn-icon sh-sketch"
-							onClick={openSketch}
-							disabled={!canType || images.length >= MAX_ATTACHMENTS || files.length >= MAX_FILES}
-							aria-label="sketch a drawing"
-							title="sketch a drawing"
-						>
-							<PenLine size={16} />
-						</button>
-						<DraftStash
-							drafts={stashed}
-							canStash={text.trim() !== ""}
-							disabled={!canType}
-							onStash={() => void stashNow()}
-							onRestore={restoreStashed}
-							onDrop={dropStashed}
-						/>
-						{models !== null && (
+						<div className="sh-composer-attach">
+							<button
+								type="button"
+								className="sh-btn sh-btn-icon"
+								onClick={() => fileRef.current?.click()}
+								disabled={!canType || (images.length >= MAX_ATTACHMENTS && files.length >= MAX_FILES)}
+								aria-label="Attach images or files"
+								title="Attach images or files"
+							>
+								<Paperclip size={18} />
+							</button>
+							<button
+								type="button"
+								className="sh-btn sh-btn-icon sh-sketch"
+								onClick={openSketch}
+								disabled={!canType || images.length >= MAX_ATTACHMENTS || files.length >= MAX_FILES}
+								aria-label="Sketch a drawing"
+								title="Sketch a drawing"
+							>
+								<PenLine size={18} />
+							</button>
+							<DraftStash
+								drafts={stashed}
+								canStash={text.trim() !== ""}
+								disabled={!canType}
+								onStash={() => void stashNow()}
+								onRestore={restoreStashed}
+								onDrop={dropStashed}
+							/>
+						</div>
+						{models !== null ? (
 							<ModelControls
 								models={models}
 								model={model}
@@ -746,10 +749,24 @@ export const Composer = memo(function Composer({
 										disabled={!canType}
 									/>
 								)}
+								{fanout && (
+									<FanoutPill
+										prompt={composePrompt(text, files)}
+										target={fanout}
+										disabled={!canType || uploading}
+									/>
+								)}
 							</ModelControls>
-						)}
-						{fanout && (
-							<FanoutPill prompt={composePrompt(text, files)} target={fanout} disabled={!canType || uploading} />
+						) : (
+							fanout && (
+								<div className="sh-composer-tools">
+									<FanoutPill
+										prompt={composePrompt(text, files)}
+										target={fanout}
+										disabled={!canType || uploading}
+									/>
+								</div>
+							)
 						)}
 					</>
 				)}
@@ -772,72 +789,84 @@ export const Composer = memo(function Composer({
 					onCompositionEnd={onCompositionEnd}
 					placeholder={
 						readOnly
-							? "Watching only"
-							: !live
-								? "Offline — sends when back"
-								: images.length > 0 || files.length > 0
-									? "Add a message…"
-									: "Message the agent…"
+							? "Read-only link: you can watch but not send"
+							: phase === "ended"
+								? "Session ended"
+								: !live
+									? "Offline — sends when back"
+									: images.length > 0 || files.length > 0
+										? "Add a message…"
+										: "Message the agent…"
 					}
 					disabled={!canType}
 					rows={1}
 					spellCheck={false}
 					enterKeyHint={isTouch() ? "enter" : "send"}
 				/>
-				<div className="sh-composer-actions">
-					{busy && queued > 0 && (
-						<span className="sh-queued">
-							<span className="sh-queued-label">queued </span>×{queued}
-						</span>
-					)}
-					{showVoice && <VoiceButton input={voiceInput} />}
-					{handsFree.button}
-					{busy && !readOnly && (
+				{!readOnly && (
+					<div className="sh-composer-actions">
+						{busy && queued > 0 && (
+							<span
+								className="sh-queued"
+								role="status"
+								title={`${queued} ${queued === 1 ? "message" : "messages"} queued behind the running turn`}
+								aria-label={`${queued} ${queued === 1 ? "message" : "messages"} queued`}
+							>
+								<ListEnd size={12} aria-hidden /> {queued}
+							</span>
+						)}
+						{showVoice && <VoiceButton input={voiceInput} />}
+						{handsFree.button}
+						{busy && (
+							<button
+								type="button"
+								className="sh-btn sh-btn-stop"
+								onClick={() => client.sendAbort()}
+								disabled={!live}
+								aria-label="Stop the current turn"
+								title="Stop the current turn (Esc)"
+							>
+								<Square size={11} /> <span className="sh-btn-label">Stop</span>
+							</button>
+						)}
+						{canFollowUp && (
+							<button
+								type="button"
+								className="sh-btn sh-btn-after"
+								onClick={() => send(undefined, queueFirst ? undefined : "follow-up")}
+								disabled={!canSend}
+								aria-label={queueFirst ? "Send into the running turn" : "Send after this turn"}
+								title={
+									queueFirst
+										? "Send now, steering the running turn (Alt+Enter)"
+										: "Send when this turn ends (Alt+Enter)"
+								}
+							>
+								{queueFirst ? <Zap size={16} /> : <ListEnd size={16} />}
+							</button>
+						)}
 						<button
 							type="button"
-							className="sh-btn sh-btn-stop"
-							onClick={() => client.sendAbort()}
-							disabled={!live}
-							title="stop the current turn"
-						>
-							<Square size={11} /> <span className="sh-btn-label">Stop</span>
-						</button>
-					)}
-					{canFollowUp && (
-						<button
-							type="button"
-							className="sh-btn sh-btn-after"
-							onClick={() => send(undefined, queueFirst ? undefined : "follow-up")}
+							className="sh-btn sh-btn-primary"
+							onClick={() => send(undefined, queueFirst ? "follow-up" : undefined)}
 							disabled={!canSend}
-							aria-label={queueFirst ? "send into the running turn" : "send after this turn"}
+							aria-label={
+								canFollowUp ? (queueFirst ? "Send after this turn" : "Send into the running turn") : "Send"
+							}
 							title={
-								queueFirst
-									? "send now, steering the running turn (Alt+Enter)"
-									: "send when this turn ends (Alt+Enter)"
+								!live
+									? "Queue until reconnected (Enter)"
+									: queueFirst
+										? "Send when this turn ends (Enter)"
+										: canFollowUp
+											? "Send now, steering the running turn (Enter)"
+											: "Send (Enter)"
 							}
 						>
-							{queueFirst ? <Zap size={15} /> : <ListEnd size={15} />}{" "}
-							<span className="sh-btn-label">{queueFirst ? "Steer" : "After turn"}</span>
+							<SendHorizontal size={16} /> <span className="sh-btn-label">Send</span>
 						</button>
-					)}
-					<button
-						type="button"
-						className="sh-btn sh-btn-primary"
-						onClick={() => send(undefined, queueFirst ? "follow-up" : undefined)}
-						disabled={!canSend}
-						title={
-							!live
-								? "queue until reconnected (Enter)"
-								: queueFirst
-									? "send when this turn ends (Enter)"
-									: canFollowUp
-										? "send now, steering the running turn (Enter)"
-										: "send (Enter)"
-						}
-					>
-						<SendHorizontal size={16} /> <span className="sh-btn-label">Send</span>
-					</button>
-				</div>
+					</div>
+				)}
 			</div>
 		</div>
 	);

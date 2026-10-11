@@ -70,12 +70,12 @@ export function PrReviewSheet({
 		<Sheet label="submit review" size="wide" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<h2 className="sh-recents-title">Submit review · #{number}</h2>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close" title="close">
+				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close" title="Close">
 					<X size={15} />
 				</button>
 			</div>
-			<div className="sh-review-confirm" role="group" aria-label="review">
-				<div className="sh-segmented" role="radiogroup" aria-label="review verdict">
+			<div className="sh-review-confirm" role="group" aria-label="Review">
+				<div className="sh-segmented" role="radiogroup" aria-label="Review verdict">
 					{EVENTS.map(e => (
 						<button
 							key={e.value}

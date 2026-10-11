@@ -108,7 +108,7 @@ export function ScreensSheet({ screens, onJump, onClose }: ScreensSheetProps): R
 		<Sheet label="screens" size={viewing ? "full" : "wide"} onClose={close}>
 			<div className="sh-sheet-head">
 				{viewing !== null && (
-					<button type="button" className="sh-btn sh-btn-icon" onClick={close} aria-label="back to all screens">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={close} aria-label="Back to all screens">
 						<ArrowLeft size={16} />
 					</button>
 				)}
@@ -117,7 +117,7 @@ export function ScreensSheet({ screens, onJump, onClose }: ScreensSheetProps): R
 						? `${index + 1} / ${newest.length}`
 						: `Screens${newest.length > 0 ? ` · ${newest.length}` : ""}`}
 				</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 					<X size={16} />
 				</button>
 			</div>
@@ -135,7 +135,7 @@ export function ScreensSheet({ screens, onJump, onClose }: ScreensSheetProps): R
 							className="sh-btn sh-btn-icon sh-screen-nav sh-screen-nav-prev"
 							onClick={() => step(-1)}
 							disabled={index === 0}
-							aria-label="newer screen"
+							aria-label="Newer screen"
 						>
 							<ChevronLeft size={18} />
 						</button>
@@ -144,7 +144,7 @@ export function ScreensSheet({ screens, onJump, onClose }: ScreensSheetProps): R
 							className="sh-btn sh-btn-icon sh-screen-nav sh-screen-nav-next"
 							onClick={() => step(1)}
 							disabled={index === newest.length - 1}
-							aria-label="older screen"
+							aria-label="Older screen"
 						>
 							<ChevronRight size={18} />
 						</button>

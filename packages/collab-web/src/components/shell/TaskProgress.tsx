@@ -35,9 +35,13 @@ const STATUS_LABEL: Record<SubagentStatus, string> = {
 	aborted: "aborted",
 };
 
+/** "1 agent working", "2 of 3 agents working": the one agent of a run needs no total. */
 function agentsSummary(work: SubagentWork): string {
 	const total = work.rows.length;
-	return work.active > 0 ? `${work.active} of ${total} agents working` : `${work.done}/${total} agents done`;
+	const state = work.active > 0 ? "working" : "done";
+	const count = work.active > 0 ? work.active : work.done;
+	if (total === 1) return count === 1 ? `1 agent ${state}` : `${count} of 1 agent ${state}`;
+	return `${count} of ${total} agents ${state}`;
 }
 
 /**
@@ -97,7 +101,7 @@ export function TaskProgress({ todos, subagents, hasAgent, onOpenAgent }: TaskPr
 							type="button"
 							className="sh-btn sh-btn-icon"
 							onClick={() => setAnchor(null)}
-							aria-label="close"
+							aria-label="Close"
 						>
 							<X size={16} />
 						</button>
@@ -109,7 +113,7 @@ export function TaskProgress({ todos, subagents, hasAgent, onOpenAgent }: TaskPr
 							</div>
 						)}
 						{subagents !== null && (
-							<section className="sh-tasks-subagents" aria-label="subagents">
+							<section className="sh-tasks-subagents" aria-label="Subagents">
 								<div className="sh-tasks-section">{agentsSummary(subagents)}</div>
 								<ul className="sh-tasks-agent-list">
 									{subagents.rows.map(row => (
@@ -158,7 +162,7 @@ function SubagentItem({ row, onOpen }: { row: SubagentRow; onOpen: (() => void) 
 			{onOpen === null ? (
 				<div className="sh-tasks-agent-row">{body}</div>
 			) : (
-				<button type="button" className="sh-tasks-agent-row" onClick={onOpen} title="open its transcript">
+				<button type="button" className="sh-tasks-agent-row" onClick={onOpen} title="Open its transcript">
 					{body}
 				</button>
 			)}

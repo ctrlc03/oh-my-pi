@@ -84,8 +84,8 @@ export function FixItSheet({ client, target, canStart, onOpenHost, onOpenLink, o
 						className="sh-btn sh-btn-icon"
 						onClick={reload}
 						disabled={state.status === "loading" || busy}
-						aria-label="refresh"
-						title="refresh"
+						aria-label="Refresh"
+						title="Refresh"
 					>
 						{state.status === "loading" ? (
 							<LoaderCircle size={15} className="sh-spin" />
@@ -93,7 +93,7 @@ export function FixItSheet({ client, target, canStart, onOpenHost, onOpenLink, o
 							<RefreshCw size={15} />
 						)}
 					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close" title="close">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close" title="Close">
 						<X size={15} />
 					</button>
 				</span>
@@ -208,7 +208,7 @@ function FixItBody({
 			{failures.length === 0 ? (
 				<div className="sh-companion-empty">No check is failing on this pull request right now.</div>
 			) : (
-				<section aria-label="failing checks">
+				<section aria-label="Failing checks">
 					<h3 className="sh-recents-title">
 						Failing checks{moreFailures > 0 ? ` (${failures.length} of ${failures.length + moreFailures})` : ""}
 					</h3>
@@ -216,7 +216,7 @@ function FixItBody({
 						{failures.map((failure, i) => (
 							<li key={`${failure.check}:${i}`} className="sh-fix-check">
 								<div className="sh-fix-check-name">
-									<CircleX size={14} className="sh-gh-check-fail" aria-label="failed" />
+									<CircleX size={14} className="sh-gh-check-fail" aria-label="Failed" />
 									{failure.url ? (
 										<a href={failure.url} target="_blank" rel="noopener noreferrer">
 											{failure.check}
@@ -238,9 +238,9 @@ function FixItBody({
 				</section>
 			)}
 			{usable.length > 0 && (
-				<section aria-label="session">
+				<section aria-label="Session">
 					<h3 className="sh-recents-title">Session</h3>
-					<div className="sh-fix-picks" role="radiogroup" aria-label="session to fix in">
+					<div className="sh-fix-picks" role="radiogroup" aria-label="Session to fix in">
 						{usable.map(candidate => (
 							<SessionPick
 								key={candidate.instanceId}
@@ -279,12 +279,12 @@ function FixItBody({
 				</>
 			)}
 			{startFolder !== null && (
-				<section aria-label="new session">
+				<section aria-label="New session">
 					<h3 className="sh-recents-title">
 						{session === null ? "No session is open in this repository" : "Or a new session"}
 					</h3>
 					{folders.length > 1 && (
-						<div className="sh-fix-picks" role="radiogroup" aria-label="folder to start in">
+						<div className="sh-fix-picks" role="radiogroup" aria-label="Folder to start in">
 							{folders.map(candidate => (
 								<button
 									key={candidate.cwd}

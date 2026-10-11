@@ -5,6 +5,13 @@
 
 export type DiagramKind = "mermaid" | "excalidraw";
 
+/**
+ * The smallest zoom at which a diagram's text stays readable, per kind: Mermaid labels are 16px and an
+ * Excalidraw default text is 20px, so the floor keeps both at about 11px. A figure or viewer that cannot fit
+ * the whole diagram at this zoom shows it here and lets the reader pan instead of shrinking the text further.
+ */
+export const READABLE_SCALE: Record<DiagramKind, number> = { mermaid: 0.7, excalidraw: 0.55 };
+
 /** Fence info strings that name a diagram language. */
 const KIND_BY_LANG: Record<string, DiagramKind> = { mermaid: "mermaid", mmd: "mermaid", excalidraw: "excalidraw" };
 

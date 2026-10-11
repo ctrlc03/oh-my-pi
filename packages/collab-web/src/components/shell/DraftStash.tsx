@@ -1,7 +1,7 @@
 import { Archive, ArchiveRestore, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { effectiveKeys, formatCombo, IS_MAC } from "../../lib/shortcuts";
+import { shortcutKeys, useOverrides } from "../../lib/shortcuts";
 import { relTime } from "../../lib/format";
 import type { StashedDraft } from "../../lib/draft-stash";
 import { Sheet } from "./Sheet";
@@ -30,6 +30,7 @@ export interface DraftStashProps {
  * how a phone stashes, restores and drops drafts.
  */
 export function DraftStash({ drafts, canStash, disabled, onStash, onRestore, onDrop }: DraftStashProps): ReactNode {
+	useOverrides();
 	const [anchor, setAnchor] = useState<{ rect: DOMRect } | null>(null);
 	const close = (): void => setAnchor(null);
 	return (
@@ -39,8 +40,9 @@ export function DraftStash({ drafts, canStash, disabled, onStash, onRestore, onD
 				className="sh-btn sh-btn-icon sh-stash-btn"
 				onClick={e => setAnchor({ rect: e.currentTarget.getBoundingClientRect() })}
 				disabled={disabled && drafts.length === 0}
-				aria-label={drafts.length > 0 ? `stashed drafts (${drafts.length})` : "stash the draft"}
-				title={`stash the draft (${formatCombo(effectiveKeys("stashDraft"), IS_MAC)}) or take one back`}
+				aria-label={drafts.length > 0 ? `Stashed drafts (${drafts.length})` : "Stash the draft"}
+				title="Stash the draft or take one back"
+				data-shortcut={shortcutKeys("stashDraft")}
 			>
 				<Archive size={16} />
 				{drafts.length > 0 && <span className="sh-stash-count">{drafts.length}</span>}
@@ -77,7 +79,7 @@ export function DraftStash({ drafts, canStash, disabled, onStash, onRestore, onD
 											onRestore(draft);
 											close();
 										}}
-										title="put it back in the message box"
+										title="Put it back in the message box"
 									>
 										<ArchiveRestore size={14} />
 										<span className="sh-stash-preview">{preview(draft.text)}</span>
@@ -87,8 +89,8 @@ export function DraftStash({ drafts, canStash, disabled, onStash, onRestore, onD
 										type="button"
 										className="sh-stash-drop"
 										onClick={() => onDrop(draft.id)}
-										aria-label="delete stashed draft"
-										title="delete"
+										aria-label="Delete stashed draft"
+										title="Delete"
 									>
 										<Trash2 size={14} />
 									</button>

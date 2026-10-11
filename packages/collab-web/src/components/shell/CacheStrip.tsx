@@ -1,5 +1,5 @@
 import type { SessionCacheStats } from "@oh-my-pi/pi-wire";
-import { Database } from "lucide-react";
+import { Database, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { fmtHit, fmtRate, lastRequestMiss, missLabel } from "../../lib/cache-strip";
@@ -31,13 +31,14 @@ export function CacheStrip({ cache }: CacheStripProps): ReactNode {
 				className="sh-cachestrip-btn"
 				data-miss={miss !== undefined ? "true" : undefined}
 				onClick={e => setAnchor(e.currentTarget.getBoundingClientRect())}
-				aria-label="prompt cache details"
+				aria-label="Prompt cache details"
 				title="Prompt cache of the last request"
 			>
 				<Database size={13} />
 				<span className="sh-cachestrip-hit">{fmtHit(last.hitPct)}</span>
-				<span className="sh-cachestrip-wide">cache</span>
-				{miss !== undefined && (
+				{miss === undefined ? (
+					<span>cache</span>
+				) : (
 					<span className="sh-cachestrip-miss">{missLabel(miss.reasons[0] ?? "unknown")}</span>
 				)}
 				<span className="sh-cachestrip-spacer" />
@@ -54,8 +55,17 @@ export function CacheStrip({ cache }: CacheStripProps): ReactNode {
 				<Sheet label="prompt cache" anchor={anchor} onClose={() => setAnchor(null)}>
 					<div className="sh-sheet-head">
 						<div className="sh-sheet-title">Prompt cache</div>
+						<button
+							type="button"
+							className="sh-btn sh-btn-icon"
+							onClick={() => setAnchor(null)}
+							aria-label="Close"
+							title="Close"
+						>
+							<X size={16} />
+						</button>
 					</div>
-					<dl className="sh-sheet-rows">
+					<dl className="sh-sheet-rows sh-cachestrip-rows">
 						<div className="sh-sheet-row">
 							<dt>Last request</dt>
 							<dd>
@@ -74,14 +84,15 @@ export function CacheStrip({ cache }: CacheStripProps): ReactNode {
 						<div className="sh-sheet-row">
 							<dt>Speed</dt>
 							<dd>
-								<span className="sh-sheet-mono">
-									{last.tokensPerSecond !== undefined ? fmtRate(last.tokensPerSecond) : "no rate"}
-								</span>
-								<span className="sh-sheet-mono">
-									{last.ttftMs !== undefined
-										? `${fmtDuration(last.ttftMs)} to first token`
-										: "no first-token time"}
-								</span>
+								{last.tokensPerSecond === undefined && last.ttftMs === undefined && (
+									<span className="sh-sheet-faint">Not reported</span>
+								)}
+								{last.tokensPerSecond !== undefined && (
+									<span className="sh-sheet-mono">{fmtRate(last.tokensPerSecond)}</span>
+								)}
+								{last.ttftMs !== undefined && (
+									<span className="sh-sheet-mono">{fmtDuration(last.ttftMs)} to first token</span>
+								)}
 							</dd>
 						</div>
 						<div className="sh-sheet-row">

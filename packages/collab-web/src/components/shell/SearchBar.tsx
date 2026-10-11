@@ -51,7 +51,7 @@ export function SearchBar({ entries, onSearch, onClose }: SearchBarProps): React
 				onKeyDown={onKeyDown}
 				placeholder="Find in prompts and replies"
 				enterKeyHint="search"
-				aria-label="find in session"
+				aria-label="Find in session"
 				autoFocus
 			/>
 			<span className="sh-search-count">{query.trim() ? `${index + 1}/${matches.length}` : ""}</span>
@@ -60,7 +60,7 @@ export function SearchBar({ entries, onSearch, onClose }: SearchBarProps): React
 				className="sh-btn sh-btn-icon"
 				onClick={() => step(true)}
 				disabled={matches.length < 2}
-				aria-label="older match"
+				aria-label="Older match"
 			>
 				<ChevronUp size={16} />
 			</button>
@@ -69,11 +69,11 @@ export function SearchBar({ entries, onSearch, onClose }: SearchBarProps): React
 				className="sh-btn sh-btn-icon"
 				onClick={() => step(false)}
 				disabled={matches.length < 2}
-				aria-label="newer match"
+				aria-label="Newer match"
 			>
 				<ChevronDown size={16} />
 			</button>
-			<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close search">
+			<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close search">
 				<X size={16} />
 			</button>
 		</div>

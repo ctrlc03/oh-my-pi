@@ -67,7 +67,7 @@ export function SessionAlert({ hosts, currentSessionId, onOpen }: SessionAlertPr
 				type="button"
 				className="sh-btn sh-btn-icon"
 				onClick={() => setRaised(list => list.filter(id => id !== host.instanceId))}
-				aria-label="dismiss"
+				aria-label="Dismiss"
 			>
 				<X size={14} />
 			</button>

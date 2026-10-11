@@ -346,9 +346,9 @@ export function useHandsFree({
 			className={`sh-btn sh-btn-icon sh-handsfree-btn${on ? " sh-handsfree-btn-on" : ""}`}
 			onClick={toggle}
 			aria-pressed={on}
-			aria-label="hands-free mode"
+			aria-label="Hands-free mode"
 			title={
-				on ? "hands-free on: replies are read aloud, then it listens" : "hands-free: read replies aloud and listen"
+				on ? "Hands-free on: replies are read aloud, then it listens" : "Hands-free: read replies aloud and listen"
 			}
 		>
 			<Headphones size={16} />
@@ -397,7 +397,7 @@ export function useHandsFree({
 			<span className="sh-voice-text">{label}</span>
 			<span className="sh-voice-actions">
 				{actions}
-				<span className="sh-segmented" role="radiogroup" aria-label="speaking speed">
+				<span className="sh-segmented" role="radiogroup" aria-label="Speaking speed">
 					{SPEECH_RATES.map(r => (
 						<button
 							key={r}

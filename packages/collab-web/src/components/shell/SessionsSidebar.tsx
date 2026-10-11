@@ -104,20 +104,30 @@ export function SessionsSidebar({
 	};
 
 	return (
-		<nav className="sh-sidebar" aria-label="sessions">
+		<nav className="sh-sidebar" aria-label="Sessions">
 			<div className="sh-sidebar-head">
 				<span className="sh-sidebar-title">Sessions</span>
-				<button type="button" className="sh-btn sh-btn-icon sh-sidebar-close" onClick={onClose} aria-label="close">
+				<button
+					type="button"
+					className="sh-btn sh-btn-icon sh-sidebar-close"
+					onClick={onClose}
+					aria-label="Close sessions"
+					title="Close sessions"
+				>
 					<X size={16} />
 				</button>
 			</div>
 			<div className="sh-sidebar-body">
 				{snap && (
-					<section className="sh-switch-section" aria-label="sessions on your computer">
+					<section className="sh-switch-section" aria-label="Sessions on your computer">
 						<h2 className="sh-recents-title">
 							<Laptop size={14} />
 							{snap.machine ?? "Your computer"}
-							<span className={`sh-dot${live ? " sh-dot-live" : ""}`} aria-label={live ? "online" : "offline"} />
+							<span
+								className={`sh-dot${live ? " sh-dot-live" : ""}`}
+								role="img"
+								aria-label={live ? "Online" : "Offline"}
+							/>
 						</h2>
 						{live && <PowerNote power={snap.power} />}
 						{snap.hosts.length === 0 && snap.idle.length === 0 && (
@@ -170,8 +180,8 @@ export function SessionsSidebar({
 							type="button"
 							className="sh-btn sh-btn-icon"
 							onClick={onOpenUsage}
-							aria-label="usage"
-							title="usage"
+							aria-label="Usage"
+							title="Usage"
 						>
 							<ChartColumn size={15} />
 						</button>
@@ -181,8 +191,8 @@ export function SessionsSidebar({
 							type="button"
 							className="sh-btn sh-btn-icon"
 							onClick={onOpenSessions}
-							aria-label="all sessions"
-							title="all sessions"
+							aria-label="All sessions"
+							title="All sessions"
 						>
 							<LayoutList size={15} />
 						</button>
@@ -208,8 +218,7 @@ export function SessionsSidebar({
 						type="button"
 						className="sh-btn sh-btn-icon"
 						onClick={() => setDiagnosing(true)}
-						aria-label="diagnostics"
-						title="diagnostics"
+						aria-label="Open diagnostics"
 					>
 						<Activity size={15} />
 					</button>
@@ -217,8 +226,8 @@ export function SessionsSidebar({
 						type="button"
 						className="sh-btn sh-btn-icon"
 						onClick={() => setDevicesOpen(true)}
-						aria-label="devices"
-						title="devices"
+						aria-label="Devices"
+						title="Devices"
 					>
 						<Smartphone size={15} />
 					</button>

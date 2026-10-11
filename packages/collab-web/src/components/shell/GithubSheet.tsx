@@ -166,7 +166,7 @@ function ItemList({ client, instanceId, kind, filter, onKind, onFilter, onOpen, 
 				</span>
 			</div>
 			<div className="sh-gh-controls">
-				<div className="sh-segmented" role="radiogroup" aria-label="list">
+				<div className="sh-segmented" role="radiogroup" aria-label="List">
 					{KINDS.map(k => (
 						<button
 							key={k.value}
@@ -180,7 +180,7 @@ function ItemList({ client, instanceId, kind, filter, onKind, onFilter, onOpen, 
 						</button>
 					))}
 				</div>
-				<div className="sh-gh-filters" role="radiogroup" aria-label="filter">
+				<div className="sh-gh-filters" role="radiogroup" aria-label="Filter">
 					{FILTERS[kind].map(f => (
 						<button
 							key={f.value}
@@ -323,7 +323,7 @@ function ItemDetail({
 							className="sh-btn sh-btn-primary"
 							disabled={detail === null}
 							onClick={() => detail && onSendToAgent(agentPrompt(detail))}
-							title="put this into the message box, to edit and send"
+							title="Put this into the message box, to edit and send"
 						>
 							<SendHorizontal size={15} /> Send to agent
 						</button>
@@ -333,7 +333,7 @@ function ItemDetail({
 							type="button"
 							className="sh-btn"
 							onClick={() => emitRoute(fixRoute(fixRepo, head.number))}
-							title="read the failing checks' logs and open a session with a prompt to fix them"
+							title="Read the failing checks' logs and open a session with a prompt to fix them"
 						>
 							<Wrench size={14} /> Fix it
 						</button>
@@ -351,7 +351,7 @@ function ItemDetail({
 				</div>
 			</div>
 			{reviewable && (
-				<div className="sh-segmented sh-prr-tabs" role="radiogroup" aria-label="pull request view">
+				<div className="sh-segmented sh-prr-tabs" role="radiogroup" aria-label="Pull request view">
 					{(["overview", "files"] as const).map(value => (
 						<button
 							key={value}
@@ -398,7 +398,7 @@ function ItemDetail({
 			) : (
 				<div className={loading ? "sh-gh-body sh-stats-stale" : "sh-gh-body"} hidden={tab === "files"}>
 					{detail.checkList.length > 0 && (
-						<section aria-label="checks">
+						<section aria-label="Checks">
 							<h3 className="sh-recents-title">Checks</h3>
 							<ul className="sh-gh-checks">
 								{detail.checkList.map((check, i) => (
@@ -416,7 +416,7 @@ function ItemDetail({
 							</ul>
 						</section>
 					)}
-					<section aria-label="description" className="sh-gh-post">
+					<section aria-label="Description" className="sh-gh-post">
 						{detail.body.trim() ? (
 							<Markdown text={detail.body} />
 						) : (
@@ -424,7 +424,7 @@ function ItemDetail({
 						)}
 					</section>
 					{(detail.comments.length > 0 || detail.olderComments > 0) && (
-						<section aria-label="comments">
+						<section aria-label="Comments">
 							<h3 className="sh-recents-title">Comments</h3>
 							{detail.olderComments > 0 && (
 								<a className="sh-gh-older" href={detail.url} target="_blank" rel="noopener noreferrer">
@@ -485,8 +485,8 @@ function RefreshButton({ loading, onClick }: { loading: boolean; onClick(): void
 			className="sh-btn sh-btn-icon"
 			onClick={onClick}
 			disabled={loading}
-			aria-label="refresh"
-			title="refresh"
+			aria-label="Refresh"
+			title="Refresh"
 		>
 			{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 		</button>
@@ -495,7 +495,7 @@ function RefreshButton({ loading, onClick }: { loading: boolean; onClick(): void
 
 function CloseButton({ onClick }: { onClick(): void }): ReactNode {
 	return (
-		<button type="button" className="sh-btn sh-btn-icon" onClick={onClick} aria-label="close">
+		<button type="button" className="sh-btn sh-btn-icon" onClick={onClick} aria-label="Close">
 			<X size={16} />
 		</button>
 	);

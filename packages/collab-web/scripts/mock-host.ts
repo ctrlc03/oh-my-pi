@@ -2,7 +2,7 @@
  * Offline mock collab host: starts the local relay, opens a room as host, and
  * serves the canned fixture session to any collab-web guest that joins.
  *
- *   bun scripts/mock-host.ts [--port 7466] [--local-relay [PORT]]
+ *   bun scripts/mock-host.ts [--port 7466] [--local-relay [PORT]] [--many-models]
  *
  * Prints a full join link (guests may prompt and run session controls) and a
  * view link (read-only). Replays a scripted streaming turn on every guest
@@ -54,6 +54,7 @@ import {
 	fixtureResumeChoices,
 	fixtureModel,
 	fixtureModels,
+	manyFixtureModels,
 	fixtureProfiles,
 	fixtureThinkingLevels,
 	HOST_DISPLAY_NAME,
@@ -117,6 +118,8 @@ const mockMaxCostUsd = maxCostAt >= 0 ? Number(argv[maxCostAt + 1]) : Number.NaN
 /** `--limited [seconds]`: the open session is at its Claude usage limit until that many seconds from now (default 90 min). */
 const limitedAt = argv.indexOf("--limited");
 const mockLimitedSeconds = limitedAt >= 0 ? Number(argv[limitedAt + 1]) || 5400 : Number.NaN;
+/** `--many-models`: offer the full catalogue (250-odd models) instead of the six fixture models. */
+const offeredModels = argv.includes("--many-models") ? manyFixtureModels() : fixtureModels;
 /** Watched pull requests act out a scripted timeline (feature `pr-watch`): a failing check wakes the session with a log, a comment wakes it again, a merge ends the watch. */
 const mockPrWatch = new MockPrWatch({
 	onState: () => broadcastState(),
@@ -404,7 +407,7 @@ function handleHello(name: string, proto: number, token: string | undefined, fro
 			entryCount: entries.length,
 			readOnly: writer ? undefined : true,
 			models: writer
-				? fixtureModels.map(model => ({
+				? offeredModels.map(model => ({
 						...model,
 						thinkingLevels: fixtureThinkingLevels[`${model.provider}/${model.id}`] ?? ["off"],
 					}))
@@ -538,7 +541,7 @@ function handleSessionCmd(
 	const who = peerName(fromPeer);
 	switch (cmd) {
 		case "model": {
-			const next = fixtureModels.find(model => `${model.provider}/${model.id}` === arg);
+			const next = offeredModels.find(model => `${model.provider}/${model.id}` === arg);
 			if (!next) {
 				sendFrame({ t: "error", message: `unknown model: ${arg ?? "(none)"}` }, fromPeer);
 				return;
@@ -931,7 +934,7 @@ function handlePrompt(
 	// Like the real host: a chosen model must be one the welcome offered, its thinking level one that model accepts.
 	let chosenModel: string | undefined;
 	if (promptModel !== undefined) {
-		const picked = fixtureModels.find(model => `${model.provider}/${model.id}` === promptModel);
+		const picked = offeredModels.find(model => `${model.provider}/${model.id}` === promptModel);
 		if (!picked) {
 			sendFrame({ t: "error", message: `prompt not sent: unknown model "${promptModel}"` }, fromPeer);
 			return;

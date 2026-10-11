@@ -121,19 +121,19 @@ export function RunSheet({ client, instanceId, machine, onSendToAgent, onClose }
 						className="sh-btn sh-btn-icon"
 						onClick={refresh}
 						disabled={loading}
-						aria-label="refresh"
-						title="refresh"
+						aria-label="Refresh"
+						title="Refresh"
 					>
 						{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>
 			</div>
 			{error !== null && <div className="sh-connect-error">{error}</div>}
 			{confirm !== null && (
-				<div className="sh-run-confirm" role="group" aria-label="confirm run">
+				<div className="sh-run-confirm" role="group" aria-label="Confirm run">
 					<div>Run this on {machine ?? "the computer"}?</div>
 					<code className="sh-run-command">{confirm.command}</code>
 					{confirm.detail !== undefined && (
@@ -191,7 +191,7 @@ export function RunSheet({ client, instanceId, machine, onSendToAgent, onClose }
 											className="sh-btn"
 											onClick={() => setConfirm(target)}
 											disabled={starting}
-											aria-label={`run ${target.command}`}
+											aria-label={`Run ${target.command}`}
 										>
 											<Play size={14} /> Run
 										</button>
@@ -356,12 +356,12 @@ function RunDetail({ client, initial, onBack, onSettled, onSendToAgent, onClose 
 							className="sh-btn sh-btn-primary"
 							disabled={text === ""}
 							onClick={() => onSendToAgent(outputPrompt(run, text))}
-							title="put the last 200 lines into the message box, to edit and send"
+							title="Put the last 200 lines into the message box, to edit and send"
 						>
 							<SendHorizontal size={15} /> Send output to agent
 						</button>
 					)}
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>

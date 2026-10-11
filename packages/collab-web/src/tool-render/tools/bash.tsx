@@ -79,7 +79,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 					!job && args.async === true && <Badge tone="accent">async</Badge>,
 					head !== null && <Badge>head={head}</Badge>,
 					tail !== null && <Badge>tail={tail}</Badge>,
-					exitCode !== null && <Badge tone="err">exit {exitCode}</Badge>,
+					exitCode !== null && <Badge tone={exitCode === 0 ? undefined : "err"}>exit {exitCode}</Badge>,
 					job && (
 						<Badge tone={job.state === "failed" ? "err" : job.state === "running" ? "accent" : "ok"}>
 							async {job.state}

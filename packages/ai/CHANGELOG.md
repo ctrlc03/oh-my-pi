@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- omp no longer crashes at startup when it may not look at `~/.aws` (for example in the collab companion's sandbox, which hides it): an AWS credentials or config file whose details cannot be read now counts as absent.
+
 ## [18.8.9] - 2026-10-10
 
 ### Changed

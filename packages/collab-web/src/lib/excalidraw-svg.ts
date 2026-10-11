@@ -18,6 +18,8 @@ export async function renderExcalidraw(source: string, theme: SystemTheme): Prom
 			appState: { exportBackground: false, exportWithDarkMode: theme === "dark", exportPadding: 16 },
 			files,
 		});
+		// Excalidraw's dark export inverts the whole drawing, which turns pastel fills into saturated slabs.
+		if (theme === "dark") root.setAttribute("filter", `${root.getAttribute("filter") ?? ""} saturate(0.6)`.trim());
 		const svg = new XMLSerializer().serializeToString(root);
 		return isSafeSvg(svg) ? { ok: true, svg } : { ok: false, error: "the drawing contained unsafe markup" };
 	} catch (error) {

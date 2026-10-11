@@ -70,7 +70,7 @@ function GitView({ git, client, instanceId, host, review, onRefresh }: GitViewPr
 					<GitBranch size={14} />
 					<span className="sh-tree-branch-name">{git.branch ?? "detached HEAD"}</span>
 					{git.upstream !== null ? (
-						<span className="sh-tree-sync" title={`tracking ${git.upstream}`}>
+						<span className="sh-tree-sync" title={`Tracking ${git.upstream}`}>
 							{git.ahead === 0 && git.behind === 0 ? (
 								"in sync"
 							) : (
@@ -88,8 +88,8 @@ function GitView({ git, client, instanceId, host, review, onRefresh }: GitViewPr
 					type="button"
 					className="sh-btn sh-btn-icon"
 					onClick={onRefresh}
-					aria-label="refresh working tree"
-					title="refresh"
+					aria-label="Refresh working tree"
+					title="Refresh"
 				>
 					<RefreshCw size={15} />
 				</button>
@@ -115,7 +115,7 @@ function GitView({ git, client, instanceId, host, review, onRefresh }: GitViewPr
 				</ul>
 			)}
 			{git.commits.length > 0 && (
-				<section className="sh-switch-section" aria-label="recent commits">
+				<section className="sh-switch-section" aria-label="Recent commits">
 					<h2 className="sh-recents-title">Recent commits</h2>
 					<ul className="sh-commits">
 						{git.commits.map(commit => (

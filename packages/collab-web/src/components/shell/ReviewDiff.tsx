@@ -259,7 +259,7 @@ function CommentBox({ value, label, hint, submitLabel, onChange, onSubmit, onCan
 				rows={3}
 				value={value}
 				placeholder={`Comment on line ${label}`}
-				aria-label={`comment on line ${label}`}
+				aria-label={`Comment on line ${label}`}
 				onChange={e => onChange(e.currentTarget.value)}
 				onKeyDown={e => {
 					if (e.key === "Escape") {

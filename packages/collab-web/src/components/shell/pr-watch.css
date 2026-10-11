@@ -43,6 +43,10 @@
 .sh-prw-title {
 	flex: 1;
 	min-width: 0;
+}
+
+.sh-prw-text {
+	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -82,4 +86,11 @@
 .sh-prw-form .sh-sheet-input {
 	flex: 1 1 200px;
 	min-width: 0;
+}
+
+/* iOS zooms into inputs under 16px. */
+@media (any-pointer: coarse) {
+	.sh-prw-form .sh-sheet-input {
+		font-size: 16px;
+	}
 }

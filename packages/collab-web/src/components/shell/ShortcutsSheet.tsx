@@ -116,8 +116,8 @@ export function ShortcutsSheet({ onClose }: { onClose(): void }): ReactNode {
 														setProblem(null);
 														setOverride(id, null);
 													}}
-													aria-label={`reset ${shortcut.label}`}
-													title="back to the default"
+													aria-label={`Reset ${shortcut.label}`}
+													title="Back to the default"
 												>
 													<RotateCcw size={13} />
 												</button>
@@ -138,7 +138,7 @@ export function ShortcutsSheet({ onClose }: { onClose(): void }): ReactNode {
 														setProblem(null);
 														setRecording(recording === id ? null : id);
 													}}
-													aria-label={`change the keys for ${shortcut.label}`}
+													aria-label={`Change the keys for ${shortcut.label}`}
 												>
 													{recording === id ? "press keys…" : formatCombo(bindings[id], IS_MAC)}
 												</button>

@@ -160,8 +160,8 @@ export function VoiceButton({ input }: { input: VoiceInput }): ReactNode {
 			className={`sh-btn sh-btn-icon sh-voice-btn${recording ? " sh-voice-btn-rec" : ""}`}
 			onClick={input.press}
 			disabled={working}
-			aria-label={recording ? "stop recording" : "voice input"}
-			title={recording ? "stop and transcribe" : "voice input"}
+			aria-label={recording ? "Stop recording" : "Voice input"}
+			title={recording ? "Stop and transcribe" : "Voice input"}
 		>
 			{recording ? (
 				<Square size={13} />
@@ -220,8 +220,8 @@ export function VoiceStatus({ voice, input }: { voice: VoiceSource | null; input
 					type="button"
 					className="sh-btn sh-btn-icon"
 					onClick={input.cancel}
-					aria-label="cancel recording"
-					title="discard recording"
+					aria-label="Cancel recording"
+					title="Discard recording"
 				>
 					<X size={14} />
 				</button>

@@ -36,7 +36,7 @@ interface PromptCall {
 const prompts: PromptCall[] = [];
 const promptWaiters: (() => void)[] = [];
 
-function makeCtx(): InteractiveModeContext {
+function makeCtx(catalog: Model[] = CATALOG): InteractiveModeContext {
 	return {
 		settings: Settings.isolated(),
 		sessionManager: SessionManager.inMemory(),
@@ -51,7 +51,7 @@ function makeCtx(): InteractiveModeContext {
 			model: SESSION_MODEL,
 			thinkingLevel: undefined,
 			scopedModels: [],
-			modelRegistry: { getAvailable: () => CATALOG },
+			modelRegistry: { getAvailable: () => catalog },
 			slashCommands: [],
 			promptTemplates: [],
 			customCommands: [],
@@ -132,8 +132,8 @@ afterEach(async () => {
 	await host.stop("test done");
 });
 
-async function join(readOnly = false): Promise<TestGuest> {
-	host = new CollabHost(makeCtx());
+async function join(readOnly = false, catalog?: Model[]): Promise<TestGuest> {
+	host = new CollabHost(makeCtx(catalog));
 	await host.start("ws://localhost:8788");
 	const guest = await joinAsGuest(host.link, readOnly);
 	guestCleanups.push(() => guest.socket.close());
@@ -155,6 +155,20 @@ describe("collab per-prompt model", () => {
 		const welcome = await guest.next("welcome");
 		expect(welcome.features).toContain("prompt-model");
 		expect(welcome.models?.find(model => model.id === "big")?.thinkingLevels).toEqual(LEVELS.big);
+	});
+
+	it("lists every provider's models when one provider has a catalog of hundreds", async () => {
+		const bedrock = Array.from(
+			{ length: 250 },
+			(_, i) => ({ ...fakeModel(`b${String(i).padStart(3, "0")}`), provider: "amazon-bedrock" }) as Model,
+		);
+		const anthropic = ["claude-opus", "claude-sonnet", "claude-haiku"].map(
+			id => ({ ...fakeModel(id), provider: "anthropic" }) as Model,
+		);
+		const guest = await join(false, [...bedrock, ...anthropic]);
+		const welcome = await guest.next("welcome");
+		const listed = welcome.models?.filter(model => model.provider === "anthropic").map(model => model.id);
+		expect(listed?.sort()).toEqual(["claude-haiku", "claude-opus", "claude-sonnet"]);
 	});
 
 	it("hands the chosen model and thinking level to the session, for steers and follow-ups", async () => {

@@ -212,3 +212,10 @@
 		flex-wrap: wrap;
 	}
 }
+
+/* Touch screens: the view tabs are a full finger tall, like the buttons beside them. */
+@media (any-pointer: coarse) {
+	.sh-sheet .sh-tab {
+		min-height: 44px;
+	}
+}

@@ -72,7 +72,7 @@ export function LimitWindows({ info, activeProvider, onRefresh }: LimitWindowsPr
 
 	const groups = info === null ? [] : groupWindows(info.windows, activeProvider);
 	return (
-		<section className="sh-stats-section sh-limits" aria-label="subscription limits">
+		<section className="sh-stats-section sh-limits" aria-label="Subscription limits">
 			<div className="sh-stats-section-head">
 				<h2 className="sh-recents-title">Limits</h2>
 				{onRefresh !== undefined && (
@@ -84,8 +84,8 @@ export function LimitWindows({ info, activeProvider, onRefresh }: LimitWindowsPr
 							onRefresh();
 						}}
 						disabled={refreshing}
-						aria-label="refresh limits"
-						title="refresh limits"
+						aria-label="Refresh limits"
+						title="Refresh limits"
 					>
 						{refreshing ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 					</button>

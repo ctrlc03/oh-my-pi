@@ -229,12 +229,12 @@ export function PreviewSheet({ client, instanceId, sessionId, edits, onClose }: 
 						className="sh-btn sh-btn-icon"
 						onClick={refresh}
 						disabled={loading}
-						aria-label="refresh preview"
-						title="refresh"
+						aria-label="Refresh preview"
+						title="Refresh"
 					>
 						<RefreshCw size={15} className={loading ? "sh-spin" : undefined} />
 					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>
@@ -249,14 +249,14 @@ export function PreviewSheet({ client, instanceId, sessionId, edits, onClose }: 
 					autoCapitalize="off"
 					autoCorrect="off"
 					spellCheck={false}
-					aria-label="page address"
+					aria-label="Page address"
 				/>
 				<button type="submit" className="sh-btn" disabled={input.trim() === ""}>
 					Go
 				</button>
 			</form>
 			<div className="sh-preview-bar">
-				<div className="sh-segmented" role="radiogroup" aria-label="screen size">
+				<div className="sh-segmented" role="radiogroup" aria-label="Screen size">
 					{VIEWPORTS.map(({ id, label, Icon }) => (
 						<button
 							key={id}
@@ -291,7 +291,7 @@ export function PreviewSheet({ client, instanceId, sessionId, edits, onClose }: 
 						className="sh-preview-shot"
 						style={{ maxWidth: shot.width / PREVIEW_SCALE }}
 						onClick={() => openImage({ type: "image", data: shot.data, mimeType: shot.mimeType })}
-						aria-label="open the preview full size"
+						aria-label="Open the preview full size"
 					>
 						<img
 							src={src}

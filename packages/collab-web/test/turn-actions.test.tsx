@@ -45,7 +45,13 @@ function render(props: { entries: SessionEntry[]; working?: boolean; chat?: bool
 const count = (html: string, needle: string): number => html.split(needle).length - 1;
 
 describe("turn actions", () => {
-	const entries = [user("u1", "one"), reply("a1", "first"), reply("a2", "second"), user("u2", "two"), reply("a3", "third")];
+	const entries = [
+		user("u1", "one"),
+		reply("a1", "first"),
+		reply("a2", "second"),
+		user("u2", "two"),
+		reply("a3", "third"),
+	];
 
 	for (const chat of [true, false]) {
 		it(`follows each finished turn once in the ${chat ? "chat" : "full"} view`, () => {
@@ -68,7 +74,7 @@ describe("turn actions", () => {
 	});
 
 	it("offers edit on every prompt row", () => {
-		expect(count(render({ entries }), 'aria-label="edit and resend"')).toBe(2);
+		expect(count(render({ entries }), 'aria-label="Edit and resend"')).toBe(2);
 	});
 
 	it("offers no Copy reply for a turn without reply text", () => {

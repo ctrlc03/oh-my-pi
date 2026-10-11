@@ -2,11 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { AssistantMessage, SessionEntry } from "@oh-my-pi/pi-wire";
 import { renderToStaticMarkup } from "react-dom/server";
 import "./transcript-dom-shim";
-import {
-	followTranscriptTail,
-	Transcript,
-	updateTranscriptTailLock,
-} from "../src/components/transcript/Transcript";
+import { followTranscriptTail, Transcript, updateTranscriptTailLock } from "../src/components/transcript/Transcript";
 import type { ActiveTool } from "../src/lib/client";
 
 const TOOL_CALL_ID = "call-running-tool";
@@ -103,9 +99,9 @@ describe("Transcript live tool rendering", () => {
 		});
 
 		expect(countElements(html, ".tv-card")).toBe(1);
-		expect(countElements(html, '[aria-label="running"]')).toBe(1);
+		expect(countElements(html, '[aria-label="Running"]')).toBe(1);
 		expect(countOccurrences(html, TOOL_NAME)).toBe(1);
-		expect(html).not.toContain("thinking…");
+		expect(html).not.toContain("Thinking…");
 		expect(html).toContain(ACTIVE_TOOL_TARGET);
 		expect(html).not.toContain(RAW_ASSISTANT_TARGET);
 	});
@@ -113,7 +109,7 @@ describe("Transcript live tool rendering", () => {
 	it("keeps the working shimmer when no tool is active", () => {
 		const html = renderTranscript({ working: true, activeTools: new Map() });
 
-		expect(html).toContain("thinking…");
+		expect(html).toContain("Thinking…");
 	});
 });
 
@@ -189,6 +185,6 @@ describe("Transcript windowing", () => {
 		expect(html).toContain("message-249-end");
 		expect(html).toContain("message-150-end");
 		expect(html).not.toContain("message-149-end");
-		expect(html).toContain("show 150 earlier");
+		expect(html).toContain("Show 150 earlier entries");
 	});
 });

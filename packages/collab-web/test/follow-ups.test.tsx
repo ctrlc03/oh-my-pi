@@ -20,15 +20,15 @@ function buttons(html: string, label: string): string[] {
 describe("FollowUps", () => {
 	it("offers edit, reorder and steer per follow-up, but no edit for a slash command", () => {
 		const html = renderToStaticMarkup(<FollowUps {...base} />);
-		expect(buttons(html, "edit queued follow-up")).toHaveLength(2);
-		expect(buttons(html, "move queued follow-up earlier")).toHaveLength(3);
-		expect(buttons(html, "send queued follow-up into the running turn")).toHaveLength(3);
+		expect(buttons(html, "Edit queued follow-up")).toHaveLength(2);
+		expect(buttons(html, "Move queued follow-up earlier")).toHaveLength(3);
+		expect(buttons(html, "Send queued follow-up into the running turn")).toHaveLength(3);
 	});
 
 	it("stops the first from moving earlier and the last from moving later", () => {
 		const html = renderToStaticMarkup(<FollowUps {...base} />);
-		const earlier = buttons(html, "move queued follow-up earlier");
-		const later = buttons(html, "move queued follow-up later");
+		const earlier = buttons(html, "Move queued follow-up earlier");
+		const later = buttons(html, "Move queued follow-up later");
 		expect(earlier[0]).toContain("disabled");
 		expect(earlier[1]).not.toContain("disabled");
 		expect(later[2]).toContain("disabled");
@@ -37,9 +37,9 @@ describe("FollowUps", () => {
 
 	it("only removes when the host cannot edit by id, and shows nothing to a read-only guest", () => {
 		const plain = renderToStaticMarkup(<FollowUps {...base} editable={false} />);
-		expect(buttons(plain, "edit queued follow-up")).toHaveLength(0);
-		expect(buttons(plain, "move queued follow-up earlier")).toHaveLength(0);
-		expect(buttons(plain, "remove queued follow-up")).toHaveLength(3);
+		expect(buttons(plain, "Edit queued follow-up")).toHaveLength(0);
+		expect(buttons(plain, "Move queued follow-up earlier")).toHaveLength(0);
+		expect(buttons(plain, "Remove queued follow-up")).toHaveLength(3);
 		const watching = renderToStaticMarkup(<FollowUps {...base} readOnly />);
 		expect(watching).toContain("then commit");
 		expect(watching).not.toContain("<button");

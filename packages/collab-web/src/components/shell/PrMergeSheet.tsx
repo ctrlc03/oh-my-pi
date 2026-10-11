@@ -90,18 +90,18 @@ export function PrMergeSheet({ client, instanceId, pr: opened, onMerged, onClose
 				<h2 className="sh-recents-title">
 					Merge #{pr.number} · {pr.title}
 				</h2>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close" title="close">
+				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close" title="Close">
 					<X size={15} />
 				</button>
 			</div>
-			<div className="sh-review-confirm" role="group" aria-label="merge">
+			<div className="sh-review-confirm" role="group" aria-label="Merge">
 				{pr.branch && (
 					<div className="sh-gh-branch">
 						<code>{pr.branch.head}</code> → <code>{pr.branch.base}</code>
 					</div>
 				)}
 				<div className={`sh-prr-checks sh-prr-checks-${checks.tone}`}>{checks.label}</div>
-				<div className="sh-segmented" role="radiogroup" aria-label="merge method">
+				<div className="sh-segmented" role="radiogroup" aria-label="Merge method">
 					{METHODS.map(m => (
 						<button
 							key={m.value}

@@ -32,6 +32,14 @@
 	font-size: 14px;
 }
 
+/* Disabled primary buttons in sheets: flat and readable (the faded accent fill left the label unreadable). */
+.sh-sheet .sh-btn.sh-btn-primary:disabled {
+	opacity: 1;
+	color: var(--fg-muted);
+	background: var(--bg-overlay);
+	border-color: var(--border-strong);
+}
+
 .sh-sheet-head .sh-start-title {
 	flex: 1;
 }
@@ -574,6 +582,37 @@
 	.sh-tree-head .sh-btn-icon {
 		width: 44px;
 		height: 44px;
+	}
+}
+
+/* ---- touch screens, iPad included: 44px targets on the home and session-management surfaces ---- */
+@media (any-pointer: coarse) {
+	.sh-companion .sh-btn,
+	.sh-connect-card .sh-btn,
+	.sh-btn.sh-start-new,
+	.sh-inbox-item .sh-btn,
+	.sh-device .sh-btn,
+	.sh-invite .sh-btn,
+	.sh-org-undo .sh-btn,
+	.sh-spend .sh-btn,
+	.sh-review-confirm-actions .sh-btn,
+	.sh-recent .sh-btn {
+		min-height: 44px;
+	}
+
+	.sh-companion .sh-btn-icon,
+	.sh-connect-card .sh-btn-icon,
+	.sh-inbox-item .sh-btn-icon,
+	.sh-device .sh-btn-icon,
+	.sh-recent .sh-btn-icon {
+		min-width: 44px;
+	}
+
+	.sh-org-title .sh-org-settings {
+		width: 44px;
+		height: 44px;
+		min-width: 44px;
+		margin: -9px 0;
 	}
 }
 

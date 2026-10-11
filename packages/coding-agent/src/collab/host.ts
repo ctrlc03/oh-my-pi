@@ -203,8 +203,11 @@ function isWireSessionEntry(entry: StoredSessionEntry): entry is StoredSessionEn
 	return entry.type in WIRE_SESSION_ENTRY_TYPES;
 }
 
-/** Models listed in a writer's welcome; the picker's order puts the likeliest choices first. */
-const MAX_WELCOME_MODELS = 200;
+/**
+ * Models listed in a writer's welcome: a backstop against a catalog of thousands, not a shortlist. One
+ * provider with a large catalog (Bedrock lists over 200) must not push every other provider out of the picker.
+ */
+const MAX_WELCOME_MODELS = 1000;
 /** A hello reloads the `/resume` suggestions at most this often. */
 const RESUME_CHOICES_TTL_MS = 15_000;
 const CONNECT_TIMEOUT_MS = 15_000;
@@ -1878,10 +1881,11 @@ export class CollabHost {
 
 	/**
 	 * The models the TUI session-model picker offers: the `--models` scope when set,
-	 * else every model with usable credentials. Ordered like the picker's default
-	 * view, most recently used first, then by provider and id. Role ranking and the
-	 * picker's version heuristics are deliberately not reproduced: they live in
-	 * the overlay stack, which the host does not load.
+	 * else every model with usable credentials. Recently used models come first;
+	 * then providers in order of their most recently used model (so the providers
+	 * you work with lead, not the alphabetically first one), then by provider and
+	 * id. Role ranking and the picker's version heuristics are deliberately not
+	 * reproduced: they live in the overlay stack, which the host does not load.
 	 */
 	#selectableModels(): Model[] {
 		const session = this.#ctx.session;
@@ -1892,8 +1896,17 @@ export class CollabHost {
 			recent[selector] = index;
 		}
 		const rank = (model: Model) => recent[`${model.provider}/${model.id}`] ?? Number.MAX_SAFE_INTEGER;
+		const providerRank: Record<string, number> = {};
+		for (const model of models) {
+			const current = providerRank[model.provider] ?? Number.MAX_SAFE_INTEGER;
+			providerRank[model.provider] = Math.min(current, rank(model));
+		}
 		return [...models].sort(
-			(a, b) => rank(a) - rank(b) || a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id),
+			(a, b) =>
+				rank(a) - rank(b) ||
+				(providerRank[a.provider] ?? 0) - (providerRank[b.provider] ?? 0) ||
+				a.provider.localeCompare(b.provider) ||
+				a.id.localeCompare(b.id),
 		);
 	}
 

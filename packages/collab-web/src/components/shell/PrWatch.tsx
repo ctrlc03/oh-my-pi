@@ -51,14 +51,16 @@ export function PrWatch({ prs, canWatch, onSessionCommand }: PrWatchProps): Reac
 							<span className="sh-prw-main">
 								<GitPullRequest size={13} className="sh-prw-icon" />
 								<a className="sh-sheet-link sh-prw-title" href={pr.url} target="_blank" rel="noreferrer">
-									{pr.key}
-									{pr.title && <span className="sh-sheet-faint"> {pr.title}</span>}
+									<span className="sh-prw-text">
+										{pr.key}
+										{pr.title && <span className="sh-sheet-faint"> {pr.title}</span>}
+									</span>
 								</a>
 								{canWatch && (
 									<button
 										type="button"
 										className="sh-btn sh-btn-icon"
-										aria-label={`stop watching ${pr.key}`}
+										aria-label={`Stop watching ${pr.key}`}
 										title="Stop watching"
 										onClick={() => onSessionCommand("pr-unwatch", pr.key)}
 									>
@@ -89,20 +91,25 @@ export function PrWatch({ prs, canWatch, onSessionCommand }: PrWatchProps): Reac
 						className="sh-sheet-input"
 						value={target}
 						onChange={e => setTarget(e.target.value)}
-						placeholder="Pull request URL or owner/repo#N (blank: this branch)"
-						aria-label="pull request to watch"
+						placeholder="URL or owner/repo#N"
+						aria-label="Pull request to watch"
 						autoCapitalize="off"
 						autoCorrect="off"
 						spellCheck={false}
 					/>
-					<button type="submit" className="sh-btn sh-btn-primary">
-						<Eye size={13} /> Watch this PR
+					<button
+						type="submit"
+						className="sh-btn sh-btn-primary"
+						aria-label={target.trim() === "" ? "Watch this branch's pull request" : "Watch this pull request"}
+					>
+						<Eye size={13} /> {target.trim() === "" ? "Watch this branch" : "Watch"}
 					</button>
 				</form>
 			)}
 			<span className="sh-sheet-faint">
 				A watched pull request wakes the agent when its required checks fail (with the failing log), someone else
 				reviews or comments, or a conflict appears. Passing checks, merges and closes only notify.
+				{canWatch && " Leave the field empty to watch this branch's pull request."}
 			</span>
 		</div>
 	);

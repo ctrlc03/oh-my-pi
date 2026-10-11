@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { fitView, MAX_SCALE, MIN_SCALE, panBy, pinchView, wheelFactor, zoomAt } from "../src/lib/pan-zoom";
+import { fitView, MAX_SCALE, MIN_SCALE, openingView, panBy, pinchView, wheelFactor, zoomAt } from "../src/lib/pan-zoom";
 import { isSafeSvg, standaloneSvg, svgSize } from "../src/lib/svg";
 import { mermaidThemeVariables } from "../src/lib/theme-tokens";
 
@@ -14,6 +14,20 @@ describe("pan-zoom", () => {
 	it("does not blow a tiny diagram up past the fit limit and survives empty sizes", () => {
 		expect(fitView({ width: 10, height: 10 }, { width: 800, height: 600 }).scale).toBe(3);
 		expect(fitView({ width: 0, height: 10 }, { width: 800, height: 600 })).toEqual({ x: 0, y: 0, scale: 1 });
+	});
+
+	it("opens a diagram that fits whole, and a wide one at the readable zoom from its start", () => {
+		const viewport = { width: 358, height: 500 };
+		expect(openingView({ width: 200, height: 100 }, viewport, 0.75)).toEqual(
+			fitView({ width: 200, height: 100 }, viewport),
+		);
+		const wide = openingView({ width: 1528, height: 162 }, viewport, 0.75);
+		expect(wide.scale).toBe(0.75);
+		expect(wide.x).toBe(16);
+		expect(wide.y).toBeCloseTo((500 - 162 * 0.75) / 2);
+		const tall = openingView({ width: 100, height: 2000 }, viewport, 0.75);
+		expect(tall.x).toBeCloseTo((358 - 100 * 0.75) / 2);
+		expect(tall.y).toBe(16);
 	});
 
 	it("zooms about the anchor", () => {

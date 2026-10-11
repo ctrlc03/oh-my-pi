@@ -1,0 +1,109 @@
+/* The app-wide tooltip (Tooltip.tsx): one fixed bubble placed by JS, above Sheets and toasts. sh-tip-* namespace. */
+
+.sh-tip {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 100;
+	/* A step lighter (dark) or darker (light) than the surface it floats over, so it reads on Sheets and the page alike. */
+	--tip-bg: color-mix(in srgb, var(--fg) 10%, var(--bg-overlay));
+	--tip-line: color-mix(in srgb, var(--fg) 24%, transparent);
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: max-content;
+	max-width: min(260px, calc(100vw - 16px));
+	padding: 6px 10px;
+	border: 1px solid var(--tip-line);
+	border-radius: var(--radius-sm);
+	background: var(--tip-bg);
+	box-shadow: var(--shadow-float);
+	color: var(--fg);
+	font: 500 12.5px/1.35 var(--font-ui);
+	pointer-events: none;
+	visibility: hidden;
+	opacity: 0;
+	transform: translateY(var(--tip-shift, 3px)) scale(0.96);
+	transform-origin: var(--tip-arrow, 50%) var(--tip-origin, 100%);
+	transition:
+		opacity 120ms ease,
+		transform 120ms ease,
+		visibility 0s linear 120ms;
+}
+
+.sh-tip[data-side="top"] {
+	--tip-shift: 3px;
+	--tip-origin: 100%;
+}
+
+.sh-tip[data-side="bottom"] {
+	--tip-shift: -3px;
+	--tip-origin: 0%;
+}
+
+.sh-tip[data-open] {
+	visibility: visible;
+	opacity: 1;
+	transform: none;
+	transition-delay: 0s;
+}
+
+.sh-tip-text {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	white-space: pre-line;
+}
+
+.sh-tip-key {
+	flex: none;
+	padding: 1px 5px;
+	border: 1px solid var(--tip-line);
+	border-radius: 5px;
+	background: var(--bg-inset);
+	color: var(--fg-muted);
+	font: 600 11px/1.4 var(--font-mono);
+	white-space: nowrap;
+}
+
+.sh-tip-key[hidden] {
+	display: none;
+}
+
+/* A rotated square half hidden behind the bubble; its two outer borders continue the bubble's. */
+.sh-tip-arrow {
+	position: absolute;
+	left: var(--tip-arrow, 50%);
+	width: 9px;
+	height: 9px;
+	background: var(--tip-bg);
+	transform: translateX(-50%) rotate(45deg);
+}
+
+.sh-tip[data-side="top"] .sh-tip-arrow {
+	bottom: -5px;
+	border-right: 1px solid var(--tip-line);
+	border-bottom: 1px solid var(--tip-line);
+}
+
+.sh-tip[data-side="bottom"] .sh-tip-arrow {
+	top: -5px;
+	border-top: 1px solid var(--tip-line);
+	border-left: 1px solid var(--tip-line);
+}
+
+/* Measures the safe-area insets for the placement math. */
+.sh-tip-probe {
+	position: fixed;
+	inset: 0;
+	padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)
+		env(safe-area-inset-left, 0px);
+	pointer-events: none;
+	visibility: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sh-tip {
+		transform: none;
+		transition: none;
+	}
+}

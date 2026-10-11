@@ -130,8 +130,8 @@ export function CodemapSheet({
 					className="sh-btn sh-btn-icon"
 					onClick={back}
 					disabled={trail.length === 0}
-					aria-label="back"
-					title="back"
+					aria-label="Back"
+					title="Back"
 				>
 					<ArrowLeft size={16} />
 				</button>
@@ -146,7 +146,7 @@ export function CodemapSheet({
 						onKeyDown={onSearchKey}
 						placeholder="Find a file or symbol"
 						enterKeyHint="search"
-						aria-label="search the code map"
+						aria-label="Search the code map"
 					/>
 				</label>
 				<span className="sh-stats-head-actions sh-cm-actions">
@@ -155,18 +155,18 @@ export function CodemapSheet({
 						className="sh-btn sh-btn-icon"
 						onClick={reload}
 						disabled={loading}
-						aria-label="refresh"
-						title="refresh"
+						aria-label="Refresh"
+						title="Refresh"
 					>
 						{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="close">
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>
 			</div>
 			{view && !searching && (
-				<nav className="sh-cm-crumbs" ref={crumbs} aria-label="location">
+				<nav className="sh-cm-crumbs" ref={crumbs} aria-label="Location">
 					{view.crumbs.map(crumb => (
 						<span key={crumb.path} className="sh-cm-crumb">
 							<button type="button" className="sh-cm-crumb-btn" onClick={() => goNode(crumb)}>

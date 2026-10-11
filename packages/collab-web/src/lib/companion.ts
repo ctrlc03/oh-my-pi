@@ -14,6 +14,7 @@
  * fragment (`https://web/#pair:<link>&invite=<invite>`) or as plain pasted text.
  */
 
+import type { AgentRef } from "@oh-my-pi/pi-wire";
 import type { Schedule, ScheduleInput } from "@oh-my-pi/pi-wire/schedule";
 import { CAN_INFLATE, importRoomKey } from "./codec";
 import { recordEvent } from "./diag-log";
@@ -79,6 +80,55 @@ const UPLOAD_TIMEOUT_MS = 120_000;
 const DOWNLOAD_CHUNK_TIMEOUT_MS = 120_000;
 /** Pings sent per round-trip measurement; the median is reported. */
 const PING_SAMPLES = 3;
+/** Probing the vendor agents again starts each one's ACP adapter to read what it supports. */
+const AGENTS_REFRESH_TIMEOUT_MS = 60_000;
+/** Installing an ACP adapter runs `npm install` on the computer. */
+const AGENT_INSTALL_TIMEOUT_MS = 330_000;
+
+export type { AgentRef };
+
+/** A model a foreign agent offers, by its vendor id; what `start`'s `model` takes. */
+export interface AgentModel {
+	id: string;
+	name: string;
+}
+
+/** How a foreign agent session answers its agent's tool-permission requests; `full` approves every call. */
+export type ForeignPermission = "supervised" | "full";
+
+/** A vendor agent the computer can run beside omp: Claude Code, Codex, Cursor, Grok, OpenCode, or a custom ACP command. */
+export interface CompanionAgent {
+	/** `claude`, `codex`, `cursor`, `grok`, `opencode`, or `custom:<slug>`. */
+	id: string;
+	name: string;
+	kind: "builtin" | "custom";
+	installed: boolean;
+	version: string | null;
+	/** `needed`: run {@link CompanionAgent.loginCommand} on the computer; `unknown`: the agent has no side-effect-free check. */
+	auth: "ok" | "needed" | "unknown";
+	/** The companion can install or update this agent's ACP adapter (`agent-install`). */
+	installable: boolean;
+	/** Command that signs in on the computer's terminal; null when none is needed. */
+	loginCommand: string | null;
+	/** A command to run on the computer to install the agent's CLI, for ones the companion cannot install itself; null when there is none. */
+	installCommand: string | null;
+	/** Custom agents: the argv and extra environment as saved, to edit them. */
+	command?: string[];
+	env?: Record<string, string>;
+	/** Models to pick from; absent or empty: the agent's default. */
+	models?: AgentModel[];
+	/** Why it cannot run (probe failure). */
+	error?: string;
+}
+
+/** A custom ACP agent as saved: `command` is the argv (no shell), `env` extra variables for it. */
+export interface CustomAgentInput {
+	/** Absent: a new agent (the companion derives the id `custom:<slug>` from the name). */
+	id?: string;
+	name: string;
+	command: string[];
+	env?: Record<string, string>;
+}
 
 /** One collab-hosting omp process, as `omp collab list --json` reports it. */
 export interface CompanionHost {
@@ -100,6 +150,8 @@ export interface CompanionHost {
 	sandboxed?: boolean;
 	/** Started by a best-of-N fan-out: the group it belongs to and the model it runs on. */
 	fanout?: HostFanout;
+	/** The vendor agent behind a foreign session; absent for an omp session. */
+	agent?: AgentRef;
 }
 
 /** An interactive omp process on the computer that is not hosting collab; `share` starts it hosting. */
@@ -114,6 +166,8 @@ export interface CompanionIdleSession {
 	busy: boolean | null;
 	/** See {@link CompanionHost.sandboxed}. */
 	sandboxed?: boolean;
+	/** The vendor agent behind a foreign session; absent for an omp session. */
+	agent?: AgentRef;
 }
 
 /** On battery at or below this charge the computer counts as low: the app warns, the companion pushes once per discharge. */
@@ -448,7 +502,7 @@ export interface RecentFolder {
 	cwd: string;
 	lastActive: number;
 	/** Most recent sessions there, newest first. */
-	sessions: { id: string; title: string | null; lastActive: number }[];
+	sessions: { id: string; title: string | null; lastActive: number; agent?: AgentRef }[];
 }
 
 export type UsageRange = "24h" | "7d" | "30d" | "90d" | "all";
@@ -498,6 +552,8 @@ export interface SessionOverview {
 	live?: "host" | "idle";
 	/** The folder is a git worktree the companion created and it still exists: it can be removed once no omp runs in it. */
 	worktree?: boolean;
+	/** The vendor agent behind a foreign session; absent for an omp session. */
+	agent?: AgentRef;
 }
 
 /** One prompt or reply of a session that matches a message search. */
@@ -515,6 +571,8 @@ export interface SessionSearchHit {
 	/** Present when the session is hosting collab or listed as idle right now. */
 	instanceId?: string;
 	live?: "host" | "idle";
+	/** The vendor agent behind a foreign session; absent for an omp session. */
+	agent?: AgentRef;
 }
 
 /** A session's tmux pane as the terminal showed it, with ANSI escape sequences kept. */
@@ -620,6 +678,8 @@ export interface InboxItem {
 	title: string;
 	cwd: string;
 	kind: "input" | "done";
+	/** The vendor agent behind a foreign session; absent for an omp session. */
+	agent?: AgentRef;
 	/** The pending question (`input`) or the start of the last reply (`done`); null when the session file cannot be read. */
 	text: string | null;
 	/** Option labels when the question is a single-choice select. */
@@ -882,6 +942,8 @@ export type CompanionRequest =
 	 * message omp works on as soon as it is up, so the session need not be opened to begin.
 	 * Resuming a session another omp has open is refused (an error with `openElsewhere`) unless `force`;
 	 * a session that is already hosting is answered with its host.
+	 * `agent` (needs `canForeign`; absent: omp) runs a vendor agent instead: `agents` lists the ids; `model` is one of its vendor model ids,
+	 * `permission` how it answers tool-permission requests (default `supervised`). `resume` then names a foreign session id.
 	 */
 	| {
 			t: "start";
@@ -893,7 +955,18 @@ export type CompanionRequest =
 			scratch?: { hint?: string };
 			prompt?: string;
 			force?: boolean;
+			agent?: string;
+			model?: string;
+			permission?: ForeignPermission;
 	  }
+	/** The vendor agents (needs `canForeign`); `refresh` probes them again instead of answering from the last probe. Answered with `agents`. */
+	| { t: "agents"; reqId: number; refresh?: boolean }
+	/** Install or update a built-in agent's ACP adapter on the computer (a pinned npm version); answered with `agents`. */
+	| { t: "agent-install"; reqId: number; id: string }
+	/** Add (no `agent.id`) or replace a custom ACP agent; answered with `agents`. */
+	| { t: "agent-custom-save"; reqId: number; agent: CustomAgentInput }
+	/** Remove a custom ACP agent; answered with `agents`. */
+	| { t: "agent-custom-delete"; reqId: number; id: string }
 	/** Make an idle session host collab; answered with a `link`. */
 	| { t: "share"; reqId: number; instanceId: string }
 	/** The branch against its base branch, with commit, push and pull request state. */
@@ -1055,6 +1128,8 @@ export type CompanionReply =
 			canScratch?: boolean;
 			/** `start` takes `prompt` (delivered at launch) and tells simultaneous starts in one folder apart: sessions can be started in the background. */
 			canBackgroundStart?: boolean;
+			/** The companion can run vendor agents beside omp (`agents`, `start` with `agent`). */
+			canForeign?: boolean;
 			/** Revision of the computer's session organisation (pin, snooze, settle); present when it keeps one. A new number means fetch it again. */
 			sessionOrgRev?: number;
 			/** The companion's session organisation keeps the active order (`rank`) and the per-session auto-settle opt-out. */
@@ -1094,6 +1169,7 @@ export type CompanionReply =
 	/** One schedule as stored: answers `schedule-save` and `schedule-run-now`. */
 	| { t: "schedule"; reqId: number; schedule: Schedule }
 	| { t: "fanout-models"; reqId: number; models: FanoutModel[] }
+	| { t: "agents"; reqId: number; agents: CompanionAgent[] }
 	| { t: "fanout-started"; reqId: number; group: FanoutGroup }
 	| { t: "fanout-compare"; reqId: number; compare: FanoutCompare }
 	| { t: "fanout-kept"; reqId: number; result: FanoutKeepResult }
@@ -1278,6 +1354,8 @@ export interface CompanionSnapshot {
 	canScratch: boolean;
 	/** The companion can start sessions in the background (`start` with `prompt`). */
 	canBackgroundStart: boolean;
+	/** The companion can run vendor agents beside omp: `start` takes `agent`, and the `agents` requests work. */
+	canForeign: boolean;
 	/** Revision of the computer's session organisation document; null when the companion keeps none. */
 	sessionOrgRev: number | null;
 	/** The computer's session organisation keeps the active order and the per-session auto-settle opt-out; older ones drop both. */
@@ -1348,6 +1426,7 @@ export class CompanionClient {
 		canSearch: false,
 		canScratch: false,
 		canBackgroundStart: false,
+		canForeign: false,
 		sessionOrgRev: null,
 		canOrderSessions: false,
 		transcribe: null,
@@ -1751,8 +1830,30 @@ export class CompanionClient {
 		return (await this.#call({ t: "file-sessions", instanceId, path }, "sessions", USAGE_TIMEOUT_MS)).sessions;
 	}
 
+	/** The vendor agents on the computer, with install and sign-in state (needs `canForeign`); `refresh` probes them again. */
+	async requestAgents(refresh?: boolean): Promise<CompanionAgent[]> {
+		const timeout = refresh ? AGENTS_REFRESH_TIMEOUT_MS : undefined;
+		return (await this.#call({ t: "agents", refresh }, "agents", timeout)).agents;
+	}
+
+	/** Install or update a built-in agent's ACP adapter; resolves with the agents as they are afterwards. */
+	async installAgent(id: string): Promise<CompanionAgent[]> {
+		return (await this.#call({ t: "agent-install", id }, "agents", AGENT_INSTALL_TIMEOUT_MS)).agents;
+	}
+
+	/** Save a custom ACP agent (a new one without `agent.id`); resolves with the agents afterwards. */
+	async saveCustomAgent(agent: CustomAgentInput): Promise<CompanionAgent[]> {
+		return (await this.#call({ t: "agent-custom-save", agent }, "agents", AGENTS_REFRESH_TIMEOUT_MS)).agents;
+	}
+
+	/** Remove a custom ACP agent; resolves with the agents afterwards. */
+	async deleteCustomAgent(id: string): Promise<CompanionAgent[]> {
+		return (await this.#call({ t: "agent-custom-delete", id }, "agents")).agents;
+	}
+
 	/**
-	 * Start omp in `cwd` (resuming session `resume`); resolves with its host `instanceId` once it is listed.
+	 * Start omp, or with `agent` (needs `canForeign`) a vendor agent, in `cwd` (resuming session `resume`); resolves with its host `instanceId` once it is listed.
+	 * `model`: a vendor model id of `agent`; `permission`: how a foreign session answers tool-permission requests (default `supervised`).
 	 * `worktree` (new sessions only): work on a new branch in its own git worktree instead of `cwd`.
 	 * `scratch` (needs `canScratch`): no project; `cwd` is ignored and the computer makes a folder named after `scratch.hint`.
 	 * `prompt` (needs `canBackgroundStart`): the first message, sent as soon as omp is up.
@@ -1765,6 +1866,9 @@ export class CompanionClient {
 			worktree?: { branch?: string };
 			scratch?: { hint?: string };
 			prompt?: string;
+			agent?: string;
+			model?: string;
+			permission?: ForeignPermission;
 			force?: boolean;
 		} = {},
 	): Promise<string> {
@@ -1927,6 +2031,7 @@ export class CompanionClient {
 				canSearch: frame.canSearch ?? false,
 				canScratch: frame.canScratch ?? false,
 				canBackgroundStart: frame.canBackgroundStart ?? false,
+				canForeign: frame.canForeign ?? false,
 				sessionOrgRev: frame.sessionOrgRev ?? null,
 				canOrderSessions: frame.canOrderSessions ?? false,
 				transcribe: frame.transcribe ?? null,

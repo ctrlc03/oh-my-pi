@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { CompanionHost } from "../src/lib/companion";
+import { createMockForeign } from "../scripts/mock-foreign";
 import { createMockStart } from "../scripts/mock-start";
 
 let dir: string;
@@ -36,6 +37,7 @@ describe("mock start", () => {
 	const mock = () =>
 		createMockStart({
 			dir,
+			foreign: createMockForeign({ hosts }),
 			hosts,
 			baseFolders: async () => [{ cwd: repo, lastActive: 1, sessions: [] }],
 			onChange: () => {},

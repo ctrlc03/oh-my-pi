@@ -2,7 +2,7 @@ import type { CollabCommand, SessionEntry } from "@oh-my-pi/pi-wire";
 import { Laptop, LoaderCircle, type LucideIcon, MessageSquareText, Search, Slash, Zap } from "lucide-react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useEffect, useId, useMemo, useState } from "react";
-import type { CompanionClient, SessionOverview, SessionSearchHit } from "../../lib/companion";
+import type { AgentRef, CompanionClient, SessionOverview, SessionSearchHit } from "../../lib/companion";
 import { highlightRuns } from "../../lib/fuzzy";
 import { relTime, shortenPath } from "../../lib/format";
 import { setJumpIntent } from "../../lib/jump-intent";
@@ -25,6 +25,7 @@ import { extractLink, type RecentRoom } from "../../lib/rooms";
 import { queryTerms, searchable, splitMatches } from "../../lib/search-terms";
 import { effectiveKeys, formatCombo, IS_MAC, shortcutFires, useOverrides } from "../../lib/shortcuts";
 import type { CompanionHandle } from "../../lib/use-companion";
+import { AgentChip } from "./AgentChip";
 import { Sheet } from "./Sheet";
 import "./palette.css";
 
@@ -82,6 +83,8 @@ interface Row extends PaletteItem {
 	subtitle?: string;
 	/** Right-aligned text: the entry's section, a session's state, a message's author and age. */
 	trailing?: string;
+	/** The vendor agent behind a session row; absent for omp. */
+	agent?: AgentRef;
 	/** Keycaps of the shortcut that does the same. */
 	keys?: string;
 	/** Words of a message hit to mark in its title. */
@@ -262,6 +265,7 @@ export function CommandPalette({
 					title: sessionTitle(host.sessionName, host.cwd),
 					keywords: [host.cwd],
 					subtitle: shortenPath(host.cwd),
+					agent: host.agent,
 					trailing: state,
 					pending: true,
 					run: () => onOpenHost(host.instanceId),
@@ -278,6 +282,7 @@ export function CommandPalette({
 					title: sessionTitle(idle.sessionName, idle.cwd),
 					keywords: [idle.cwd],
 					subtitle: shortenPath(idle.cwd),
+					agent: idle.agent,
 					trailing: "running",
 					pending: true,
 					run: async () => {
@@ -314,6 +319,7 @@ export function CommandPalette({
 				title: sessionTitle(past.title, past.folder),
 				keywords: [past.folder],
 				subtitle: shortenPath(past.folder),
+				agent: past.agent,
 				trailing: `ended ${relTime(past.endedAt ?? past.startedAt)}`,
 				run: () => onOpenAllSessions({ mode: "sessions", query: text }),
 			});
@@ -344,6 +350,7 @@ export function CommandPalette({
 					title: hit.snippet,
 					terms,
 					subtitle: sessionTitle(hit.title, hit.cwd),
+					agent: hit.agent,
 					trailing: `${hit.role === "user" ? "You" : "Agent"} · ${relTime(hit.time)}`,
 				} satisfies Omit<Row, "run">;
 				if (hit.live === "host" && instanceId !== undefined) {
@@ -531,6 +538,7 @@ export function CommandPalette({
 												<LoaderCircle size={14} className="sh-spin" />
 											) : (
 												<>
+													<AgentChip agent={item.agent} />
 													{item.trailing !== undefined && (
 														<span className="sh-palette-trail">{item.trailing}</span>
 													)}

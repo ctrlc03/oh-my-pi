@@ -353,6 +353,19 @@ export interface SessionState {
 	cache?: SessionCacheStats;
 	/** Pull requests the session watches (`pr-watch`); present only on hosts with feature `pr-watch`, and only while some are watched. */
 	prWatch?: WirePrWatch[];
+	/** Tool permission mode of a foreign (non-omp) agent session; present only on hosts with feature `permission-mode`. `supervised` asks for each tool call, `full` approves them all. */
+	permission?: SessionPermission;
+}
+
+/** How a foreign agent session answers its tool-permission requests (feature `permission-mode`). */
+export type SessionPermission = "supervised" | "full";
+
+/** The vendor agent behind a non-omp session; an omp session carries none. */
+export interface AgentRef {
+	/** `claude`, `codex`, `cursor`, `grok`, `opencode`, or `custom:<slug>`. */
+	id: string;
+	/** Display name, e.g. `Claude Code`. */
+	name: string;
 }
 
 export interface AgentSnapshot {
@@ -574,7 +587,8 @@ export type CollabFeature =
 	| "queue-edit"
 	| "mentions"
 	| "approval-grants"
-	| "pr-watch";
+	| "pr-watch"
+	| "permission-mode";
 
 /** A slash command a writer may run by sending it as a `prompt` (`/name args`). */
 export interface CollabCommand {
@@ -655,6 +669,8 @@ export interface CollabCommandChoice {
  * required checks fail, a review or comment arrives, or a conflict appears, and tells it when the checks pass or
  * the pull request merges or closes. `pr-unwatch`'s `arg` is a watched pull request's `key`. Both are reflected
  * in `state.prWatch`.
+ * `permission` (feature `permission-mode`, foreign agent hosts): `arg` is `supervised` or `full`; the host
+ * switches how the session answers its agent's tool-permission requests, reflected in `state.permission`.
  */
 export type SessionCommand =
 	| "compact"
@@ -682,7 +698,8 @@ export type SessionCommand =
 	| "session-diff"
 	| "receipts"
 	| "pr-watch"
-	| "pr-unwatch";
+	| "pr-unwatch"
+	| "permission";
 
 /** One row of the host's ranking of what fills the context window (`context-items` frame). */
 export interface ContextItemRow {
@@ -903,6 +920,8 @@ export type HostFrame =
 			 * names the active one.
 			 */
 			profiles?: WireProfile[];
+			/** The vendor agent behind this session; absent for an omp session. */
+			agent?: AgentRef;
 	  }
 	/**
 	 * Targeted snapshot fragment delivered after `welcome`. Hosts split the

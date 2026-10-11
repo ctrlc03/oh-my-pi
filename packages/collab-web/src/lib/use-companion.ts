@@ -34,6 +34,7 @@ const UNPAIRED: CompanionSnapshot = {
 	canSearch: false,
 	canScratch: false,
 	canBackgroundStart: false,
+	canForeign: false,
 	sessionOrgRev: null,
 	canOrderSessions: false,
 	transcribe: null,

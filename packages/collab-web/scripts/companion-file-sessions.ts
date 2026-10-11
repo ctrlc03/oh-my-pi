@@ -1,7 +1,8 @@
 /**
- * Which omp sessions changed a file, for the `file-sessions` request: the recent sessions that ran inside the
- * file's repository are streamed line by line for a successful `edit`, `apply_patch` or `write` call on it.
- * The scan is bounded (recent sessions only, a byte cap per file, a deadline) and stops at a file's first hit.
+ * Which sessions changed a file, for the `file-sessions` request: the recent sessions (omp's, and the vendor agents'
+ * transcripts beside them) that ran inside the file's repository are streamed line by line for a successful `edit`,
+ * `apply_patch` or `write` call on it. The scan is bounded (recent sessions only, a byte cap per file, a deadline)
+ * and stops at a file's first hit.
  */
 
 import * as fs from "node:fs/promises";
@@ -9,7 +10,13 @@ import * as path from "node:path";
 import type { SessionSummary } from "@oh-my-pi/omp-stats/shared-types";
 import { inputPaths, isRecord, str } from "../src/tool-render/util";
 import { isInside, repoRoot } from "./companion-git";
-import { readSessionHead, recentSessionFiles, type SessionHead } from "./companion-sessions";
+import {
+	foreignTranscriptsDir,
+	readSessionHead,
+	recentSessionFiles,
+	type SessionHead,
+	sessionFilesOf,
+} from "./companion-sessions";
 
 /** Session files whose header is read to find those that ran inside the repository. */
 const HEADER_SCAN_FILES = 300;
@@ -183,7 +190,13 @@ export async function findFileSessions(options: FileSessionsOptions): Promise<Fo
 
 	const candidates: { found: FoundSession; cwd: string; realCwd: string }[] = [];
 	const realCwds = new Map<string, string>();
-	for (const { file, mtime } of await recentSessionFiles(options.sessionsDir, HEADER_SCAN_FILES)) {
+	const files = [
+		...(await recentSessionFiles(options.sessionsDir, HEADER_SCAN_FILES)),
+		...(await sessionFilesOf(foreignTranscriptsDir(options.sessionsDir))),
+	]
+		.sort((a, b) => b.mtime - a.mtime)
+		.slice(0, HEADER_SCAN_FILES);
+	for (const { file, mtime } of files) {
 		if (candidates.length >= SCAN_SESSIONS) break;
 		let head: SessionHead | null;
 		try {

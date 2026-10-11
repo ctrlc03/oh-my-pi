@@ -16,7 +16,6 @@ import {
 	type FanoutCompare,
 	type FanoutGroup,
 	type FanoutKeepResult,
-	type FanoutModel,
 	type FanoutRunView,
 	type FanoutStatus,
 	type HostFanout,
@@ -28,7 +27,9 @@ import {
 	takePendingReview,
 } from "../../lib/fanout";
 import { fmtCost } from "../../lib/format";
+import { fanoutModelLabel, groupModelsByAgent, type ModelGroup, modelLabel } from "../../lib/agents";
 import { useRequest } from "../../lib/use-request";
+import { AgentChip } from "./AgentChip";
 import { Sheet } from "./Sheet";
 import "./fanout.css";
 
@@ -95,16 +96,23 @@ export function FanoutPicker({
 	const [starting, setStarting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
-	const shown = useMemo<FanoutModel[]>(() => {
+	const groups = useMemo<ModelGroup[]>(() => {
 		if (state.status !== "ready") return [];
 		const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
-		return state.value
-			.filter(model => {
-				const text = `${model.selector} ${model.name}`.toLowerCase();
-				return words.every(word => text.includes(word));
-			})
-			.slice(0, MAX_LISTED_MODELS);
+		const matching = state.value.filter(model => {
+			const text = `${model.selector} ${model.name} ${model.agent?.name ?? ""}`.toLowerCase();
+			return words.every(word => text.includes(word));
+		});
+		return groupModelsByAgent(matching).map(group => ({
+			...group,
+			models: group.models.slice(0, MAX_LISTED_MODELS),
+		}));
 	}, [state, filter]);
+	const labels = useMemo(
+		() =>
+			new Map(state.status === "ready" ? state.value.map(model => [model.selector, fanoutModelLabel(model)]) : []),
+		[state],
+	);
 
 	const toggle = (selector: string): void =>
 		setPicked(prev =>
@@ -148,7 +156,7 @@ export function FanoutPicker({
 					Starting {picked.length} sessions in {picked.length} worktrees…
 				</div>
 				<div className="sh-field-hint">
-					Each omp boots with the prompt on its own model. This can take up to two minutes.
+					Each agent boots with the prompt on its own model. This can take up to two minutes.
 				</div>
 			</div>
 		);
@@ -167,9 +175,9 @@ export function FanoutPicker({
 								type="button"
 								className="sh-chip sh-fan-chip"
 								onClick={() => toggle(selector)}
-								aria-label={`Remove ${selector}`}
+								aria-label={`Remove ${labels.get(selector) ?? selector}`}
 							>
-								{selector} <X size={11} />
+								{labels.get(selector) ?? selector} <X size={11} />
 							</button>
 						</li>
 					))}
@@ -194,30 +202,37 @@ export function FanoutPicker({
 						<RefreshCw size={14} /> Retry
 					</button>
 				</div>
-			) : shown.length === 0 ? (
+			) : groups.length === 0 ? (
 				<div className="sh-companion-empty">No model matches.</div>
 			) : (
 				<ul className="sh-fan-models" aria-label="Models">
-					{shown.map(model => {
-						const on = picked.includes(model.selector);
-						return (
-							<li key={model.selector}>
-								<button
-									type="button"
-									className={on ? "sh-model sh-model-on" : "sh-model"}
-									onClick={() => toggle(model.selector)}
-									disabled={!on && picked.length >= MAX_FANOUT_MODELS}
-									aria-pressed={on}
-								>
-									<span className="sh-fan-model-name">{model.name}</span>
-									<span className="sh-sheet-faint">
-										{model.provider}
-										{on && <Check size={13} />}
-									</span>
-								</button>
+					{groups.flatMap(group => [
+						groups.length > 1 && (
+							<li key={`agent:${group.agent.id}`} className="sh-fan-agent-head">
+								{group.agent.name}
 							</li>
-						);
-					})}
+						),
+						...group.models.map(model => {
+							const on = picked.includes(model.selector);
+							return (
+								<li key={model.selector}>
+									<button
+										type="button"
+										className={on ? "sh-model sh-model-on" : "sh-model"}
+										onClick={() => toggle(model.selector)}
+										disabled={!on && picked.length >= MAX_FANOUT_MODELS}
+										aria-pressed={on}
+									>
+										<span className="sh-fan-model-name">{model.name}</span>
+										<span className="sh-sheet-faint">
+											{model.provider}
+											{on && <Check size={13} />}
+										</span>
+									</button>
+								</li>
+							);
+						}),
+					])}
 				</ul>
 			)}
 			<label className="sh-fan-budget">
@@ -233,7 +248,7 @@ export function FanoutPicker({
 				/>
 				<span className="sh-field-hint">
 					{each !== null
-						? `Each session stops at a safe point after ${fmtCost(each)} (omp --max-cost).`
+						? `Each session stops at a safe point after ${fmtCost(each)}.`
 						: "Split evenly: each session gets its share as a spend limit."}
 				</span>
 			</label>
@@ -426,7 +441,7 @@ export function FanoutCompareSheet({ client, groupId, onOpen, onClose }: FanoutC
 			) : kept !== null ? (
 				<div className="sh-fan-kept" role="status">
 					<div>
-						Kept <b>{kept.run.model}</b>.{" "}
+						Kept <b>{modelLabel(kept.run.model)}</b>.{" "}
 						{kept.result.removed.length > 0 && `Removed: ${kept.result.removed.join(", ")}. `}
 					</div>
 					<div className="sh-field-hint">Left in place:</div>
@@ -446,7 +461,7 @@ export function FanoutCompareSheet({ client, groupId, onOpen, onClose }: FanoutC
 						}}
 						disabled={busy}
 					>
-						<ExternalLink size={15} /> Open {kept.run.model} and its pull request flow
+						<ExternalLink size={15} /> Open {modelLabel(kept.run.model)} and its pull request flow
 					</button>
 				</div>
 			) : (
@@ -492,7 +507,8 @@ function RunRow({
 	return (
 		<li className={`sh-fan-run${kept ? " sh-fan-run-kept" : ""}`}>
 			<div className="sh-fan-run-head">
-				<span className="sh-fan-model">{run.model}</span>
+				<span className="sh-fan-model">{modelLabel(run.model)}</span>
+				<AgentChip agent={run.agent} />
 				<span className={`sh-chip sh-fan-status sh-fan-status-${run.status}`}>{STATUS_LABEL[run.status]}</span>
 				{kept && (
 					<span className="sh-chip sh-fan-kept-chip">
@@ -576,8 +592,8 @@ function KeepPanel({
 	return (
 		<div className="sh-fan-keep">
 			<div>
-				Keep <b>{draft.run.model}</b> on branch <code>{draft.run.branch}</code>? Its session opens with the branch
-				review, where you commit, push and open the pull request.
+				Keep <b>{modelLabel(draft.run.model)}</b> on branch <code>{draft.run.branch}</code>? Its session opens with
+				the branch review, where you commit, push and open the pull request.
 			</div>
 			{others.length > 0 && (
 				<label className="sh-start-sandbox">
@@ -590,7 +606,7 @@ function KeepPanel({
 						<span className="sh-start-sandbox-title">Remove the other worktrees</span>
 						<span className="sh-field-hint">
 							Ends their sessions and deletes their folders; their branches stay.{" "}
-							{others.map(run => run.model).join(", ")}
+							{others.map(run => modelLabel(run.model)).join(", ")}
 						</span>
 					</span>
 				</label>
@@ -605,8 +621,8 @@ function KeepPanel({
 					<span className="sh-start-sandbox-text">
 						<span className="sh-start-sandbox-title">Discard their uncommitted changes</span>
 						<span className="sh-field-hint">
-							{dirty.map(run => run.model).join(", ")} {dirty.length === 1 ? "has" : "have"} uncommitted work
-							that cannot be recovered. Without this, those worktrees stay.
+							{dirty.map(run => modelLabel(run.model)).join(", ")} {dirty.length === 1 ? "has" : "have"}{" "}
+							uncommitted work that cannot be recovered. Without this, those worktrees stay.
 						</span>
 					</span>
 				</label>
@@ -658,7 +674,7 @@ export function FanoutPill({
 export function FanoutChip({ fanout }: { fanout: HostFanout }): ReactNode {
 	return (
 		<span className="sh-chip sh-fan-row-chip" title="Started by a model comparison">
-			<GitCompareArrows size={11} /> {fanout.model}
+			<GitCompareArrows size={11} /> {modelLabel(fanout.model)}
 		</span>
 	);
 }
@@ -678,7 +694,7 @@ export function FanoutGroups({
 		const byGroup = new Map<string, string[]>();
 		for (const host of hosts) {
 			if (host.fanout)
-				byGroup.set(host.fanout.group, [...(byGroup.get(host.fanout.group) ?? []), host.fanout.model]);
+				byGroup.set(host.fanout.group, [...(byGroup.get(host.fanout.group) ?? []), modelLabel(host.fanout.model)]);
 		}
 		return [...byGroup];
 	}, [hosts]);

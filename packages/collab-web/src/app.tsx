@@ -502,6 +502,8 @@ function Session({
 	);
 	const [paneOpen, setPaneOpen] = useState(false);
 	const openPane = useCallback(() => setPaneOpen(true), []);
+	// A vendor agent's host process has no terminal worth watching: the transcript is the session.
+	const canPane = companionClient !== null && hostId !== null && snap.agent === null;
 	const canPreview =
 		companionClient !== null && hostId !== null && sessionId !== null && companion?.snap.canPreview === true;
 	// Voice input rides the companion; a reconnect blip (`connecting`) must not discard a recording.
@@ -1043,7 +1045,7 @@ function Session({
 			openUsage: companion ? openUsage : null,
 			openSessions: companion ? openSessions : null,
 			openCodemap: canCodemap ? openCodemap : null,
-			openPane: companionClient !== null && hostId !== null ? openPane : null,
+			openPane: canPane ? openPane : null,
 			openPreview: canPreview ? openPreview : null,
 			openGithub: canGithub ? openGithub : null,
 			openRun: canRun ? openRun : null,
@@ -1055,6 +1057,7 @@ function Session({
 			canCodemap,
 			canEdit,
 			canGithub,
+			canPane,
 			canPreview,
 			canRun,
 			canShowSidebar,
@@ -1108,6 +1111,8 @@ function Session({
 				phase={snap.phase}
 				readOnly={snap.readOnly}
 				sandboxed={companion?.snap.hosts.some(host => host.sessionId === sessionId && host.sandboxed) ?? false}
+				agent={snap.agent}
+				canPermission={Object.hasOwn(snap.features, "permission-mode")}
 				subCount={subCount}
 				railOpen={railOpen}
 				onToggleRail={toggleRail}
@@ -1137,7 +1142,7 @@ function Session({
 				onOpenUsage={companion ? openUsage : null}
 				onOpenSessions={companion ? openSessions : null}
 				onOpenCodemap={canCodemap ? openCodemap : null}
-				onOpenPane={companionClient !== null && hostId !== null ? openPane : null}
+				onOpenPane={canPane ? openPane : null}
 				onOpenPreview={canPreview ? openPreview : null}
 				onOpenGithub={canGithub ? openGithub : null}
 				onOpenRun={canRun ? openRun : null}
@@ -1328,6 +1333,7 @@ function Session({
 					canSearch={companion.snap.canSearch}
 					initial={sessionsSearch ?? undefined}
 					canGitFlow={companion.snap.canGitFlow}
+					canForeign={companion.snap.canForeign}
 					currentSessionId={sessionId}
 					onOpenHost={onOpenHost}
 					onOpenLink={onOpenLink}
@@ -1380,7 +1386,7 @@ function Session({
 					onClose={() => setCodemap(null)}
 				/>
 			)}
-			{paneOpen && companionClient !== null && hostId !== null && (
+			{paneOpen && canPane && companionClient !== null && hostId !== null && (
 				<PaneSheet client={companionClient} instanceId={hostId} onClose={() => setPaneOpen(false)} />
 			)}
 			{previewOpen && canPreview && companionClient !== null && hostId !== null && sessionId !== null && (

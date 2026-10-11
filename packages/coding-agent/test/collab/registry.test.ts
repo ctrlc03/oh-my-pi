@@ -340,6 +340,40 @@ describe("collab registry", () => {
 		});
 	});
 
+	it("lists the vendor agent behind a session and omits it for an omp session", async () => {
+		const dir = await tempDir();
+		const vendor = makeFixture({ instanceId: "vendor-one", agent: { id: "claude", name: "Claude Code" } });
+		const omp = makeFixture({ instanceId: "omp-host-one" });
+		await publish(dir, vendor);
+		await publish(dir, omp);
+
+		const hosts = await listCollabHosts({ dir });
+		expect(hosts.find(host => host.instanceId === "vendor-one")?.agent).toEqual({
+			id: "claude",
+			name: "Claude Code",
+		});
+		expect(hosts.find(host => host.instanceId === "omp-host-one")).not.toHaveProperty("agent");
+	});
+
+	it("drops a malformed agent field instead of the host and bounds a long one", async () => {
+		const dir = await tempDir();
+		const garbled = makeFixture({ instanceId: "agent-garbled" });
+		Object.assign(garbled.snapshot, { agent: { id: 7, name: "x" } });
+		const long = makeFixture({
+			instanceId: "agent-long",
+			agent: { id: "custom:" + "a".repeat(5000), name: "n".repeat(5000) },
+		});
+		await publish(dir, garbled);
+		await publish(dir, long);
+
+		const hosts = await listCollabHosts({ dir });
+		expect(hosts).toHaveLength(2);
+		expect(hosts.find(host => host.instanceId === "agent-garbled")).not.toHaveProperty("agent");
+		const bounded = hosts.find(host => host.instanceId === "agent-long")?.agent;
+		expect(bounded?.id.length).toBeLessThanOrEqual(1024);
+		expect(bounded?.name.length).toBeLessThanOrEqual(1024);
+	});
+
 	it("resolves a unique PID and rejects it as ambiguous when a second instance shares the process", async () => {
 		const dir = await tempDir();
 		const first = makeFixture({ instanceId: "pid-first" });

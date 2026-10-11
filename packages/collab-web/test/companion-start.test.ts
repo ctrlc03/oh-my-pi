@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { findTmux, launchInTmux } from "../scripts/companion-start";
+import { findTmux, foreignHostCommand, launchInTmux } from "../scripts/companion-start";
 
 const tmuxBin = await findTmux();
 
@@ -122,5 +122,134 @@ describe.skipIf(tmuxBin === null)("launchInTmux with a real tmux", () => {
 				model: "--yolo",
 			}),
 		).rejects.toThrow("invalid model");
+	});
+
+	it("runs a vendor agent's host with every value as its own argument and hands over the prompt file", async () => {
+		const folder = path.join(root, "a folder; touch pwned2 #{session_name}");
+		await fs.mkdir(folder);
+		await fs.rm(path.join(root, "out"), { force: true });
+		const fanout = '{"group":"g","model":"agent:custom:x/","agent":{"id":"custom:x","name":"X"}}';
+		const launched = await launchInTmux({
+			tmux: wrapper,
+			ompBin: "/unused/omp",
+			overlayPath: path.join(root, "never", "overlay.yml"),
+			promptDir: path.join(root, "run2"),
+			localRelayUrl: "ws://127.0.0.1:1234",
+			cwd: folder,
+			resume: "custom-team-0123456789abcdef",
+			prompt: "$(touch pwned2) -- 'x'",
+			maxCostUsd: 2.5,
+			model: "anthropic/sonnet[1m]",
+			foreign: {
+				bun: fakeOmp,
+				hostMain: "/repo/foreign/host-main.ts",
+				agent: "custom:team-agent",
+				permission: "full",
+				relayUrl: "wss://relay.example",
+				webUrl: "https://web.example/",
+				fanout,
+			},
+		});
+		expect(launched.cwd).toBe(folder);
+		const lines = (await report()).trim().split("\n");
+		const promptFiles = await fs.readdir(path.join(root, "run2"));
+		expect(promptFiles).toHaveLength(1);
+		const promptFile = path.join(root, "run2", promptFiles[0]!);
+		expect(lines).toEqual([
+			folder,
+			"[/repo/foreign/host-main.ts]",
+			"[--agent]",
+			"[custom:team-agent]",
+			"[--cwd]",
+			`[${folder}]`,
+			"[--resume]",
+			"[custom-team-0123456789abcdef]",
+			"[--model]",
+			"[anthropic/sonnet[1m]]",
+			"[--permission]",
+			"[full]",
+			"[--max-cost]",
+			"[2.5]",
+			"[--prompt-file]",
+			`[${promptFile}]`,
+			"[--fanout]",
+			`[${fanout}]`,
+			"[--relay]",
+			"[wss://relay.example]",
+			"[--web]",
+			"[https://web.example/]",
+			"[--local-relay]",
+			"[ws://127.0.0.1:1234]",
+		]);
+		// The prompt is in the private hand-off folder, for the host to read and delete; no omp overlay was written.
+		expect(await Bun.file(promptFile).text()).toBe("$(touch pwned2) -- 'x'");
+		expect((await fs.stat(promptFile)).mode & 0o777).toBe(0o600);
+		expect((await fs.stat(path.join(root, "run2"))).mode & 0o777).toBe(0o700);
+		expect(await Bun.file(path.join(root, "never", "overlay.yml")).exists()).toBe(false);
+		expect(await Bun.file(path.join(root, "pwned2")).exists()).toBe(false);
+		expect(await Bun.file(path.join(folder, "pwned2")).exists()).toBe(false);
+	});
+
+	it("refuses a vendor agent id or model that is not plain", async () => {
+		const base = {
+			tmux: wrapper,
+			ompBin: "/unused/omp",
+			overlayPath: path.join(root, "never", "overlay.yml"),
+			promptDir: path.join(root, "run2"),
+			cwd: root,
+		};
+		const foreign = {
+			bun: fakeOmp,
+			hostMain: "/repo/foreign/host-main.ts",
+			agent: "claude",
+			permission: "supervised" as const,
+		};
+		await expect(launchInTmux({ ...base, foreign: { ...foreign, agent: "claude; touch pwned3" } })).rejects.toThrow(
+			"invalid agent",
+		);
+		await expect(launchInTmux({ ...base, foreign: { ...foreign, agent: "custom:UP" } })).rejects.toThrow(
+			"invalid agent",
+		);
+		await expect(
+			launchInTmux({ ...base, foreign: { ...foreign, permission: "yolo" as unknown as "full" } }),
+		).rejects.toThrow("invalid agent");
+		for (const model of ["--yolo", "a b", "x;y", "$(id)"])
+			await expect(launchInTmux({ ...base, model, foreign })).rejects.toThrow("invalid model");
+		expect(await Bun.file(path.join(root, "pwned3")).exists()).toBe(false);
+	});
+});
+
+describe("foreignHostCommand", () => {
+	const foreign = {
+		bun: "/usr/bin/bun",
+		hostMain: "/repo/host-main.ts",
+		agent: "claude",
+		permission: "supervised" as const,
+	};
+
+	it("is the host entry with only the options that were given", () => {
+		expect(foreignHostCommand(foreign, { cwd: "/work/app" })).toEqual([
+			"/usr/bin/bun",
+			"/repo/host-main.ts",
+			"--agent",
+			"claude",
+			"--cwd",
+			"/work/app",
+			"--permission",
+			"supervised",
+		]);
+	});
+
+	it("marks a worktree session", () => {
+		const command = foreignHostCommand({ ...foreign, worktree: true }, { cwd: "/work/tree" });
+		expect(command).toContain("--worktree");
+		expect(foreignHostCommand({ ...foreign, worktree: false }, { cwd: "/work/tree" })).not.toContain("--worktree");
+	});
+
+	it("keeps a hostile value one argument, never a shell string", () => {
+		const evil = "x; rm -rf ~ $(id) `id` '\"";
+		const command = foreignHostCommand(foreign, { cwd: evil, model: evil, resume: evil, promptFile: evil });
+		expect(command.filter(arg => arg === evil)).toHaveLength(4);
+		expect(command.every(arg => !arg.includes(" ") || arg === evil)).toBe(true);
 	});
 });

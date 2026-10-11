@@ -1,12 +1,15 @@
 import { GitBranch, LoaderCircle, Play, RefreshCw, Search, Share2, Trash2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CompanionClient, SessionOverview, SessionSearchHit } from "../../lib/companion";
+import { agentFilterOptions, filterByAgent } from "../../lib/agents";
+import type { AgentRef, CompanionClient, SessionOverview, SessionSearchHit } from "../../lib/companion";
 import { fmtCost, fmtTokens, relTime, shortenPath } from "../../lib/format";
 import { setJumpIntent } from "../../lib/jump-intent";
 import { extractLink } from "../../lib/rooms";
 import { MIN_QUERY_CHARS, searchable } from "../../lib/search-terms";
 import { useRequest } from "../../lib/use-request";
+import { AgentChip } from "./AgentChip";
+import { AgentsEntry } from "./AgentsSheet";
 import { MessageSearch } from "./MessageSearch";
 import { useOpenElsewhere } from "./OpenElsewhere";
 import { Sheet } from "./Sheet";
@@ -25,6 +28,8 @@ export interface SessionsSheetProps {
 	canSearch?: boolean;
 	/** The companion keeps git worktree settings (`canGitFlow`): a toggle shows them above the list. */
 	canGitFlow?: boolean;
+	/** The companion can drive other vendors' agents (`canForeign`): the head offers the Agents settings. */
+	canForeign?: boolean;
 	/** A search to open on (from the command palette): sessions by title or folder, or messages. */
 	initial?: { mode: "sessions" | "messages"; query: string };
 	/** Session on screen: marked and not openable. */
@@ -41,6 +46,7 @@ export function SessionsSheet({
 	canStart,
 	canSearch,
 	canGitFlow,
+	canForeign,
 	initial,
 	currentSessionId,
 	onOpenHost,
@@ -74,6 +80,8 @@ export function SessionsSheet({
 	const [error, setError] = useState<string | null>(null);
 	/** Folder of the worktree whose removal awaits confirmation. */
 	const [removing, setRemoving] = useState<string | null>(null);
+	/** Id of the agent the list is narrowed to; null: every agent. */
+	const [agentFilter, setAgentFilter] = useState<string | null>(null);
 	const closedRef = useRef(false);
 	useEffect(() => {
 		closedRef.current = false;
@@ -108,9 +116,16 @@ export function SessionsSheet({
 		onOpenLink(link);
 	};
 
-	const resume = async (session: { sessionId: string; folder: string }, force: boolean): Promise<void> => {
+	const resume = async (
+		session: { sessionId: string; folder: string; agent?: AgentRef },
+		force: boolean,
+	): Promise<void> => {
 		await onOpenHost(
-			await client.startSession(session.folder, { resume: session.sessionId, force: force || undefined }),
+			await client.startSession(session.folder, {
+				resume: session.sessionId,
+				agent: session.agent?.id,
+				force: force || undefined,
+			}),
 		);
 	};
 
@@ -143,7 +158,7 @@ export function SessionsSheet({
 	};
 	const resumeHit = (hit: SessionSearchHit): void => {
 		void run(hit.sessionId, force =>
-			withJump(hit, () => resume({ sessionId: hit.sessionId, folder: hit.cwd }, force)),
+			withJump(hit, () => resume({ sessionId: hit.sessionId, folder: hit.cwd, agent: hit.agent }, force)),
 		);
 	};
 
@@ -154,8 +169,13 @@ export function SessionsSheet({
 		reload();
 	};
 
+	const agentOptions = agentFilterOptions(sessions ?? []);
+	// A filter whose agent left the list (a narrower search) shows everything again rather than nothing.
+	const activeAgent = agentOptions.some(option => option.id === agentFilter) ? agentFilter : null;
+	const visible = filterByAgent(sessions ?? [], activeAgent);
+
 	const groups = new Map<string, { sessions: SessionOverview[]; cost: number }>();
-	for (const session of sessions ?? []) {
+	for (const session of visible) {
 		const group = groups.get(session.folder);
 		if (group) {
 			group.sessions.push(session);
@@ -168,6 +188,7 @@ export function SessionsSheet({
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">All sessions</div>
 				<span className="sh-stats-head-actions">
+					{canForeign === true && <AgentsEntry client={client} variant="icon" />}
 					{canGitFlow === true && (
 						<button
 							type="button"
@@ -232,6 +253,31 @@ export function SessionsSheet({
 					spellCheck={false}
 				/>
 			</label>
+			{agentOptions.length > 0 && (
+				<div className="sh-segmented sh-segmented-wrap" role="radiogroup" aria-label="Filter by agent">
+					<button
+						type="button"
+						role="radio"
+						aria-checked={activeAgent === null}
+						className={activeAgent === null ? "sh-segment sh-segment-on" : "sh-segment"}
+						onClick={() => setAgentFilter(null)}
+					>
+						All
+					</button>
+					{agentOptions.map(option => (
+						<button
+							key={option.id}
+							type="button"
+							role="radio"
+							aria-checked={activeAgent === option.id}
+							className={activeAgent === option.id ? "sh-segment sh-segment-on" : "sh-segment"}
+							onClick={() => setAgentFilter(option.id)}
+						>
+							{option.name}
+						</button>
+					))}
+				</div>
+			)}
 			{!messages && state.status === "error" && (
 				<div className="sh-tree-error">
 					<div className="sh-connect-error">{state.message}</div>
@@ -251,6 +297,7 @@ export function SessionsSheet({
 						onOpen={openHit}
 						onShare={shareHit}
 						onResume={resumeHit}
+						agent={activeAgent}
 					/>
 				) : (
 					<div className="sh-companion-empty">
@@ -263,8 +310,10 @@ export function SessionsSheet({
 						<LoaderCircle size={14} className="sh-spin" /> Loading sessions… the first read can take a while.
 					</div>
 				)
-			) : sessions.length === 0 ? (
-				<div className="sh-companion-empty">{q ? "No session matches." : "No sessions yet."}</div>
+			) : visible.length === 0 ? (
+				<div className="sh-companion-empty">
+					{q || activeAgent !== null ? "No session matches." : "No sessions yet."}
+				</div>
 			) : (
 				<div className={loading ? "sh-stats-body sh-stats-cols sh-stats-stale" : "sh-stats-body sh-stats-cols"}>
 					{[...groups].map(([folder, group]) => (
@@ -370,6 +419,7 @@ export function SessionRow({
 			<div className="sh-recent-join sh-idle-info" title={session.folder}>
 				<span className="sh-recent-title">
 					<span className="sh-recent-name">{session.title ?? "Untitled"}</span>
+					<AgentChip agent={session.agent} />
 					{current && <span className="sh-chip">here</span>}
 					{session.live === "host" && <span className="sh-chip sh-chip-live">live</span>}
 					{session.live === "idle" && <span className="sh-chip">running</span>}

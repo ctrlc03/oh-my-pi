@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { CompanionClient, RecentFolder } from "../../lib/companion";
+import type { CompanionAgent, CompanionClient, ForeignPermission, RecentFolder } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import { setOpenIntent } from "../../lib/inbox";
 import { type Combo, formatCombo, IS_MAC, matchCombo } from "../../lib/shortcuts";
@@ -32,6 +32,9 @@ import { type RequestState, useRequest } from "../../lib/use-request";
 import { useOpenElsewhere } from "./OpenElsewhere";
 import { QuickReplies } from "./QuickReplies";
 import type { FanoutGroup } from "../../lib/fanout";
+import { AgentChip } from "./AgentChip";
+import { AgentPicker } from "./AgentPicker";
+import { AgentsSheet } from "./AgentsSheet";
 import { FanoutCompareSheet, FanoutPicker } from "./FanoutSheet";
 import { Sheet } from "./Sheet";
 
@@ -76,7 +79,16 @@ export function StartSessionSheet({
 	const load = useCallback(() => client.requestFolders(), [client]);
 	const { state, reload } = useRequest(load);
 	const subscribe = useCallback((listener: () => void) => client.subscribe(listener), [client]);
-	const { canScratch, canBackgroundStart } = useSyncExternalStore(subscribe, () => client.getSnapshot());
+	const { canScratch, canBackgroundStart, canForeign } = useSyncExternalStore(subscribe, () => client.getSnapshot());
+	const loadAgents = useCallback(
+		() => (canForeign ? client.requestAgents() : Promise.resolve<CompanionAgent[]>([])),
+		[client, canForeign],
+	);
+	const { state: agentsState, reload: reloadAgents } = useRequest(loadAgents);
+	const [agent, setAgent] = useState<string | null>(null);
+	const [model, setModel] = useState("");
+	const [permission, setPermission] = useState<ForeignPermission>("supervised");
+	const [managing, setManaging] = useState(false);
 	const [folder, setFolder] = useState<RecentFolder | null>(null);
 	const [starting, setStarting] = useState<StartTarget | null>(null);
 	const [sandboxed, setSandboxed] = useState(false);
@@ -97,7 +109,25 @@ export function StartSessionSheet({
 		};
 	}, []);
 
-	const draft = (cwd: string): StartDraft => ({ cwd, sandboxed, worktree, branch, prompt });
+	const agentList = agentsState.status === "ready" ? agentsState.value : [];
+	/** The chosen agent as the computer lists it; null for omp (and for one that was removed meanwhile). */
+	const chosenAgent = agent === null ? null : (agentList.find(entry => entry.id === agent) ?? null);
+	// Other vendors' agents run unsandboxed for now: only omp sessions offer the option.
+	const canSandboxHere = agent === null && canSandbox;
+	const effectiveSandbox = sandboxed && canSandboxHere;
+	const agentName = (id: string | undefined): string =>
+		id === undefined ? "omp" : (agentList.find(entry => entry.id === id)?.name ?? id);
+
+	const draft = (cwd: string): StartDraft => ({
+		cwd,
+		sandboxed: effectiveSandbox,
+		worktree,
+		branch,
+		prompt,
+		agent: chosenAgent?.id ?? null,
+		model: chosenAgent === null ? "" : model,
+		permission,
+	});
 
 	const start = async (target: StartTarget, force = false): Promise<void> => {
 		setStarting(target);
@@ -131,6 +161,7 @@ export function StartSessionSheet({
 			title: fromPrompt ?? folderLabel(current.cwd),
 			detail: [
 				fromPrompt === null ? null : folderLabel(current.cwd),
+				target.agent === undefined ? null : agentName(target.agent),
 				target.sandboxed ? "Sandboxed" : null,
 				target.worktree ? "New worktree" : null,
 			]
@@ -228,13 +259,13 @@ export function StartSessionSheet({
 				<div className="sh-start-progress" role="status">
 					<LoaderCircle size={22} className="sh-spin" />
 					<div className="sh-start-progress-title">
-						{starting.resume ? "Resuming" : "Starting"} {starting.sandboxed ? "sandboxed " : ""}omp in{" "}
-						{starting.scratch ? "a new scratch folder" : folderLabel(starting.cwd)}
+						{starting.resume ? "Resuming" : "Starting"} {starting.sandboxed ? "sandboxed " : ""}
+						{agentName(starting.agent)} in {starting.scratch ? "a new scratch folder" : folderLabel(starting.cwd)}
 						{starting.worktree ? " on a new worktree" : ""}…
 					</div>
 					<div className="sh-field-hint">
-						This can take up to a minute while omp boots. You can close this; the session appears in your
-						computer's list when it is ready.
+						This can take up to a minute while {agentName(starting.agent)} boots. You can close this; the session
+						appears in your computer's list when it is ready.
 					</div>
 				</div>
 			) : folder === null ? (
@@ -243,19 +274,41 @@ export function StartSessionSheet({
 				<div className="sh-start-form" onKeyDown={onFormKey}>
 					{folder.cwd === NO_PROJECT && (
 						<div className="sh-field-hint">
-							omp starts in a fresh folder of its own on your computer, with no git repository. The folder is
-							kept when the session ends.
+							The session starts in a fresh folder of its own on your computer, with no git repository. The
+							folder is kept when the session ends.
 						</div>
 					)}
-					{canSandbox && (
+					{canForeign && !fan && (
+						<AgentPicker
+							agents={agentsState}
+							agent={chosenAgent?.id ?? null}
+							model={model}
+							permission={permission}
+							onAgent={id => {
+								setAgent(id);
+								setModel("");
+							}}
+							onModel={setModel}
+							onPermission={setPermission}
+							onRetry={reloadAgents}
+							onManage={() => setManaging(true)}
+						/>
+					)}
+					{canSandboxHere && (
 						<label className="sh-start-sandbox">
-							<input type="checkbox" checked={sandboxed} onChange={e => setSandboxed(e.currentTarget.checked)} />
+							<input
+								type="checkbox"
+								checked={effectiveSandbox}
+								onChange={e => setSandboxed(e.currentTarget.checked)}
+							/>
 							<span className="sh-start-sandbox-text">
 								<span className="sh-start-sandbox-title">
 									<ShieldCheck size={14} /> Sandboxed
 								</span>
 								<span className="sh-field-hint">
-									Reads and edits files only; changes stay in this folder. No commands run.
+									{chosenAgent === null
+										? "Reads and edits files only; changes stay in this folder. No commands run."
+										: `Runs ${chosenAgent.name} with its own sandbox, which limits what it can change.`}
 								</span>
 							</span>
 						</label>
@@ -357,10 +410,18 @@ export function StartSessionSheet({
 										<button
 											type="button"
 											className="sh-recent-join"
-											onClick={() => void start({ cwd: folder.cwd, resume: session.id, sandboxed })}
+											onClick={() =>
+												void start({
+													cwd: folder.cwd,
+													resume: session.id,
+													sandboxed: session.agent === undefined && sandboxed && canSandbox,
+													agent: session.agent?.id,
+												})
+											}
 										>
 											<span className="sh-recent-title">
 												<span className="sh-recent-name">{session.title ?? "Untitled session"}</span>
+												<AgentChip agent={session.agent} />
 											</span>
 											<span className="sh-recent-meta">
 												<span>{relTime(session.lastActive)}</span>
@@ -372,6 +433,15 @@ export function StartSessionSheet({
 						</section>
 					)}
 				</div>
+			)}
+			{managing && (
+				<AgentsSheet
+					client={client}
+					onClose={() => {
+						setManaging(false);
+						reloadAgents();
+					}}
+				/>
 			)}
 		</Sheet>
 	);

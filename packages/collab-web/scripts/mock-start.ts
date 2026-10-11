@@ -12,6 +12,7 @@ import type { CompanionHost, CompanionReply, CompanionRequest, RecentFolder } fr
 import { createScratchFolder } from "./companion-scratch";
 import { createWorktree } from "./companion-gitflow";
 import { parseStartPrompt } from "./companion-start";
+import type { MockForeign } from "./mock-foreign";
 
 /** How long the fake omp "boots": long enough to see the starting row in the sheet. */
 const BOOT_MS = 1_800;
@@ -31,6 +32,8 @@ export function createMockStart(options: {
 	/** The folders besides the scratch ones. */
 	baseFolders(): Promise<RecentFolder[]>;
 	onChange(): void;
+	/** Vendor agents: a `start` with an `agent` (or resuming one of their ended sessions) runs one. */
+	foreign: Pick<MockForeign, "plan">;
 }): MockStart {
 	const configDir = path.join(options.dir, "config");
 	const worktrees = path.join(options.dir, "worktrees");
@@ -47,9 +50,15 @@ export function createMockStart(options: {
 			}
 			if (request.t !== "start") throw new Error(`the mock companion does not answer ${request.t}`);
 			const prompt = parseStartPrompt(request.prompt);
+			const foreign = options.foreign.plan(request);
+			const open = foreign?.resumed && options.hosts.find(h => h.sessionId === foreign.resumed?.sessionId);
+			if (open) return { t: "started", reqId: request.reqId, instanceId: open.instanceId };
 			let cwd: string;
 			let name: string;
-			if (request.scratch) {
+			if (foreign?.resumed) {
+				cwd = foreign.resumed.cwd;
+				name = foreign.resumed.title;
+			} else if (request.scratch) {
 				cwd = await createScratchFolder({ configDir, hint: request.scratch.hint });
 				name = request.scratch.hint?.trim().split("\n")[0]?.slice(0, 40) || "session";
 				scratch.unshift({ cwd, lastActive: Date.now(), sessions: [] });
@@ -66,16 +75,17 @@ export function createMockStart(options: {
 			const instanceId = `start-${n}-${crypto.randomUUID().slice(0, 6)}`;
 			options.hosts.push({
 				instanceId,
-				sessionId: instanceId,
+				sessionId: foreign?.resumed?.sessionId ?? instanceId,
 				sessionName: prompt?.split("\n")[0]?.slice(0, 60) || name,
 				cwd,
-				model: "anthropic/claude-sonnet-5-5",
+				model: foreign ? (foreign.model ?? null) : "anthropic/claude-sonnet-5-5",
 				startedAt: Date.now(),
 				participants: 1,
 				busy: prompt !== undefined,
 				inputRequired: false,
 				relayConnected: true,
 				sandboxed: request.sandboxed === true ? true : undefined,
+				agent: foreign?.agent,
 			});
 			if (prompt !== undefined) {
 				setTimeout(() => {

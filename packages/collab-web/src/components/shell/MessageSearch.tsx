@@ -1,10 +1,12 @@
 import { LoaderCircle, Play, RefreshCw, Share2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
+import { filterByAgent } from "../../lib/agents";
 import type { CompanionClient, SessionSearchHit } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import { groupBySession, queryTerms, splitMatches } from "../../lib/search-terms";
 import { useRequest } from "../../lib/use-request";
+import { AgentChip } from "./AgentChip";
 import "./message-search.css";
 
 export interface MessageSearchProps {
@@ -21,6 +23,8 @@ export interface MessageSearchProps {
 	onOpen(hit: SessionSearchHit): void;
 	onShare(hit: SessionSearchHit): void;
 	onResume(hit: SessionSearchHit): void;
+	/** Only hits of the agent with this id (`omp` for omp's own sessions); every hit when null. */
+	agent?: string | null;
 }
 
 const hitKey = (hit: SessionSearchHit): string => `${hit.sessionId}:${hit.entryId}`;
@@ -49,6 +53,7 @@ export function MessageSearch({
 	onOpen,
 	onShare,
 	onResume,
+	agent = null,
 }: MessageSearchProps): ReactNode {
 	const load = useCallback(() => client.searchSessions(query), [client, query]);
 	const { state, reload } = useRequest(load);
@@ -58,7 +63,8 @@ export function MessageSearch({
 	const answer = shown.current;
 	const loading = state.status === "loading";
 	const terms = useMemo(() => queryTerms(query), [query]);
-	const groups = useMemo(() => groupBySession(answer?.results ?? []), [answer]);
+	const results = useMemo(() => filterByAgent(answer?.results ?? [], agent), [answer, agent]);
+	const groups = useMemo(() => groupBySession(results), [results]);
 	/** The hit of a session that is not open, awaiting a choice. */
 	const [picked, setPicked] = useState<string | null>(null);
 
@@ -78,7 +84,7 @@ export function MessageSearch({
 						<LoaderCircle size={14} className="sh-spin" /> Searching your sessions…
 					</div>
 				)
-			) : answer.results.length === 0 ? (
+			) : results.length === 0 ? (
 				<div className="sh-companion-empty">
 					{loading
 						? "Searching…"
@@ -95,6 +101,7 @@ export function MessageSearch({
 							<section key={first.sessionId} className="sh-msg-group" aria-label={first.title ?? "Untitled"}>
 								<div className="sh-msg-group-head" title={first.cwd}>
 									<span className="sh-msg-group-title">{first.title ?? "Untitled"}</span>
+									<AgentChip agent={first.agent} />
 									{current && <span className="sh-chip">here</span>}
 									{first.live === "host" && <span className="sh-chip sh-chip-live">live</span>}
 									{first.live === "idle" && <span className="sh-chip">running</span>}

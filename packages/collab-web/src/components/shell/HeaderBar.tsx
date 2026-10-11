@@ -1,5 +1,15 @@
-import type { SessionCommand, SessionHeader, SessionState, WireModel } from "@oh-my-pi/pi-wire";
-import { Ellipsis, LogOut, PanelLeft, PanelRight, Search, ShieldCheck, SquareCode, Waypoints } from "lucide-react";
+import type { AgentRef, SessionCommand, SessionHeader, SessionState, WireModel } from "@oh-my-pi/pi-wire";
+import {
+	Ellipsis,
+	LogOut,
+	PanelLeft,
+	PanelRight,
+	Search,
+	ShieldAlert,
+	ShieldCheck,
+	SquareCode,
+	Waypoints,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import type { ConnectionPhase, ContextItemsInfo } from "../../lib/client";
@@ -7,6 +17,7 @@ import { fmtPercent, shortenPath } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
 import { shortcutKeys, useOverrides } from "../../lib/shortcuts";
 import type { SessionUsage } from "../../lib/usage";
+import { AgentChip } from "./AgentChip";
 import { OmpMark } from "./OmpMark";
 import { SessionSheet } from "./SessionSheet";
 import type { TurnUndoControl } from "./TurnUndo";
@@ -38,6 +49,10 @@ export interface HeaderBarProps {
 	sidebarOpen: boolean;
 	/** Another session on the paired computer is waiting for input. */
 	sidebarAlert: boolean;
+	/** The vendor agent behind this session (Claude Code, Codex, …); null for an omp session. */
+	agent: AgentRef | null;
+	/** The host advertises `permission-mode`: the session sheet offers Supervised / Full access. */
+	canPermission: boolean;
 	chat: boolean;
 	/** The session sheet; the app owns it so a shortcut can open it. */
 	sheetOpen: boolean;
@@ -94,6 +109,8 @@ export const HeaderBar = memo(function HeaderBar({
 	phase,
 	readOnly,
 	sandboxed,
+	agent,
+	canPermission,
 	subCount,
 	railOpen,
 	onToggleRail,
@@ -195,6 +212,17 @@ export const HeaderBar = memo(function HeaderBar({
 								data-tip="Sandboxed: file tools only, edits stay in its folder"
 							>
 								<ShieldCheck size={12} />
+							</span>
+						)}
+						<AgentChip agent={agent} variant="mark" />
+						{state?.permission === "full" && (
+							<span
+								className="sh-agent-mark sh-agent-mark-warn"
+								role="img"
+								aria-label="Full access"
+								data-tip="Full access: every tool call runs without asking"
+							>
+								<ShieldAlert size={12} />
 							</span>
 						)}
 						{state?.cwd && <span className="sh-cwd">{shortenPath(state.cwd)}</span>}
@@ -315,6 +343,8 @@ export const HeaderBar = memo(function HeaderBar({
 					phaseLabel={PHASE_LABEL[phase]}
 					readOnly={readOnly}
 					sandboxed={sandboxed}
+					agent={agent}
+					canPermission={canPermission}
 					contextPct={pct}
 					chat={chat}
 					onChatChange={onChatChange}

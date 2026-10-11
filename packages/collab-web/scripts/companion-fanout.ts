@@ -7,7 +7,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { RunInfo } from "../src/lib/companion";
+import type { AgentRef, RunInfo } from "../src/lib/companion";
 import {
 	type FanoutCompare,
 	type FanoutGroup,
@@ -101,13 +101,19 @@ export interface FanoutStartDeps {
 	branchPrefix?: string;
 	/** Prepare a fresh worktree (the companion's setup script) before its session starts; a rejection fails that run. */
 	setup?(tree: { root: string; path: string; branch: string }): Promise<unknown>;
-	/** Start omp in `cwd` (a worktree) on `model` with the prompt and `omp --max-cost`; resolves with its instance id once it hosts. */
+	/** The vendor agent a model selector runs; undefined for an omp model. */
+	agentRef?(model: string): AgentRef | undefined;
+	/**
+	 * Start a session in `cwd` (a worktree) on `model` with the prompt and `--max-cost`; resolves with its instance id once it hosts.
+	 * `model` is an omp `provider/id`, or the selector of a vendor agent's model (`agent:<agent>/<model>`); `group` is the fan-out's id.
+	 */
 	launch(input: {
 		cwd: string;
 		prompt: string;
 		model: string;
 		maxCostUsd?: number;
 		sandboxed?: boolean;
+		group: string;
 	}): Promise<string>;
 	now?: () => number;
 	newId?: () => string;
@@ -139,7 +145,13 @@ export async function startFanout(request: FanoutRequest, deps: FanoutStartDeps)
 			const model = request.models[i]!;
 			// Resolved, as the session list and the stats database name the folder omp ran in.
 			const resolved = await fs.realpath(tree.path).catch(() => tree.path);
-			const run: FanoutRun = { model, branch: tree.branch, path: resolved, maxCostUsd: perSession };
+			const run: FanoutRun = {
+				model,
+				agent: deps.agentRef?.(model),
+				branch: tree.branch,
+				path: resolved,
+				maxCostUsd: perSession,
+			};
 			try {
 				await deps.setup?.(tree);
 				run.instanceId = await deps.launch({
@@ -148,6 +160,7 @@ export async function startFanout(request: FanoutRequest, deps: FanoutStartDeps)
 					model,
 					maxCostUsd: perSession,
 					sandboxed: request.sandboxed,
+					group: id,
 				});
 			} catch (err) {
 				run.error = err instanceof Error ? err.message : String(err);
@@ -218,6 +231,7 @@ export async function compareGroup(group: FanoutGroup, deps: CompareDeps): Promi
 			const review = run.removed || run.error !== undefined ? null : await deps.review(run.path).catch(() => null);
 			return {
 				model: run.model,
+				agent: run.agent,
 				branch: run.branch,
 				path: run.path,
 				instanceId: run.instanceId ?? null,
@@ -310,6 +324,13 @@ export async function keepRun(
 
 // ── storage ──────────────────────────────────────────────────────────────────
 
+/** The agent a saved run recorded; absent for an omp run. */
+function parseAgentRef(value: unknown): AgentRef | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const { id, name } = value as Record<string, unknown>;
+	return typeof id === "string" && typeof name === "string" ? { id, name } : undefined;
+}
+
 function parseRun(value: unknown): FanoutRun | null {
 	if (typeof value !== "object" || value === null) return null;
 	const run = value as Record<string, unknown>;
@@ -318,6 +339,7 @@ function parseRun(value: unknown): FanoutRun | null {
 		return null;
 	return {
 		model: run.model,
+		agent: parseAgentRef(run.agent),
 		branch: run.branch,
 		path: run.path,
 		instanceId: run.instanceId as string | undefined,

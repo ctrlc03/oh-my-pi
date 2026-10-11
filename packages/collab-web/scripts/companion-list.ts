@@ -139,6 +139,7 @@ export function createSessionLister(options: SessionListerOptions): SessionListe
 				inputRequired: host.inputRequired,
 				relayConnected: host.relayConnected,
 				sandboxed: sandboxed.has(host.pid),
+				...(host.agent ? { agent: host.agent } : {}),
 			}))
 			.sort((a, b) => b.startedAt - a.startedAt);
 		const idle = listedIdle

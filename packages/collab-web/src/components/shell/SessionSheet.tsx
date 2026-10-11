@@ -1,4 +1,4 @@
-import type { SessionCommand, SessionState, WireModel } from "@oh-my-pi/pi-wire";
+import type { AgentRef, SessionCommand, SessionState, WireModel } from "@oh-my-pi/pi-wire";
 import {
 	Check,
 	ChevronDown,
@@ -31,6 +31,8 @@ import { effectiveKeys, formatCombo, IS_MAC, useOverrides } from "../../lib/shor
 import { type ThemePreference, useThemePreference } from "../../lib/theme";
 import { formatUsage, type SessionUsage } from "../../lib/usage";
 import { ContextItems } from "./ContextItems";
+import { AgentChip } from "./AgentChip";
+import { PermissionControl } from "./PermissionControl";
 import { PrWatch } from "./PrWatch";
 import { PushButton, SandboxedChip } from "./CompanionCard";
 import { ModelList } from "./ModelControls";
@@ -78,6 +80,10 @@ export interface SessionSheetProps {
 	phaseLabel: string;
 	readOnly: boolean;
 	sandboxed: boolean;
+	/** The vendor agent behind this session; null for an omp session. */
+	agent: AgentRef | null;
+	/** The host advertises `permission-mode`. */
+	canPermission: boolean;
 	contextPct: number | null;
 	/** Chat view: prompts and replies only, tool runs folded. */
 	chat: boolean;
@@ -142,6 +148,8 @@ export function SessionSheet({
 	phaseLabel,
 	readOnly,
 	sandboxed,
+	agent,
+	canPermission,
 	contextPct,
 	chat,
 	onChatChange,
@@ -300,9 +308,21 @@ export function SessionSheet({
 						<span className={`sh-dot sh-dot-${phase}`} />
 						{phaseLabel}
 						{readOnly && <span className="sh-chip">read-only</span>}
+						<AgentChip agent={agent} />
 						{sandboxed && <SandboxedChip />}
 					</dd>
 				</div>
+				{canPermission && state?.permission !== undefined && !readOnly && phase === "live" && (
+					<div className="sh-sheet-row sh-sheet-row-top">
+						<dt>Permissions</dt>
+						<dd className="sh-sheet-compact">
+							<PermissionControl
+								value={state.permission}
+								onChange={permission => onSessionCommand("permission", permission)}
+							/>
+						</dd>
+					</div>
+				)}
 				{state?.model && (
 					<div className="sh-sheet-row">
 						<dt>Model</dt>
@@ -386,7 +406,7 @@ export function SessionSheet({
 						</dd>
 					</div>
 				)}
-				{canControl && (
+				{canControl && agent === null && (
 					<div className="sh-sheet-row sh-sheet-row-top">
 						<dt>Compact</dt>
 						<dd className="sh-sheet-compact">

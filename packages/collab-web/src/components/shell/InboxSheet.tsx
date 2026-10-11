@@ -5,6 +5,7 @@ import type { CompanionClient, InboxItem } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import { inboxKey, loadDismissed, type OpenIntent, saveDismissed, setOpenIntent } from "../../lib/inbox";
 import { useRequest } from "../../lib/use-request";
+import { AgentChip } from "./AgentChip";
 import { Sheet } from "./Sheet";
 import "./inbox.css";
 
@@ -150,6 +151,7 @@ function InboxRow({ item, busy, disabled, onOpen, onDismiss }: InboxRowProps): R
 							<CircleCheck size={14} />
 						)}
 						<span className="sh-recent-name">{item.title}</span>
+						<AgentChip agent={item.agent} />
 					</span>
 					<span className="sh-recent-meta">
 						<span className="sh-recent-cwd">{shortenPath(item.cwd)}</span>

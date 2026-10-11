@@ -50,6 +50,11 @@
  * own VAPID key (no server in between). A device that is showing the app is
  * skipped: it alerts in-app instead.
  *
+ * Vendor agents (Claude Code, Codex, Cursor, Grok, OpenCode, custom ACP commands): `start` with `agent` runs
+ * `./foreign/host-main.ts` in the same kind of tmux session, so the session outlives the companion and is listed like
+ * any host (with `agent`). Ended ones come from the session index the hosts write (`./companion-foreign`), appear in the
+ * sessions list and recent folders, and are resumed through `start`. The spend limits cap them (`--max-cost`).
+ *
  * Staying reachable (macOS): the companion holds a sleep assertion while it
  * runs (`caffeinate -i -s`), so the Mac does not idle-sleep and sessions stay
  * online; closing the lid still sleeps it. The hosts frame carries the power
@@ -63,7 +68,13 @@ import * as path from "node:path";
 import { QrCode, renderQrHalfBlocks } from "@oh-my-pi/pi-tui/chrome/qrcode";
 import { SCHEDULE_IPC_FILE } from "@oh-my-pi/pi-wire/schedule";
 import { generateRoomKey, importRoomKey } from "../src/lib/codec";
-import { type FanoutCompare, type FanoutGroup, type FanoutKeepResult, hostFanout } from "../src/lib/fanout";
+import {
+	type FanoutCompare,
+	type FanoutGroup,
+	type FanoutKeepResult,
+	hostFanout,
+	parseForeignSelector,
+} from "../src/lib/fanout";
 import {
 	type CompanionHost,
 	type CompanionIdleSession,
@@ -74,7 +85,11 @@ import {
 	formatPairingUrl,
 	LOW_BATTERY_PCT,
 	type PushSubscriptionJson,
+	type RecentFolder,
 	SessionOpenElsewhereError,
+	type CompanionAgent,
+	type SessionOverview,
+	type SpendLimits,
 } from "../src/lib/companion";
 import {
 	DEFAULT_RELAY_URL,
@@ -126,6 +141,7 @@ import { consumeInvite, type DeviceRecord, DeviceRegistry, issueInvite, parseDev
 import { installLaunchAgent, launchLogPath, uninstallLaunchAgent } from "./companion-launchd";
 import {
 	findSessionFile,
+	foreignTranscriptsDir,
 	lastAssistantSummary,
 	pendingQuestion,
 	readSessionTail,
@@ -154,7 +170,15 @@ import {
 } from "./companion-schedule";
 import { startScheduleIpc } from "./companion-schedule-ipc";
 import { createSessionOrg, ghSessionPrDone, loadOrgFile, saveOrgFile } from "./companion-sessionorg";
-import { createSpendMonitor, parseSpendLimits, parseSpendState, type SpendState, withLimits } from "./companion-spend";
+import {
+	createSpendMonitor,
+	dayStart,
+	parseSpendLimits,
+	parseSpendState,
+	type SpendReading,
+	type SpendState,
+	withLimits,
+} from "./companion-spend";
 import { createScratchFolder } from "./companion-scratch";
 import {
 	canSandbox,
@@ -163,6 +187,7 @@ import {
 	killTmuxSession,
 	launchInTmux,
 	parseStartPrompt,
+	tmuxSessionExists,
 } from "./companion-start";
 import {
 	compareGroup,
@@ -175,10 +200,35 @@ import {
 	startFanout,
 	withGroup,
 } from "./companion-fanout";
-import { fileSessionOverviews, isUsageRange, readSpend, sessionOverview, usageReport } from "./companion-stats";
+import {
+	clampSessionLimit,
+	fileSessionOverviews,
+	isUsageRange,
+	readSpend,
+	sessionOverview,
+	usageReport,
+} from "./companion-stats";
 import { storeUpload } from "./companion-upload";
 import { createVoice } from "./companion-voice";
 import { generateVapidKeys, isPushSubscription, sendPush, type VapidKeys } from "./web-push";
+import {
+	createAgentDirectory,
+	createAgentHandlers,
+	createForeignCatalog,
+	fanoutArg,
+	type ForeignStartDeps,
+	foreignFanoutModels,
+	mergeForeignUsage,
+	mergeFileSessions,
+	mergeOverviews,
+	planForeignStart,
+	usageRangeStart,
+	withAgents,
+	withForeignRows,
+	withForeignSpend,
+} from "./companion-foreign";
+import { deleteCustomAgent, installAgent, listAgents, saveCustomAgent } from "./foreign/agents";
+import { readForeignIndexStrict } from "./foreign/foreign-index";
 
 /** Host list refresh while at least one device is connected. */
 const POLL_MS = 3_000;
@@ -195,6 +245,83 @@ const invitesDir = path.join(configDir, "agent", "collab-companion-invites");
 const sessionsDir = path.join(configDir, "agent", "sessions");
 /** Message search over the session files; keeps the searchable text of recent files in memory. */
 const sessionSearch = createSessionSearch({ sessionsDir });
+
+/**
+ * Vendor agents (Claude Code, Codex, ...): each session runs in its own detached host process (`./foreign/host-main.ts`, started in
+ * tmux like omp) that outlives the companion. The hosts write the session index and the transcripts the catalog reads.
+ */
+const foreignHostMain = path.join(import.meta.dir, "foreign", "host-main.ts");
+const foreignHostExists = await Bun.file(foreignHostMain).exists();
+const agentDirectory = createAgentDirectory();
+const foreignCatalog = createForeignCatalog({
+	transcriptsDir: foreignTranscriptsDir(sessionsDir),
+	readRows: async () => (await readForeignIndexStrict(configDir)).sessions,
+	agentRef: agentDirectory.ref,
+});
+
+/** The computer can run vendor agents: the host entry ships with this checkout and tmux is there to run it in. */
+async function foreignReady(): Promise<boolean> {
+	return foreignHostExists && (await findTmux()) !== null;
+}
+
+/** Remembers the agents' names for sessions that only know an id. */
+function rememberAgents(agents: CompanionAgent[]): CompanionAgent[] {
+	agentDirectory.remember(agents);
+	return agents;
+}
+
+const agentHandlers = createAgentHandlers({
+	ready: foreignReady,
+	list: async refresh => rememberAgents(await listAgents({ configDir, refresh })),
+	install: async id => rememberAgents(await installAgent(id, { configDir })),
+	saveCustom: async agent => rememberAgents(await saveCustomAgent(agent, { configDir })),
+	deleteCustom: async id => rememberAgents(await deleteCustomAgent(id, { configDir })),
+});
+
+const foreignStartDeps: ForeignStartDeps = {
+	agents: async () => rememberAgents(await listAgents({ configDir })),
+	rows: () => foreignCatalog.rows(),
+	limits: () => state.spend?.limits ?? null,
+	spentToday: () => foreignCatalog.spentSince(dayStart(Date.now())),
+	sessionSpend: sessionId => foreignCatalog.sessionSpend(sessionId),
+};
+
+/** What the agent sessions say, or `fallback` (logged) when the index or a transcript cannot be read: omp's own rows still go out. */
+async function foreignOr<T>(what: string, work: () => Promise<T>, fallback: T): Promise<T> {
+	try {
+		return await work();
+	} catch (err) {
+		console.error(`companion: reading agent sessions for ${what} failed: ${errorText(err)}`);
+		return fallback;
+	}
+}
+
+/** Spend omp's stats database holds plus what the vendor agents' sessions reported. */
+async function readSpendAll(limits: SpendLimits, now: number): Promise<SpendReading> {
+	const reading = await readSpend(limits, now, knownHosts);
+	return await foreignOr(
+		"spend",
+		() => withForeignSpend(reading, { catalog: foreignCatalog, hosts: knownHosts, limits, now }),
+		reading,
+	);
+}
+
+/** Past and live sessions of omp and of the vendor agents, newest activity first. */
+async function allOverviews(request: { limit?: unknown; q?: unknown }): Promise<SessionOverview[]> {
+	const live = { hosts: knownHosts, idle: knownIdle };
+	const [omp, foreign] = await Promise.all([
+		sessionOverview(request, live),
+		foreignOr("the session list", () => foreignCatalog.overviews(request, live), []),
+	]);
+	return mergeOverviews(omp, foreign, clampSessionLimit(request.limit));
+}
+
+/** The folders sessions ran in, vendor agents' included. */
+async function recentFoldersAll(): Promise<RecentFolder[]> {
+	const base = await recentFolders(sessionsDir);
+	return await foreignOr("recent folders", () => foreignCatalog.folders(base), base);
+}
+
 const overlayPath = path.join(configDir, "agent", "collab-companion-overlay.yml");
 const sandboxOverlayPath = path.join(configDir, "agent", "collab-companion-sandbox.yml");
 const ompBin = process.env.OMP_BIN || Bun.which("omp") || path.join(os.homedir(), ".bun", "bin", "omp");
@@ -466,7 +593,7 @@ const spendMonitor = createSpendMonitor({
 		await saveState(state);
 	},
 	wanted: () => registry.subscriptions().length > 0,
-	read: (limits, now) => readSpend(limits, now, knownHosts),
+	read: readSpendAll,
 	alert: alert => {
 		for (const subscription of registry.subscriptions()) push(subscription, alert);
 	},
@@ -613,7 +740,7 @@ const scheduler = createScheduler({
 	spendLimitReached: async () => {
 		const limit = state.spend?.limits.dailyUsd ?? null;
 		if (limit === null) return false;
-		return (await readSpend({ dailyUsd: limit, sessionUsd: null }, Date.now(), knownHosts)).dailyUsd >= limit;
+		return (await readSpendAll({ dailyUsd: limit, sessionUsd: null }, Date.now())).dailyUsd >= limit;
 	},
 	refreshSessions: async () => {
 		await loadSessions();
@@ -670,13 +797,18 @@ function detectEdges(hosts: CompanionHost[]): void {
 
 async function loadSessions(): Promise<{ hosts: CompanionHost[]; idle: CompanionIdleSession[] }> {
 	const listed = await lister.list();
-	knownHosts = listed.hosts;
+	// A vendor host has no omp overlay to tell it is sandboxed: its index row says. An index that cannot be read leaves
+	// no rows, and a host without a row counts as sandboxed (see withForeignRows).
+	const hosts = listed.hosts.some(host => host.agent)
+		? withForeignRows(listed.hosts, await foreignOr("sandbox state", () => foreignCatalog.rows(), {}))
+		: listed.hosts;
+	knownHosts = hosts;
 	knownIdle = listed.idle;
 	knownPids = listed.pids;
 	// A listing that came back empty is more likely a glitch than every session gone: keep the history then.
-	if (listed.hosts.length + listed.idle.length > 0)
-		runs.retain(new Set([...listed.hosts, ...listed.idle].map(session => session.instanceId)));
-	return listed;
+	if (hosts.length + listed.idle.length > 0)
+		runs.retain(new Set([...hosts, ...listed.idle].map(session => session.instanceId)));
+	return { hosts, idle: listed.idle };
 }
 
 /**
@@ -755,6 +887,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canSearch: true,
 		canScratch: extras.canStart,
 		canBackgroundStart: extras.canStart,
+		canForeign: extras.canStart && foreignHostExists,
 		sessionOrgRev: sessionOrg.file().rev,
 		canOrderSessions: true,
 		transcribe: extras.transcribe ?? undefined,
@@ -809,11 +942,23 @@ async function idleSessionCwd(instanceId: unknown): Promise<string> {
 	return session.cwd;
 }
 
+/** What a `start` that runs a vendor agent adds to {@link startSession}; absent fields come from the resumed session or the defaults. */
+interface ForeignStart {
+	agent?: unknown;
+	/** The vendor's model id. */
+	model?: unknown;
+	permission?: unknown;
+	/** Fan-out membership: the group and the model selector the member was picked by. */
+	fanout?: { group: string; selector: string };
+}
+
 /**
  * Start omp in a detached tmux session — sandboxed to `cwd` with file tools
  * only when `sandboxed` — and wait until it hosts collab; resolves with its instance id.
  * Resuming a session that already hosts answers with that host; one another omp has open is
  * refused (`SessionOpenElsewhereError`) unless `force`.
+ * With `foreign.agent`, or when `resume` names a session of the foreign index, the session runs a vendor agent instead:
+ * a detached host process (`./foreign/host-main.ts`) in the same kind of tmux session, listed like any other host.
  */
 async function startSession(
 	cwd: unknown,
@@ -827,6 +972,7 @@ async function startSession(
 	maxCostUsd?: number,
 	/** Fan-out sessions: `omp --model provider/id`. */
 	model?: string,
+	foreign?: ForeignStart,
 ): Promise<string> {
 	if (
 		typeof cwd !== "string" ||
@@ -838,20 +984,34 @@ async function startSession(
 	) {
 		throw new Error("invalid request");
 	}
+	if (resume !== undefined && !SAFE_ID_RE.test(resume)) throw new Error("invalid session id");
+	const plan = await planForeignStart(
+		{
+			agent: foreign?.agent,
+			resume,
+			cwd,
+			model: foreign?.model,
+			permission: foreign?.permission,
+			sandboxed,
+			maxCostUsd,
+		},
+		foreignStartDeps,
+	);
+	if (plan && !(await foreignReady())) throw new Error("This computer cannot run other agents (tmux is missing).");
 	console.log(
-		`companion: ${new Date().toISOString()} starting omp in ${cwd}${resume === undefined ? "" : ` (resuming ${resume})`}`,
+		`companion: ${new Date().toISOString()} starting ${plan ? plan.agent.name : "omp"} in ${plan?.cwd ?? cwd}${resume === undefined ? "" : ` (resuming ${resume})`}`,
 	);
 	if (worktree !== undefined && resume !== undefined)
 		throw new Error("a worktree needs a new session, not a resumed one");
 	if (resume !== undefined) {
-		if (!SAFE_ID_RE.test(resume)) throw new Error("invalid session id");
 		const listed = await loadSessions();
-		const live = listed.hosts.find(host => host.sessionId.startsWith(resume));
+		const live = listed.hosts.find(host => (plan ? host.sessionId === resume : host.sessionId.startsWith(resume)));
 		if (live) {
 			if (prompt !== undefined) throw new Error("that session is already open; the scheduled prompt was not sent");
 			return live.instanceId;
 		}
-		if (force !== true) {
+		// A vendor session has no omp process another terminal could hold.
+		if (!plan && force !== true) {
 			const listedPids = listed.idle
 				.filter(session => session.sessionId.startsWith(resume))
 				.flatMap(session => knownPids.get(session.instanceId) ?? []);
@@ -861,7 +1021,8 @@ async function startSession(
 	}
 	const tmux = await findTmux();
 	if (!tmux) throw new Error("tmux is not installed on this computer");
-	if (sandboxed && !sandboxAvailable) throw new Error("sandboxed sessions need macOS sandbox-exec");
+	// omp runs under sandbox-exec; a vendor agent never does (`planForeignStart` refuses a sandboxed one).
+	if (sandboxed && !plan && !sandboxAvailable) throw new Error("sandboxed sessions need macOS sandbox-exec");
 	const sandbox = sandboxed
 		? {
 				home: os.homedir(),
@@ -871,16 +1032,23 @@ async function startSession(
 				overlayPath: sandboxOverlayPath,
 			}
 		: undefined;
+	const workCwd = plan?.cwd ?? cwd;
 	// The worktree checkout can take a while: the boot wait starts after it.
 	const created = worktree
-		? await createWorktree(cwd, effectiveWorktreesDir(gitFlow.settings, worktreesDir), worktree.branch, new Date(), {
-				branchPrefix: gitFlow.settings.branchPrefix,
-			})
+		? await createWorktree(
+				workCwd,
+				effectiveWorktreesDir(gitFlow.settings, worktreesDir),
+				worktree.branch,
+				new Date(),
+				{
+					branchPrefix: gitFlow.settings.branchPrefix,
+				},
+			)
 		: null;
 	try {
 		// A failing setup (an install that breaks) discards the tree below, like a session that cannot start.
 		if (created) await setupWorktree(created, sandboxed);
-		const launchCwd = created?.path ?? cwd;
+		const launchCwd = created?.path ?? workCwd;
 		// Sticky, and before omp starts: no cleanup command ever runs in a tree a sandboxed agent could write.
 		if (sandboxed) await settleCleanup.recordSandboxed(launchCwd);
 		const lockKey = await fs.realpath(launchCwd).catch(() => launchCwd);
@@ -894,11 +1062,25 @@ async function startSession(
 				promptDir: path.join(configDir, COMPANION_RUN_DIR),
 				localRelayUrl,
 				cwd: launchCwd,
-				resume,
+				resume: plan ? plan.resume : resume,
 				sandbox,
 				prompt,
-				maxCostUsd,
-				model,
+				maxCostUsd: plan ? plan.maxCostUsd : maxCostUsd,
+				model: plan ? plan.model : model,
+				foreign: plan
+					? {
+							bun: process.execPath,
+							hostMain: foreignHostMain,
+							agent: plan.agent.id,
+							permission: plan.permission,
+							worktree: created !== null || plan.row?.worktree === true,
+							relayUrl: state.relayUrl,
+							webUrl,
+							fanout: foreign?.fanout
+								? fanoutArg(foreign.fanout.group, foreign.fanout.selector, agentDirectory.ref(plan.agent.id))
+								: plan.row?.fanout && JSON.stringify(plan.row.fanout),
+						}
+					: undefined,
 			});
 			while (Date.now() < spawnedAt + START_WAIT_MS) {
 				await Bun.sleep(START_POLL_MS);
@@ -910,8 +1092,11 @@ async function startSession(
 				}
 				for (const host of hosts) {
 					if (before.has(host.instanceId)) continue;
+					// Another agent's host (or an omp) that came up in the same folder meanwhile is not this start's.
+					if (plan ? host.agent?.id !== plan.agent.id : host.agent !== undefined) continue;
 					const hostCwd = await fs.realpath(host.cwd).catch(() => host.cwd);
-					const resumed = resume !== undefined && host.sessionId.startsWith(resume);
+					const resumed =
+						resume !== undefined && (plan ? host.sessionId === resume : host.sessionId.startsWith(resume));
 					if (resumed || (hostCwd === launched.cwd && host.startedAt >= spawnedAt - 1_000)) {
 						// Where this session works is how its settle finds its worktree later; never from a session file.
 						await settleCleanup
@@ -923,9 +1108,14 @@ async function startSession(
 						return host.instanceId;
 					}
 				}
+				// The host process ended (a missing adapter, a bad sign-in, a vendor that refused to start): no point waiting on.
+				if (plan && !(await tmuxSessionExists(tmux, launched.name)))
+					throw new Error(
+						`${plan.agent.name} stopped before it was ready. Check that it is installed and signed in on the computer.`,
+					);
 			}
 			await killTmuxSession(tmux, launched.name);
-			throw new Error("omp did not start hosting in time");
+			throw new Error(`${plan ? plan.agent.name : "omp"} did not start hosting in time`);
 		});
 	} catch (err) {
 		// The branch and worktree only exist for this session.
@@ -940,8 +1130,19 @@ async function startSession(
  */
 async function startFromRequest(frame: Extract<CompanionRequest, { t: "start" }>): Promise<string> {
 	const prompt = parseStartPrompt(frame.prompt);
+	const foreign: ForeignStart = { agent: frame.agent, model: frame.model, permission: frame.permission };
 	if (frame.scratch === undefined)
-		return await startSession(frame.cwd, frame.resume, frame.sandboxed, frame.worktree, frame.force, prompt);
+		return await startSession(
+			frame.cwd,
+			frame.resume,
+			frame.sandboxed,
+			frame.worktree,
+			frame.force,
+			prompt,
+			undefined,
+			undefined,
+			foreign,
+		);
 	if (
 		typeof frame.scratch !== "object" ||
 		frame.scratch === null ||
@@ -951,10 +1152,21 @@ async function startFromRequest(frame: Extract<CompanionRequest, { t: "start" }>
 	}
 	if (frame.resume !== undefined || frame.worktree !== undefined)
 		throw new Error("a session without a project is new and has no worktree");
-	if (frame.sandboxed === true && !sandboxAvailable) throw new Error("sandboxed sessions need macOS sandbox-exec");
+	if (frame.sandboxed === true && frame.agent === undefined && !sandboxAvailable)
+		throw new Error("sandboxed sessions need macOS sandbox-exec");
 	const folder = await createScratchFolder({ configDir, hint: frame.scratch.hint });
 	try {
-		return await startSession(folder, undefined, frame.sandboxed, undefined, undefined, prompt);
+		return await startSession(
+			folder,
+			undefined,
+			frame.sandboxed,
+			undefined,
+			undefined,
+			prompt,
+			undefined,
+			undefined,
+			foreign,
+		);
 	} catch (err) {
 		await fs.rmdir(folder).catch(() => undefined);
 		throw err;
@@ -964,7 +1176,7 @@ async function startFromRequest(frame: Extract<CompanionRequest, { t: "start" }>
 /** Spend in USD of every session that worked in each folder, from the stats database. */
 async function folderCosts(): Promise<Map<string, number>> {
 	const costs = new Map<string, number>();
-	for (const session of await sessionOverview({ limit: 200 }, { hosts: knownHosts, idle: knownIdle }))
+	for (const session of await allOverviews({ limit: 200 }))
 		costs.set(session.folder, (costs.get(session.folder) ?? 0) + session.cost);
 	return costs;
 }
@@ -988,14 +1200,31 @@ function fanoutGroup(id: unknown): FanoutGroup {
 async function fanoutStart(input: unknown): Promise<FanoutGroup> {
 	const request = parseFanoutRequest(input);
 	if (!(await findTmux())) throw new Error("tmux is not installed on this computer");
+	// Other agents run unsandboxed for now: refuse before any member starts rather than run some of them unconfined.
+	if (request.sandboxed && request.models.some(model => parseForeignSelector(model) !== null))
+		throw new Error("Other agents cannot run sandboxed yet: untick Sandboxed or pick omp models only.");
 	if (request.sandboxed && !sandboxAvailable) throw new Error("sandboxed sessions need macOS sandbox-exec");
+	// Vendor agents' names go into the group as the run records its agent.
+	if (request.models.some(model => parseForeignSelector(model) !== null))
+		rememberAgents(await listAgents({ configDir }));
 	const group = await startFanout(request, {
 		worktreesDir: effectiveWorktreesDir(gitFlow.settings, worktreesDir),
 		branchPrefix: gitFlow.settings.branchPrefix,
 		// The setup runs per tree, as for a new worktree session.
 		setup: tree => setupWorktree(tree, request.sandboxed),
-		launch: ({ cwd, prompt, model, maxCostUsd, sandboxed }) =>
-			startSession(cwd, undefined, sandboxed, undefined, undefined, prompt, maxCostUsd, model),
+		agentRef: model => {
+			const parsed = parseForeignSelector(model);
+			return parsed ? agentDirectory.ref(parsed.agent) : undefined;
+		},
+		launch: ({ cwd, prompt, model, maxCostUsd, sandboxed, group: groupId }) => {
+			const parsed = parseForeignSelector(model);
+			if (!parsed) return startSession(cwd, undefined, sandboxed, undefined, undefined, prompt, maxCostUsd, model);
+			return startSession(cwd, undefined, sandboxed, undefined, undefined, prompt, maxCostUsd, undefined, {
+				agent: parsed.agent,
+				model: parsed.model === "" ? undefined : parsed.model,
+				fanout: { group: groupId, selector: model },
+			});
+		},
 	});
 	fanoutGroups = withGroup(fanoutGroups, group);
 	await saveGroups(fanoutPath, fanoutGroups);
@@ -1259,7 +1488,7 @@ socket.onFrame = (frame, fromPeer) => {
 			respond(frame.reqId, async () => ({
 				t: "folders",
 				reqId: frame.reqId,
-				folders: await recentFolders(sessionsDir),
+				folders: await recentFoldersAll(),
 			}));
 			return;
 		case "schedules":
@@ -1293,6 +1522,34 @@ socket.onFrame = (frame, fromPeer) => {
 				t: "started",
 				reqId: frame.reqId,
 				instanceId: await startFromRequest(frame),
+			}));
+			return;
+		case "agents":
+			respond(frame.reqId, async () => ({
+				t: "agents",
+				reqId: frame.reqId,
+				agents: await agentHandlers.list(frame.refresh),
+			}));
+			return;
+		case "agent-install":
+			respond(frame.reqId, async () => ({
+				t: "agents",
+				reqId: frame.reqId,
+				agents: await agentHandlers.install(frame.id),
+			}));
+			return;
+		case "agent-custom-save":
+			respond(frame.reqId, async () => ({
+				t: "agents",
+				reqId: frame.reqId,
+				agents: await agentHandlers.saveCustom(frame.agent),
+			}));
+			return;
+		case "agent-custom-delete":
+			respond(frame.reqId, async () => ({
+				t: "agents",
+				reqId: frame.reqId,
+				agents: await agentHandlers.deleteCustom(frame.id),
 			}));
 			return;
 		case "share":
@@ -1388,7 +1645,11 @@ socket.onFrame = (frame, fromPeer) => {
 		case "usage":
 			respond(frame.reqId, async () => {
 				if (!isUsageRange(frame.range)) throw new Error("unknown usage range");
-				return { t: "usage", reqId: frame.reqId, usage: await usageReport(frame.range) };
+				const range = frame.range;
+				const now = Date.now();
+				const report = await usageReport(range);
+				const events = await foreignOr("usage", () => foreignCatalog.usageSince(usageRangeStart(range, now)), []);
+				return { t: "usage", reqId: frame.reqId, usage: mergeForeignUsage(report, events, agentDirectory.ref) };
 			});
 			return;
 		case "session-org":
@@ -1403,14 +1664,14 @@ socket.onFrame = (frame, fromPeer) => {
 				return {
 					t: "session-search",
 					reqId: frame.reqId,
-					results: withLiveness(results, { hosts: knownHosts, idle: knownIdle }),
+					results: withLiveness(await withAgents(results, foreignCatalog), { hosts: knownHosts, idle: knownIdle }),
 					truncated,
 				};
 			});
 			return;
 		case "sessions":
 			respond(frame.reqId, async () => {
-				const sessions = await sessionOverview(frame, { hosts: knownHosts, idle: knownIdle });
+				const sessions = await allOverviews(frame);
 				// Only worktrees that still exist can be removed.
 				return {
 					t: "sessions",
@@ -1452,7 +1713,12 @@ socket.onFrame = (frame, fromPeer) => {
 				return {
 					t: "sessions",
 					reqId: frame.reqId,
-					sessions: await fileSessionOverviews(found, { hosts: knownHosts, idle: knownIdle }),
+					sessions: await mergeFileSessions(
+						found,
+						foreignCatalog,
+						{ hosts: knownHosts },
+						async omp => await fileSessionOverviews(omp, { hosts: knownHosts, idle: knownIdle }),
+					),
 				};
 			});
 			return;
@@ -1679,7 +1945,13 @@ socket.onFrame = (frame, fromPeer) => {
 			});
 			return;
 		case "fanout-models":
-			respond(frame.reqId, async () => ({ t: "fanout-models", reqId: frame.reqId, models: await fanoutModels() }));
+			respond(frame.reqId, async () => {
+				const omp = await fanoutModels();
+				const agents = (await foreignReady())
+					? await foreignOr("the model list", async () => rememberAgents(await listAgents({ configDir })), [])
+					: [];
+				return { t: "fanout-models", reqId: frame.reqId, models: [...omp, ...foreignFanoutModels(agents)] };
+			});
 			return;
 		case "fanout-start":
 			respond(frame.reqId, async () => ({

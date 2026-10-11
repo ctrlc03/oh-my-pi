@@ -1,3 +1,5 @@
+import type { AgentRef } from "@oh-my-pi/pi-wire";
+
 /**
  * Best-of-N: one prompt on several models, each in its own git worktree, then a
  * comparison. Types shared by the app and the companion (`fanout-*` requests).
@@ -10,14 +12,33 @@ export const MAX_FANOUT_PROMPT_CHARS = 100_000;
 /** Largest group budget in USD; the same ceiling as a scheduled run's spend limit. */
 export const MAX_FANOUT_BUDGET_USD = 10_000;
 /** `provider/id` as `omp models --json` lists it: no spaces, no leading dash (it would read as a flag). */
-export const MODEL_SELECTOR_RE = /^[A-Za-z0-9_][\w.:/@+-]{0,199}$/;
+export const MODEL_SELECTOR_RE = /^[A-Za-z0-9_][\w.:/@+[\]-]{0,199}$/;
 
-/** A model the computer can run, from `omp models`. */
+/** Prefix of the selector of a model a foreign agent runs: `agent:<agent id>/<vendor model id>`. */
+const FOREIGN_SELECTOR_PREFIX = "agent:";
+
+/** Selector of `model` (a vendor model id; empty: the agent's default) of the foreign agent `agentId`. */
+export function foreignSelector(agentId: string, model: string): string {
+	return `${FOREIGN_SELECTOR_PREFIX}${agentId}/${model}`;
+}
+
+/** The agent and vendor model id of a {@link foreignSelector}; null for an omp model selector. */
+export function parseForeignSelector(selector: string): { agent: string; model: string } | null {
+	if (!selector.startsWith(FOREIGN_SELECTOR_PREFIX)) return null;
+	const rest = selector.slice(FOREIGN_SELECTOR_PREFIX.length);
+	const slash = rest.indexOf("/");
+	if (slash <= 0) return null;
+	return { agent: rest.slice(0, slash), model: rest.slice(slash + 1) };
+}
+
+/** A model the computer can run, from `omp models` or, tagged with `agent`, from a foreign agent. */
 export interface FanoutModel {
-	/** `provider/id`: what `omp --model` takes. */
+	/** `provider/id`: what `omp --model` takes; `agent:<agent>/<model>` for a foreign agent's model (see {@link foreignSelector}). */
 	selector: string;
 	name: string;
 	provider: string;
+	/** The vendor agent that runs it; absent for an omp model. */
+	agent?: AgentRef;
 }
 
 /** Start one prompt on each of `models` (2–4 distinct) in new worktrees of the repository containing `cwd`. */
@@ -45,6 +66,8 @@ export interface FanoutRun {
 	error?: string;
 	/** The worktree was removed by a keep. */
 	removed?: boolean;
+	/** The vendor agent the session runs; absent for omp. */
+	agent?: AgentRef;
 }
 
 export interface FanoutGroup {
@@ -63,6 +86,8 @@ export interface FanoutGroup {
 export interface HostFanout {
 	group: string;
 	model: string;
+	/** The vendor agent the session runs; absent for omp. */
+	agent?: AgentRef;
 }
 
 /** `ended`: the session's omp exited. `failed`: it never started. */
@@ -95,6 +120,8 @@ export interface FanoutRunView {
 	/** The worktree was removed. */
 	gone: boolean;
 	error: string | null;
+	/** The vendor agent the session runs; absent for omp. */
+	agent?: AgentRef;
 }
 
 export interface FanoutCompare {
@@ -133,7 +160,9 @@ export function hostFanout(groups: readonly FanoutGroup[]): Record<string, HostF
 	const out: Record<string, HostFanout> = {};
 	for (const group of groups) {
 		for (const run of group.runs) {
-			if (run.instanceId !== undefined && !run.removed) out[run.instanceId] = { group: group.id, model: run.model };
+			if (run.instanceId !== undefined && !run.removed) {
+				out[run.instanceId] = { group: group.id, model: run.model, ...(run.agent ? { agent: run.agent } : {}) };
+			}
 		}
 	}
 	return out;

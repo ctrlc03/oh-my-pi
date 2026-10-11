@@ -101,6 +101,9 @@ const draft: StartDraft = {
 	worktree: true,
 	branch: " fix/x ",
 	prompt: " do it \n",
+	agent: null,
+	model: "",
+	permission: "supervised",
 };
 
 describe("the start draft", () => {
@@ -119,6 +122,16 @@ describe("the start draft", () => {
 			worktree: undefined,
 			scratch: undefined,
 		});
+	});
+
+	it("carries a vendor agent, its model and permission, and none for omp", () => {
+		expect(newSessionTarget(draft)).not.toHaveProperty("agent");
+		expect(newSessionTarget({ ...draft, agent: "claude", model: "opus", permission: "full" })).toMatchObject({
+			agent: "claude",
+			model: "opus",
+			permission: "full",
+		});
+		expect(newSessionTarget({ ...draft, agent: "codex" }).model).toBeUndefined();
 	});
 
 	it("asks for a scratch folder, named by the prompt, when no project is picked", () => {

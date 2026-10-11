@@ -221,7 +221,7 @@ export function validateGrantPattern(
  * covers `bun test`). `allow` grants never match a compound or shell-controlled line; `deny` grants match
  * when any segment of one matches, like `bash.patterns` deny rules.
  */
-function bashGrantMatches(command: string, pattern: string, segmentwise: boolean): boolean {
+export function bashGrantMatches(command: string, pattern: string, segmentwise: boolean): boolean {
 	const normalizedPattern = normalizeBashApprovalPattern(pattern);
 	const bare = normalizedPattern.endsWith(" *") ? normalizedPattern.slice(0, -2) : undefined;
 	if (segmentwise) {

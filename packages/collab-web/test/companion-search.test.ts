@@ -304,3 +304,31 @@ describe("withLiveness", () => {
 		expect(marked[2]?.live).toBeUndefined();
 	});
 });
+
+describe("vendor agent transcripts", () => {
+	it("are searched with omp's sessions, newest file first", async () => {
+		const sessionsDir = path.join(dir, "agent", "sessions");
+		const foreignDir = path.join(dir, "agent", "collab-foreign", "sessions");
+		await fs.mkdir(path.join(sessionsDir, "-work-app"), { recursive: true });
+		await fs.mkdir(foreignDir, { recursive: true });
+		const write = async (file: string, lines: Line[], at: number) => {
+			await Bun.write(file, `${lines.map(line => JSON.stringify(line)).join("\n")}\n`);
+			await fs.utimes(file, at, at);
+		};
+		await write(
+			path.join(sessionsDir, "-work-app", "2026-10-01T10-00-00-000Z_omp1.jsonl"),
+			[header("omp1"), user("u1", "needle from omp")],
+			1_000,
+		);
+		await write(
+			path.join(foreignDir, "claude-0123456789abcdef.jsonl"),
+			[header("claude-0123456789abcdef", "/work/vendor"), user("u1", "needle from a vendor agent")],
+			2_000,
+		);
+		const { results } = await createSessionSearch({ sessionsDir }).search("needle");
+		expect(results.map(hit => [hit.sessionId, hit.cwd])).toEqual([
+			["claude-0123456789abcdef", "/work/vendor"],
+			["omp1", "/work/app"],
+		]);
+	});
+});

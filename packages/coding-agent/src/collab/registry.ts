@@ -37,6 +37,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { IpcConnection, IpcServer, ipcEndpoint } from "@oh-my-pi/pi-natives";
 import { getBaseConfigRoot, isEnoent, isFsError } from "@oh-my-pi/pi-utils";
+import type { AgentRef } from "@oh-my-pi/pi-wire";
 
 /** Discovery metadata / IPC protocol version of hosting rooms. Mixed omp versions fail safely. */
 export const COLLAB_REGISTRY_VERSION = 1;
@@ -111,6 +112,11 @@ export interface CollabHostSnapshot {
 	 * that stopped.
 	 */
 	busy: boolean | null;
+	/**
+	 * The vendor agent behind a foreign (non-omp) session host; absent for an omp session.
+	 * A lister that predates the field ignores it.
+	 */
+	agent?: AgentRef;
 	/** Highest access the registry will hand out for this host. */
 	access: CollabAccess;
 }
@@ -302,6 +308,14 @@ function parseModel(value: unknown): CollabHostSnapshot["model"] | undefined {
 	return { provider, id };
 }
 
+/** The vendor agent of a foreign host's snapshot; a malformed value reads as absent (an omp host). */
+function parseAgent(value: unknown): AgentRef | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const { id, name } = value as Record<string, unknown>;
+	if (typeof id !== "string" || typeof name !== "string") return undefined;
+	return { id, name };
+}
+
 function parseSnapshot(raw: unknown): CollabHostSnapshot | null {
 	if (typeof raw !== "object" || raw === null) return null;
 	const host = raw as Record<string, unknown>;
@@ -324,6 +338,7 @@ function parseSnapshot(raw: unknown): CollabHostSnapshot | null {
 	// (`null`) rather than rejecting an otherwise healthy host.
 	if (host.busy !== undefined && host.busy !== null && typeof host.busy !== "boolean") return null;
 	if (!isAccess(host.access)) return null;
+	const agent = parseAgent(host.agent);
 	return {
 		instanceId: host.instanceId,
 		generation: host.generation,
@@ -338,6 +353,7 @@ function parseSnapshot(raw: unknown): CollabHostSnapshot | null {
 		inputRequired: host.inputRequired,
 		busy: typeof host.busy === "boolean" ? host.busy : null,
 		access: host.access,
+		...(agent === undefined ? {} : { agent }),
 	};
 }
 
@@ -376,7 +392,7 @@ function boundMessage(message: string): string {
 }
 
 /** The snapshot as sent on the wire: every free-form string bounded to {@link MAX_SNAPSHOT_FIELD_CHARS}. */
-function boundSnapshot<T extends Pick<CollabHostSnapshot, "sessionId" | "sessionName" | "cwd" | "model">>(
+function boundSnapshot<T extends Pick<CollabHostSnapshot, "sessionId" | "sessionName" | "cwd" | "model" | "agent">>(
 	snapshot: T,
 ): T {
 	return {
@@ -387,6 +403,9 @@ function boundSnapshot<T extends Pick<CollabHostSnapshot, "sessionId" | "session
 		model: snapshot.model
 			? { provider: boundField(snapshot.model.provider), id: boundField(snapshot.model.id) }
 			: null,
+		...(snapshot.agent
+			? { agent: { id: boundField(snapshot.agent.id), name: boundField(snapshot.agent.name) } }
+			: {}),
 	};
 }
 

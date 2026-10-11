@@ -12,7 +12,7 @@
 import * as fs from "node:fs/promises";
 import type { SessionSearchHit } from "../src/lib/companion";
 import { isRecord } from "../src/tool-render/util";
-import { recentSessionFiles } from "./companion-sessions";
+import { foreignTranscriptsDir, recentSessionFiles, sessionFilesOf } from "./companion-sessions";
 
 export const MIN_QUERY_CHARS = 2;
 const MAX_QUERY_CHARS = 200;
@@ -230,7 +230,7 @@ function matchPassage(passage: Passage, terms: readonly string[]): string | null
 }
 
 export interface SessionSearchOptions {
-	/** `<config>/agent/sessions`. */
+	/** `<config>/agent/sessions`; the transcripts of vendor agent sessions beside it (see `foreignTranscriptsDir`) are searched too. */
 	sessionsDir: string;
 	budgetMs?: number;
 	maxFiles?: number;
@@ -288,7 +288,13 @@ export function createSessionSearch(options: SessionSearchOptions): SessionSearc
 			const results: SearchHit[] = [];
 			let truncated = false;
 
-			for (const { file } of await recentSessionFiles(options.sessionsDir, MAX_LISTED_FILES)) {
+			const files = [
+				...(await recentSessionFiles(options.sessionsDir, MAX_LISTED_FILES)),
+				...(await sessionFilesOf(foreignTranscriptsDir(options.sessionsDir))),
+			]
+				.sort((a, b) => b.mtime - a.mtime)
+				.slice(0, MAX_LISTED_FILES);
+			for (const { file } of files) {
 				if (expired()) {
 					truncated = true;
 					break;

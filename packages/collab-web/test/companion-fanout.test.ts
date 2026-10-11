@@ -204,6 +204,49 @@ describe("startFanout", () => {
 			}),
 		).rejects.toThrow("not a git repository");
 	});
+
+	it("mixes omp models and vendor agents: each run records its agent, and the launch knows the group", async () => {
+		const claude = { id: "claude", name: "Claude Code" };
+		const models = [
+			"anthropic/claude-sonnet-4-5",
+			"agent:claude/sonnet",
+			"agent:opencode/anthropic/claude-sonnet-4-5[1m]",
+		];
+		const launched: { model: string; group: string }[] = [];
+		const group = await startFanout(parseFanoutRequest({ cwd: repo, prompt: "p", models, budgetUsd: 3 }), {
+			worktreesDir: worktrees,
+			agentRef: model =>
+				model.startsWith("agent:claude/")
+					? claude
+					: model.startsWith("agent:")
+						? { id: "opencode", name: "OpenCode" }
+						: undefined,
+			launch: async input => {
+				launched.push({ model: input.model, group: input.group });
+				// Concurrent launches finish in any order: the id follows the model, not the arrival.
+				return `mix${models.indexOf(input.model) + 1}`;
+			},
+		});
+		expect(group.runs.map(r => [r.model, r.agent?.id])).toEqual([
+			[models[0], undefined],
+			[models[1], "claude"],
+			[models[2], "opencode"],
+		]);
+		expect(launched.map(l => l.model).sort()).toEqual([...models].sort());
+		expect(new Set(launched.map(l => l.group))).toEqual(new Set([group.id]));
+		// Every member gets its share of the budget, vendor agent or not.
+		expect(group.runs.map(r => r.maxCostUsd)).toEqual([1, 1, 1]);
+		const byHost = hostFanout([group]);
+		expect(byHost.mix1).toEqual({ group: group.id, model: models[0] });
+		expect(byHost.mix2).toEqual({ group: group.id, model: models[1], agent: claude });
+		const compare = await compareGroup(group, {
+			hosts: () => [],
+			cost: () => null,
+			review: async () => null,
+			runs: () => [],
+		});
+		expect(compare.runs.map(r => r.agent?.id)).toEqual([undefined, "claude", "opencode"]);
+	});
 });
 
 describe("keepRun and compareGroup", () => {
@@ -410,6 +453,34 @@ describe("group storage", () => {
 		expect((await loadGroups(file)).map(g => g.id)).toEqual(["ok"]);
 		await fs.writeFile(file, "not json");
 		expect(await loadGroups(file)).toEqual([]);
+	});
+
+	it("keeps the agent of a run, and reads groups saved before there were agents", async () => {
+		const file = path.join(tmp, "fanout-agents.json");
+		const group: FanoutGroup = {
+			id: "ag1",
+			root: repo,
+			prompt: "p",
+			createdAt: 1,
+			runs: [
+				{ model: "a/1", branch: "b1", path: "/x1", instanceId: "i1" },
+				{
+					model: "agent:codex/",
+					agent: { id: "codex", name: "Codex" },
+					branch: "b2",
+					path: "/x2",
+					instanceId: "i2",
+				},
+			],
+		};
+		await saveGroups(file, [group]);
+		const [loaded] = await loadGroups(file);
+		expect(loaded?.runs.map(r => r.agent)).toEqual([undefined, { id: "codex", name: "Codex" }]);
+		await fs.writeFile(
+			file,
+			JSON.stringify({ groups: [{ ...group, runs: [{ ...group.runs[1], agent: { id: 5 } }] }] }),
+		);
+		expect((await loadGroups(file))[0]?.runs[0]?.agent).toBeUndefined();
 	});
 });
 

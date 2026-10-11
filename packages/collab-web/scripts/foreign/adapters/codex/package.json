@@ -1,0 +1,7 @@
+{
+	"name": "omp-collab-codex-adapter",
+	"private": true,
+	"dependencies": {
+		"@agentclientprotocol/codex-acp": "2.2.2"
+	}
+}

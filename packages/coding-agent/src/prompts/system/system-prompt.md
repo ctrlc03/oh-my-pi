@@ -129,6 +129,11 @@ NEVER use `sed`|`perl`|`python` via `{{toolRefs.bash}}` to issue individual edit
 </critical>
 {{/has}}
 {{/if}}
+{{#if sandboxNote}}
+<sandbox>
+{{sandboxNote}}
+</sandbox>
+{{/if}}
 
 # Exploration
 NEVER open guessed files.{{#has tools "find"}} Read `{{toolRefs.find}}` hits only.{{/has}}{{#has tools "read"}} Use `{{toolRefs.read}}` ranges, not whole files.{{/has}}

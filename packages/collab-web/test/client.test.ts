@@ -999,6 +999,79 @@ describe("GuestClient context items", () => {
 	});
 });
 
+describe("GuestClient inspect", () => {
+	it("keeps the host's latest timeline and request preview, drops both on reconnect, and sends the commands as given", () => {
+		const sent: GuestFrame[] = [];
+		const sendSpy = vi.spyOn(CollabSocket.prototype, "send").mockImplementation((frame: GuestFrame) => {
+			sent.push(frame);
+		});
+		try {
+			const client = liveClient();
+			expect(client.getSnapshot().inspect).toBeNull();
+			expect(client.getSnapshot().requestPreview).toBeNull();
+			const rows = [
+				{
+					seq: 1,
+					entryId: "a1",
+					at: 1_700_000_000_000,
+					model: "anthropic/claude-sonnet-4-5",
+					ttftMs: 800,
+					durationMs: 3_000,
+					input: 100,
+					output: 50,
+					cacheRead: 900,
+					cacheWrite: 0,
+					cost: 0.01,
+					stopReason: "stop",
+					injected: [{ kind: "prompt" as const, label: "Your prompt", tokens: 12, text: "hi" }],
+				},
+			];
+			client.applyFrameForTest({ t: "inspect", rows, total: 5 });
+			const first = client.getSnapshot().inspect;
+			expect(first?.rows).toEqual(rows);
+			expect(first?.total).toBe(5);
+			// Every reply is a new object, so a consumer waiting on one sees each.
+			client.applyFrameForTest({ t: "inspect", rows, total: 5 });
+			expect(client.getSnapshot().inspect).not.toBe(first);
+
+			const preview = {
+				source: "request" as const,
+				model: "anthropic/claude-sonnet-4-5",
+				tokens: 1_200,
+				messages: 3,
+				tools: 2,
+				text: '{"messages":[]}',
+				truncated: true,
+				note: "hooks are not run",
+			};
+			client.applyFrameForTest({ t: "request-preview", preview });
+			expect(client.getSnapshot().requestPreview?.preview).toEqual(preview);
+
+			client.sendSessionCommand("inspect");
+			client.sendSessionCommand("preview-request");
+			expect(sent).toEqual([
+				{ t: "session-cmd", cmd: "inspect" },
+				{ t: "session-cmd", cmd: "preview-request" },
+			]);
+
+			const connectSpy = vi
+				.spyOn(CollabSocket.prototype, "connect")
+				.mockImplementation(function (this: CollabSocket) {
+					this.onOpen?.();
+				});
+			try {
+				client.connect();
+			} finally {
+				connectSpy.mockRestore();
+			}
+			expect(client.getSnapshot().inspect).toBeNull();
+			expect(client.getSnapshot().requestPreview).toBeNull();
+		} finally {
+			sendSpy.mockRestore();
+		}
+	});
+});
+
 describe("GuestClient file restore", () => {
 	const restored: HostFrame = {
 		t: "files-restored",
@@ -1067,5 +1140,40 @@ describe("GuestClient turn undo", () => {
 		expect(client.getSnapshot().turnUndo).not.toBe(undone);
 		client.applyFrameForTest({ t: "turn-undone", kind: "redo", staleText: "fix it" });
 		expect(client.getSnapshot().turnUndo).toMatchObject({ kind: "redo", staleText: "fix it" });
+	});
+});
+
+describe("GuestClient turn diff and receipts", () => {
+	it("keeps the latest turn-diff and receipts frames and drops them on a new connection", () => {
+		const client = liveClient();
+		expect(client.getSnapshot().turnDiff).toBeNull();
+		expect(client.getSnapshot().receipts).toBeNull();
+		client.applyFrameForTest({
+			t: "turn-diff",
+			scope: "turn",
+			entryId: "u1",
+			files: [{ path: "a.ts", status: "added", added: 2, removed: 0, diff: "@@ -0,0 +1,2 @@\n+a\n+b\n" }],
+			omitted: 3,
+		});
+		expect(client.getSnapshot().turnDiff).toMatchObject({
+			scope: "turn",
+			entryId: "u1",
+			spansTurns: 1,
+			omitted: 3,
+			reason: null,
+		});
+		client.applyFrameForTest({ t: "turn-diff", scope: "session", entryId: null, files: null, reason: "no snapshot" });
+		expect(client.getSnapshot().turnDiff).toMatchObject({ scope: "session", files: null, reason: "no snapshot" });
+		client.applyFrameForTest({
+			t: "receipts",
+			receipts: {
+				turns: 1,
+				files: [],
+				commands: [{ command: "ls", exitCode: 0, source: "agent", turn: 1, promptId: "u1" }],
+				approvals: [],
+				subagents: [],
+			},
+		});
+		expect(client.getSnapshot().receipts?.commands).toHaveLength(1);
 	});
 });

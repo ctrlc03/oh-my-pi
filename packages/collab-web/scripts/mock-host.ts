@@ -11,6 +11,9 @@
  * `session-cmd` (model / thinking switches, compact, rename) — exactly the frames a
  * real `omp /collab` host emits.
  *
+ * A writer's prompt `approve [command]` raises a tool-approval ask with the always-allow choices (feature
+ * `approval-grants`, see mock-approvals.ts); `MOCK_GUESTS_SAVE_APPROVALS=1` lets guests save project rules.
+ *
  * `--local-relay` also serves the room on a second loopback relay (default: the port after
  * `--port`) and puts it in the links as `?local=`, the way omp does with `collab.localRelayUrl`:
  * a guest on this computer joins through it and falls back to the main relay when it is down.
@@ -22,6 +25,7 @@ import type {
 	ContextItemRow,
 	HostFrame,
 	ImageContent,
+	PromptMention,
 	RewindFilesPlan,
 	SessionCommand,
 	SessionEntry,
@@ -45,6 +49,8 @@ import {
 	fixtureEntries,
 	fixtureHeader,
 	fixtureHostOnlyCommands,
+	fixtureInspectRows,
+	fixtureRequestPreview,
 	fixtureResumeChoices,
 	fixtureModel,
 	fixtureModels,
@@ -57,6 +63,11 @@ import {
 	subagentTranscriptJsonl,
 } from "./fixture";
 import { type LocalRelay, startLocalRelay } from "./local-relay";
+import { MockCache } from "./mock-cache";
+import { MockApprovals } from "./mock-approvals";
+import { createMockLimits } from "./mock-usage-limits";
+import { MockPrWatch } from "./mock-pr-watch";
+import { mockReceipts, mockSessionDiff, mockTurnDiff } from "./mock-turn-diff";
 
 const DEFAULT_PORT = 7466;
 /** Local relay peer ids are shifted so both relays share one id space, as omp's host does. */
@@ -103,6 +114,46 @@ const localPort = parseLocalRelayPort(argv, port);
 /** `--max-cost <usd>`: report a spend cap in the state; the mock "spends" one cent per entry, so a low cap shows the capped banner. */
 const maxCostAt = argv.indexOf("--max-cost");
 const mockMaxCostUsd = maxCostAt >= 0 ? Number(argv[maxCostAt + 1]) : Number.NaN;
+/** `--limited [seconds]`: the open session is at its Claude usage limit until that many seconds from now (default 90 min). */
+const limitedAt = argv.indexOf("--limited");
+const mockLimitedSeconds = limitedAt >= 0 ? Number(argv[limitedAt + 1]) || 5400 : Number.NaN;
+/** Watched pull requests act out a scripted timeline (feature `pr-watch`): a failing check wakes the session with a log, a comment wakes it again, a merge ends the watch. */
+const mockPrWatch = new MockPrWatch({
+	onState: () => broadcastState(),
+	notice: (level, message) => notice(level, message),
+	busy: () => streaming || isReplaying(),
+	wake: text => {
+		liveEntrySeq++;
+		appendEntry({
+			id: `live-${liveEntrySeq}`,
+			parentId: lastEntryId,
+			timestamp: new Date().toISOString(),
+			type: "custom_message",
+			customType: "pr-watch",
+			content: text,
+			display: false,
+		});
+		startReplay(undefined);
+	},
+});
+setInterval(() => mockPrWatch.tick(), 2_000).unref();
+const mockLimits = createMockLimits({
+	limitedSeconds: mockLimitedSeconds,
+	limitedProvider: "anthropic",
+	provider: () => currentModel.provider,
+	onState: () => broadcastState(),
+	notice: (level, message) => notice(level, message),
+	sendContinue: () => {
+		appendPromptEntry("continue", undefined, "usage limit reset");
+		if (isReplaying()) {
+			queuedPrompts++;
+			queuedModels.push(undefined);
+			broadcastState();
+			return;
+		}
+		startReplay(undefined);
+	},
+});
 const relay = startLocalRelay(port);
 let localRelay: LocalRelay | null =
 	localPort === null ? null : startLocalRelay(localPort, { refuseMissingRooms: true });
@@ -116,6 +167,16 @@ const viewLink = formatCollabLink(relay.url, roomId, rawKey, undefined, localRel
 
 // ── mutable session state ────────────────────────────────────────────────────
 
+/** Prompt-cache numbers per settled turn, with a cause for each miss (feature `cache-stats`). */
+const mockCache = new MockCache();
+/** The tool-approval prompt a guest triggers by typing `approve [command]` (feature `approval-grants`). */
+const mockApprovals = new MockApprovals({
+	sendWriters: frame => {
+		for (const peer of peers.keys()) if (!readOnlyPeers.has(peer)) sendFrame(frame, peer);
+	},
+	notice,
+	guestsCanSaveProject: process.env.MOCK_GUESTS_SAVE_APPROVALS === "1",
+});
 const entries: SessionEntry[] = [...fixtureEntries];
 const agents: AgentSnapshot[] = fixtureAgents.map(agent => ({ ...agent }));
 const peers = new Map<number, string>();
@@ -139,7 +200,16 @@ let queuedModels: (string | undefined)[] = [];
 /** Model id the running scripted turn answers on when its prompt chose one. */
 let replayModel: string | undefined;
 /** Follow-up prompts held until the running replay ends, oldest first. */
-let followUps: { text: string; images: ImageContent[] | undefined; from: string; model?: string }[] = [];
+/** `text` is the chip as typed; `content` is what the transcript gets (the text plus any mention context). */
+let followUps: {
+	id: string;
+	text: string;
+	content: string;
+	images: ImageContent[] | undefined;
+	from: string;
+	model?: string;
+}[] = [];
+let followUpSeq = 0;
 let turnSeq = 0;
 let liveEntrySeq = 0;
 let replayQueue: ScriptedStep[] = [];
@@ -186,12 +256,16 @@ function buildState(): SessionState {
 		isStreaming: streaming,
 		queuedMessageCount: queuedPrompts + followUps.length,
 		followUps: followUps.map(followUp => followUp.text),
+		followUpIds: followUps.map(followUp => followUp.id),
 		redoTurns: liveRedoSteps().length,
 		sessionName,
 		cwd: fixtureHeader.cwd,
 		model: currentModel,
 		thinkingLevel,
 		profile,
+		limited: mockLimits.limited(),
+		cache: mockCache.snapshot(),
+		prWatch: mockPrWatch.list(),
 		thinkingLevels: fixtureThinkingLevels[`${currentModel.provider}/${currentModel.id}`] ?? ["off"],
 		contextUsage: {
 			tokens,
@@ -252,7 +326,7 @@ function scheduleStep(): void {
 		}
 		const next = followUps.shift();
 		if (next !== undefined) {
-			appendPromptEntry(next.text, next.images, next.from);
+			appendPromptEntry(next.content, next.images, next.from);
 			startReplay(next.model);
 		}
 	}, STEP_INTERVAL_MS);
@@ -287,6 +361,7 @@ function applyStep(rawStep: ScriptedStep): void {
 			break;
 		case "state":
 			streaming = step.streaming;
+			if (!step.streaming) mockCache.settle(replayModel ?? currentModel.id);
 			broadcastState();
 			break;
 	}
@@ -342,15 +417,25 @@ function handleHello(name: string, proto: number, token: string | undefined, fro
 				"rewind-files",
 				"prompt-model",
 				"context-items",
+				"inspect",
 				"spend-cap",
 				"undo",
 				"profiles",
+				"usage-limits",
+				"cache-stats",
+				"queue-edit",
+				"mentions",
+				"approval-grants",
+				"pr-watch",
+				"turn-diff",
+				"receipts",
 			],
 			commands: writer ? fixtureCommands : undefined,
 		},
 		fromPeer,
 	);
 	sendFrame({ t: "snapshot-chunk", entries: [...entries], final: true }, fromPeer);
+	if (writer) sendFrame({ t: "usage-limits", windows: mockLimits.windows(), fetchedAt: Date.now() }, fromPeer);
 	console.log(`mock-host: ${cleanName} joined (peer ${fromPeer})${writer ? "" : " read-only"}`);
 	broadcastState();
 }
@@ -436,7 +521,20 @@ function sendContextItems(fromPeer: number, pruned?: { entries: number; tokensFr
 	);
 }
 
-function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer: number, restoreFiles = false): void {
+/** What a `session-cmd` frame carries besides its command and `arg`. */
+interface SessionCmdExtra {
+	id?: string;
+	index?: number;
+	mentions?: PromptMention[];
+}
+
+function handleSessionCmd(
+	cmd: SessionCommand,
+	arg: string | undefined,
+	fromPeer: number,
+	restoreFiles = false,
+	extra: SessionCmdExtra = {},
+): void {
 	const who = peerName(fromPeer);
 	switch (cmd) {
 		case "model": {
@@ -446,6 +544,7 @@ function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer
 				return;
 			}
 			currentModel = next;
+			mockCache.note("model");
 			const levels = fixtureThinkingLevels[`${next.provider}/${next.id}`] ?? ["off"];
 			if (!levels.includes(thinkingLevel))
 				thinkingLevel = levels.includes("medium") ? "medium" : (levels[0] ?? "off");
@@ -471,6 +570,7 @@ function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer
 				return;
 			}
 			thinkingLevel = arg;
+			mockCache.note("thinking");
 			liveEntrySeq++;
 			appendEntry({
 				id: `live-${liveEntrySeq}`,
@@ -494,7 +594,18 @@ function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer
 			broadcastState();
 			break;
 		}
+		case "pr-watch": {
+			const failure = mockPrWatch.watch(arg);
+			if (failure !== undefined) sendFrame({ t: "error", message: `pr-watch: ${failure}` }, fromPeer);
+			break;
+		}
+		case "pr-unwatch": {
+			const failure = mockPrWatch.unwatch(arg);
+			if (failure !== undefined) sendFrame({ t: "error", message: `pr-unwatch: ${failure}` }, fromPeer);
+			break;
+		}
 		case "compact":
+			mockCache.note("compaction");
 			notice("info", arg ? `${who} compacted the context (${arg})` : `${who} compacted the context`);
 			break;
 		case "rename": {
@@ -505,6 +616,41 @@ function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer
 			}
 			sessionName = name;
 			notice("info", `${who} renamed the session to "${name}"`);
+			broadcastState();
+			break;
+		}
+		case "queue-edit":
+		case "queue-move":
+		case "queue-steer": {
+			const at = followUps.findIndex(followUp => followUp.id === extra.id);
+			if (at < 0) {
+				sendFrame({ t: "error", message: `${cmd}: that follow-up is no longer queued` }, fromPeer);
+				return;
+			}
+			const item = followUps[at];
+			if (cmd === "queue-edit") {
+				const text = arg ?? "";
+				if (text.trim() === "" || text.trimStart().startsWith("/")) {
+					sendFrame({ t: "error", message: "queue-edit: a queued prompt must be plain text" }, fromPeer);
+					return;
+				}
+				item.text = text;
+				item.content = text + mentionContext(extra.mentions);
+			} else if (cmd === "queue-move") {
+				const index = extra.index;
+				if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
+					sendFrame({ t: "error", message: "queue-move: no position given" }, fromPeer);
+					return;
+				}
+				followUps.splice(at, 1);
+				followUps.splice(Math.min(index, followUps.length), 0, item);
+			} else {
+				// A steer joins the running turn: its prompt lands in the transcript now and the turn goes on after.
+				followUps.splice(at, 1);
+				appendPromptEntry(item.content, item.images, item.from);
+				queuedPrompts++;
+				queuedModels.push(item.model);
+			}
 			broadcastState();
 			break;
 		}
@@ -597,8 +743,44 @@ function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer
 			broadcastState();
 			break;
 		}
+		case "usage-limits":
+			sendFrame({ t: "usage-limits", windows: mockLimits.windows(), fetchedAt: Date.now() }, fromPeer);
+			break;
+		case "resume-at-reset": {
+			const armed = mockLimits.arm();
+			if (!armed.ok) {
+				sendFrame({ t: "error", message: `resume-at-reset: ${armed.error}` }, fromPeer);
+				return;
+			}
+			notice("info", `${who} will continue the session when the usage limit resets`);
+			break;
+		}
+		case "resume-cancel":
+			if (mockLimits.cancel()) notice("info", `${who} cancelled the resume at the usage limit reset`);
+			else sendFrame({ t: "error", message: "resume-cancel: no resume is scheduled" }, fromPeer);
+			break;
+		case "turn-diff":
+			sendFrame(mockTurnDiff(entries, arg), fromPeer);
+			break;
+		case "session-diff":
+			sendFrame(mockSessionDiff(entries), fromPeer);
+			break;
+		case "receipts":
+			sendFrame(mockReceipts(entries), fromPeer);
+			break;
 		case "context-items":
 			sendContextItems(fromPeer);
+			break;
+		case "inspect": {
+			const rows = fixtureInspectRows(Date.now());
+			sendFrame({ t: "inspect", rows, total: rows.length }, fromPeer);
+			break;
+		}
+		case "preview-request":
+			sendFrame(
+				{ t: "request-preview", preview: fixtureRequestPreview(`${currentModel.provider}/${currentModel.id}`) },
+				fromPeer,
+			);
 			break;
 		case "context-prune": {
 			const item = contextItems.find(candidate => candidate.id === arg);
@@ -690,6 +872,20 @@ function runMockSlashCommand(name: string, args: string, fromPeer: number): bool
 	return true;
 }
 
+/** The block the real host appends for a prompt's mentions, minus the transcript lookups. */
+function mentionContext(mentions: PromptMention[] | undefined): string {
+	const lines = (mentions ?? []).flatMap(mention =>
+		mention.kind === "pr"
+			? [`- #${mention.number} is a pull request titled "${mention.title}": ${mention.url}`]
+			: [
+					`- @session "${mention.title}" (id ${mention.id}) is another omp session: try \`read history://${mention.id}\``,
+				],
+	);
+	return lines.length === 0
+		? ""
+		: `\n\n<referenced-context>\nThe message above refers to:\n${lines.join("\n")}\n</referenced-context>`;
+}
+
 function appendPromptEntry(text: string, images: ImageContent[] | undefined, from: string): void {
 	liveEntrySeq++;
 	appendEntry({
@@ -715,8 +911,15 @@ function handlePrompt(
 	fromPeer: number,
 	promptModel?: string,
 	promptThinking?: string,
+	mentions?: PromptMention[],
 ): void {
 	if (refuseReadOnly(fromPeer)) return;
+	if (mockApprovals.prompt(text)) return;
+	const limitedNow = mockLimits.limited();
+	if (limitedNow !== undefined) {
+		notice("error", `usage limit reached on ${limitedNow.provider}: switch model or wait for the reset`);
+		return;
+	}
 	// Like the real host: only the listed commands run for a guest; other builtins stay on the host.
 	const typed = /^\/(\S+)/.exec(text)?.[1];
 	if (typed !== undefined && Object.hasOwn(fixtureHostOnlyCommands, typed)) {
@@ -751,11 +954,18 @@ function handlePrompt(
 	}
 	if (deliver === "follow-up" && isReplaying()) {
 		// Like the real host: no transcript entry until the turn that carries it starts.
-		followUps.push({ text, images, from: peerName(fromPeer), model: chosenModel });
+		followUps.push({
+			id: `f${++followUpSeq}`,
+			text,
+			content: text + mentionContext(mentions),
+			images,
+			from: peerName(fromPeer),
+			model: chosenModel,
+		});
 		broadcastState();
 		return;
 	}
-	appendPromptEntry(text, images, peerName(fromPeer));
+	appendPromptEntry(text + mentionContext(mentions), images, peerName(fromPeer));
 	if (isReplaying()) {
 		queuedPrompts++;
 		queuedModels.push(chosenModel);
@@ -796,13 +1006,22 @@ function handleFrame(frame: WireFrame, fromPeer: number): void {
 			handleHello(frame.name, frame.proto, frame.writeToken, fromPeer);
 			break;
 		case "prompt":
-			handlePrompt(frame.text, frame.images, frame.deliver, fromPeer, frame.model, frame.thinking);
+			handlePrompt(frame.text, frame.images, frame.deliver, fromPeer, frame.model, frame.thinking, frame.mentions);
+			break;
+		case "ui-response":
+			if (!refuseReadOnly(fromPeer)) mockApprovals.answer(frame.reqId, frame.value);
 			break;
 		case "abort":
 			handleAbort(fromPeer);
 			break;
 		case "session-cmd":
-			if (!refuseReadOnly(fromPeer)) handleSessionCmd(frame.cmd, frame.arg, fromPeer, frame.restoreFiles === true);
+			if (!refuseReadOnly(fromPeer)) {
+				handleSessionCmd(frame.cmd, frame.arg, fromPeer, frame.restoreFiles === true, {
+					id: frame.id,
+					index: frame.index,
+					mentions: frame.mentions,
+				});
+			}
 			break;
 		case "agent-cmd":
 			handleAgentCmd(frame.cmd, frame.agentId, fromPeer);

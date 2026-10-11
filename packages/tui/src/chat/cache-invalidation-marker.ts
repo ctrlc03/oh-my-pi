@@ -15,6 +15,19 @@ const MIN_CACHE_FOOTPRINT = 2048;
 export interface CacheInvalidation {
 	/** Prompt tokens the cold turn had to (re)process instead of reading from cache. */
 	reprocessedTokens: number;
+	/** Short label for what broke the prefix (`system prompt changed`), when the host could attribute it. */
+	cause?: string;
+}
+
+/**
+ * Cache hit share of one request as a percentage: `cacheRead` over every prompt
+ * token (`cacheRead + cacheWrite + input`). DeepSeek reports its miss as `input`
+ * with no `cacheWrite`, Anthropic splits it between both; the sum is the
+ * denominator either way. Undefined for a request with no prompt tokens.
+ */
+export function cacheHitPct(usage: Pick<Usage, "input" | "cacheRead" | "cacheWrite">): number | undefined {
+	const total = usage.cacheRead + usage.cacheWrite + usage.input;
+	return total > 0 ? (usage.cacheRead / total) * 100 : undefined;
 }
 
 /**
@@ -82,7 +95,8 @@ export class CacheInvalidationMarkerComponent extends MessageDividerComponent {
 				const icon = theme.icon.cacheMiss;
 				const head = icon ? `${icon} cache miss` : "cache miss";
 				const tokens = info.reprocessedTokens;
-				return tokens > 0 ? `${head} ${theme.sep.dot.trim()} ${formatNumber(tokens)} tokens` : head;
+				const sized = tokens > 0 ? `${head} ${theme.sep.dot.trim()} ${formatNumber(tokens)} tokens` : head;
+				return info.cause ? `${sized} ${theme.sep.dot.trim()} ${info.cause}` : sized;
 			},
 			labelColor: "muted",
 			ruleColor: "dim",
@@ -90,10 +104,13 @@ export class CacheInvalidationMarkerComponent extends MessageDividerComponent {
 			role: "omp.marker.cache-miss",
 			native: {
 				icon: "database",
-				label: () =>
-					info.reprocessedTokens > 0
-						? `Cache miss · ${formatNumber(info.reprocessedTokens)} tokens`
-						: "Cache miss",
+				label: () => {
+					const sized =
+						info.reprocessedTokens > 0
+							? `Cache miss · ${formatNumber(info.reprocessedTokens)} tokens`
+							: "Cache miss";
+					return info.cause ? `${sized} · ${info.cause}` : sized;
+				},
 			},
 			// Too narrow to frame — preserve the legacy bare label.
 			truncateWhenNarrow: false,

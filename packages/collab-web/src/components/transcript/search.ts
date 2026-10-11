@@ -13,7 +13,8 @@ function contentText(content: string | readonly (TextContent | ImageContent)[]):
 	return text;
 }
 
-function entryText(entry: SessionEntry): string {
+/** The prompt or reply text of `entry` (empty for anything else). */
+export function entryText(entry: SessionEntry): string {
 	if (entry.type === "custom_message")
 		return entry.display || entry.customType === "collab-prompt" ? contentText(entry.content) : "";
 	if (entry.type !== "message") return "";

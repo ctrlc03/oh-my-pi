@@ -6,6 +6,7 @@ import { cfgCompactionExperimentalContextManagement } from "../session/context-s
 import { cfgEvalJs, cfgEvalPy } from "../eval/settings";
 import { cfgIdaAvailable } from "../ida/install";
 import { cfgLspEnabled } from "../lsp/settings";
+import { cfgPrWatchEnabled } from "../pr-watch/settings";
 import { cfgTaskMaxRecursionDepth } from "../task/settings";
 
 const EMPTY_STRING_ARRAY: string[] = [];
@@ -1081,6 +1082,7 @@ export const cfgBuiltinToolGates = combine({
 	glob: cfgGlobEnabled,
 	grep: cfgGrepEnabled,
 	ida: cfgIdaAvailable,
+	prWatch: cfgPrWatchEnabled,
 	launch: cfgLaunchEnabled,
 	lsp: cfgLspEnabled,
 	security: cfgSecurityEnabled,

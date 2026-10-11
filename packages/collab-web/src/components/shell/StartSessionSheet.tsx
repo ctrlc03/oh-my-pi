@@ -1,4 +1,14 @@
-import { ChevronLeft, FolderOpen, GitBranch, LoaderCircle, Plus, RefreshCw, ShieldCheck, X } from "lucide-react";
+import {
+	ChevronLeft,
+	FolderOpen,
+	GitBranch,
+	GitCompareArrows,
+	LoaderCircle,
+	Plus,
+	RefreshCw,
+	ShieldCheck,
+	X,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CompanionClient, RecentFolder } from "../../lib/companion";
@@ -7,12 +17,16 @@ import { setOpenIntent } from "../../lib/inbox";
 import { type RequestState, useRequest } from "../../lib/use-request";
 import { useOpenElsewhere } from "./OpenElsewhere";
 import { QuickReplies } from "./QuickReplies";
+import type { FanoutGroup } from "../../lib/fanout";
+import { FanoutCompareSheet, FanoutPicker } from "./FanoutSheet";
 import { Sheet } from "./Sheet";
 
 export interface StartSessionSheetProps {
 	client: CompanionClient;
 	/** The companion can start sandboxed sessions: offer the toggle. */
 	canSandbox: boolean;
+	/** The companion can start one prompt on several models in separate worktrees: offer "Compare models". */
+	canFanout?: boolean;
 	/** Join the started host; rejects with a readable message. */
 	onOpen(instanceId: string): Promise<void>;
 	onClose(): void;
@@ -32,7 +46,13 @@ function folderName(cwd: string): string {
 }
 
 /** Pick a folder omp has run in, then start a new session there or resume one. */
-export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: StartSessionSheetProps): ReactNode {
+export function StartSessionSheet({
+	client,
+	canSandbox,
+	canFanout = false,
+	onOpen,
+	onClose,
+}: StartSessionSheetProps): ReactNode {
 	const load = useCallback(() => client.requestFolders(), [client]);
 	const { state, reload } = useRequest(load);
 	const [folder, setFolder] = useState<RecentFolder | null>(null);
@@ -42,6 +62,8 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 	const [branch, setBranch] = useState("");
 	const [prompt, setPrompt] = useState("");
 	const [error, setError] = useState<string | null>(null);
+	const [fan, setFan] = useState(false);
+	const [group, setGroup] = useState<FanoutGroup | null>(null);
 	const openElsewhere = useOpenElsewhere();
 	const closedRef = useRef(false);
 	useEffect(() => {
@@ -75,6 +97,9 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 			setStarting(null);
 		}
 	};
+
+	if (group !== null)
+		return <FanoutCompareSheet client={client} groupId={group.id} onOpen={onOpen} onClose={onClose} />;
 
 	return (
 		<Sheet label="start a session" onClose={onClose}>
@@ -139,7 +164,7 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 							className="sh-input sh-input-mono"
 							value={branch}
 							onChange={e => setBranch(e.currentTarget.value)}
-							placeholder="branch name (default omp/<date>-<id>)"
+							placeholder="branch name (default <prefix><date>-<id>)"
 							aria-label="worktree branch name"
 							autoCapitalize="off"
 							autoCorrect="off"
@@ -158,19 +183,43 @@ export function StartSessionSheet({ client, canSandbox, onOpen, onClose }: Start
 						/>
 					</label>
 					<QuickReplies disabled={false} onPick={text => setPrompt(prev => (prev ? `${prev}\n${text}` : text))} />
-					<button
-						type="button"
-						className="sh-btn sh-btn-primary sh-start-new"
-						onClick={() =>
-							void start({
-								cwd: folder.cwd,
-								sandboxed,
-								worktree: worktree ? { branch: branch.trim() || undefined } : undefined,
-							})
-						}
-					>
-						<Plus size={16} /> New session
-					</button>
+					{canFanout && (
+						<label className="sh-start-sandbox">
+							<input type="checkbox" checked={fan} onChange={e => setFan(e.currentTarget.checked)} />
+							<span className="sh-start-sandbox-text">
+								<span className="sh-start-sandbox-title">
+									<GitCompareArrows size={14} /> Compare models
+								</span>
+								<span className="sh-field-hint">
+									Run the prompt on 2–4 models at once, each in its own worktree, then keep the best.
+								</span>
+							</span>
+						</label>
+					)}
+					{fan ? (
+						<FanoutPicker
+							client={client}
+							cwd={folder.cwd}
+							prompt={prompt}
+							canSandbox={false}
+							sandboxed={sandboxed}
+							onStarted={setGroup}
+						/>
+					) : (
+						<button
+							type="button"
+							className="sh-btn sh-btn-primary sh-start-new"
+							onClick={() =>
+								void start({
+									cwd: folder.cwd,
+									sandboxed,
+									worktree: worktree ? { branch: branch.trim() || undefined } : undefined,
+								})
+							}
+						>
+							<Plus size={16} /> New session
+						</button>
+					)}
 					{folder.sessions.length > 0 && (
 						<section className="sh-switch-section" aria-label="resume a session">
 							<h2 className="sh-recents-title">Resume</h2>

@@ -14,10 +14,20 @@
  * fragment (`https://web/#pair:<link>&invite=<invite>`) or as plain pasted text.
  */
 
+import type { Schedule, ScheduleInput } from "@oh-my-pi/pi-wire/schedule";
 import { CAN_INFLATE, importRoomKey } from "./codec";
 import { recordEvent } from "./diag-log";
 import { parseCollabLink } from "./link";
-import type { Schedule, ScheduleInput } from "./schedules";
+import type {
+	FanoutCompare,
+	FanoutGroup,
+	FanoutKeepRequest,
+	FanoutKeepResult,
+	FanoutModel,
+	FanoutRequest,
+	HostFanout,
+} from "./fanout";
+import type { OrgDoc } from "./session-org";
 import { CollabSocket } from "./socket";
 import { readJson, writeJson } from "./storage";
 
@@ -32,8 +42,13 @@ const LEGACY_PROBE_MS = 4_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 /** Starting a session waits for omp to boot and publish its room. */
 const START_TIMEOUT_MS = 60_000;
-/** A worktree start also waits for the checkout (up to 60s) before omp boots. */
-const WORKTREE_START_TIMEOUT_MS = 120_000;
+/** A worktree start also waits for the checkout (up to 60s), its setup script (up to 5 minutes) and omp's boot. */
+const WORKTREE_START_TIMEOUT_MS = 420_000;
+/** Writing commit text runs a headless omp; the companion allows it 90 seconds. */
+const GIT_MESSAGE_TIMEOUT_MS = 120_000;
+const GIT_SETTINGS_TIMEOUT_MS = 60_000;
+/** `omp models` loads the model catalog, which may refresh over the network. */
+const FANOUT_MODELS_TIMEOUT_MS = 45_000;
 /** Usage and session listings may wait on a stats sync of every session file. */
 const USAGE_TIMEOUT_MS = 60_000;
 /** Commits wait on hooks and checkout. */
@@ -83,6 +98,8 @@ export interface CompanionHost {
 	relayConnected: boolean;
 	/** Started sandboxed: file tools only, writes confined to `cwd`. Absent from companions that predate it. */
 	sandboxed?: boolean;
+	/** Started by a best-of-N fan-out: the group it belongs to and the model it runs on. */
+	fanout?: HostFanout;
 }
 
 /** An interactive omp process on the computer that is not hosting collab; `share` starts it hosting. */
@@ -169,6 +186,60 @@ export interface GitReview {
 	pr: { number: number; url: string; state: string; title: string } | null;
 	/** The checkout is a linked git worktree. */
 	worktree: boolean;
+}
+
+/** Text for the confirm dialog of "commit, push and open PR". */
+export interface GitText {
+	/** Commit message; empty unless asked for. */
+	commit: string;
+	/** Pull request title; empty unless asked for. */
+	prTitle: string;
+	prBody: string;
+	/** `model`: written by a model. `fallback`: built from the session and the changes, because of `note`. */
+	source: "model" | "fallback";
+	note?: string;
+}
+
+/** How new git worktrees are made and cleaned up, and which model writes commit and pull request text. */
+export interface GitFlowSettings {
+	/** Prepended to generated worktree branch names (`omp/`); may be empty. */
+	branchPrefix: string;
+	/** Absolute folder new worktrees go under; null: the companion's default. */
+	worktreesDir: string | null;
+	/** Shell command run once in each new worktree; a repository's own `.omp/worktree-setup` runs instead only once approved. Empty: none. */
+	setupScript: string;
+	/** `merged`: remove a worktree once its pull request merged; `inactive`: once untouched for `days`. Never one with uncommitted changes or a running omp. */
+	cleanup: { mode: "off" | "merged" | "inactive"; days: number };
+	/** Model id or role (`@smol`) for the text. */
+	messageModel: string;
+}
+
+/** A repository's own `.omp/worktree-setup` and whether the user approved its current content: only then does it run in new worktrees. */
+export interface WorktreeSetupStatus {
+	root: string;
+	/** The script now; null when the repository no longer has a readable one. */
+	script: string | null;
+	hash: string | null;
+	/** The stored approval is of exactly this content. */
+	trusted: boolean;
+	/** Some approval is stored, whether or not it still matches. */
+	approved: boolean;
+}
+
+export interface GitSettingsOptions {
+	settings?: GitFlowSettings;
+	trust?: { root: string; hash: string | null };
+	sweep?: boolean;
+}
+
+export interface GitFlowSettingsReply {
+	settings: GitFlowSettings;
+	/** The folder new worktrees go under now. */
+	worktreesDir: string;
+	/** Worktrees the requested sweep removed. */
+	swept?: string[];
+	/** Repository setup scripts the companion has met: approved ones, and ones a start did not run for lack of approval. */
+	projects: WorktreeSetupStatus[];
 }
 
 export type GithubKind = "issue" | "pr";
@@ -807,6 +878,18 @@ export type CompanionRequest =
 	| { t: "pr-create"; reqId: number; instanceId: string; title: string; body: string; draft?: boolean }
 	/** Remove the linked worktree at `path` when no omp runs in it and it is clean; the branch stays. */
 	| { t: "worktree-remove"; reqId: number; path: string }
+	/** Commit message (`commit`) and / or pull request title and body (`pr`) written by a model from the changes, for the person to edit; answered with `git-message` (needs `canGitFlow`). */
+	| { t: "git-message"; reqId: number; instanceId: string; commit: boolean; pr: boolean }
+	/** Read (no `settings`) or replace the worktree and git flow settings; `trust` approves (`hash` of the script that was shown) or withdraws (`hash` null) a repository's `.omp/worktree-setup`; `sweep` also runs the worktree cleanup now; answered with `git-settings` (needs `canGitFlow`). */
+	| ({ t: "git-settings"; reqId: number } & GitSettingsOptions)
+	/** Models `omp` can run (needs `canFanout`). */
+	| { t: "fanout-models"; reqId: number }
+	/** One prompt on each of `request.models` in new worktrees of `request.cwd`'s repository; answered with `fanout-started` (needs `canFanout`). */
+	| { t: "fanout-start"; reqId: number; request: FanoutRequest }
+	/** Status, cost, changed files and verify result of every session in group `group`. */
+	| { t: "fanout-compare"; reqId: number; group: string }
+	/** Keep a session of a group; with `removeOthers`, end and remove the other worktrees (those with uncommitted changes only with `discardDirty`). */
+	| { t: "fanout-keep"; reqId: number; request: FanoutKeepRequest }
 	/** Spend and token totals across every omp session on the computer. */
 	| { t: "usage"; reqId: number; range: UsageRange }
 	/** Sessions that need input or finished a turn recently. */
@@ -819,6 +902,8 @@ export type CompanionRequest =
 	| { t: "sessions"; reqId: number; limit?: number; q?: string }
 	/** Prompts and replies of every session containing all words of `query` (at least 2 characters), newest first; answered with `session-search` (needs `canSearch`). */
 	| { t: "session-search"; reqId: number; query: string; limit?: number }
+	/** Merge `doc` (the device's pin/snooze/settle document, when given) into the computer's, last writer winning per session; answered with the merged document (needs `sessionOrgRev`). */
+	| { t: "session-org"; reqId: number; doc?: OrgDoc }
 	/** The session's terminal: the screen of the tmux pane running it, plus recent scrollback. */
 	| { t: "pane"; reqId: number; instanceId: string }
 	/** Sessions that changed `path` (absolute, or relative to the repository root) in the session's repository; answered with `sessions`. */
@@ -924,12 +1009,20 @@ export type CompanionReply =
 			canUpload?: boolean;
 			/** The companion can run scheduled prompts. */
 			canSchedule?: boolean;
+			/** Schedules can use cron expressions, intervals and catch-up policies. */
+			canScheduleCron?: boolean;
+			/** The companion answers `git-message` and `git-settings`. */
+			canGitFlow?: boolean;
+			/** The companion can start one prompt on several models in separate worktrees (`fanout-*` requests). */
+			canFanout?: boolean;
 			/** The companion can serve files of a session's repository for download. */
 			canDownload?: boolean;
 			/** The companion can run listed scripts and build targets of a session's repository. */
 			canRun?: boolean;
 			/** The companion answers `session-search`. */
 			canSearch?: boolean;
+			/** Revision of the computer's session organisation (pin, snooze, settle); present when it keeps one. A new number means fetch it again. */
+			sessionOrgRev?: number;
 			/** The companion can transcribe voice recordings, and with which model; absent when it cannot. */
 			transcribe?: TranscribeInfo;
 			/** Power of the computer; absent off macOS and from companions that predate it. */
@@ -964,7 +1057,13 @@ export type CompanionReply =
 	| { t: "schedules"; reqId: number; schedules: Schedule[] }
 	/** One schedule as stored: answers `schedule-save` and `schedule-run-now`. */
 	| { t: "schedule"; reqId: number; schedule: Schedule }
+	| { t: "fanout-models"; reqId: number; models: FanoutModel[] }
+	| { t: "fanout-started"; reqId: number; group: FanoutGroup }
+	| { t: "fanout-compare"; reqId: number; compare: FanoutCompare }
+	| { t: "fanout-kept"; reqId: number; result: FanoutKeepResult }
 	| { t: "review"; reqId: number; review: GitReview }
+	| { t: "git-message"; reqId: number; text: GitText }
+	| ({ t: "git-settings"; reqId: number } & GitFlowSettingsReply)
 	/** The started session is hosting and listed under `instanceId`. */
 	| { t: "started"; reqId: number; instanceId: string }
 	| { t: "usage"; reqId: number; usage: UsageReport }
@@ -973,6 +1072,7 @@ export type CompanionReply =
 	| { t: "pr-alerts"; reqId: number; settings: PrAlertSettings }
 	| { t: "sessions"; reqId: number; sessions: SessionOverview[] }
 	| { t: "session-search"; reqId: number; results: SessionSearchHit[]; truncated: boolean }
+	| { t: "session-org"; reqId: number; doc: OrgDoc; rev: number }
 	| { t: "pane"; reqId: number; pane: PaneCapture }
 	| { t: "codemap"; reqId: number; view: CodemapView }
 	| { t: "codemap-search"; reqId: number; hits: CodemapNode[] }
@@ -1126,12 +1226,20 @@ export interface CompanionSnapshot {
 	canUpload: boolean;
 	/** The companion can run scheduled prompts. */
 	canSchedule: boolean;
+	/** Scheduled runs can repeat on a cron expression or an interval, and catch up after downtime. */
+	canScheduleCron: boolean;
+	/** The companion writes commit and pull request text, and keeps git worktree settings (`git-message`, `git-settings`). */
+	canGitFlow: boolean;
+	/** The companion can start one prompt on several models in separate worktrees. */
+	canFanout: boolean;
 	/** The companion can serve files of a session's repository for download. */
 	canDownload: boolean;
 	/** The companion can run the session repository's scripts and build targets. */
 	canRun: boolean;
 	/** The companion answers `session-search` (message search across sessions). */
 	canSearch: boolean;
+	/** Revision of the computer's session organisation document; null when the companion keeps none. */
+	sessionOrgRev: number | null;
 	/** Voice input on the computer; null when the companion cannot transcribe. */
 	transcribe: TranscribeInfo | null;
 	/** Power of the computer, while the companion reports it. */
@@ -1190,9 +1298,13 @@ export class CompanionClient {
 		canFixIt: false,
 		canUpload: false,
 		canSchedule: false,
+		canScheduleCron: false,
+		canGitFlow: false,
+		canFanout: false,
 		canDownload: false,
 		canRun: false,
 		canSearch: false,
+		sessionOrgRev: null,
 		transcribe: null,
 		power: null,
 		vapidKey: null,
@@ -1410,6 +1522,41 @@ export class CompanionClient {
 		await this.#call({ t: "worktree-remove", path }, "ok", GIT_WRITE_TIMEOUT_MS);
 	}
 
+	/** Commit message and / or pull request text written for the session's changes (needs `canGitFlow`); falls back to a template when the model fails. */
+	async generateGitText(instanceId: string, want: { commit: boolean; pr: boolean }): Promise<GitText> {
+		return (await this.#call({ t: "git-message", instanceId, ...want }, "git-message", GIT_MESSAGE_TIMEOUT_MS)).text;
+	}
+
+	/** The git flow settings; `settings` replaces them first, `trust` approves or withdraws a repository's setup script, `sweep` runs the worktree cleanup now (needs `canGitFlow`). */
+	async gitSettings(options: GitSettingsOptions = {}): Promise<GitFlowSettingsReply> {
+		const {
+			t: _t,
+			reqId: _reqId,
+			...reply
+		} = await this.#call({ t: "git-settings", ...options }, "git-settings", GIT_SETTINGS_TIMEOUT_MS);
+		return reply;
+	}
+
+	/** Models the computer can run, for a fan-out (needs `canFanout`). */
+	async requestFanoutModels(): Promise<FanoutModel[]> {
+		return (await this.#call({ t: "fanout-models" }, "fanout-models", FANOUT_MODELS_TIMEOUT_MS)).models;
+	}
+
+	/** One prompt on each of 2–4 models in separate worktrees; resolves once every session that could start hosts (needs `canFanout`). */
+	async startFanout(request: FanoutRequest): Promise<FanoutGroup> {
+		return (await this.#call({ t: "fanout-start", request }, "fanout-started", WORKTREE_START_TIMEOUT_MS)).group;
+	}
+
+	/** The group's sessions with status, cost, changed files and verify result. */
+	async requestFanoutCompare(group: string): Promise<FanoutCompare> {
+		return (await this.#call({ t: "fanout-compare", group }, "fanout-compare", USAGE_TIMEOUT_MS)).compare;
+	}
+
+	/** Keep one session of a group; optionally remove the other worktrees (never ones with uncommitted changes unless `discardDirty`). */
+	async keepFanoutRun(request: FanoutKeepRequest): Promise<FanoutKeepResult> {
+		return (await this.#call({ t: "fanout-keep", request }, "fanout-kept", GIT_WRITE_TIMEOUT_MS * 2)).result;
+	}
+
 	/** Spend and token totals; the companion may sync its stats database first, so allow it time. */
 	async requestUsage(range: UsageRange): Promise<UsageReport> {
 		return (await this.#call({ t: "usage", range }, "usage", USAGE_TIMEOUT_MS)).usage;
@@ -1439,6 +1586,12 @@ export class CompanionClient {
 	async searchSessions(query: string, limit?: number): Promise<{ results: SessionSearchHit[]; truncated: boolean }> {
 		const reply = await this.#call({ t: "session-search", query, limit }, "session-search", USAGE_TIMEOUT_MS);
 		return { results: reply.results, truncated: reply.truncated };
+	}
+
+	/** Merge this device's session organisation into the computer's and read the result (needs `sessionOrgRev`). */
+	async syncSessionOrg(doc?: OrgDoc): Promise<{ doc: OrgDoc; rev: number }> {
+		const reply = await this.#call({ t: "session-org", doc }, "session-org");
+		return { doc: reply.doc, rev: reply.rev };
 	}
 
 	/** Code map around `focus`; the first request for a repository indexes it, so allow it time. */
@@ -1712,9 +1865,13 @@ export class CompanionClient {
 				canFixIt: frame.canFixIt ?? false,
 				canUpload: frame.canUpload ?? false,
 				canSchedule: frame.canSchedule ?? false,
+				canScheduleCron: frame.canScheduleCron ?? false,
+				canFanout: frame.canFanout ?? false,
 				canDownload: frame.canDownload ?? false,
 				canRun: frame.canRun ?? false,
+				canGitFlow: frame.canGitFlow ?? false,
 				canSearch: frame.canSearch ?? false,
+				sessionOrgRev: frame.sessionOrgRev ?? null,
 				transcribe: frame.transcribe ?? null,
 				power: frame.power ?? null,
 				vapidKey: frame.vapidKey,

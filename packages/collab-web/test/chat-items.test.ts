@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { AssistantMessage, SessionEntry } from "@oh-my-pi/pi-wire";
 import { buildChatItems, type ChatItem } from "../src/components/transcript/chat-items";
+import { asyncResultJobs } from "../src/lib/async-result";
 
 const AT = "2026-07-09T00:00:00Z";
 
@@ -80,5 +81,41 @@ describe("buildChatItems", () => {
 		expect(shape(items)).toEqual(["p1", "tools(c1,c2,c3)*"]);
 		const run = items[1];
 		expect(run?.kind === "tools" && run.calls.map(c => c.pending)).toEqual([false, true, true]);
+	});
+
+	it("keeps background job reports out of the chat view but keeps other displayed messages", () => {
+		const custom = (id: string, customType: string): SessionEntry => ({
+			type: "custom_message",
+			id,
+			parentId: null,
+			timestamp: AT,
+			customType,
+			content: "<task-result>…</task-result>",
+			display: true,
+			details: { jobs: [{ jobId: "FanOut", type: "task", durationMs: 1000 }] },
+		});
+		const entries = [prompt("p1"), custom("j1", "async-result"), custom("n1", "note")];
+		expect(shape(buildChatItems(entries, null, true, []))).toEqual(["p1", "n1"]);
+	});
+});
+
+describe("asyncResultJobs", () => {
+	it("reads a batch, a single inline job, and ignores malformed details", () => {
+		expect(
+			asyncResultJobs({
+				jobs: [
+					{ jobId: "A", type: "task", label: "Review", durationMs: 2500 },
+					{ jobId: "B", durationMs: -1 },
+				],
+			}),
+		).toEqual([
+			{ id: "A", type: "task", label: "Review", durationMs: 2500 },
+			{ id: "B", type: null, label: null, durationMs: null },
+		]);
+		expect(asyncResultJobs({ jobId: "bg_7", type: "bash" })).toEqual([
+			{ id: "bg_7", type: "bash", label: null, durationMs: null },
+		]);
+		expect(asyncResultJobs(null)).toEqual([]);
+		expect(asyncResultJobs({ result: "x" })).toEqual([]);
 	});
 });

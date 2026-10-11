@@ -11,8 +11,10 @@
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import type { ImageContent, Model, TextContent } from "@oh-my-pi/pi-ai";
 import { logger } from "@oh-my-pi/pi-utils";
+import { getSessionsDir } from "@oh-my-pi/pi-utils/dirs";
 import type {
 	BusChannel,
 	CollabCommand,
@@ -26,6 +28,7 @@ import type {
 	AgentEvent as WireAgentEvent,
 	WireModel,
 	WireProfile,
+	WirePrWatch,
 	SessionEntry as WireSessionEntry,
 } from "@oh-my-pi/pi-wire";
 import { buildSkillCommandPrompt } from "../modes/skill-command";
@@ -55,7 +58,9 @@ import {
 	routeGuestCommand,
 } from "./guest-commands";
 import { hostKeepsGuestsAcrossSwitch, recentSessionChoices, replaceSessionForGuest } from "./guest-session-commands";
+import { buildMentionContext, withMentionContext } from "./mentions";
 import { type PromptModelRequest, type PromptModelResolution, resolvePromptModel } from "./prompt-model";
+import { queueEditRefusal, rewriteQueuedPrompt } from "./queue-edit";
 import {
 	type AgentSnapshot,
 	COLLAB_PROMPT_MESSAGE_TYPE,
@@ -91,7 +96,10 @@ import {
 	rollBackRestoredFiles,
 } from "./rewind-files";
 import { runGuestTurnUndo } from "./turn-undo";
+import { replyReceipts, replyTurnDiff } from "./turn-diff";
 import { replyContextItems, runGuestContextPrune } from "./context-items";
+import { replyInspect, replyRequestPreview } from "./inspect";
+import { HostUsageLimits, RESUME_AUTHOR, RESUME_PROMPT } from "./usage-limits";
 import {
 	COLLAB_ENTRY_OMITTED_CUSTOM_TYPE,
 	copyForReplication,
@@ -156,18 +164,35 @@ const COLLAB_BUS_CHANNELS = [
 /** Optional capabilities this host advertises in `welcome`. */
 const COLLAB_FEATURES: CollabFeature[] = [
 	"follow-up",
+	"queue-edit",
+	"mentions",
 	"rewind",
 	"commands",
 	"prompt-model",
 	"undo",
 	"spend-cap",
 	"context-items",
+	"inspect",
 	"profiles",
+	"cache-stats",
+	"approval-grants",
+	"pr-watch",
 ];
 
 /** A prompt's message content: the text, plus any images the guest attached. */
 function withImages(text: string, images: ImageContent[] | undefined): string | (TextContent | ImageContent)[] {
 	return images && images.length > 0 ? [{ type: "text", text }, ...images] : text;
+}
+
+/** What a `session-cmd` frame carries besides its command and `arg`. */
+interface SessionCmdOptions {
+	restoreFiles?: boolean;
+	/** `queue-*`: the queued follow-up (`state.followUpIds`). */
+	id?: string;
+	/** `queue-move`: the position it takes. */
+	index?: number;
+	/** `queue-edit`: references in the new text. */
+	mentions?: unknown;
 }
 
 function isWireAgentEvent(event: AgentSessionEvent): event is AgentSessionEvent & WireAgentEvent {
@@ -328,6 +353,9 @@ export class CollabHost {
 	#supersedingDraining = false;
 	#registryUnsubscribe?: () => void;
 	#profileUnsubscribe?: () => void;
+	#prWatchUnsubscribe?: () => void;
+	/** Subscription limit windows, the limited stage and the resume-at-reset timer (feature `usage-limits`). */
+	#usageLimits?: HostUsageLimits;
 	/** Set the moment `stop()` begins; `#stopped` follows once teardown has run. */
 	#stopping = false;
 	/** The in-flight or finished `stop()`; concurrent callers share it. */
@@ -560,7 +588,10 @@ export class CollabHost {
 		this.#unsubscribe = this.#ctx.session.subscribe(event => {
 			if (isWireAgentEvent(event)) this.#broadcastEvent(event);
 			this.#onEventForState(event);
+			this.#usageLimits?.observe(event);
 		});
+		this.#usageLimits = this.#createUsageLimits();
+		this.#usageLimits.start();
 		// Subagent frames publish on the session tree's observability bus at
 		// any spawn depth; mirroring from it is what lets nested agents reach
 		// guests at all. Embedders on the previous constructor signature only
@@ -586,6 +617,7 @@ export class CollabHost {
 		}
 		this.#registryUnsubscribe = AgentRegistry.global().onChange(() => this.#scheduleAgentsBroadcast());
 		this.#profileUnsubscribe = this.#ctx.session.profiles?.onChange(() => this.#scheduleStateBroadcast());
+		this.#prWatchUnsubscribe = this.#ctx.session.prWatch?.onChange(() => this.#scheduleStateBroadcast());
 		this.#sentPath = this.#activeWirePath().map(entry => entry.id);
 		this.#ctx.sessionManager.onEntryAppended = entry => {
 			if (isWireSessionEntry(entry)) this.#replicateAppended(entry);
@@ -697,6 +729,10 @@ export class CollabHost {
 		this.#registryUnsubscribe = undefined;
 		this.#profileUnsubscribe?.();
 		this.#profileUnsubscribe = undefined;
+		this.#prWatchUnsubscribe?.();
+		this.#prWatchUnsubscribe = undefined;
+		this.#usageLimits?.dispose();
+		this.#usageLimits = undefined;
 		clearTimeout(this.#stateDebounce ?? undefined);
 		this.#stateDebounce = null;
 		clearTimeout(this.#agentsDebounce ?? undefined);
@@ -923,6 +959,7 @@ export class CollabHost {
 					frame.deliver === "follow-up" ? "follow-up" : undefined,
 					fromPeer,
 					{ model: frame.model, thinking: frame.thinking },
+					frame.mentions,
 				);
 				break;
 			case "abort":
@@ -942,6 +979,9 @@ export class CollabHost {
 					undefined,
 					{
 						restoreFiles: frame.restoreFiles === true,
+						id: frame.id,
+						index: frame.index,
+						mentions: frame.mentions,
 					},
 				);
 				break;
@@ -1057,6 +1097,7 @@ export class CollabHost {
 		this.#scheduleStateBroadcast();
 		// The welcome above used the last listing; the next writer's gets a fresher one.
 		if (canWrite) void this.#refreshResumeChoices();
+		if (canWrite) this.#sendUsageLimits(fromPeer);
 	}
 
 	/**
@@ -1226,6 +1267,7 @@ export class CollabHost {
 		deliver: "follow-up" | undefined,
 		fromPeer: number,
 		promptModel: PromptModelRequest = {},
+		mentions?: unknown,
 	): void {
 		const peer = this.#peers.get(fromPeer);
 		if (!peer?.canWrite) {
@@ -1238,15 +1280,23 @@ export class CollabHost {
 			return;
 		}
 		const modelOverride = resolved.override;
+		const context = this.#mentionContext(mentions);
 		if (!text.startsWith("/") && this.#promptsQueued === 0) {
-			this.#submitPrompt(withImages(text, images), text, deliver, fromPeer, peer.name, modelOverride);
+			this.#submitPrompt(
+				withMentionContext(withImages(text, images), context),
+				text,
+				deliver,
+				fromPeer,
+				peer.name,
+				modelOverride,
+			);
 			return;
 		}
 		// A slash prompt may load a skill file or run a builtin first; whatever the guest
 		// sends next must not overtake it.
 		this.#promptsQueued++;
 		this.#promptTail = this.#promptTail
-			.then(() => this.#dispatchSlashAware(text, images, deliver, fromPeer, modelOverride))
+			.then(() => this.#dispatchSlashAware(text, images, deliver, fromPeer, modelOverride, context))
 			.catch(err => {
 				logger.warn("collab guest prompt failed", { error: String(err) });
 				this.#send({ t: "error", message: `prompt failed: ${String(err)}` }, fromPeer);
@@ -1266,6 +1316,8 @@ export class CollabHost {
 			hasHostOnlyCommand: name =>
 				session.extensionRunner?.getCommand(name) !== undefined ||
 				session.customCommands.some(loaded => loaded.command.name === name),
+			createShell: () => session.createCommandShell(),
+			resolveShell: (shell, text) => session.resolveCommandShell(shell, text),
 			keepsGuestsAcrossSwitch: hostKeepsGuestsAcrossSwitch(this.#ctx),
 			resumeChoices: this.#resumeChoices,
 		};
@@ -1306,6 +1358,7 @@ export class CollabHost {
 		deliver: "follow-up" | undefined,
 		fromPeer: number,
 		modelOverride?: PromptModelOverride,
+		context?: string,
 	): Promise<void> {
 		const peer = this.#peers.get(fromPeer);
 		// The guest left or the room ended while this waited its turn.
@@ -1313,17 +1366,31 @@ export class CollabHost {
 		let route: GuestCommandRoute = { kind: "literal" };
 		if (text.startsWith("/")) {
 			try {
-				route = routeGuestCommand(text, this.#commandSource());
+				route = await routeGuestCommand(text, this.#commandSource());
 			} catch (err) {
 				logger.warn("collab slash command routing failed; sending the text as a prompt", { error: String(err) });
 			}
 		}
 		switch (route.kind) {
 			case "literal":
-				this.#submitPrompt(withImages(text, images), text, deliver, fromPeer, peer.name, modelOverride);
+				this.#submitPrompt(
+					withMentionContext(withImages(text, images), context),
+					text,
+					deliver,
+					fromPeer,
+					peer.name,
+					modelOverride,
+				);
 				return;
 			case "expanded":
-				this.#submitPrompt(withImages(route.text, images), text, deliver, fromPeer, peer.name, modelOverride);
+				this.#submitPrompt(
+					withMentionContext(withImages(route.text, images), context),
+					text,
+					deliver,
+					fromPeer,
+					peer.name,
+					modelOverride,
+				);
 				return;
 			case "refused":
 				this.#send({ t: "error", message: route.message }, fromPeer);
@@ -1340,11 +1407,18 @@ export class CollabHost {
 					return;
 				}
 				if (!this.#peers.get(fromPeer)?.canWrite || this.ending) return;
-				this.#submitPrompt(built.message.content, text, deliver, fromPeer, peer.name, modelOverride);
+				this.#submitPrompt(
+					withMentionContext(built.message.content, context),
+					text,
+					deliver,
+					fromPeer,
+					peer.name,
+					modelOverride,
+				);
 				return;
 			}
 			case "builtin":
-				await this.#runBuiltinCommand(route, images, deliver, fromPeer, peer.name, modelOverride);
+				await this.#runBuiltinCommand(route, images, deliver, fromPeer, peer.name, modelOverride, context);
 				return;
 		}
 	}
@@ -1364,6 +1438,7 @@ export class CollabHost {
 		fromPeer: number,
 		peerName: string,
 		modelOverride?: PromptModelOverride,
+		context?: string,
 	): Promise<void> {
 		const { name, args } = route;
 		const refuse = (reason: string): void => this.#send({ t: "error", message: `/${name}: ${reason}` }, fromPeer);
@@ -1416,7 +1491,78 @@ export class CollabHost {
 			}
 		}
 		if (this.#guestTrafficAllowed()) ctx.session.emitNotice("info", `${peerName} ran /${name}`, "collab");
-		if (name === "plan" && args) await this.#dispatchSlashAware(args, images, deliver, fromPeer, modelOverride);
+		if (name === "plan" && args)
+			await this.#dispatchSlashAware(args, images, deliver, fromPeer, modelOverride, context);
+	}
+
+	/** The context block for a prompt's `mentions` (see {@link buildMentionContext}); undefined when there are none. */
+	#mentionContext(mentions: unknown): string | undefined {
+		if (!Array.isArray(mentions) || mentions.length === 0) return undefined;
+		const roots = new Set([getSessionsDir()]);
+		const projectDir = this.#ctx.sessionManager.getSessionDir();
+		if (projectDir) roots.add(path.dirname(projectDir));
+		return buildMentionContext(mentions, [...roots]);
+	}
+
+	/**
+	 * `queue-edit` / `queue-move` / `queue-steer`: change one queued follow-up, named by its id. Only the
+	 * follow-up queue is touched; what the host queued to steer stays with the host.
+	 */
+	#runQueueCommand(
+		cmd: "queue-edit" | "queue-move" | "queue-steer",
+		arg: string | undefined,
+		options: SessionCmdOptions,
+		fail: (message: string) => void,
+		announce: (what: string) => void,
+	): void {
+		const session = this.#ctx.session;
+		const { id } = options;
+		const gone = "that follow-up is no longer queued";
+		if (typeof id !== "string" || id === "") {
+			fail("no queued follow-up given");
+			return;
+		}
+		if (cmd === "queue-edit") {
+			const text = arg ?? "";
+			if (text.trim() === "") {
+				fail("a queued prompt cannot be empty");
+				return;
+			}
+			const context = this.#mentionContext(options.mentions);
+			let refusal: string | undefined;
+			const outcome = session.editQueuedFollowUp(id, message => {
+				refusal = queueEditRefusal(message, text);
+				return refusal === undefined ? rewriteQueuedPrompt(message, text, context) : undefined;
+			});
+			if (outcome === "missing") {
+				fail(gone);
+				return;
+			}
+			if (outcome === "refused") {
+				fail(refusal ?? "that follow-up cannot be edited");
+				return;
+			}
+			announce("edited a queued follow-up");
+		} else if (cmd === "queue-move") {
+			const { index } = options;
+			if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
+				fail("no position given");
+				return;
+			}
+			if (!session.moveQueuedFollowUp(id, index)) {
+				fail(gone);
+				return;
+			}
+			announce("reordered the queued follow-ups");
+		} else {
+			if (!session.promoteQueuedFollowUp(id)) {
+				fail(gone);
+				return;
+			}
+			announce("sent a queued follow-up into the running turn");
+		}
+		this.#ctx.updatePendingMessagesDisplay();
+		this.#ctx.ui.requestRender();
 	}
 
 	/** Hand a guest prompt to the session as a collab-prompt message authored by `name`. */
@@ -1553,10 +1699,16 @@ export class CollabHost {
 			queuedMessageCount: session.queuedMessageCount,
 			// Chip texts, oldest first: what `session-cmd` `unqueue` removes.
 			followUps: [...session.getQueuedMessages().followUp],
+			// Collab test doubles implement only the session surface they exercise, so a missing queue listing reads as no ids.
+			followUpIds: session.listQueuedFollowUps?.().map(queued => queued.id),
 			// Turns `session-cmd` `redo` can bring back; 0 once the conversation has moved on.
 			redoTurns: session.turnUndo?.redoDepth,
 			spend: this.#spendState(),
 			profile: session.profiles?.active.name,
+			prWatch: this.#prWatchState(),
+			limited: this.#usageLimits?.available ? this.#usageLimits.limited() : undefined,
+			// Collab test doubles implement only the session surface they exercise, so a missing ledger reads as no stats.
+			cache: session.requestLedger?.snapshot(),
 			sessionName: session.sessionName,
 			cwd: this.#ctx.sessionManager.getCwd(),
 			model: session.model,
@@ -1583,6 +1735,13 @@ export class CollabHost {
 			maxTokens: cap.maxTokens > 0 ? cap.maxTokens : undefined,
 			capped: cap.level === "capped",
 		};
+	}
+
+	/** The watched pull requests for the guests' session sheet; absent while none is watched. */
+	#prWatchState(): WirePrWatch[] | undefined {
+		// Collab test doubles implement only the session surface they exercise, so a missing watcher reads as none.
+		const watched = this.#ctx.session.prWatch?.list();
+		return watched && watched.length > 0 ? watched : undefined;
 	}
 
 	#onEventForState(event: AgentSessionEvent): void {
@@ -1738,9 +1897,57 @@ export class CollabHost {
 		);
 	}
 
+	/** The usage windows a writer sees, from the host's cache while it is fresh; sent once read. */
+	#sendUsageLimits(peerId: number): void {
+		const limits = this.#usageLimits;
+		if (!limits?.available) return;
+		const pushes = limits.pushCount;
+		void limits.refresh(false).then(snapshot => {
+			// A read that changed the windows was pushed to every writer, this one included.
+			if (limits.pushCount !== pushes) return;
+			if (snapshot && this.#peers.get(peerId)?.canWrite) this.#send({ t: "usage-limits", ...snapshot }, peerId);
+		});
+	}
+
+	#createUsageLimits(): HostUsageLimits {
+		return new HostUsageLimits({
+			session: this.#ctx.session,
+			sendContinue: () => this.#sendResumeContinue(),
+			onStateChange: () => this.#scheduleStateBroadcast(),
+			onWindows: snapshot => this.#sendWritablePeers({ t: "usage-limits", ...snapshot }),
+			hasWriters: () => Array.from(this.#peers.values()).some(peer => peer.canWrite),
+			onError: (message, err) => logger.warn(message, { error: String(err) }),
+		});
+	}
+
+	/** The `continue` a resume-at-reset timer sends once the usage limit has reset. */
+	async #sendResumeContinue(): Promise<void> {
+		if (this.ending || !this.#sessionStillCurrent()) return;
+		const details: CollabPromptDetails = { from: RESUME_AUTHOR };
+		const dispatched = await this.#ctx.session.promptCustomMessage(
+			{
+				customType: COLLAB_PROMPT_MESSAGE_TYPE,
+				content: RESUME_PROMPT,
+				display: true,
+				details,
+				attribution: "user",
+			},
+			{ streamingBehavior: "followUp", queueChipText: RESUME_PROMPT },
+		);
+		if (dispatched === false) logger.warn("collab resume at usage-limit reset was not submitted");
+		else if (this.#guestTrafficAllowed()) {
+			this.#ctx.session.emitNotice("info", "the usage limit reset: sent continue", "collab");
+		}
+	}
+
 	/** The optional capabilities this host advertises; `rewind-files` only while the session can snapshot and restore files. */
 	#welcomeFeatures(): CollabFeature[] {
-		return this.#ctx.session.canRestoreFiles === true ? [...COLLAB_FEATURES, "rewind-files"] : COLLAB_FEATURES;
+		const features: CollabFeature[] =
+			this.#ctx.session.canRestoreFiles === true ? [...COLLAB_FEATURES, "rewind-files"] : [...COLLAB_FEATURES];
+		if (this.#usageLimits?.available) features.push("usage-limits");
+		features.push("receipts");
+		if (this.#ctx.session.canRestoreFiles === true) features.push("turn-diff");
+		return features;
 	}
 
 	/** A prompt frame's model choice, checked against what the welcome offers; `error` names why it was refused. */
@@ -1788,7 +1995,7 @@ export class CollabHost {
 		arg: string | undefined,
 		fromPeer: number,
 		slash?: string,
-		options: { restoreFiles?: boolean } = {},
+		options: SessionCmdOptions = {},
 	): Promise<boolean> {
 		const peer = this.#peers.get(fromPeer);
 		if (!peer?.canWrite) {
@@ -1813,7 +2020,7 @@ export class CollabHost {
 			restoreFiles: options.restoreFiles === true,
 			reply: frame => this.#send(frame, fromPeer),
 		};
-		await this.#performSessionCmd(cmd, arg, fail, announce, files);
+		await this.#performSessionCmd(cmd, arg, fail, announce, files, options);
 		if (!failed && slash !== undefined && this.#guestTrafficAllowed()) {
 			this.#ctx.session.emitNotice("info", `${peer.name} ran /${slash}`, "collab");
 		}
@@ -1826,10 +2033,42 @@ export class CollabHost {
 		fail: (message: string) => void,
 		announce: (what: string) => void,
 		files: RewindFilesChannel,
+		options: SessionCmdOptions = {},
 	): Promise<void> {
 		const session = this.#ctx.session;
 		try {
 			switch (cmd) {
+				case "usage-limits": {
+					const limits = this.#usageLimits;
+					if (!limits?.available) {
+						fail("this host cannot read usage limits");
+						return;
+					}
+					const pushes = limits.pushCount;
+					const snapshot = await limits.refresh(arg === "refresh");
+					// A read that changed the windows was pushed to every writer, this one included.
+					if (limits.pushCount !== pushes) return;
+					files.reply({
+						t: "usage-limits",
+						windows: snapshot?.windows ?? [],
+						fetchedAt: snapshot?.fetchedAt ?? Date.now(),
+					});
+					return;
+				}
+				case "resume-at-reset": {
+					const armed = this.#usageLimits?.arm();
+					if (armed === undefined || !armed.ok) {
+						fail(armed?.error ?? "this host cannot read usage limits");
+						return;
+					}
+					const at = new Date(armed.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+					announce(`will send continue when the usage limit resets (${at})`);
+					return;
+				}
+				case "resume-cancel":
+					if (this.#usageLimits?.cancel()) announce("cancelled the resume at the usage limit reset");
+					else fail("no resume is scheduled");
+					return;
 				case "profile": {
 					const profiles = session.profiles;
 					const name = arg?.trim() ?? "";
@@ -1942,6 +2181,12 @@ export class CollabHost {
 					announce(`renamed the session to "${this.#ctx.sessionManager.getSessionName() ?? name}"`);
 					return;
 				}
+				case "queue-edit":
+				case "queue-move":
+				case "queue-steer": {
+					this.#runQueueCommand(cmd, arg, options, fail, announce);
+					return;
+				}
 				case "unqueue": {
 					// `state.followUps` carries chip text, which `removeQueuedMessage` matches; steers stay
 					// with the host, as in the TUI where only the follow-up queue is editable.
@@ -2009,6 +2254,19 @@ export class CollabHost {
 				case "rewind-preview":
 					await previewRewindFiles(session, arg, files, fail);
 					return;
+				case "turn-diff":
+					if (arg === undefined) {
+						fail("which turn? pass a prompt entry id");
+						return;
+					}
+					await replyTurnDiff(session, arg, files.reply);
+					return;
+				case "session-diff":
+					await replyTurnDiff(session, undefined, files.reply);
+					return;
+				case "receipts":
+					replyReceipts(session, files.reply);
+					return;
 				case "undo":
 				case "redo": {
 					const done = await runGuestTurnUndo(session, cmd, files.reply, fail);
@@ -2023,6 +2281,12 @@ export class CollabHost {
 				}
 				case "context-items":
 					replyContextItems(session, this.#ctx.statusLine.getCachedContextBreakdown(), files.reply);
+					return;
+				case "inspect":
+					replyInspect(session, files.reply);
+					return;
+				case "preview-request":
+					await replyRequestPreview(session, files.reply, fail);
 					return;
 				case "context-prune": {
 					if (session.isBusyForSnapshot || session.isSessionTransitioning) {
@@ -2048,6 +2312,18 @@ export class CollabHost {
 					}
 					const undone = await redoRestoredFiles(session, files, fail);
 					if (undone !== undefined) announce(undone);
+					return;
+				}
+				case "pr-watch": {
+					const { pr, watching } = await session.prWatch.watch(arg);
+					if (watching) announce(`started watching pull request ${pr.key}`);
+					else fail(`${pr.key} is already ${pr.state}: nothing to watch`);
+					return;
+				}
+				case "pr-unwatch": {
+					const target = arg?.trim() ?? "";
+					if (!session.prWatch.unwatch(target)) fail(`${target || "(none given)"} is not a watched pull request`);
+					else announce(`stopped watching ${target}`);
 					return;
 				}
 				default:

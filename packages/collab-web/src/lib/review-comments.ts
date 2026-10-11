@@ -85,8 +85,8 @@ export function sameHunk(rows: readonly DiffRow[], a: number, b: number): boolea
 	return true;
 }
 
-/** `tree`: working-tree tab; `branch`: branch-review tab; `pr`: a GitHub pull request's files. */
-export type ReviewScope = "tree" | "branch" | "pr";
+/** `tree`: working-tree tab; `branch`: branch-review tab; `pr`: a GitHub pull request's files; `turn`: what the agent changed in a turn or a session. */
+export type ReviewScope = "tree" | "branch" | "pr" | "turn";
 
 export interface ReviewComment {
 	scope: ReviewScope;
@@ -178,7 +178,7 @@ function isComment(v: unknown): v is ReviewComment {
 	if (typeof v !== "object" || v === null) return false;
 	const c = v as Record<string, unknown>;
 	return (
-		(c.scope === "tree" || c.scope === "branch" || c.scope === "pr") &&
+		(c.scope === "tree" || c.scope === "branch" || c.scope === "pr" || c.scope === "turn") &&
 		typeof c.path === "string" &&
 		typeof c.from === "string" &&
 		typeof c.to === "string" &&

@@ -87,7 +87,7 @@ export interface ResolvedApproval {
 	tier: ToolTier;
 	reason?: string;
 	override: boolean;
-	source?: "tool" | "user" | "mode";
+	source?: "tool" | "user" | "mode" | "grant";
 	/** User-policy key that produced `source: "user"` (defaults to the tool name). */
 	policyKey?: string;
 }
@@ -324,6 +324,9 @@ export function denyError(resolved: ResolvedApproval, toolName: string): Error {
 	const { source, reason, policyKey } = resolved;
 	if (source === "tool") {
 		return new Error(`Tool "${toolName}" is blocked by tool policy.${reason ? `\nReason: ${reason}` : ""}`);
+	}
+	if (source === "grant") {
+		return new Error(`Tool "${toolName}" is blocked by a saved approval rule.${reason ? `\nReason: ${reason}` : ""}`);
 	}
 	return new Error(
 		`Tool "${policyKey ?? toolName}" is blocked by user policy.\n` +

@@ -16,34 +16,34 @@ import { useCallback, useRef, useState } from "react";
 import type { CompanionClient, RecentFolder } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import {
+	type CatchUpPolicy,
 	describeWhen,
+	formatRunTime,
 	MAX_SCHEDULE_COST_USD,
 	MAX_SCHEDULE_PROMPT_CHARS,
 	MAX_SCHEDULE_TITLE_CHARS,
 	type Schedule,
 	type ScheduleInput,
-	type ScheduleWhen,
-	untilWords,
-	weekdayLabel,
-} from "../../lib/schedules";
+} from "@oh-my-pi/pi-wire/schedule";
+import { untilWords } from "../../lib/schedules";
 import { useRequest } from "../../lib/use-request";
 import { QuickReplies } from "./QuickReplies";
+import { blankWhenDraft, ScheduleWhenEditor, type WhenDraft, whenDraftOf, whenOf } from "./ScheduleWhenEditor";
 import { Sheet } from "./Sheet";
 import "./schedules.css";
-
-/** Weekdays in the order the editor lists them (Monday first); values are `Date#getDay` numbers. */
-const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
 export interface SchedulesSheetProps {
 	client: CompanionClient;
 	/** The companion can start sandboxed sessions: offer the toggle. */
 	canSandbox: boolean;
+	/** The companion understands cron and interval schedules and catch-up policies. */
+	canCron: boolean;
 	/** Fetch a link for a hosting session and join it; rejects with a readable message. */
 	onOpenHost(instanceId: string): Promise<void>;
 	onClose(): void;
 }
 
-/** The form's state: `at` is a `datetime-local` value, `time` an `HH:MM` value. */
+/** The form's state; the timetable part lives with its editor. */
 interface Draft {
 	id?: string;
 	title: string;
@@ -54,10 +54,10 @@ interface Draft {
 	worktree: boolean;
 	sandboxed: boolean;
 	maxCost: string;
-	kind: ScheduleWhen["kind"];
-	at: string;
-	time: string;
-	days: number[];
+	when: WhenDraft;
+	catchUp: CatchUpPolicy;
+	/** Kept as stored: an agent-made schedule stays marked after the user edits it. */
+	createdBy?: "agent";
 	enabled: boolean;
 }
 
@@ -65,17 +65,7 @@ function folderName(cwd: string): string {
 	return cwd.split("/").filter(Boolean).pop() ?? cwd;
 }
 
-/** A `datetime-local` value (local time, minutes) for `ms`. */
-function toLocalInput(ms: number): string {
-	const d = new Date(ms);
-	const p = (n: number) => String(n).padStart(2, "0");
-	return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
 function blankDraft(): Draft {
-	const tomorrow = new Date();
-	tomorrow.setDate(tomorrow.getDate() + 1);
-	tomorrow.setHours(9, 0, 0, 0);
 	return {
 		title: "",
 		prompt: "",
@@ -85,16 +75,13 @@ function blankDraft(): Draft {
 		worktree: false,
 		sandboxed: false,
 		maxCost: "",
-		kind: "daily",
-		at: toLocalInput(tomorrow.getTime()),
-		time: "09:00",
-		days: [1, 2, 3, 4, 5],
+		when: blankWhenDraft(),
+		catchUp: "skip",
 		enabled: true,
 	};
 }
 
 function draftOf(schedule: Schedule): Draft {
-	const { when } = schedule;
 	return {
 		...blankDraft(),
 		id: schedule.id,
@@ -106,8 +93,9 @@ function draftOf(schedule: Schedule): Draft {
 		worktree: schedule.worktree === true,
 		sandboxed: schedule.sandboxed === true,
 		maxCost: schedule.maxCostUsd === undefined ? "" : String(schedule.maxCostUsd),
-		kind: when.kind,
-		...(when.kind === "once" ? { at: toLocalInput(when.at) } : { time: when.time, days: when.days }),
+		when: whenDraftOf(schedule.when),
+		catchUp: schedule.catchUp ?? "skip",
+		createdBy: schedule.createdBy,
 		enabled: schedule.enabled,
 	};
 }
@@ -117,16 +105,9 @@ function inputOf(draft: Draft): { input: ScheduleInput } | { error: string } {
 	if (draft.prompt.trim() === "") return { error: "Write the prompt to run." };
 	if (draft.cwd === "") return { error: "Pick a folder." };
 	if (draft.mode === "resume" && draft.sessionId === "") return { error: "Pick the session to resume." };
-	let when: ScheduleWhen;
-	if (draft.kind === "once") {
-		const at = new Date(draft.at).getTime();
-		if (!Number.isFinite(at)) return { error: "Pick a date and time." };
-		when = { kind: "once", at };
-	} else {
-		if (draft.time === "") return { error: "Pick a time." };
-		if (draft.days.length === 0) return { error: "Pick at least one weekday." };
-		when = { kind: "daily", time: draft.time, days: draft.days };
-	}
+	const built = whenOf(draft.when);
+	if ("error" in built) return built;
+	const when = built.when;
 	const maxCostText = draft.maxCost.trim().replace(/^\$/, "");
 	const maxCostUsd = maxCostText === "" ? undefined : Number(maxCostText);
 	if (
@@ -147,6 +128,8 @@ function inputOf(draft: Draft): { input: ScheduleInput } | { error: string } {
 			sandboxed: draft.sandboxed ? true : undefined,
 			maxCostUsd: draft.mode === "new" ? maxCostUsd : undefined,
 			when,
+			catchUp: draft.catchUp === "run-once" ? "run-once" : undefined,
+			createdBy: draft.createdBy,
 			enabled: draft.enabled,
 		},
 	};
@@ -158,7 +141,7 @@ function inputFromSchedule(schedule: Schedule, enabled: boolean): ScheduleInput 
 }
 
 /** Prompts the computer runs on a timetable: each starts a hosted omp session that begins working at once. */
-export function SchedulesSheet({ client, canSandbox, onOpenHost, onClose }: SchedulesSheetProps): ReactNode {
+export function SchedulesSheet({ client, canSandbox, canCron, onOpenHost, onClose }: SchedulesSheetProps): ReactNode {
 	const load = useCallback(() => client.requestSchedules(), [client]);
 	const { state, reload } = useRequest(load);
 	// Keep the last list on screen while it reloads.
@@ -243,6 +226,7 @@ export function SchedulesSheet({ client, canSandbox, onOpenHost, onClose }: Sche
 				<ScheduleEditor
 					client={client}
 					canSandbox={canSandbox}
+					canCron={canCron}
 					draft={draft}
 					busy={busy === "save"}
 					onChange={setDraft}
@@ -253,7 +237,8 @@ export function SchedulesSheet({ client, canSandbox, onOpenHost, onClose }: Sche
 					<p className="sh-field-hint sh-sched-note">
 						Each run starts omp on this computer with your prompt, as a session you can open from here. Runs use
 						your omp and cost money; they never start once today's spend limit (Usage → Spend alerts) is reached.
-						A run missed while the computer slept still starts if it is under an hour late.
+						A run missed while the computer was off follows its catch-up setting (by default it still starts if it
+						is under an hour late).
 					</p>
 					{list === null ? (
 						loading ? (
@@ -321,7 +306,10 @@ function lastResult(schedule: Schedule): { text: string; tone: "ok" | "skip" | "
 	if (!run) return null;
 	if (run.error?.startsWith("skipped")) return { text: `${run.error} · ${relTime(run.at)}`, tone: "skip" };
 	if (run.error) return { text: `failed: ${run.error} · ${relTime(run.at)}`, tone: "err" };
-	if (run.instanceId) return { text: `started ${relTime(run.at)}`, tone: "ok" };
+	if (run.instanceId) {
+		const caughtUp = run.missedAt === undefined ? "" : ` (caught up; was due ${formatRunTime(run.missedAt)})`;
+		return { text: `started${caughtUp} ${relTime(run.at)}`, tone: "ok" };
+	}
 	return { text: `starting… ${relTime(run.at)}`, tone: "skip" };
 }
 
@@ -355,6 +343,8 @@ function ScheduleRow({
 						{schedule.worktree && <span className="sh-chip">worktree</span>}
 						{schedule.maxCostUsd !== undefined && <span className="sh-chip">limit ${schedule.maxCostUsd}</span>}
 						{schedule.mode === "resume" && <span className="sh-chip">resume</span>}
+						{schedule.catchUp === "run-once" && <span className="sh-chip">catches up</span>}
+						{schedule.createdBy === "agent" && <span className="sh-chip">made by agent</span>}
 					</span>
 					<span className="sh-recent-meta">
 						<span>{describeWhen(schedule.when)}</span>
@@ -443,13 +433,22 @@ function ScheduleRow({
 interface ScheduleEditorProps {
 	client: CompanionClient;
 	canSandbox: boolean;
+	canCron: boolean;
 	draft: Draft;
 	busy: boolean;
 	onChange(draft: Draft): void;
 	onSave(input: ScheduleInput): void;
 }
 
-function ScheduleEditor({ client, canSandbox, draft, busy, onChange, onSave }: ScheduleEditorProps): ReactNode {
+function ScheduleEditor({
+	client,
+	canSandbox,
+	canCron,
+	draft,
+	busy,
+	onChange,
+	onSave,
+}: ScheduleEditorProps): ReactNode {
 	const loadFolders = useCallback(() => client.requestFolders(), [client]);
 	const { state: folders } = useRequest(loadFolders);
 	const [problem, setProblem] = useState<string | null>(null);
@@ -472,9 +471,6 @@ function ScheduleEditor({ client, canSandbox, draft, busy, onChange, onSave }: S
 		if ("error" in built) setProblem(built.error);
 		else onSave(built.input);
 	};
-
-	const toggleDay = (day: number): void =>
-		set({ days: draft.days.includes(day) ? draft.days.filter(d => d !== day) : [...draft.days, day] });
 
 	return (
 		<form className="sh-sched-form" onSubmit={submit}>
@@ -564,58 +560,31 @@ function ScheduleEditor({ client, canSandbox, draft, busy, onChange, onSave }: S
 						</select>
 					))}
 			</div>
-			<div className="sh-sched-field">
-				<span className="sh-field-label">Repeat</span>
-				<div className="sh-segmented" role="radiogroup" aria-label="repeat">
-					{(["once", "daily"] as const).map(kind => (
-						<button
-							key={kind}
-							type="button"
-							role="radio"
-							aria-checked={draft.kind === kind}
-							className={draft.kind === kind ? "sh-segment sh-segment-on" : "sh-segment"}
-							onClick={() => set({ kind })}
-						>
-							{kind === "once" ? "Once" : "Daily"}
-						</button>
-					))}
+			<ScheduleWhenEditor draft={draft.when} canCron={canCron} onChange={when => set({ when })} />
+			{canCron && (
+				<div className="sh-sched-field">
+					<span className="sh-field-label">If the computer was off at the time</span>
+					<div className="sh-segmented sh-segmented-wrap" role="radiogroup" aria-label="missed runs">
+						{(["skip", "run-once"] as const).map(policy => (
+							<button
+								key={policy}
+								type="button"
+								role="radio"
+								aria-checked={draft.catchUp === policy}
+								className={draft.catchUp === policy ? "sh-segment sh-segment-on" : "sh-segment"}
+								onClick={() => set({ catchUp: policy })}
+							>
+								{policy === "skip" ? "Skip it" : "Run once when back"}
+							</button>
+						))}
+					</div>
+					<span className="sh-field-hint">
+						{draft.catchUp === "skip"
+							? "A run under an hour late still starts; anything later is only recorded as missed."
+							: "However late, one run starts when the companion is back, whatever number of runs were missed."}
+					</span>
 				</div>
-				{draft.kind === "once" ? (
-					<input
-						className="sh-input"
-						type="datetime-local"
-						value={draft.at}
-						onChange={e => set({ at: e.currentTarget.value })}
-						aria-label="date and time"
-					/>
-				) : (
-					<>
-						<input
-							className="sh-input"
-							type="time"
-							value={draft.time}
-							onChange={e => set({ time: e.currentTarget.value })}
-							aria-label="time of day"
-						/>
-						<div className="sh-sched-days" role="group" aria-label="weekdays">
-							{DAY_ORDER.map(day => (
-								<button
-									key={day}
-									type="button"
-									className={
-										draft.days.includes(day) ? "sh-chip sh-sched-day sh-sched-day-on" : "sh-chip sh-sched-day"
-									}
-									aria-pressed={draft.days.includes(day)}
-									onClick={() => toggleDay(day)}
-								>
-									{weekdayLabel(day)}
-								</button>
-							))}
-						</div>
-					</>
-				)}
-				<span className="sh-field-hint">The computer's local time.</span>
-			</div>
+			)}
 			{canSandbox && (
 				<label className="sh-start-sandbox">
 					<input
@@ -688,13 +657,15 @@ function ScheduleEditor({ client, canSandbox, draft, busy, onChange, onSave }: S
 export interface SchedulesEntryProps {
 	client: CompanionClient;
 	canSandbox: boolean;
+	/** The companion understands cron and interval schedules and catch-up policies. */
+	canCron: boolean;
 	onOpenHost(instanceId: string): Promise<void>;
 	/** `card`: labelled button in the start screen's action row; `icon`: sidebar footer button. */
 	variant: "card" | "icon";
 }
 
 /** The button that opens the schedules sheet. */
-export function SchedulesEntry({ client, canSandbox, onOpenHost, variant }: SchedulesEntryProps): ReactNode {
+export function SchedulesEntry({ client, canSandbox, canCron, onOpenHost, variant }: SchedulesEntryProps): ReactNode {
 	const [open, setOpen] = useState(false);
 	return (
 		<>
@@ -712,6 +683,7 @@ export function SchedulesEntry({ client, canSandbox, onOpenHost, variant }: Sche
 				<SchedulesSheet
 					client={client}
 					canSandbox={canSandbox}
+					canCron={canCron}
 					onOpenHost={onOpenHost}
 					onClose={() => setOpen(false)}
 				/>

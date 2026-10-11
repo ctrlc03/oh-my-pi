@@ -1,0 +1,69 @@
+import { LoaderCircle, RefreshCw, X } from "lucide-react";
+import type { ComponentType, ReactNode } from "react";
+import { useEffect, useState } from "react";
+import { Sheet } from "../shell/Sheet";
+import type { DiagramSheetsProps } from "./DiagramSheets";
+
+type DiagramSheetsComponent = ComponentType<DiagramSheetsProps>;
+
+let loaded: Promise<DiagramSheetsComponent> | undefined;
+
+/** The diagram sheets, fetched on first use and shared after that. A failed fetch is retried next time. */
+function loadDiagramSheets(): Promise<DiagramSheetsComponent> {
+	// Dynamic: the viewer, canvas and file sheets stay out of the entry bundle until a diagram is opened.
+	loaded ??= import("./DiagramSheets").then(
+		module => module.DiagramSheets,
+		(error: unknown) => {
+			loaded = undefined;
+			throw error;
+		},
+	);
+	return loaded;
+}
+
+/** `DiagramSheets`, loaded when first shown; the sheet frame with a spinner stands in meanwhile. */
+export function LazyDiagramSheets(props: DiagramSheetsProps): ReactNode {
+	// Held in an object: a bare component function would be taken for a state updater.
+	const [loadedSheet, setLoadedSheet] = useState<{ Sheet: DiagramSheetsComponent } | null>(null);
+	const [error, setError] = useState<string | null>(null);
+	const [attempt, setAttempt] = useState(0);
+	useEffect(() => {
+		let stale = false;
+		setError(null);
+		loadDiagramSheets().then(
+			next => {
+				if (!stale) setLoadedSheet({ Sheet: next });
+			},
+			(err: unknown) => {
+				if (!stale) setError(err instanceof Error ? err.message : String(err));
+			},
+		);
+		return () => {
+			stale = true;
+		};
+	}, [attempt]);
+
+	if (loadedSheet !== null) return <loadedSheet.Sheet {...props} />;
+	return (
+		<Sheet label="diagram" size="full" onClose={props.onClose}>
+			<div className="sh-sheet-head">
+				<div className="sh-sheet-title">Diagram</div>
+				<button type="button" className="sh-btn sh-btn-icon" onClick={props.onClose} aria-label="close">
+					<X size={16} />
+				</button>
+			</div>
+			{error === null ? (
+				<div className="sh-companion-empty sh-file-status">
+					<LoaderCircle size={14} className="sh-spin" /> Loading…
+				</div>
+			) : (
+				<div className="sh-tree-error">
+					<div className="sh-connect-error">Could not load the diagram tools: {error}</div>
+					<button type="button" className="sh-btn" onClick={() => setAttempt(n => n + 1)}>
+						<RefreshCw size={14} /> Retry
+					</button>
+				</div>
+			)}
+		</Sheet>
+	);
+}

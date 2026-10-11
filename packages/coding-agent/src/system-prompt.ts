@@ -42,6 +42,7 @@ import { cfgTtsrBuiltinRules, cfgTtsrDisabledRules, cfgTtsrEnabled } from "./exp
 import { cfgTuiAutoGraph, cfgTuiReactions, cfgTuiRenderMermaid, cfgTuiRenderSvg } from "./modes/settings";
 import { cfgSecretsEnabled } from "./secrets/settings";
 import { cfgToolsFormat } from "./session/context-settings";
+import { cfgSandboxAutoEscalate, cfgSandboxMode, cfgSandboxNetwork } from "./sandbox/settings";
 import {
 	cfgIncludeModelInPrompt,
 	cfgIncludeWorkspaceTree,
@@ -89,6 +90,10 @@ export const cfgSystemPromptInputs = combine({
 	ttsrBuiltinRules: cfgTtsrBuiltinRules,
 	ttsrDisabledRules: cfgTtsrDisabledRules,
 	secretsEnabled: cfgSecretsEnabled,
+	// Rendered as the sandbox policy note (`sandboxPromptNote`).
+	sandboxMode: cfgSandboxMode,
+	sandboxNetwork: cfgSandboxNetwork,
+	sandboxAutoEscalate: cfgSandboxAutoEscalate,
 });
 
 /** Bundled personality specs, keyed by the `personality` setting value. */
@@ -591,6 +596,8 @@ export interface BuildSystemPromptOptions {
 	xdevDocs?: string;
 	/** Whether Auto-QA grievance reporting is enabled; renders the `xd://report_issue` note. */
 	autoQaEnabled?: boolean;
+	/** Active shell-sandbox policy for the model (`sandboxPromptNote`); renders the `<sandbox>` section. */
+	sandboxNote?: string;
 	/** Whether active `write` is restricted to xd:// dispatch and the plan artifact sandbox. */
 	writeTransportOnly?: boolean;
 	/**
@@ -681,6 +688,7 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		xdevTools = [],
 		xdevDocs = "",
 		autoQaEnabled = false,
+		sandboxNote,
 		writeTransportOnly = false,
 		subagent = false,
 		activeRepoContext: providedActiveRepoContext,
@@ -1012,6 +1020,7 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		hasDynamicXdevTools: xdevTools.some(mounted => mounted.dynamic === true),
 		xdevDocs,
 		autoQaEnabled,
+		sandboxNote: sandboxNote ?? "",
 		writeTransportOnly,
 		subagent,
 	};

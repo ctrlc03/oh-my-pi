@@ -1,15 +1,17 @@
-import { Activity, ChartColumn, LayoutList, Laptop, PanelRight, Plus, Smartphone, X } from "lucide-react";
+import { Activity, ChartColumn, LayoutList, Laptop, Plus, Smartphone, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import type { CompanionHost, CompanionIdleSession } from "../../lib/companion";
-import { relTime, shortenPath } from "../../lib/format";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
 import type { CompanionHandle } from "../../lib/use-companion";
+import type { SessionOrgControl } from "../../lib/use-session-org";
 import type { BesideControl } from "../../lib/use-split";
-import { HostList, IdleList, PowerNote } from "./CompanionCard";
+import { PowerNote } from "./CompanionCard";
 import { DevicesSheet } from "./DevicesSheet";
 import { DiagnosticsSheet } from "./DiagnosticsSheet";
+import { FanoutGroups } from "./FanoutSheet";
 import { InboxEntry } from "./InboxSheet";
+import { OrgSessions } from "./OrgSessions";
 import { SchedulesEntry } from "./SchedulesSheet";
 import { StartSessionSheet } from "./StartSessionSheet";
 
@@ -27,6 +29,10 @@ export interface SessionsSidebarProps {
 	onOpenSessions: (() => void) | null;
 	/** Split view: sessions can open in a second pane beside the transcript. null where the screen has no room. */
 	beside?: Pick<BesideControl, "openHost" | "openLink"> | null;
+	/** Pin / snooze / settle state of every session. */
+	org: SessionOrgControl;
+	/** When the open session's usage limit resets (ms): offered as a snooze time for it. */
+	limitResetAt?: number | null;
 	onClose(): void;
 }
 
@@ -37,6 +43,7 @@ export interface SessionsSidebarProps {
 export function SessionsSidebar({
 	companion,
 	rooms,
+	org,
 	currentSessionId,
 	currentRoomId,
 	onOpenHost,
@@ -45,6 +52,7 @@ export function SessionsSidebar({
 	onOpenSessions,
 	onClose,
 	beside = null,
+	limitResetAt = null,
 }: SessionsSidebarProps): ReactNode {
 	const [joining, setJoining] = useState<string | null>(null);
 	const [starting, setStarting] = useState(false);
@@ -112,7 +120,7 @@ export function SessionsSidebar({
 							<span className={`sh-dot${live ? " sh-dot-live" : ""}`} aria-label={live ? "online" : "offline"} />
 						</h2>
 						{live && <PowerNote power={snap.power} />}
-						{snap.hosts.length === 0 ? (
+						{snap.hosts.length === 0 && snap.idle.length === 0 && (
 							<div className="sh-companion-empty">
 								{snap.phase === "unpaired"
 									? snap.error
@@ -122,57 +130,27 @@ export function SessionsSidebar({
 											? "Connecting…"
 											: "No session is sharing."}
 							</div>
-						) : (
-							<HostList
-								hosts={snap.hosts}
-								joining={joining}
-								disabled={!live}
-								currentSessionId={currentSessionId}
-								onJoin={join}
-								onOpenBeside={beside === null ? undefined : joinBeside}
-							/>
 						)}
-						<IdleList idle={snap.idle} joining={joining} disabled={!live} onShare={share} />
 					</section>
 				)}
-				{recents.length > 0 && (
-					<section className="sh-switch-section" aria-label="recent sessions">
-						<h2 className="sh-recents-title">Recent</h2>
-						<ul className="sh-recents-list">
-							{recents.map(room => (
-								<li key={room.roomId} className="sh-recent">
-									<button
-										type="button"
-										className="sh-recent-join"
-										onClick={() => onOpenLink(room.link)}
-										disabled={joining !== null}
-									>
-										<span className="sh-recent-title">
-											<span className="sh-recent-name">{room.title}</span>
-											{room.readOnly && <span className="sh-chip">read-only</span>}
-										</span>
-										<span className="sh-recent-meta">
-											{room.cwd && <span className="sh-recent-cwd">{shortenPath(room.cwd)}</span>}
-											<span>{relTime(room.lastSeen)}</span>
-										</span>
-									</button>
-									{beside !== null && (
-										<button
-											type="button"
-											className="sh-btn sh-btn-icon"
-											onClick={() => openRoomBeside(room.link)}
-											disabled={joining !== null}
-											aria-label={`open ${room.title} beside`}
-											title="open beside"
-										>
-											<PanelRight size={15} />
-										</button>
-									)}
-								</li>
-							))}
-						</ul>
-					</section>
+				{snap && companion?.client && live && (
+					<FanoutGroups hosts={snap.hosts} client={companion.client} onOpen={onOpenHost} />
 				)}
+				<OrgSessions
+					hosts={snap?.hosts ?? []}
+					idle={snap?.idle ?? []}
+					rooms={recents}
+					org={org}
+					joining={joining}
+					disabled={!live}
+					currentSessionId={currentSessionId}
+					limitResetAt={limitResetAt}
+					onJoinHost={join}
+					onOpenHostBeside={beside === null ? undefined : joinBeside}
+					onShare={share}
+					onOpenRoom={room => onOpenLink(room.link)}
+					onOpenRoomBeside={beside === null ? undefined : room => openRoomBeside(room.link)}
+				/>
 				{!snap && recents.length === 0 && (
 					<div className="sh-companion-empty">
 						No other sessions yet. Pair your computer from the start screen to list all of them here.
@@ -221,6 +199,7 @@ export function SessionsSidebar({
 						<SchedulesEntry
 							client={companion.client}
 							canSandbox={snap.canSandbox}
+							canCron={snap.canScheduleCron}
 							onOpenHost={onOpenHost}
 							variant="icon"
 						/>
@@ -255,6 +234,7 @@ export function SessionsSidebar({
 				<StartSessionSheet
 					client={companion.client}
 					canSandbox={companion.snap.canSandbox}
+					canFanout={companion.snap.canFanout}
 					onOpen={onOpenHost}
 					onClose={() => setStarting(false)}
 				/>

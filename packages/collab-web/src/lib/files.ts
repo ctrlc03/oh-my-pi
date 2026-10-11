@@ -92,6 +92,10 @@ const LANG_BY_EXT: Record<string, string> = {
 	svelte: "svelte",
 	tf: "hcl",
 	proto: "protobuf",
+	// Diagram sources: the transcript draws these fences (see diagrams.ts).
+	excalidraw: "excalidraw",
+	mmd: "mermaid",
+	mermaid: "mermaid",
 };
 /** Extensionless names that are plain text. */
 const LANG_BY_NAME: Record<string, string> = { dockerfile: "dockerfile", makefile: "makefile" };

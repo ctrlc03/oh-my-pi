@@ -1,0 +1,203 @@
+/* Command palette (⌘K): a centered card on desktop, a bottom sheet on phones. sh-palette-* namespace. */
+
+@media (min-width: 641px) {
+	.sh-sheet-palette {
+		top: max(var(--topbar-h), 12vh);
+		right: auto;
+		left: calc(50% - min(330px, calc(50vw - 12px)));
+		width: min(660px, calc(100vw - 24px));
+		padding: 12px;
+	}
+}
+
+.sh-palette {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-height: 0;
+}
+
+.sh-palette-input {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 12px;
+	color: var(--fg-faint);
+	background: var(--bg-inset);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	transition:
+		border-color 120ms ease-out,
+		box-shadow 120ms ease-out;
+}
+
+.sh-palette-input:focus-within {
+	border-color: var(--ring);
+	box-shadow: 0 0 0 3px var(--ring-soft);
+}
+
+.sh-palette-field {
+	flex: 1;
+	min-width: 0;
+	height: 42px;
+	font-size: 15px;
+	color: var(--fg);
+	background: transparent;
+	border: 0;
+	outline: none;
+}
+
+.sh-palette-field::placeholder {
+	color: var(--fg-faint);
+}
+
+.sh-palette-scopes {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.sh-palette-scope {
+	min-height: 28px;
+	padding: 0 10px;
+	font-size: 12.5px;
+	color: var(--fg-muted);
+	background: transparent;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+}
+
+.sh-palette-scope:hover {
+	border-color: var(--border-strong);
+}
+
+.sh-palette-scope-on {
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft);
+	border-color: transparent;
+}
+
+.sh-palette-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	max-height: min(430px, calc(var(--viewport-height, 100dvh) * 0.5));
+}
+
+.sh-palette-section {
+	list-style: none;
+}
+
+.sh-palette-rows {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-palette-group {
+	padding: 6px 10px 2px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--fg-faint);
+}
+
+.sh-palette-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 40px;
+	padding: 6px 10px;
+	cursor: pointer;
+	border-radius: var(--radius-sm);
+}
+
+.sh-palette-row-on {
+	background: var(--selected);
+}
+
+.sh-palette-icon {
+	flex: none;
+	color: var(--fg-faint);
+}
+
+.sh-palette-row-on .sh-palette-icon {
+	color: var(--accent);
+}
+
+.sh-palette-copy {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+	gap: 1px;
+}
+
+.sh-palette-title {
+	overflow: hidden;
+	font-size: 13.5px;
+	color: var(--fg);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-palette-sub {
+	overflow: hidden;
+	font-size: 12px;
+	color: var(--fg-faint);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-palette-hit {
+	color: var(--accent);
+	background: transparent;
+	font-weight: 600;
+}
+
+.sh-palette-trail {
+	flex: none;
+	font-size: 12px;
+	color: var(--fg-faint);
+}
+
+.sh-palette-kbd {
+	flex: none;
+	font-size: 11px;
+}
+
+.sh-palette-note {
+	font-size: 12px;
+	color: var(--fg-faint);
+}
+
+.sh-palette-foot {
+	display: none;
+	flex-wrap: wrap;
+	gap: 4px 16px;
+	padding-top: 8px;
+	font-size: 12px;
+	color: var(--fg-faint);
+	border-top: 1px solid var(--border);
+}
+
+.sh-palette-foot .sh-kbd {
+	min-width: 18px;
+	padding: 0 5px;
+	font-size: 11px;
+}
+
+/* Key hints help where a keyboard is the primary input. */
+@media (pointer: fine) {
+	.sh-palette-foot {
+		display: flex;
+	}
+}

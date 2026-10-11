@@ -2,6 +2,7 @@ import { parseFrontmatter, prompt } from "@oh-my-pi/pi-utils";
 import { slashCommandCapability } from "../capability/slash-command";
 import { slashCommandFrontmatterDisplay } from "@oh-my-pi/pi-tui/overlays/extensions/inspector-model";
 import type { EffectiveExtensionRoots } from "../capability/types";
+import type { CommandOrigin, CommandShellExpansion } from "../config/command-shell";
 import { appendInlineArgsFallback, templateUsesInlineArgPlaceholders } from "../config/prompt-templates";
 import type { SlashCommand } from "../discovery";
 import { loadCapability } from "../discovery";
@@ -33,7 +34,7 @@ export interface FileSlashCommand {
 	content: string;
 	source: string; // e.g., "via Claude Code (User)"
 	/** Source metadata for display */
-	_source?: { providerName: string; level: "user" | "project" | "native" };
+	_source?: { provider: string; providerName: string; level: "user" | "project" | "native" };
 }
 
 const EMBEDDED_SLASH_COMMANDS = EMBEDDED_COMMAND_TEMPLATES;
@@ -91,7 +92,7 @@ export async function loadSlashCommands(options: LoadSlashCommandsOptions = {}):
 			argumentHint: cmd.argumentHint ?? argumentHint,
 			content: body,
 			source: sourceStr,
-			_source: { providerName: cmd._source.providerName, level: cmd.level },
+			_source: { provider: cmd._source.provider, providerName: cmd._source.providerName, level: cmd.level },
 		};
 	});
 
@@ -117,11 +118,31 @@ export async function loadSlashCommands(options: LoadSlashCommandsOptions = {}):
 	return fileCommands;
 }
 
+/** Providers whose commands come from installed third-party packages rather than the user's own command directories. */
+const PACKAGE_COMMAND_PROVIDERS: Record<string, true> = { "claude-plugins": true, "omp-plugins": true };
+
+/**
+ * Whose text a command is: `user` for the user's own command directories (and bundled commands), `project` for
+ * anything a repository or an installed plugin supplies. Shell in a `project` command needs `commands.shellExpansion: all`.
+ */
+function commandOrigin(command: FileSlashCommand): CommandOrigin {
+	const source = command._source;
+	if (!source) return "user";
+	return source.level === "project" || Object.hasOwn(PACKAGE_COMMAND_PROVIDERS, source.provider) ? "project" : "user";
+}
+
 /**
  * Expand a slash command if it matches a file-based command.
  * Returns the expanded content or the original text if not a slash command.
+ *
+ * With `shell`, `!`cmd`` snippets are captured as placeholders for the caller to resolve
+ * (see {@link CommandShellExpansion}); without it they stay as written.
  */
-export function expandSlashCommand(text: string, fileCommands: FileSlashCommand[]): string {
+export function expandSlashCommand(
+	text: string,
+	fileCommands: FileSlashCommand[],
+	shell?: CommandShellExpansion,
+): string {
 	if (!text.startsWith("/")) return text;
 
 	const spaceIndex = text.indexOf(" ");
@@ -133,7 +154,9 @@ export function expandSlashCommand(text: string, fileCommands: FileSlashCommand[
 		const args = parseCommandArgs(argsString);
 		const argsText = args.join(" ");
 		const usesInlineArgPlaceholders = templateUsesInlineArgPlaceholders(fileCommand.content);
-		const substituted = substituteArgs(fileCommand.content, args);
+		const origin = commandOrigin(fileCommand);
+		const content = shell?.capture(fileCommand.content, args, origin, commandName) ?? fileCommand.content;
+		const substituted = substituteArgs(content, args);
 		const rendered = prompt.render(substituted, { args, ARGUMENTS: argsText, arguments: argsText });
 		return appendInlineArgsFallback(rendered, argsText, usesInlineArgPlaceholders);
 	}

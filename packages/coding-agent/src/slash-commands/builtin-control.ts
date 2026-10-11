@@ -3,6 +3,7 @@ import { clearSubmittedText } from "./helpers/draft";
 import { shutdownHandlerTui } from "./builtin-lifecycle";
 import { commandConsumed, errorMessage, usage } from "./helpers/parse";
 import { parseBudgetArgs } from "../session/spend-cap-input";
+import { formatCacheReport } from "../session/cache-report";
 import { formatBudgetStatus } from "../session/spend-cap";
 import type { SlashCommandSpec } from "./types";
 
@@ -106,6 +107,19 @@ export const BUILTIN_CONTROL_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 			if (parsed.action === "error") runtime.ctx.showWarning(parsed.message);
 			else if (parsed.action === "set") runtime.ctx.session.setSpendCap(parsed);
 			else runtime.ctx.showStatus(formatBudgetStatus(runtime.ctx.session.getSpendCap()));
+		},
+	},
+	{
+		name: "cache",
+		icon: "stats",
+		description: "Show prompt-cache hit rate and why requests missed the cache",
+		handle: async (_command, runtime) => {
+			await runtime.output(formatCacheReport(runtime.session.requestLedger));
+			return commandConsumed();
+		},
+		handleTui: (_command, runtime) => {
+			clearSubmittedText(runtime);
+			runtime.ctx.showStatus(formatCacheReport(runtime.ctx.session.requestLedger));
 		},
 	},
 	{

@@ -91,4 +91,29 @@ describe.skipIf(tmuxBin === null)("launchInTmux with a real tmux", () => {
 		expect(lines.slice(at, at + 2)).toEqual(["[--max-cost]", "[1.5]"]);
 		expect(at).toBeLessThan(lines.indexOf("[--]"));
 	});
+
+	it("passes the model as --model, before the prompt, and refuses one that reads as a flag", async () => {
+		await fs.rm(path.join(root, "out"), { force: true });
+		await launchInTmux({
+			tmux: wrapper,
+			ompBin: fakeOmp,
+			overlayPath: path.join(root, "overlay.yml"),
+			cwd: root,
+			prompt: "fix it",
+			model: "anthropic/claude-sonnet-4-5",
+		});
+		const lines = (await report()).trim().split("\n");
+		const at = lines.indexOf("[--model]");
+		expect(lines[at + 1]).toBe("[anthropic/claude-sonnet-4-5]");
+		expect(at).toBeLessThan(lines.indexOf("[--]"));
+		await expect(
+			launchInTmux({
+				tmux: wrapper,
+				ompBin: fakeOmp,
+				overlayPath: path.join(root, "overlay.yml"),
+				cwd: root,
+				model: "--yolo",
+			}),
+		).rejects.toThrow("invalid model");
+	});
 });

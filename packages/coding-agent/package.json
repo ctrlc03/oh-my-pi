@@ -444,6 +444,10 @@
 			"types": "./src/secrets/*.ts",
 			"import": "./src/secrets/*.ts"
 		},
+		"./schedule/*": {
+			"types": "./src/schedule/*.ts",
+			"import": "./src/schedule/*.ts"
+		},
 		"./session/*": {
 			"types": "./src/session/*.ts",
 			"import": "./src/session/*.ts"

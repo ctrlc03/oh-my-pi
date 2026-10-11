@@ -2,6 +2,7 @@ import type { ImageContent, SessionEntry, TextContent } from "@oh-my-pi/pi-wire"
 import { type ReactNode, type RefObject, useCallback, useEffect, useState } from "react";
 import type { GuestClient, GuestSnapshot } from "../../lib/client";
 import { describeFilePlan } from "../../lib/file-restore";
+import { stripMentionContext } from "../../lib/mentions";
 import { isPrompt } from "../../lib/trim";
 import type { ComposerHandle } from "./Composer";
 import { Sheet } from "./Sheet";
@@ -82,13 +83,14 @@ export function useEditPrompt(
 		const blocks = typeof content === "string" ? [] : content;
 		setPending({
 			entryId: entry.id,
-			text:
+			text: stripMentionContext(
 				typeof content === "string"
 					? content
 					: blocks
 							.filter((block): block is TextContent => block.type === "text")
 							.map(block => block.text)
 							.join("\n"),
+			),
 			images: blocks.filter((block): block is ImageContent => block.type === "image"),
 			noticeFloor: notices.at(-1)?.id ?? 0,
 		});

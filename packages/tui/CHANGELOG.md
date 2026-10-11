@@ -4,8 +4,10 @@
 
 ### Added
 
+- Added the `cache` status-line segment (hit percentage of the last request that carried a prompt, `SegmentContext.lastCacheHitPct`; off by default), `cacheHitPct`, and an optional `cause` on `CacheInvalidation` that the cache-miss marker appends.
 - Added the `app.profile.cycle` keybinding (default `Alt+O`) and an agent-profile badge in the status line's `mode` segment (`SegmentContext.profile`, `StatusLineComponent.setProfileStatus`).
 - Added a ranked "What fills the context" block to the context usage report (`ContextUsageOptions.items`, `ContextRankedItem`), listing the largest items with their token estimate, share and whether they can be pruned.
+- Added an optional `route` label to `createUsageRowBlock` (shown in the per-turn usage row, e.g. `route smol`).
 
 ## [18.8.9] - 2026-10-10
 

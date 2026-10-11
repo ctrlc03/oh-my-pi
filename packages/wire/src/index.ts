@@ -11,6 +11,8 @@
  * JSON boundary and every `switch` keeps a tolerant `default:` branch.
  */
 
+import type { WirePrWatch } from "./pr-watch";
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Content blocks
 // ═══════════════════════════════════════════════════════════════════════════
@@ -240,6 +242,83 @@ export interface SessionSpend {
 	capped: boolean;
 }
 
+/** Whether a window still has room: `exhausted` is at its limit, `warning` is close to it. */
+export type LimitWindowStatus = "ok" | "warning" | "exhausted" | "unknown";
+
+/** One subscription limit window of one provider account (feature `usage-limits`): "5 Hour 62% used, resets 14:30". */
+export interface WireLimitWindow {
+	provider: string;
+	/** Email or account id the window belongs to; absent when the provider reports none. */
+	account?: string;
+	/** Stable window id (`5h`, `7d`, `monthly` ...), when the provider names one. */
+	windowId?: string;
+	label: string;
+	/** Fraction used (0..1; above 1 means overage); absent when the provider reports no amount. */
+	usedFraction?: number;
+	/** Epoch ms the window resets; absent when unknown. */
+	resetsAt?: number;
+	status?: LimitWindowStatus;
+}
+
+/**
+ * Why a session stopped or slowed on its account's usage limit (feature `usage-limits`). `blocked`: the
+ * last turn failed on the limit; `wrap-up` / `low-priority`: the provider serves requests on a short
+ * allowance or a slow lane past the limit.
+ */
+export interface SessionLimited {
+	kind: "blocked" | "wrap-up" | "low-priority";
+	provider?: string;
+	/** Epoch ms the limit resets; absent when neither the provider nor the usage report says. */
+	until?: number;
+	/** Epoch ms the host will send `continue` on its own (armed by `session-cmd` `resume-at-reset`); absent when not armed. */
+	resumeAt?: number;
+}
+
+/** Why a request read less of its prompt cache than the previous request left behind (feature `cache-stats`). */
+export type CacheMissReason = "model" | "system-prompt" | "tools" | "compaction" | "thinking" | "ttl" | "unknown";
+
+/** The last settled request's cache, speed and cost numbers. */
+export interface CacheRequestStat {
+	/** Epoch ms the request started. */
+	at: number;
+	model: string;
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	/** `cacheRead` as a percentage (0..100) of the prompt tokens; absent when the request carried no prompt. */
+	hitPct?: number;
+	/** Output tokens per second of response time; absent when the provider reported no usable duration. */
+	tokensPerSecond?: number;
+	/** Milliseconds to the first streamed token; absent when the provider reported none. */
+	ttftMs?: number;
+	costUsd: number;
+}
+
+/** One request whose cache read fell short of the previous request's prefix. */
+export interface CacheMiss {
+	/** Epoch ms the request started. */
+	at: number;
+	/** Most likely cause first, then any other cause that also applied. */
+	reasons: CacheMissReason[];
+	/** Prompt tokens the request had to process instead of reading from cache. */
+	reprocessedTokens: number;
+	model: string;
+}
+
+/** Prompt-cache statistics of a session (feature `cache-stats`). */
+export interface SessionCacheStats {
+	last?: CacheRequestStat;
+	/** Requests that carried prompt tokens. */
+	requests: number;
+	/** Session hit rate, `cacheRead` over prompt tokens, as a percentage (0..100); absent before the first request. */
+	hitPct?: number;
+	/** Cache misses seen this session. */
+	misses: number;
+	/** The most recent misses, newest last. */
+	recentMisses: CacheMiss[];
+}
+
 /** Debounced footer snapshot broadcast by the host. */
 export interface SessionState {
 	isStreaming: boolean;
@@ -256,12 +335,24 @@ export interface SessionState {
 	thinkingLevels?: string[];
 	/** Texts of the host's queued follow-ups, oldest first; present only on hosts with feature `follow-up`. */
 	followUps?: string[];
+	/**
+	 * Stable ids of `followUps`, same order and length; present only on hosts with feature `queue-edit`.
+	 * `session-cmd` `queue-edit` / `queue-move` / `queue-steer` name a follow-up by its id, which stays
+	 * with it through edits and moves and is never reused.
+	 */
+	followUpIds?: string[];
 	/** How many undone turns `session-cmd` `redo` can bring back; present only on hosts with feature `undo`. */
 	redoTurns?: number;
 	/** Session spend against its cap; present only on hosts with feature `spend-cap`, and only while a cap is set. */
 	spend?: SessionSpend;
 	/** Name of the active agent profile; present only on hosts with feature `profiles`. */
 	profile?: string;
+	/** Usage-limit stage of the session's account; present only on hosts with feature `usage-limits`, and only while limited. */
+	limited?: SessionLimited;
+	/** Prompt-cache statistics; present only on hosts with feature `cache-stats`, once a request settled. */
+	cache?: SessionCacheStats;
+	/** Pull requests the session watches (`pr-watch`); present only on hosts with feature `pr-watch`, and only while some are watched. */
+	prWatch?: WirePrWatch[];
 }
 
 export interface AgentSnapshot {
@@ -335,6 +426,22 @@ export type CollabUiSelectItem = string | { label: string; description?: string 
 
 export type CollabUiResponseValue = string | undefined;
 
+/** Choice kinds of a tool-approval select (feature `approval-grants`). `*-project` choices persist a rule in the project. */
+export type CollabApprovalChoiceKind = "once" | "session" | "project" | "deny" | "deny-project";
+
+/**
+ * Marks a `select` as a tool-approval prompt (feature `approval-grants`). `choices` pairs each option
+ * label of the request with its kind, so a client can group them and answer with the label. `rule` is
+ * what the "always" choices save, e.g. `bash: bun test *`; `guestProject` says whether a guest's
+ * project-scoped choice is honored (otherwise the host approves the call once and saves nothing).
+ */
+export interface CollabUiApproval {
+	tool: string;
+	rule?: string;
+	guestProject: boolean;
+	choices: { label: string; kind: CollabApprovalChoiceKind }[];
+}
+
 export type CollabUiRequestDraft =
 	| {
 			kind: "select";
@@ -345,6 +452,8 @@ export type CollabUiRequestDraft =
 			checkedIndices?: number[];
 			markableCount?: number;
 			helpText?: string;
+			/** Present on a tool-approval prompt from a host with feature `approval-grants`. */
+			approval?: CollabUiApproval;
 	  }
 	| {
 			kind: "editor";
@@ -353,6 +462,17 @@ export type CollabUiRequestDraft =
 	  };
 
 export type CollabUiRequest = CollabUiRequestDraft & { reqId: number };
+
+/**
+ * A reference a guest's prompt carries (feature `mentions`). The prompt text keeps what was typed
+ * (`#123`, `@title`); the host appends the context the agent needs to resolve each reference.
+ * `pr`: a pull request of the session's repository; the host checks `number` and an `https` `url`,
+ * and quotes `title`. `session`: another omp session by id; the host tells the agent where its
+ * transcript is.
+ */
+export type PromptMention =
+	| { kind: "pr"; number: number; title: string; url: string }
+	| { kind: "session"; id: string; title: string };
 
 export type GuestFrame =
 	| {
@@ -400,6 +520,8 @@ export type GuestFrame =
 			deliver?: "follow-up";
 			model?: string;
 			thinking?: string;
+			/** References in `text` (feature `mentions`); hosts without the feature ignore them. */
+			mentions?: PromptMention[];
 	  }
 	| { t: "ui-response"; reqId: number; value?: CollabUiResponseValue }
 	| { t: "abort" }
@@ -414,7 +536,18 @@ export type GuestFrame =
 	 * ignore it, so guests offer these controls only when `welcome.models` is
 	 * present; hosts that predate a command answer it with an `error`.
 	 */
-	| { t: "session-cmd"; cmd: SessionCommand; arg?: string; restoreFiles?: boolean };
+	| {
+			t: "session-cmd";
+			cmd: SessionCommand;
+			arg?: string;
+			restoreFiles?: boolean;
+			/** The queued follow-up a `queue-*` command acts on (one of `state.followUpIds`). */
+			id?: string;
+			/** `queue-move`: the 0-based position the follow-up takes among the queued follow-ups. */
+			index?: number;
+			/** `queue-edit`: references in the new text, as in `prompt.mentions`. */
+			mentions?: PromptMention[];
+	  };
 
 /**
  * Optional host capabilities advertised in `welcome.features`. `commands`: the
@@ -432,7 +565,16 @@ export type CollabFeature =
 	| "undo"
 	| "spend-cap"
 	| "context-items"
-	| "profiles";
+	| "inspect"
+	| "profiles"
+	| "usage-limits"
+	| "cache-stats"
+	| "turn-diff"
+	| "receipts"
+	| "queue-edit"
+	| "mentions"
+	| "approval-grants"
+	| "pr-watch";
 
 /** A slash command a writer may run by sending it as a `prompt` (`/name args`). */
 export interface CollabCommand {
@@ -484,9 +626,35 @@ export interface CollabCommandChoice {
  * the context window and is answered with a `context-items` frame; `context-prune` takes the
  * `id` of one listed item, elides it from the context the way the host's `/context prune`
  * does, and is answered with a fresh `context-items` frame carrying `pruned`.
+ * `inspect` / `preview-request` (feature `inspect`): `inspect` answers with an `inspect` frame, one row per
+ * model request on the active path (timing, tokens, cache, cost, and what entered the context since the
+ * request before); `preview-request` answers with a `request-preview` frame holding the provider request the
+ * next turn would send, built without sending it. Both redact secrets through the host's obfuscator.
  * `profile` (feature `profiles`): `arg` is the name of one of `welcome.profiles`; the host
  * switches the session to it (at the next turn when it is busy) and refuses while plan, goal or
  * vibe mode is active.
+ * `usage-limits` (feature `usage-limits`): refresh the host's subscription limit windows (`arg`
+ * `refresh` skips the host's short cache) and answer with a `usage-limits` frame.
+ * `resume-at-reset` / `resume-cancel` (feature `usage-limits`): while `state.limited.until` is set, the
+ * host sends `continue` as a prompt once that reset has passed (while its process lives; it refuses while
+ * the session is not limited or has no reset time), and `resume-cancel` disarms it; both are reflected
+ * in `state.limited.resumeAt`.
+ * `queue-edit` / `queue-move` / `queue-steer` (feature `queue-edit`): `id` is one of `state.followUpIds`.
+ * `queue-edit` replaces that follow-up's text with `arg` (and its `mentions`), keeping its position, author
+ * and images; `queue-move` puts it at `index` among the queued follow-ups; `queue-steer` moves it to the
+ * steering queue so the running turn picks it up at its next step. Each is refused when the follow-up
+ * already ran, and `queue-edit` when it was expanded from a slash command.
+ * `turn-diff` / `session-diff` (feature `turn-diff`, hosts with file snapshots): `turn-diff`'s `arg` is the
+ * id of a prompt entry on the active path and is answered with a `turn-diff` frame holding what that
+ * turn changed (the snapshot before it against the snapshot before the next prompt, or the working tree
+ * for the latest turn); `session-diff` takes no `arg` and answers with every change since the session's
+ * first snapshot. `receipts` (feature `receipts`): answered with a `receipts` frame listing the files
+ * changed, shell commands run, approval decisions and subagents on the active path.
+ * `pr-watch` / `pr-unwatch` (feature `pr-watch`): `pr-watch`'s `arg` is a pull request (a URL, `owner/repo#N`, or
+ * empty for the pull request of the host's current branch); the host watches it and wakes the session when its
+ * required checks fail, a review or comment arrives, or a conflict appears, and tells it when the checks pass or
+ * the pull request merges or closes. `pr-unwatch`'s `arg` is a watched pull request's `key`. Both are reflected
+ * in `state.prWatch`.
  */
 export type SessionCommand =
 	| "compact"
@@ -501,7 +669,20 @@ export type SessionCommand =
 	| "redo"
 	| "context-items"
 	| "context-prune"
-	| "profile";
+	| "inspect"
+	| "preview-request"
+	| "profile"
+	| "usage-limits"
+	| "resume-at-reset"
+	| "resume-cancel"
+	| "queue-edit"
+	| "queue-move"
+	| "queue-steer"
+	| "turn-diff"
+	| "session-diff"
+	| "receipts"
+	| "pr-watch"
+	| "pr-unwatch";
 
 /** One row of the host's ranking of what fills the context window (`context-items` frame). */
 export interface ContextItemRow {
@@ -518,6 +699,76 @@ export interface ContextItemRow {
 	prunable: boolean;
 }
 
+/** What a piece of context that entered the conversation since the previous model request is. */
+export type InspectInjectedKind =
+	| "prompt"
+	| "tool-results"
+	| "system-prompt"
+	| "context-notes"
+	| "todo"
+	| "verify"
+	| "hook"
+	| "memory"
+	| "advisor"
+	| "mode"
+	| "compaction"
+	| "other";
+
+/** One thing that entered the context between two model requests (`inspect` frame). */
+export interface InspectInjected {
+	kind: InspectInjectedKind;
+	/** Short name: `Todo reminder`, `System prompt changed`, `3 tool results`, … */
+	label: string;
+	/** Estimated tokens it adds. */
+	tokens: number;
+	/** Redacted, length-capped excerpt of what was added; absent when there is nothing to show. */
+	text?: string;
+}
+
+/** One model request of the active path (`inspect` frame): timing, usage and what changed in the context. */
+export interface InspectRow {
+	/** 1-based position among the active path's requests. */
+	seq: number;
+	/** Entry id of the assistant message the request produced. */
+	entryId: string;
+	/** Epoch ms the request started. */
+	at: number;
+	/** `provider/model` the request ran on. */
+	model: string;
+	/** Milliseconds from request start to the first streamed token; absent when the provider reported none. */
+	ttftMs?: number;
+	/** Milliseconds from request start to the end of the response; absent when the provider reported none. */
+	durationMs?: number;
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	/** Cost of the request in US dollars. */
+	cost: number;
+	stopReason: string;
+	/** Provider error text for a failed request. */
+	error?: string;
+	/** What entered the context since the request before, oldest first. */
+	injected: InspectInjected[];
+}
+
+/** The provider request a `preview-request` answers with (`request-preview` frame). */
+export interface RequestPreview {
+	/** `request`: the provider request body the next turn would send, captured before the host sends it. `context`: the provider would not expose its body without sending, so this is the provider-neutral context (system prompt, messages, tools) the next turn would hand it. */
+	source: "request" | "context";
+	/** `provider/model` the request targets. */
+	model: string;
+	/** Estimated tokens of the serialized request. */
+	tokens: number;
+	messages: number;
+	tools: number;
+	/** The redacted request body as JSON, cut at a size cap. */
+	text: string;
+	truncated: boolean;
+	/** What the preview leaves out or approximates (`source: "context"`, extension hooks that rewrite requests are not run). */
+	note?: string;
+}
+
 /**
  * What restoring the working tree to before a prompt does: files whose content
  * goes back (`revert`), files created since that are deleted (`remove`), and
@@ -527,6 +778,78 @@ export interface RewindFilesPlan {
 	revert: number;
 	remove: number;
 	recreate: number;
+}
+
+/** One file in a `turn-diff` frame. */
+export interface TurnDiffFile {
+	/** Repository-relative path, `/`-separated. */
+	path: string;
+	status: "added" | "modified" | "deleted" | "typechange";
+	/** Lines added and removed; null for a binary file. */
+	added: number | null;
+	removed: number | null;
+	/** Unified diff of the file as `git diff` prints it; empty for a binary or mode-only change. */
+	diff: string;
+	/** `diff` was cut (a very large file, or the frame's size budget ran out and it is empty). */
+	truncated?: true;
+}
+
+/** A file the agent changed through its edit tools, for the `receipts` frame. */
+export interface ReceiptFile {
+	path: string;
+	/** Tool that changed it: `edit`, `write`, `apply_patch`, `ast_edit`. */
+	tool: string;
+	/** 1-based number of the prompt it happened under (0 before the first prompt). */
+	turn: number;
+	/** Entry id of that prompt, for `turn-diff`; null before the first prompt. */
+	promptId: string | null;
+}
+
+/** A shell command run on the active path, for the `receipts` frame. */
+export interface ReceiptCommand {
+	command: string;
+	/** Exit status; null when there is none (cancelled, timed out, or never finished). */
+	exitCode: number | null;
+	/** `agent`: the bash tool; `user`: a `!` command typed by a person. */
+	source: "agent" | "user";
+	turn: number;
+	promptId: string | null;
+}
+
+/** A tool approval decision recorded in the session, for the `receipts` frame. */
+export interface ReceiptApproval {
+	tool: string;
+	approved: boolean;
+	/** Who decided: `tui` (the host's terminal), `guest` (a collab guest), `grant` (a saved grant, no prompt). */
+	by: string;
+	reason?: string;
+	turn: number;
+	promptId: string | null;
+}
+
+/** A subagent a `task` call ran, for the `receipts` frame. */
+export interface ReceiptSubagent {
+	id: string;
+	agent: string;
+	/** What it was asked to do: its description, else the first line of its task. */
+	label: string;
+	/** Exit status; null while the call has not returned. */
+	exitCode: number | null;
+	durationMs: number | null;
+	turn: number;
+	promptId: string | null;
+}
+
+/** What the session did on the active path, derived from its entries (`receipts` frame). */
+export interface SessionReceipts {
+	/** Prompts on the active path. */
+	turns: number;
+	files: ReceiptFile[];
+	commands: ReceiptCommand[];
+	approvals: ReceiptApproval[];
+	subagents: ReceiptSubagent[];
+	/** A list was cut to its most recent rows. */
+	truncated?: true;
 }
 
 /** EventBus channels mirrored to guests (task subagent traffic only). */
@@ -649,6 +972,39 @@ export type HostFrame =
 			contextWindow: number;
 			pruned?: { entries: number; tokensFreed: number };
 	  }
+	/**
+	 * Targeted reply to `session-cmd` `turn-diff` (`scope: "turn"`, `entryId` the prompt asked about) and
+	 * `session-diff` (`scope: "session"`, `entryId` null). `files` is null when the host cannot tell (`reason`
+	 * says why: no snapshot was recorded before that prompt, snapshots are off). `spansTurns` is how many
+	 * turns the diff covers: 1 unless the prompts after the asked one had no snapshot, so it ends at a later
+	 * one (or at the working tree), and for `session` the number of turns since the first snapshot.
+	 */
+	| {
+			t: "turn-diff";
+			scope: "turn" | "session";
+			entryId: string | null;
+			files: TurnDiffFile[] | null;
+			spansTurns?: number;
+			/** Changed files past the host's listing cap, not in `files`. */
+			omitted?: number;
+			reason?: string;
+	  }
+	/** Targeted reply to `session-cmd` `receipts`. */
+	| { t: "receipts"; receipts: SessionReceipts }
+	/**
+	 * Targeted reply to `session-cmd` `usage-limits`, and sent to writers when the windows change
+	 * (feature `usage-limits`): the account windows the host's providers report, `fetchedAt` the epoch ms
+	 * the host read them.
+	 */
+	| { t: "usage-limits"; windows: WireLimitWindow[]; fetchedAt: number }
+	/**
+	 * Targeted reply to `session-cmd` `inspect` (feature `inspect`, writers only): one row per model request
+	 * of the active path, oldest first, cut to the newest rows when the path holds more than the host
+	 * sends; `total` is the full count.
+	 */
+	| { t: "inspect"; rows: InspectRow[]; total: number }
+	/** Targeted reply to `session-cmd` `preview-request` (feature `inspect`, writers only). */
+	| { t: "request-preview"; preview: RequestPreview }
 	| { t: "ui-request-end"; reqId: number }
 	/** Targeted reply to fetch-transcript; `text` is decoded JSONL from `fromByte`, `newSize` the next offset base. */
 	| { t: "transcript"; reqId: number; text: string; newSize: number; error?: string }
@@ -759,5 +1115,6 @@ export type RelayControlToHost = { t: "peer-joined" | "peer-left"; peer: number 
 export type RelayControlToGuest = { t: "room-closed" };
 export type RelayControlMessage = RelayControlToHost | RelayControlToGuest;
 
+export * from "./pr-watch";
 export * from "./stream";
 export * from "./tsp";

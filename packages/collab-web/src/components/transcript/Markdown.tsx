@@ -2,8 +2,11 @@ import type { Token } from "@oh-my-pi/pi-utils/marked";
 import { Marked } from "@oh-my-pi/pi-utils/marked";
 import { listMayContinueAt } from "@oh-my-pi/pi-utils/marked-list";
 import type { MouseEvent, ReactNode } from "react";
-import { memo, useMemo, useRef } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { type DiagramKind, diagramKindOf, isClosedFence } from "../../lib/diagrams";
 import { escapeHtml } from "../../lib/format";
+import { DiagramFigure } from "../diagram/DiagramFigure";
 import { mathExtension } from "./math";
 
 function unescapeHtml(raw: string): string {
@@ -67,11 +70,14 @@ const md = new Marked({
 			return escapeHtml(unescapeHtml(cleaned));
 		},
 		// Fenced and indented code, wrapped with a copy button handled by `onCopyClick`.
-		code({ text, lang, escaped }) {
+		code({ text, lang, escaped, raw }) {
 			const language = /^\S*/.exec(lang ?? "")?.[0] ?? "";
 			const code = `${text.replace(/\n$/, "")}\n`;
 			const cls = language ? ` class="language-${escapeHtml(language)}"` : "";
-			return `<div class="tr-code"><pre><code${cls}>${escaped ? code : escapeHtml(code)}</code></pre><button type="button" class="tr-copy" aria-label="copy code"></button></div>\n`;
+			// A closed diagram fence gets a placeholder that `MarkdownBody` replaces with the rendered diagram.
+			const kind = isClosedFence(raw) ? diagramKindOf(language, text) : null;
+			const diagram = kind === null ? "" : ` tr-diagram" data-diagram="${kind}`;
+			return `<div class="tr-code${diagram}"><pre><code${cls}>${escaped ? code : escapeHtml(code)}</code></pre><button type="button" class="tr-copy" aria-label="copy code"></button></div>\n`;
 		},
 		link({ href, title, tokens }) {
 			const inner = this.parser.parseInline(tokens);
@@ -107,9 +113,49 @@ function onCopyClick(e: MouseEvent<HTMLDivElement>): void {
 	});
 }
 
+interface DiagramMount {
+	kind: DiagramKind;
+	source: string;
+	/** The element the figure is portaled into, inside its fence's placeholder. */
+	host: HTMLElement;
+}
+
+/**
+ * The rendered markup of a block. The `code` renderer leaves a placeholder (the plain code block) for each
+ * closed diagram fence; once the markup is in the page, each placeholder gets a {@link DiagramFigure} portaled
+ * into it, which draws the diagram and falls back to that same code block when it cannot.
+ */
+function MarkdownBody({ html }: { html: string }): ReactNode {
+	const root = useRef<HTMLDivElement>(null);
+	const [mounts, setMounts] = useState<readonly DiagramMount[]>([]);
+	// React re-applies `innerHTML` whenever this object changes identity, which would wipe the portal hosts
+	// appended below on the re-render `setMounts` triggers.
+	const inner = useMemo(() => ({ __html: html }), [html]);
+	useLayoutEffect(() => {
+		const found: DiagramMount[] = [];
+		for (const node of root.current?.querySelectorAll<HTMLElement>(".tr-diagram[data-diagram]") ?? []) {
+			const kind = node.dataset.diagram === "excalidraw" ? "excalidraw" : "mermaid";
+			const host = document.createElement("div");
+			host.className = "tr-diagram-host";
+			node.append(host);
+			node.dataset.mounted = "";
+			found.push({ kind, source: node.querySelector("code")?.textContent ?? "", host });
+		}
+		setMounts(prev => (prev.length === 0 && found.length === 0 ? prev : found));
+	}, [html]);
+	return (
+		<>
+			<div ref={root} className="tr-md" onClick={onCopyClick} dangerouslySetInnerHTML={inner} />
+			{mounts.map((mount, i) =>
+				createPortal(<DiagramFigure kind={mount.kind} source={mount.source} />, mount.host, String(i)),
+			)}
+		</>
+	);
+}
+
 export const Markdown = memo(function Markdown({ text }: { text: string }): ReactNode {
 	const html = useMemo(() => renderMarkdown(text), [text]);
-	return <div className="tr-md" onClick={onCopyClick} dangerouslySetInnerHTML={{ __html: html }} />;
+	return <MarkdownBody html={html} />;
 });
 
 /**
@@ -221,5 +267,5 @@ export const StreamingMarkdown = memo(function StreamingMarkdown({ text }: { tex
 		prefixRef.current = rendered.prefix;
 		return rendered.html;
 	}, [text]);
-	return <div className="tr-md" onClick={onCopyClick} dangerouslySetInnerHTML={{ __html: html }} />;
+	return <MarkdownBody html={html} />;
 });

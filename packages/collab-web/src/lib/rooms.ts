@@ -8,7 +8,7 @@
  * a room when the relay reports it gone.
  */
 
-import type { ImageContent } from "@oh-my-pi/pi-wire";
+import type { ImageContent, PromptMention } from "@oh-my-pi/pi-wire";
 import { parseCollabLink } from "./link";
 import { replicaStore } from "./replica-cache";
 import { readJson, writeJson } from "./storage";
@@ -127,6 +127,8 @@ export interface QueuedPrompt {
 	model?: string;
 	/** Thinking level for that model; only with `model`. */
 	thinking?: string;
+	/** References in `text` (`#123`, `@session`) the host expands into context. */
+	mentions?: PromptMention[];
 }
 
 function isQueuedPrompt(value: unknown): value is QueuedPrompt {
@@ -138,7 +140,8 @@ function isQueuedPrompt(value: unknown): value is QueuedPrompt {
 		(q.images === undefined || Array.isArray(q.images)) &&
 		(q.deliver === undefined || q.deliver === "follow-up") &&
 		(q.model === undefined || typeof q.model === "string") &&
-		(q.thinking === undefined || (typeof q.thinking === "string" && typeof q.model === "string"))
+		(q.thinking === undefined || (typeof q.thinking === "string" && typeof q.model === "string")) &&
+		(q.mentions === undefined || Array.isArray(q.mentions))
 	);
 }
 

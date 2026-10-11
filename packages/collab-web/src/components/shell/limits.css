@@ -1,0 +1,154 @@
+/* Subscription limits: the bar above the composer while a session is limited, and the
+ * window list shared by the usage sheet and the limits sheet. Token colours only. */
+
+.sh-limit-bar {
+	/* The composer's side inset, so the bar lines up with the chips and the message box below. */
+	flex: none;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px 12px;
+	width: calc(100% - 32px);
+	max-width: calc(var(--chat-width) - 32px);
+	margin: 0 16px 8px;
+	padding: 8px 12px;
+	font-size: 12.5px;
+	color: var(--fg);
+	background: var(--bg-raised);
+	border: 1px solid var(--warn);
+	border-radius: var(--radius-lg);
+}
+
+.sh-limit-bar-msg {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	flex: 1 1 220px;
+}
+
+.sh-limit-bar-msg svg {
+	flex: none;
+	color: var(--warn);
+}
+
+.sh-limit-bar-text {
+	min-width: 0;
+	font-variant-numeric: tabular-nums;
+}
+
+.sh-limit-bar-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+/* ---- windows ---- */
+.sh-limits {
+	gap: 12px;
+}
+
+.sh-limit-empty {
+	color: var(--fg-faint);
+	font-size: 12.5px;
+}
+
+.sh-limit-group {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px 12px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-limit-group-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 10px;
+	min-width: 0;
+}
+
+.sh-limit-provider {
+	font-weight: 600;
+}
+
+.sh-limit-tag {
+	margin-left: auto;
+	font-size: 11px;
+	color: var(--accent);
+}
+
+.sh-limit-list {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-limit-row {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.sh-limit-line {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	font-size: 12.5px;
+}
+
+.sh-limit-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-limit-pct {
+	flex: none;
+	font: 600 12.5px / 1.3 var(--font-mono);
+}
+
+.sh-limit-meter {
+	height: 6px;
+	overflow: hidden;
+	background: var(--border);
+	border-radius: 999px;
+}
+
+.sh-limit-fill {
+	width: var(--used);
+	height: 100%;
+	border-radius: inherit;
+	background: var(--ok);
+	transition: width 240ms var(--ease-out);
+}
+
+.sh-limit-fill.sh-limit-low,
+.sh-limit-pct.sh-limit-low {
+	color: var(--warn);
+}
+
+.sh-limit-fill.sh-limit-low {
+	background: var(--warn);
+}
+
+.sh-limit-fill.sh-limit-full {
+	background: var(--err);
+}
+
+.sh-limit-pct.sh-limit-full {
+	color: var(--err);
+}
+
+.sh-limit-reset {
+	font: 400 11.5px / 1.3 var(--font-mono);
+	color: var(--fg-muted);
+}

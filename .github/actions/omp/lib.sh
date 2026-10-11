@@ -26,7 +26,46 @@ git_auth() {
 	git -c "$key=" -c "$key=AUTHORIZATION: basic $basic" "$@"
 }
 
+# skip <reason>: end prepare with "do not run". The remaining steps are conditional on it.
+skip() {
+	echo "::notice::omp skipped: $1"
+	output skip true
+	exit 0
+}
+
 # post_comment <issue-or-pr-number> <body-file>
 post_comment() {
 	gh api "repos/$GITHUB_REPOSITORY/issues/$1/comments" -F "body=@$2" --silent
+}
+
+# association_allowed <csv-list> <author_association>: succeeds when the value is listed.
+association_allowed() {
+	case ",${1// /}," in
+	*",$2,"*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+# split_json_block <answer-file> <text-out> <json-out>
+# Splits an answer into the prose and the contents of its last fenced ```json
+# block. <text-out> gets every line outside that block; <json-out> gets the lines
+# inside it (empty when the answer has no complete json block).
+split_json_block() {
+	awk -v textf="$2" -v jsonf="$3" '
+		{ line[NR] = $0 }
+		END {
+			printf "" >textf
+			printf "" >jsonf
+			for (i = 1; i <= NR; i++) {
+				if (!open && line[i] ~ /^```json[ \t]*$/) { open = 1; s = i }
+				else if (open && line[i] ~ /^```[ \t]*$/) { open = 0; first = s; last = i }
+			}
+			for (i = 1; i <= NR; i++) {
+				if (first && i == first) continue
+				if (first && i == last) continue
+				if (first && i > first && i < last) print line[i] >jsonf
+				else print line[i] >textf
+			}
+		}
+	' "$1"
 }

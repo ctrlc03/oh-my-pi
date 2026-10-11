@@ -1,4 +1,4 @@
-import { Check, CheckSquare, Copy, FileText, Pencil, Send, Share2, SquareTerminal } from "lucide-react";
+import { Check, CheckSquare, Copy, FileDiff, FileText, Pencil, Send, Share2, SquareTerminal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { type Block, blockTitle, hasOutput } from "../../lib/blocks";
@@ -38,6 +38,7 @@ export function BlockSheet({
 	api,
 	canSend,
 	onEdit,
+	onChanges,
 	onSelect,
 	onClose,
 }: {
@@ -45,6 +46,7 @@ export function BlockSheet({
 	api: BlockApi;
 	canSend: boolean;
 	onEdit?: (entryId: string) => void;
+	onChanges?: (entryId: string) => void;
 	onSelect(): void;
 	onClose(): void;
 }): ReactNode {
@@ -111,6 +113,13 @@ export function BlockSheet({
 						icon={<Pencil size={16} />}
 						label="Edit and resend"
 						onClick={() => act(() => onEdit(block.entryId))}
+					/>
+				)}
+				{block.kind === "prompt" && block.editable && onChanges !== undefined && (
+					<SheetRow
+						icon={<FileDiff size={16} />}
+						label="Changes in this turn"
+						onClick={() => act(() => onChanges(block.entryId))}
 					/>
 				)}
 				<SheetRow icon={<CheckSquare size={16} />} label="Select" onClick={() => act(onSelect)} />

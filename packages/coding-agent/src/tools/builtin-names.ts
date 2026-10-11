@@ -7,6 +7,7 @@ export const BUILTIN_TOOL_NAMES = [
 	"ask",
 	"debug",
 	"ida",
+	"schedule",
 	"eval",
 	"github",
 	"glob",
@@ -31,6 +32,7 @@ export const BUILTIN_TOOL_NAMES = [
 	"reflect",
 	"learn",
 	"manage_skill",
+	"watch_pr",
 ] as const;
 
 export type BuiltinToolName = (typeof BUILTIN_TOOL_NAMES)[number];

@@ -49,3 +49,66 @@
 	border: 1px solid var(--border-strong);
 	border-radius: 6px;
 }
+
+.sh-keys-hint {
+	margin-bottom: 4px;
+}
+
+.sh-keys-list dt {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.sh-keys-list dd {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 6px;
+}
+
+.sh-keys-warn,
+.sh-keys-error {
+	font-size: 12px;
+}
+
+.sh-keys-warn {
+	color: var(--warn);
+}
+
+.sh-keys-error {
+	color: var(--err);
+}
+
+/* A keycap that is a button: click, then press the new keys. */
+.sh-kbd-edit {
+	cursor: pointer;
+	transition:
+		border-color 120ms ease-out,
+		box-shadow 120ms ease-out;
+}
+
+.sh-kbd-edit:hover {
+	border-color: var(--edge-top);
+}
+
+.sh-kbd-edit:focus-visible {
+	outline: none;
+	border-color: var(--ring);
+	box-shadow: 0 0 0 3px var(--ring-soft);
+}
+
+.sh-kbd-custom {
+	border-color: var(--accent);
+}
+
+.sh-kbd-recording {
+	color: var(--accent);
+	border-color: var(--ring);
+	box-shadow: 0 0 0 3px var(--ring-soft);
+}
+
+.sh-keys-reset {
+	min-height: 26px;
+	min-width: 26px;
+}

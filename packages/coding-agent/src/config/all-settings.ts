@@ -18,12 +18,15 @@ import * as hindsightSettings from "../hindsight/settings";
 import * as exportTtsrSettings from "../export/ttsr-settings";
 import * as editSettings from "../edit/settings";
 import * as toolsSettings from "../tools/settings";
+import * as prWatchSettings from "../pr-watch/settings";
 import * as lspSettings from "../lsp/settings";
 import * as execSettings from "../exec/settings";
+import * as sandboxSettings from "../sandbox/settings";
 import * as evalSettings from "../eval/settings";
 import * as taskSettings from "../task/settings";
 import * as planModeSettings from "../plan-mode/settings";
 import * as profilesSettings from "../profiles/settings";
+import * as routingSettings from "../routing/settings";
 import * as goalsSettings from "../goals/settings";
 import * as verifySettings from "../verify/settings";
 import * as titleSettings from "../utils/title-settings";
@@ -31,6 +34,7 @@ import * as extensibilitySettings from "../extensibility/settings";
 import * as webSettings from "../web/settings";
 import * as toolsBrowserSettings from "../tools/browser/settings";
 import * as idaSettings from "../ida/settings";
+import * as scheduleSettings from "../schedule/settings";
 import * as mcpSettings from "../mcp/settings";
 import * as blobBrokerSettings from "../blob-broker/settings";
 import * as secretsSettings from "../secrets/settings";
@@ -60,12 +64,15 @@ const DOMAINS: readonly Readonly<Record<string, unknown>>[] = [
 	exportTtsrSettings,
 	editSettings,
 	toolsSettings,
+	prWatchSettings,
 	lspSettings,
 	execSettings,
+	sandboxSettings,
 	evalSettings,
 	taskSettings,
 	planModeSettings,
 	profilesSettings,
+	routingSettings,
 	goalsSettings,
 	verifySettings,
 	titleSettings,
@@ -73,6 +80,7 @@ const DOMAINS: readonly Readonly<Record<string, unknown>>[] = [
 	webSettings,
 	toolsBrowserSettings,
 	idaSettings,
+	scheduleSettings,
 	mcpSettings,
 	blobBrokerSettings,
 	secretsSettings,

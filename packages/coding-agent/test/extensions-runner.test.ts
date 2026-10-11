@@ -2621,10 +2621,17 @@ describe("ExtensionRunner", () => {
 				{ type: "ui_select" },
 				{ type: "tool_approval_resolved", approved: true },
 			]);
-			expect(select).toHaveBeenCalledWith(expect.stringContaining("Allow tool: dangerous_tool"), [
-				"Approve",
-				"Deny",
-			]);
+			expect(select).toHaveBeenCalledWith(
+				expect.stringContaining("Allow tool: dangerous_tool"),
+				[
+					"Allow once",
+					"Always allow (this session)",
+					"Always allow (this project)",
+					"Deny",
+					"Deny always (this project)",
+				],
+				expect.objectContaining({ approval: expect.objectContaining({ tool: "dangerous_tool" }) }),
+			);
 			delete globalState.__approvalEvents;
 		});
 		it("runs bridged preflight before approval and cancels denied state", async () => {

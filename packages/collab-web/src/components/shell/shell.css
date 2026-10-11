@@ -1062,6 +1062,25 @@
 	width: 100%;
 }
 
+.sh-approval-row {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+	gap: 6px;
+}
+
+.sh-approval-allow .sh-ask-option-marker {
+	color: var(--ok);
+}
+
+.sh-approval-deny .sh-ask-option-marker {
+	color: var(--err);
+}
+
+.sh-approval-choice:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
 .sh-queued {
 	display: inline-flex;
 	align-items: center;

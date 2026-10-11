@@ -20,6 +20,9 @@ import type {
 	WireModel,
 	WireProfile,
 	WireUsage,
+	InspectInjected,
+	InspectRow,
+	RequestPreview,
 } from "@oh-my-pi/pi-wire";
 
 export const HOST_DISPLAY_NAME = "kai";
@@ -156,6 +159,94 @@ const delay = Math.min(1000 * 2 ** attempt, 30_000);
 \`\`\`
 
 Checking the actual implementation now.`;
+
+/** A small drawing for the reply below: the app draws an `excalidraw` fence read-only (tap it, then Edit, to change it). */
+const DIAGRAM_SCENE = JSON.stringify({
+	type: "excalidraw",
+	version: 2,
+	elements: [
+		{
+			id: "box-guest",
+			type: "rectangle",
+			x: 0,
+			y: 0,
+			width: 150,
+			height: 70,
+			strokeColor: "#1e1e1e",
+			backgroundColor: "#a5d8ff",
+			fillStyle: "solid",
+		},
+		{
+			id: "box-relay",
+			type: "rectangle",
+			x: 280,
+			y: 0,
+			width: 150,
+			height: 70,
+			strokeColor: "#1e1e1e",
+			backgroundColor: "#b2f2bb",
+			fillStyle: "solid",
+		},
+		{
+			id: "txt-guest",
+			type: "text",
+			x: 45,
+			y: 24,
+			text: "guest",
+			fontSize: 20,
+			fontFamily: 1,
+			strokeColor: "#1e1e1e",
+		},
+		{
+			id: "txt-relay",
+			type: "text",
+			x: 328,
+			y: 24,
+			text: "relay",
+			fontSize: 20,
+			fontFamily: 1,
+			strokeColor: "#1e1e1e",
+		},
+		{
+			id: "arrow-sync",
+			type: "arrow",
+			x: 150,
+			y: 35,
+			width: 130,
+			height: 0,
+			strokeColor: "#1e1e1e",
+			points: [
+				[0, 0],
+				[130, 0],
+			],
+			endArrowhead: "arrow",
+		},
+	],
+	appState: { viewBackgroundColor: "#ffffff" },
+	files: {},
+});
+
+const ASSISTANT_SUMMARY_TEXT = [
+	"Done: backoff window verified, fatal-code table cross-checked against the relay, buffer cap documented. Left: an integration test that kills the relay mid-stream and asserts the guest resyncs from `welcome` without duplicated entries — RelayProbe is running that now, DocSweep already swept the docs.",
+	"",
+	"How a guest recovers after the relay restarts:",
+	"",
+	"```mermaid",
+	"flowchart LR",
+	"  A[Relay redeploys] --> B{Close code}",
+	"  B -- 1001 --> C[Back off 1s to 30s]",
+	"  B -- fatal --> D[Stop and tell the user]",
+	"  C --> E[Reopen and send hello]",
+	"  E --> F[Relay answers welcome]",
+	"  F --> G[Resync from the last entry]",
+	"```",
+	"",
+	"And the two ends at a glance:",
+	"",
+	"```excalidraw",
+	DIAGRAM_SCENE,
+	"```",
+].join("\n");
 
 /** A long bash result with ANSI colours: pass and fail marks over sixty lines, to exercise a sticky tool header. */
 const LONG_BASH_OUTPUT = Array.from({ length: 60 }, (_, i) => {
@@ -420,8 +511,19 @@ export const fixtureEntries: SessionEntry[] = [
 		},
 	},
 	{
-		id: "e09-legacy-call",
+		id: "e09-job",
 		parentId: "e09",
+		timestamp: iso(NOW - 19 * MIN - 30_000),
+		type: "custom_message",
+		customType: "async-result",
+		content:
+			'<system-notice>\nBackground job RelayProbe has completed.\n<task-result id="RelayProbe" agent="task" status="completed">\n{ "summary": "Reconnect buffer verified at 256 frames; overflow is dropped and logged." }\n</task-result>\n</system-notice>',
+		details: { jobs: [{ jobId: "RelayProbe", type: "task", durationMs: 92_000 }] },
+		display: true,
+	},
+	{
+		id: "e09-legacy-call",
+		parentId: "e09-job",
 		timestamp: iso(NOW - 19 * MIN),
 		type: "message",
 		message: {
@@ -566,7 +668,7 @@ export const fixtureEntries: SessionEntry[] = [
 			content: [
 				{
 					type: "text",
-					text: "Done: backoff window verified, fatal-code table cross-checked against the relay, buffer cap documented. Left: an integration test that kills the relay mid-stream and asserts the guest resyncs from `welcome` without duplicated entries — RelayProbe is running that now, DocSweep already swept the docs.",
+					text: ASSISTANT_SUMMARY_TEXT,
 				},
 			],
 			model: fixtureModel.id,
@@ -1006,4 +1108,148 @@ export function makeScriptedTurn(seq: number, parentId: string | null): Scripted
 		{ kind: "event", event: { type: "agent_end" } },
 		{ kind: "state", streaming: false },
 	];
+}
+
+/** [kind, label, tokens, excerpt] of what entered the context before each fixture request (index 0 = request #1). */
+type InjectedSpec = [InspectInjected["kind"], string, number, string?];
+const INSPECT_INJECTED: InjectedSpec[][] = [
+	[
+		[
+			"system-prompt",
+			"System prompt",
+			9_200,
+			"You are omp, a coding agent working in /repo.\nPrefer small, reviewed edits; run the tests you touch.",
+		],
+		["prompt", "Your prompt", 38, "Why does the relay drop guests after a reconnect?"],
+	],
+	[["tool-results", "2 tool results", 3_400, "grep: src/relay.ts:88 rejoin()\nread: src/relay.ts (214 lines)"]],
+	[
+		[
+			"tool-results",
+			"bash bun test",
+			6_100,
+			"bun test v1.3\n 41 pass\n 2 fail\n\nrelay.test.ts > rejoin resets the room key",
+		],
+	],
+	[
+		["context-notes", "Context notes", 420, "Reconnect backoff is capped at 30s (settled in turn 2)."],
+		["todo", "Todo reminder", 160, "- [x] reproduce the drop\n- [ ] fix rejoin()\n- [ ] add a regression test"],
+	],
+	[["tool-results", "edit src/relay.ts", 900, "Applied 1 hunk to src/relay.ts"]],
+	[["verify", "Verification reminder", 210, "Run the relay tests before reporting the fix done."]],
+	[["tool-results", "bash bun test", 2_800, "bun test v1.3\n 43 pass\n 0 fail"]],
+	[["hook", "Hook: pre-commit lint", 540, "lint: 2 warnings in src/relay.ts (unused import)"]],
+	[["prompt", "Your prompt", 61, "Now also cover the backoff cap with a test."]],
+	[
+		[
+			"memory",
+			"Memory: relay conventions",
+			780,
+			"Relay tests live beside the source as *.test.ts and use the fake clock.",
+		],
+		["tool-results", "3 tool results", 5_300],
+	],
+	[
+		[
+			"compaction",
+			"Compaction",
+			4_100,
+			"Summary of the session so far:\n- Goal: stop the relay dropping guests after a reconnect.\n- Done: reproduced the drop; rejoin() now re-derives the room key before the first frame.\n- Open: a regression test for the 30s backoff cap, and a docs note.\n- Files touched: src/relay.ts, src/relay.test.ts.\n- Decisions: keep the backoff cap at 30s; do not change the wire protocol.",
+		],
+	],
+	[["tool-results", "write src/relay.test.ts", 1_200, "Wrote 64 lines to src/relay.test.ts"]],
+];
+
+/** Timing, usage and stop reason of each fixture request: ttft, duration, input, output, cacheRead, cacheWrite, cost, stopReason. */
+const INSPECT_REQUESTS: [number, number, number, number, number, number, number, string][] = [
+	[3_900, 9_600, 11_200, 420, 0, 11_200, 0.071, "toolUse"],
+	[1_900, 4_300, 400, 310, 11_200, 3_400, 0.026, "toolUse"],
+	[1_300, 5_800, 380, 640, 15_000, 6_100, 0.047, "toolUse"],
+	[1_100, 3_200, 600, 280, 21_500, 580, 0.018, "toolUse"],
+	[760, 2_400, 300, 190, 22_700, 900, 0.013, "toolUse"],
+	[640, 6_900, 260, 880, 23_900, 210, 0.029, "toolUse"],
+	[520, 2_100, 240, 150, 24_300, 2_800, 0.016, "toolUse"],
+	[480, 2_700, 220, 230, 27_300, 540, 0.012, "toolUse"],
+	[0, 0, 410, 0, 28_100, 0, 0.009, "error"],
+	[420, 5_100, 180, 700, 28_600, 780, 0.021, "stop"],
+	[2_600, 7_400, 5_200, 520, 0, 9_300, 0.052, "toolUse"],
+	[310, 1_800, 250, 120, 9_300, 1_200, 0.008, "stop"],
+];
+
+/** The mock host's `inspect` rows, oldest first, ending a minute ago: ttft from 300ms to 4s, cache share rising, one failed request, one after a compaction. */
+export function fixtureInspectRows(now: number): InspectRow[] {
+	return INSPECT_REQUESTS.map(
+		([ttftMs, durationMs, input, output, cacheRead, cacheWrite, cost, stopReason], index) => {
+			const failed = stopReason === "error";
+			return {
+				seq: index + 1,
+				entryId: `inspect-${index + 1}`,
+				at: now - 60_000 - (INSPECT_REQUESTS.length - index) * 38_000,
+				model: index >= 10 ? "anthropic/claude-sonnet-4-5" : "anthropic/claude-haiku-4-5",
+				...(failed ? {} : { ttftMs, durationMs }),
+				input,
+				output,
+				cacheRead,
+				cacheWrite,
+				cost,
+				stopReason,
+				...(failed ? { error: "429 rate_limit_error: retry after 12s" } : {}),
+				injected: (INSPECT_INJECTED[index] ?? []).map(([kind, label, tokens, text]) => ({
+					kind,
+					label,
+					tokens,
+					...(text === undefined ? {} : { text }),
+				})),
+			};
+		},
+	);
+}
+
+/** The mock host's `request-preview` of the next turn: a small Anthropic-shaped body. */
+export function fixtureRequestPreview(model: string): RequestPreview {
+	const body = {
+		model: model.slice(model.lastIndexOf("/") + 1),
+		max_tokens: 16_000,
+		temperature: 1,
+		system: [
+			{ type: "text", text: "You are omp, a coding agent working in /repo.", cache_control: { type: "ephemeral" } },
+		],
+		messages: [
+			{ role: "user", content: [{ type: "text", text: "Now also cover the backoff cap with a test." }] },
+			{
+				role: "assistant",
+				content: [
+					{ type: "text", text: "I'll add a test beside the others." },
+					{ type: "tool_use", id: "toolu_01", name: "read", input: { path: "src/relay.test.ts" } },
+				],
+			},
+			{
+				role: "user",
+				content: [{ type: "tool_result", tool_use_id: "toolu_01", content: 'describe("relay", () => { … })' }],
+			},
+		],
+		tools: [
+			{
+				name: "read",
+				description: "Read a file",
+				input_schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+			},
+			{
+				name: "bash",
+				description: "Run a command",
+				input_schema: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
+			},
+		],
+	};
+	const text = JSON.stringify(body, null, 2);
+	return {
+		source: "request",
+		model,
+		tokens: Math.round(text.length / 4),
+		messages: body.messages.length,
+		tools: body.tools.length,
+		text,
+		truncated: false,
+		note: "Extension hooks that rewrite requests are not run for the preview.",
+	};
 }

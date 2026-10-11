@@ -1,0 +1,276 @@
+/* Diagrams: the transcript figure (tr-diagram-*), the viewer's pan/zoom surface (sh-pz-*), the canvas
+ * sheet (sh-canvas) and the Mermaid file editor (sh-mmd-*). Colours come from tokens only. */
+
+/* ---- transcript figure ---- */
+
+/* The placeholder keeps the plain code block until the figure is mounted into it. */
+.tr-md .tr-diagram[data-mounted] > pre,
+.tr-md .tr-diagram[data-mounted] > .tr-copy {
+	display: none;
+}
+
+.tr-diagram-fig {
+	margin: 12px 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	background: var(--bg-inset);
+	overflow: hidden;
+}
+
+.tr-diagram-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 4px 6px 4px 12px;
+	border-bottom: 1px solid var(--border);
+	font: 500 11px / 1 var(--font-ui);
+	color: var(--fg-muted);
+}
+
+.tr-diagram-actions {
+	display: inline-flex;
+	gap: 2px;
+}
+
+.tr-diagram-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	min-height: 28px;
+	padding: 0 8px;
+	font: 500 11px / 1 var(--font-ui);
+	color: var(--fg-muted);
+	background: none;
+	border: 0;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+}
+
+.tr-diagram-btn:hover,
+.tr-diagram-btn[aria-pressed="true"] {
+	color: var(--fg);
+	background: var(--hover);
+}
+
+.tr-diagram-wait {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 18px 14px;
+	font-size: 12.5px;
+	color: var(--fg-muted);
+}
+
+.tr-diagram-svg {
+	padding: 12px;
+	overflow-x: auto;
+	text-align: center;
+	cursor: zoom-in;
+	line-height: 0;
+}
+
+.tr-diagram-svg svg {
+	display: inline-block;
+	max-width: 100%;
+	height: auto;
+}
+
+/* A code block inside the figure sits flush: the figure already has the frame. */
+.tr-diagram-fig .tr-code pre {
+	margin: 0;
+	border: 0;
+	border-radius: 0;
+}
+
+.tr-diagram-note {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+	padding: 8px 12px;
+	border-top: 1px solid var(--border);
+	font-size: 12px;
+	line-height: 1.45;
+	color: var(--warn);
+}
+
+.tr-diagram-note svg {
+	flex: none;
+	margin-top: 2px;
+}
+
+@media (max-width: 640px) {
+	.tr-diagram-btn {
+		min-height: 36px;
+		padding: 0 10px;
+	}
+	.tr-diagram-btn-label {
+		display: none;
+	}
+}
+
+/* ---- pan/zoom surface ---- */
+
+.sh-pz {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	display: flex;
+}
+
+.sh-pz-surface {
+	position: relative;
+	flex: 1;
+	min-height: 240px;
+	overflow: hidden;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	background: var(--bg-inset);
+	/* Gestures belong to the surface: no page scroll or browser zoom under a pinch. */
+	touch-action: none;
+	overscroll-behavior: none;
+	cursor: grab;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.sh-pz-surface:active {
+	cursor: grabbing;
+}
+
+.sh-pz-surface:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: -2px;
+}
+
+.sh-pz-content {
+	position: absolute;
+	top: 0;
+	left: 0;
+	transform-origin: 0 0;
+	will-change: transform;
+}
+
+.sh-diagram-art,
+.sh-diagram-art svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+.sh-pz-controls {
+	position: absolute;
+	right: 10px;
+	bottom: 10px;
+	display: flex;
+	gap: 6px;
+	padding: 4px;
+	background: var(--glass);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	-webkit-backdrop-filter: blur(12px);
+	backdrop-filter: blur(12px);
+}
+
+/* ---- viewer sheet ---- */
+
+.sh-diagram-actions {
+	display: inline-flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 6px;
+}
+
+.sh-diagram-source,
+.sh-diagram-fail {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-height: 0;
+	overflow: auto;
+}
+
+.sh-diagram-source .tr-code pre,
+.sh-diagram-fail .tr-code pre {
+	margin: 0;
+	padding: 14px 16px;
+	overflow-x: auto;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	background: var(--bg-inset);
+}
+
+.sh-diagram-source .tr-code code,
+.sh-diagram-fail .tr-code code {
+	font-family: var(--font-mono);
+	font-size: 12.5px;
+	line-height: 1.6;
+}
+
+/* ---- canvas ---- */
+
+.sh-canvas {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	overscroll-behavior: none;
+}
+
+.sh-canvas .excalidraw {
+	height: 100%;
+}
+
+/* On a phone the canvas gets the whole width: the sheet's side padding would waste a thumb's reach. */
+@media (max-width: 640px) {
+	.sh-canvas {
+		margin: 0 -16px;
+		border-width: 1px 0;
+		border-radius: 0;
+	}
+	.sh-sheet:has(.sh-canvas) {
+		padding-top: 4px;
+		padding-bottom: env(safe-area-inset-bottom, 0px);
+	}
+	.sh-sheet:has(.sh-canvas) > .sh-sheet-head {
+		padding-bottom: 4px;
+	}
+}
+
+/* ---- Mermaid file editor ---- */
+
+.sh-mmd {
+	flex: 1;
+	min-height: 0;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+	gap: 10px;
+}
+
+.sh-mmd-source {
+	min-height: 0;
+	height: 100%;
+	resize: none;
+	font-family: var(--font-mono);
+	font-size: 12.5px;
+	line-height: 1.6;
+	white-space: pre;
+	overflow: auto;
+}
+
+.sh-mmd-preview {
+	position: relative;
+	min-width: 0;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+@media (max-width: 640px) {
+	.sh-mmd {
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: minmax(120px, 0.8fr) minmax(0, 1.2fr);
+	}
+}

@@ -17,6 +17,7 @@
  * which builtins stay and why the session-replacing ones are conditional.
  */
 import type { CollabCommand, CollabCommandChoice, SessionCommand } from "@oh-my-pi/pi-wire";
+import type { CommandShellExpansion } from "../config/command-shell";
 import { expandPromptTemplate, type PromptTemplate } from "../config/prompt-templates";
 import { expandSlashCommand, type FileSlashCommand } from "../extensibility/slash-commands";
 import { BUILTIN_SLASH_COMMAND_DEFS, lookupBuiltinSlashCommand } from "../slash-commands/builtin-registry";
@@ -108,6 +109,10 @@ export interface GuestCommandSource {
 	promptTemplates: readonly PromptTemplate[];
 	/** An extension, TypeScript custom or MCP prompt command named `name` exists: the host runs it, guests may not. */
 	hasHostOnlyCommand(name: string): boolean;
+	/** Shell expansion for one guest invocation; `!`cmd`` snippets in commands and templates run under the host's `commands.shellExpansion`. */
+	createShell(): CommandShellExpansion;
+	/** Run what `shell` captured and splice the output into `text`, telling the host what ran. */
+	resolveShell(shell: CommandShellExpansion, text: string): Promise<string>;
 	/** The host reopens a control room after its session switches, so a guest can follow `/new`, `/resume` and `/fork`. */
 	keepsGuestsAcrossSwitch: boolean;
 	/** Suggested `/resume` arguments: the folder's recent sessions. */
@@ -185,7 +190,7 @@ export function buildGuestCommands(source: GuestCommandSource): CollabCommand[] 
 }
 
 /** Decide what a guest prompt starting with `/` means on this host; mirrors the TUI's command precedence. */
-export function routeGuestCommand(text: string, source: GuestCommandSource): GuestCommandRoute {
+export async function routeGuestCommand(text: string, source: GuestCommandSource): Promise<GuestCommandRoute> {
 	if (!text.startsWith("/")) return { kind: "literal" };
 
 	if (text.startsWith("/skill:")) {
@@ -223,8 +228,12 @@ export function routeGuestCommand(text: string, source: GuestCommandSource): Gue
 	if (source.hasHostOnlyCommand(name)) {
 		return { kind: "refused", message: `/${name} is a host command and can only be run on the host` };
 	}
-	const expanded = expandPromptTemplate(expandSlashCommand(text, [...source.fileCommands]), [
-		...source.promptTemplates,
-	]);
+	const shell = source.createShell();
+	const rendered = expandPromptTemplate(
+		expandSlashCommand(text, [...source.fileCommands], shell),
+		[...source.promptTemplates],
+		shell,
+	);
+	const expanded = await source.resolveShell(shell, rendered);
 	return expanded === text ? { kind: "literal" } : { kind: "expanded", text: expanded };
 }

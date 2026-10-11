@@ -12,6 +12,7 @@ import {
 	rowKey,
 	sameHunk,
 } from "../../lib/review-comments";
+import { lastRow, splitLines } from "../../lib/split-diff";
 
 interface Selection {
 	anchor: number;
@@ -24,6 +25,8 @@ export interface UnifiedDiffProps {
 	path: string;
 	/** null: commenting is off (nowhere to send a review). */
 	review: DiffReview | null;
+	/** Side-by-side layout (old file left, new file right) instead of one column. */
+	side?: boolean;
 }
 
 /**
@@ -32,8 +35,9 @@ export interface UnifiedDiffProps {
  * With a `review`, tapping a line selects it, a second tap (or shift-click) in the same hunk
  * extends the range, and the comment box opens under the selection.
  */
-export function UnifiedDiff({ diff, scope, path, review }: UnifiedDiffProps): ReactNode {
+export function UnifiedDiff({ diff, scope, path, review, side }: UnifiedDiffProps): ReactNode {
 	const rows = useMemo(() => parseUnifiedDiff(diff), [diff]);
+	const split = useMemo(() => (side ? splitLines(rows) : undefined), [side, rows]);
 	const [sel, setSel] = useState<Selection | null>(null);
 	/** Text typed for the selection; null until typed, so the box shows the range's existing comment. */
 	const [draft, setDraft] = useState<string | null>(null);
@@ -106,44 +110,106 @@ export function UnifiedDiff({ diff, scope, path, review }: UnifiedDiffProps): Re
 		/>
 	);
 
+	const rowProps = (i: number, extra: string): Record<string, unknown> => {
+		const row = rows[i]!;
+		const line = isLineRow(row);
+		const commentable = review !== null && line;
+		const selected = line && sel !== null && i >= lo && i <= hi;
+		const className = [
+			extra,
+			row.kind === "hunk" && "sh-udiff-hunk",
+			row.kind === "add" && "sh-udiff-add",
+			row.kind === "del" && "sh-udiff-del",
+			commentable && "sh-udiff-pick",
+			selected && "sh-udiff-sel",
+			line && Object.hasOwn(layout.marked, i) && "sh-udiff-commented",
+		]
+			.filter(Boolean)
+			.join(" ");
+		const onKey = (e: KeyboardEvent): void => {
+			if (e.key !== "Enter" && e.key !== " ") return;
+			e.preventDefault();
+			pick(i, e.shiftKey);
+		};
+		return {
+			className,
+			...(commentable && {
+				role: "button",
+				tabIndex: 0,
+				"aria-pressed": selected,
+				onKeyDown: onKey,
+				onClick: (e: MouseEvent) => {
+					// Dragging across the text to copy it is not a tap on the line.
+					if (window.getSelection()?.isCollapsed === false) return;
+					pick(i, e.shiftKey);
+				},
+			}),
+		};
+	};
+	/** Notes on the rows of one display line, then the comment box when the selection ends on it. */
+	const below = (i: number): ReactNode => (
+		<>
+			{layout.after[i]?.map(note)}
+			{review !== null && sel !== null && range !== null && hi === i && (
+				<CommentBox
+					value={boxText}
+					label={lineLabel(range)}
+					hint={sel.anchor === sel.head ? "Tap another line to extend the range." : null}
+					submitLabel={existing === undefined ? "Add" : "Replace"}
+					onChange={setDraft}
+					onSubmit={() => {
+						const comment = commentOnRows(rows, sel.anchor, sel.head, scope, path, boxText.trim());
+						if (comment === null) return;
+						review.save(comment);
+						close();
+					}}
+					onCancel={close}
+				/>
+			)}
+		</>
+	);
+
+	if (split !== undefined) {
+		const cell = (i: number | null, side: "old" | "new"): ReactNode => {
+			if (i === null) return <div className="sh-sdiff-cell sh-sdiff-gap" aria-hidden />;
+			const row = rows[i]!;
+			const num = side === "old" ? row.oldLine : row.newLine;
+			return (
+				<div {...rowProps(i, "sh-sdiff-cell")}>
+					<span className="sh-udiff-num" aria-hidden>
+						{num}
+					</span>
+					{row.text === "" ? " " : row.text}
+				</div>
+			);
+		};
+		return (
+			<div className="sh-udiff sh-sdiff">
+				{split.map((line, k) => (
+					<Fragment key={k}>
+						{line.kind === "full" ? (
+							<div {...rowProps(line.row, "sh-sdiff-full")}>{rows[line.row]!.text}</div>
+						) : (
+							<>
+								{cell(line.left, "old")}
+								{cell(line.right, "new")}
+							</>
+						)}
+						{below(lastRow(line))}
+					</Fragment>
+				))}
+				{layout.orphans.map(note)}
+			</div>
+		);
+	}
+
 	return (
 		<div className="sh-udiff">
 			{rows.map((row, i) => {
 				const line = isLineRow(row);
-				const commentable = review !== null && line;
-				const selected = line && sel !== null && i >= lo && i <= hi;
-				const className = [
-					"sh-udiff-row",
-					row.kind === "hunk" && "sh-udiff-hunk",
-					row.kind === "add" && "sh-udiff-add",
-					row.kind === "del" && "sh-udiff-del",
-					commentable && "sh-udiff-pick",
-					selected && "sh-udiff-sel",
-					line && Object.hasOwn(layout.marked, i) && "sh-udiff-commented",
-				]
-					.filter(Boolean)
-					.join(" ");
-				const onKey = (e: KeyboardEvent): void => {
-					if (e.key !== "Enter" && e.key !== " ") return;
-					e.preventDefault();
-					pick(i, e.shiftKey);
-				};
 				return (
 					<Fragment key={i}>
-						<div
-							className={className}
-							{...(commentable && {
-								role: "button",
-								tabIndex: 0,
-								"aria-pressed": selected,
-								onKeyDown: onKey,
-								onClick: (e: MouseEvent) => {
-									// Dragging across the text to copy it is not a tap on the line.
-									if (window.getSelection()?.isCollapsed === false) return;
-									pick(i, e.shiftKey);
-								},
-							})}
-						>
+						<div {...rowProps(i, "sh-udiff-row")}>
 							{line && (
 								<>
 									<span className="sh-udiff-num" aria-hidden>
@@ -156,23 +222,7 @@ export function UnifiedDiff({ diff, scope, path, review }: UnifiedDiffProps): Re
 							)}
 							{row.text === "" ? " " : row.text}
 						</div>
-						{layout.after[i]?.map(note)}
-						{review !== null && sel !== null && range !== null && hi === i && (
-							<CommentBox
-								value={boxText}
-								label={lineLabel(range)}
-								hint={sel.anchor === sel.head ? "Tap another line to extend the range." : null}
-								submitLabel={existing === undefined ? "Add" : "Replace"}
-								onChange={setDraft}
-								onSubmit={() => {
-									const comment = commentOnRows(rows, sel.anchor, sel.head, scope, path, boxText.trim());
-									if (comment === null) return;
-									review.save(comment);
-									close();
-								}}
-								onCancel={close}
-							/>
-						)}
+						{below(i)}
 					</Fragment>
 				);
 			})}

@@ -1,15 +1,20 @@
 import type { SessionCommand } from "@oh-my-pi/pi-wire";
+import { Activity, Archive, Eye, PenLine } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentDrawer } from "./components/agents/AgentDrawer";
 import { AgentsPanel, isInactive } from "./components/agents/AgentsPanel";
 import { LazyCodemapSheet } from "./components/codemap/LazyCodemapSheet";
+import { DiagramHost } from "./components/diagram/DiagramHost";
 import { LazyIdeSheet } from "./components/ide/LazyIdeSheet";
 import { Banners } from "./components/shell/Banners";
 import { ChangesSheet } from "./components/shell/ChangesSheet";
 import { Composer, type ComposerHandle } from "./components/shell/Composer";
+import { useComposerExtras } from "./components/shell/composer-extras";
+import type { FanoutTarget } from "./components/shell/FanoutSheet";
 import { ConnectScreen } from "./components/shell/ConnectScreen";
 import { useEditPrompt } from "./components/shell/EditPromptSheet";
+import { useTurnChanges } from "./components/shell/TurnChangesSheet";
 import { FileRestoreBar } from "./components/shell/FileRestoreBar";
 import { FileSheet } from "./components/shell/FileSheet";
 import { FixItHost } from "./components/shell/FixItHost";
@@ -17,6 +22,7 @@ import { HeaderBar } from "./components/shell/HeaderBar";
 import { useTurnUndo } from "./components/shell/TurnUndo";
 import { useMedia } from "./components/codemap/shared";
 import { PaneSheet } from "./components/shell/PaneSheet";
+import { PaletteHost, type PaletteActions, type PaletteSessionControl } from "./components/shell/PaletteHost";
 import { GithubSheet } from "./components/shell/GithubSheet";
 import { PreviewSheet } from "./components/shell/PreviewSheet";
 import { RunSheet } from "./components/shell/RunSheet";
@@ -26,23 +32,30 @@ import { SessionAlert } from "./components/shell/SessionAlert";
 import { SessionsSheet } from "./components/shell/SessionsSheet";
 import { SessionsSidebar } from "./components/shell/SessionsSidebar";
 import { SplitPane } from "./components/shell/SplitPane";
+import { LimitBar } from "./components/shell/LimitBar";
 import { SpendCapBar } from "./components/shell/SpendCapBar";
+import { CacheStrip } from "./components/shell/CacheStrip";
 import { TaskProgress } from "./components/shell/TaskProgress";
 import { Toasts } from "./components/shell/Toasts";
 import { UpdateBar } from "./components/shell/UpdateBar";
 import { ShortcutsSheet } from "./components/shell/ShortcutsSheet";
 import { UsageSheet } from "./components/shell/UsageSheet";
+import { TimelineSheet } from "./components/shell/TimelineSheet";
 import { Transcript } from "./components/transcript/Transcript";
 import { collectChanges } from "./lib/changes";
 import { GuestClient } from "./lib/client";
+import { togglePalette, usePaletteEntries } from "./lib/palette";
 import { extractPairing, loadPairing, type Pairing, savePairing } from "./lib/companion";
 import { subscribeDraft } from "./lib/draft-bus";
+import { openDiagramFile, openSketch } from "./lib/diagram-store";
+import { diagramFileKind } from "./lib/diagrams";
 import { adjacentRoom, IS_MAC, type ShortcutId, shortcutFires } from "./lib/shortcuts";
 import { useEdgeGestures } from "./lib/use-edge-gestures";
 import { sessionMarkdown } from "./lib/export";
 import { blobToBase64 } from "./lib/images";
 import { useAppBadge } from "./lib/badge";
 import { applyOpenIntent, claimPendingAnswer, setOpenIntent } from "./lib/inbox";
+import { takePendingReview } from "./lib/fanout";
 import { onJumpIntent, takeJumpIntent } from "./lib/jump-intent";
 import { useNewSince } from "./lib/new-since";
 import { emitRoute, parseRoute } from "./lib/notify-route";
@@ -74,9 +87,11 @@ import { currentSubagents } from "./lib/subagents";
 import { currentTodos } from "./lib/todos";
 import { loadTrim, saveTrim, trimEntries } from "./lib/trim";
 import { sumUsage } from "./lib/usage";
+import { limitedUntil } from "./lib/usage-limits";
 import { type CompanionHandle, useCompanion } from "./lib/use-companion";
 import { useHostRecovery } from "./lib/use-host-recovery";
 import { useGuestSnapshot } from "./lib/use-guest";
+import { useSessionOrg } from "./lib/use-session-org";
 import type { ToolRenderHost } from "./tool-render";
 import "./components/shell/shell.css";
 import "./components/shell/companion.css";
@@ -457,6 +472,14 @@ function Session({
 		[hosts, sessionId],
 	);
 	const hostRow = hosts?.find(host => host.instanceId === hostId);
+	const org = useSessionOrg(
+		{
+			client: companionClient,
+			live: companion?.snap.phase === "live",
+			orgRev: companion?.snap.sessionOrgRev ?? null,
+		},
+		rooms,
+	);
 	const [file, setFile] = useState<{ path: string; line?: number } | null>(null);
 	const [codemap, setCodemap] = useState<{ file?: string } | null>(null);
 	const canCodemap = companionClient !== null && hostId !== null && companion?.snap.canCodemap === true;
@@ -466,8 +489,13 @@ function Session({
 	const [editor, setEditor] = useState<{ target: { path: string; line?: number } | null } | null>(null);
 	const openEditor = useCallback(() => setEditor(open => open ?? { target: null }), []);
 	const openFile = useCallback(
-		(path: string, line?: number) => (canEdit ? setEditor({ target: { path, line } }) : setFile({ path, line })),
-		[canEdit],
+		(path: string, line?: number) => {
+			// Diagram files (.excalidraw, .mmd) open in the canvas, wherever a file path is shown.
+			if (diagramFileKind(path) !== null && companionClient !== null && hostId !== null) openDiagramFile(path);
+			else if (canEdit) setEditor({ target: { path, line } });
+			else setFile({ path, line });
+		},
+		[canEdit, companionClient, hostId],
 	);
 	const [paneOpen, setPaneOpen] = useState(false);
 	const openPane = useCallback(() => setPaneOpen(true), []);
@@ -503,6 +531,7 @@ function Session({
 	const [previewOpen, setPreviewOpen] = useState(false);
 	const openPreview = useCallback(() => setPreviewOpen(true), []);
 	const canGithub = companionClient !== null && hostId !== null && companion?.snap.canGithub === true;
+	const composerExtras = useComposerExtras(snap, companionClient, hostId, canGithub);
 	const [githubOpen, setGithubOpen] = useState(false);
 	const openGithub = useCallback(() => setGithubOpen(true), []);
 	// Running commands needs a session this device may control and that is not confined to file tools.
@@ -517,12 +546,84 @@ function Session({
 	}, []);
 	const composerRef = useRef<ComposerHandle>(null);
 	const editPrompt = useEditPrompt(client, snap, composerRef);
+	const turnChanges = useTurnChanges(client, snap, sessionId, composerRef, true);
 	const turnUndo = useTurnUndo(client, snap, composerRef);
+	const canStashDraft = !snap.readOnly && snap.phase !== "ended";
+	usePaletteEntries(
+		useMemo(
+			() =>
+				canStashDraft
+					? [
+							{
+								id: "composer:stash",
+								title: "Stash the draft",
+								section: "Session",
+								keywords: ["draft", "save", "set aside", "message box"],
+								icon: Archive,
+								shortcut: "stashDraft" as const,
+								run: () => composerRef.current?.stash(),
+							},
+						]
+					: [],
+			[canStashDraft],
+		),
+	);
 	const sendToAgent = useCallback((prompt: string) => {
 		setGithubOpen(false);
 		composerRef.current?.insert(prompt);
 	}, []);
+	// Diagrams: a drawing from the canvas lands in the message box as attachments; repository diagram files go through the paired computer.
+	const attachDrawing = useCallback((attached: File[], note: string) => {
+		void composerRef.current?.attach(attached, note);
+	}, []);
+	const diagramFiles = useMemo(
+		() =>
+			companionClient !== null && hostId !== null
+				? { client: companionClient, instanceId: hostId, canWrite: canEdit && !snap.readOnly }
+				: null,
+		[companionClient, hostId, canEdit, snap.readOnly],
+	);
+	usePaletteEntries(
+		useMemo(
+			() =>
+				snap.readOnly
+					? []
+					: [
+							{
+								id: "diagram:sketch",
+								title: "Sketch a drawing",
+								section: "Actions",
+								keywords: ["draw", "canvas", "excalidraw", "whiteboard", "diagram", "attach"],
+								icon: PenLine,
+								run: openSketch,
+							},
+						],
+			[snap.readOnly],
+		),
+	);
 	const cwd = snap.state?.cwd ?? snap.header?.cwd ?? null;
+	// "Try on several models": the composer's draft starts in worktrees of this session's repository on the paired computer.
+	const fanoutTarget = useMemo<FanoutTarget | null>(
+		() =>
+			companionClient !== null &&
+			hostId !== null &&
+			cwd !== null &&
+			companion?.snap.canFanout === true &&
+			!snap.readOnly &&
+			!runSandboxed
+				? { client: companionClient, cwd, canSandbox: companion.snap.canSandbox, onOpen: onOpenHost }
+				: null,
+		[
+			companionClient,
+			hostId,
+			cwd,
+			companion?.snap.canFanout,
+			companion?.snap.canSandbox,
+			snap.readOnly,
+			runSandboxed,
+			onOpenHost,
+		],
+	);
 
 	// Task-card agent chips drill into the same drawer the rail uses.
 	const agentIds = useMemo(() => new Set(snap.agents.map(a => a.id)), [snap.agents]);
@@ -690,7 +791,40 @@ function Session({
 	}, []);
 	const closeScreens = useCallback(() => setScreensOpen(false), []);
 	const [changesOpen, setChangesOpen] = useState(false);
-	const openChanges = useCallback(() => setChangesOpen(true), []);
+	// A kept model-comparison winner opens on its branch review, where the pull request is made.
+	const [changesTab, setChangesTab] = useState<"branch" | undefined>(undefined);
+	const openChanges = useCallback(() => {
+		setChangesTab(undefined);
+		setChangesOpen(true);
+	}, []);
+	useEffect(() => {
+		if (hostId === null || !takePendingReview(hostId)) return;
+		setChangesTab("branch");
+		setChangesOpen(true);
+	}, [hostId]);
+	// The per-request timeline asks the host to read its session, so it is for writers on a live host that advertises it.
+	const canTimeline = Object.hasOwn(snap.features, "inspect") && !snap.readOnly && live;
+	const [timelineOpen, setTimelineOpen] = useState(false);
+	const openTimeline = useCallback(() => setTimelineOpen(true), []);
+	const closeTimeline = useCallback(() => setTimelineOpen(false), []);
+	usePaletteEntries(
+		useMemo(
+			() =>
+				canTimeline
+					? [
+							{
+								id: "inspect:timeline",
+								title: "Open the request timeline",
+								section: "View",
+								keywords: ["inspect", "requests", "latency", "ttft", "cache", "cost", "trajectory"],
+								icon: Activity,
+								run: openTimeline,
+							},
+						]
+					: [],
+			[canTimeline, openTimeline],
+		),
+	);
 	const sendReviewToAgent = useCallback((prompt: string) => {
 		setChangesOpen(false);
 		composerRef.current?.insert(prompt);
@@ -709,7 +843,16 @@ function Session({
 	const closeSidebar = useCallback(() => changeSidebar(false), [changeSidebar]);
 	const [statsSheet, setStatsSheet] = useState<"usage" | "sessions" | null>(null);
 	const openUsage = useCallback(() => setStatsSheet("usage"), []);
-	const openSessions = useCallback(() => setStatsSheet("sessions"), []);
+	// The palette hands a search to the all-sessions sheet when a result needs a choice (resume, share) before it opens.
+	const [sessionsSearch, setSessionsSearch] = useState<{ mode: "sessions" | "messages"; query: string } | null>(null);
+	const openSessions = useCallback(() => {
+		setSessionsSearch(null);
+		setStatsSheet("sessions");
+	}, []);
+	const openSessionsSearch = useCallback((initial: { mode: "sessions" | "messages"; query: string }) => {
+		setSessionsSearch(initial);
+		setStatsSheet("sessions");
+	}, []);
 
 	const { newSince, seen: newSeen, markSeen, markTail } = useNewSince(client, roomId, snap.entries, live);
 	const sessionUsage = useMemo(() => sumUsage(snap.entries), [snap.entries]);
@@ -717,6 +860,26 @@ function Session({
 		(cmd: SessionCommand, arg?: string) => client.sendSessionCommand(cmd, arg),
 		[client],
 	);
+	const canWatchPr = Object.hasOwn(snap.features, "pr-watch") && !snap.readOnly && live;
+	usePaletteEntries(
+		useMemo(
+			() =>
+				canWatchPr
+					? [
+							{
+								id: "pr-watch:watch",
+								title: "Watch this branch's pull request",
+								section: "Git",
+								keywords: ["pr", "pull request", "ci", "checks", "review", "wake"],
+								icon: Eye,
+								run: () => sendSessionCommand("pr-watch", ""),
+							},
+						]
+					: [],
+			[canWatchPr, sendSessionCommand],
+		),
+	);
+	const limitsOn = Object.hasOwn(snap.features, "usage-limits");
 	const cancelQueued = useCallback((id: string) => client.cancelQueued(id), [client]);
 	// Built on click from every entry, not the trimmed view; the ref keeps the callback stable for the memoized header.
 	const entriesRef = useRef(snap.entries);
@@ -750,7 +913,10 @@ function Session({
 				return;
 			}
 			if (dialogOpen) return;
-			if (fires("sidebar")) {
+			if (fires("palette")) {
+				e.preventDefault();
+				togglePalette();
+			} else if (fires("sidebar")) {
 				if (!canShowSidebar) return;
 				e.preventDefault();
 				toggleSidebar();
@@ -759,6 +925,10 @@ function Session({
 				setHelpOpen(true);
 			} else if (focusedPane() !== "main") {
 				return;
+			} else if (fires("stashDraft")) {
+				// Outside the message box the browser would save the page.
+				e.preventDefault();
+				if (canStashDraft) composerRef.current?.stash();
 			} else if (fires("find")) {
 				if (searchOpen) return;
 				e.preventDefault();
@@ -783,6 +953,7 @@ function Session({
 		return () => window.removeEventListener("keydown", onKey);
 	}, [
 		canShowSidebar,
+		canStashDraft,
 		chat,
 		changeChat,
 		client,
@@ -842,6 +1013,89 @@ function Session({
 	const ideDocked = ideSheet !== null && ideDock?.docked === true;
 	const besideOpen = beside.available && beside.pane !== null;
 
+	// ⌘K: the app's own actions for the palette (others register theirs where they are available), its model and
+	// thinking switches, and the draft hook slash commands use.
+	const hasChanges = changes.length > 0 || hostId !== null;
+	const paletteActions = useMemo<PaletteActions>(
+		() => ({
+			openSessionSheet: () => setSessionSheetOpen(true),
+			openFind: () => setSearch(open => open ?? { query: "", target: null }),
+			chat,
+			onChatChange: changeChat,
+			toggleSidebar: canShowSidebar ? toggleSidebar : null,
+			sidebarOpen: showSidebar,
+			toggleRail,
+			railOpen,
+			focusComposer: () => composerRef.current?.focus(),
+			adjacentSession:
+				adjacentRoom(rooms, roomId, 1) === null
+					? null
+					: delta => {
+							const room = adjacentRoom(rooms, roomId, delta);
+							if (room !== null) onOpenLink(room.link);
+						},
+			openChanges: hasChanges ? openChanges : null,
+			openScreens,
+			openShortcuts: openHelp,
+			openUsage: companion ? openUsage : null,
+			openSessions: companion ? openSessions : null,
+			openCodemap: canCodemap ? openCodemap : null,
+			openPane: companionClient !== null && hostId !== null ? openPane : null,
+			openPreview: canPreview ? openPreview : null,
+			openGithub: canGithub ? openGithub : null,
+			openRun: canRun ? openRun : null,
+			openEditor: canEdit ? openEditor : null,
+			turnUndo: turnUndo.control,
+			onLeave,
+		}),
+		[
+			canCodemap,
+			canEdit,
+			canGithub,
+			canPreview,
+			canRun,
+			canShowSidebar,
+			changeChat,
+			chat,
+			companion,
+			companionClient,
+			hasChanges,
+			hostId,
+			onLeave,
+			onOpenLink,
+			openChanges,
+			openCodemap,
+			openEditor,
+			openGithub,
+			openHelp,
+			openPane,
+			openPreview,
+			openRun,
+			openScreens,
+			openSessions,
+			openUsage,
+			railOpen,
+			roomId,
+			rooms,
+			showSidebar,
+			toggleRail,
+			toggleSidebar,
+			turnUndo.control,
+		],
+	);
+	const models = snap.models;
+	const modelId = snap.state?.model?.id;
+	const thinkingLevels = snap.state?.thinkingLevels;
+	const thinkingLevel = snap.state?.thinkingLevel;
+	const paletteControl = useMemo<PaletteSessionControl | null>(
+		() =>
+			models !== null && !snap.readOnly && live
+				? { models, modelId, thinkingLevels: thinkingLevels ?? [], thinkingLevel, send: sendSessionCommand }
+				: null,
+		[models, modelId, thinkingLevels, thinkingLevel, snap.readOnly, live, sendSessionCommand],
+	);
+	const insertDraft = useCallback((text: string) => composerRef.current?.insert(text), []);
+
 	return (
 		<div className="sh-app">
 			<div className="sh-ambient" />
@@ -873,6 +1127,7 @@ function Session({
 				onSessionCommand={sendSessionCommand}
 				turnUndo={turnUndo.control}
 				contextItems={Object.hasOwn(snap.features, "context-items") ? snap.contextItems : undefined}
+				canWatchPr={Object.hasOwn(snap.features, "pr-watch")}
 				exportMarkdown={exportMarkdown}
 				onOpenChanges={openChanges}
 				onOpenShortcuts={openHelp}
@@ -884,6 +1139,7 @@ function Session({
 				onOpenGithub={canGithub ? openGithub : null}
 				onOpenRun={canRun ? openRun : null}
 				onOpenEditor={canEdit ? openEditor : null}
+				onOpenTimeline={canTimeline ? openTimeline : null}
 				screenCount={screens.length}
 				onOpenScreens={openScreens}
 				push={push}
@@ -904,6 +1160,8 @@ function Session({
 								onOpenSessions={companion ? openSessions : null}
 								onClose={closeSidebar}
 								beside={beside.available ? beside : null}
+								org={org}
+								limitResetAt={limitedUntil(snap.state ?? undefined, Date.now())}
 							/>
 						</aside>
 					</>
@@ -929,12 +1187,26 @@ function Session({
 							onCancelQueued={cancelQueued}
 							trimmed={trimmed}
 							onEditPrompt={editPrompt.onEditPrompt}
+							onTurnChanges={turnChanges.onTurnChanges}
 							onSendToAgent={snap.readOnly ? undefined : sendToAgent}
 							sessionModel={snap.state?.model?.id}
 						/>
 					</div>
 					{editPrompt.sheet}
+					{turnChanges.sheet}
+					{limitsOn && (
+						<LimitBar
+							limited={snap.state?.limited}
+							info={snap.usageLimits}
+							models={snap.models}
+							model={snap.state?.model}
+							readOnly={snap.readOnly}
+							onSessionCommand={sendSessionCommand}
+							onSnooze={sessionId === null ? undefined : until => org.act(sessionId, { type: "snooze", until })}
+						/>
+					)}
 					<TaskProgress todos={todos} subagents={subagents} hasAgent={hasAgent} onOpenAgent={openAgent} />
+					<CacheStrip cache={Object.hasOwn(snap.features, "cache-stats") ? snap.state?.cache : undefined} />
 					<Composer
 						ref={composerRef}
 						key={roomId}
@@ -945,7 +1217,11 @@ function Session({
 						working={snap.working}
 						queuedMessageCount={snap.state?.queuedMessageCount ?? 0}
 						followUp={Object.hasOwn(snap.features, "follow-up") && !snap.readOnly}
+						approvalGrants={Object.hasOwn(snap.features, "approval-grants")}
 						followUps={snap.followUps}
+						followUpIds={composerExtras.followUpIds}
+						queueEdit={composerExtras.queueEdit}
+						mentions={composerExtras.mentions}
 						upload={upload}
 						voice={voice}
 						draftKey={roomId}
@@ -957,6 +1233,7 @@ function Session({
 						profile={snap.state?.profile}
 						followsRoom={companionClient !== null && instanceId !== null}
 						promptModel={Object.hasOwn(snap.features, "prompt-model") && !snap.readOnly && snap.models !== null}
+						fanout={fanoutTarget}
 						onSessionCommand={sendSessionCommand}
 					/>
 				</section>
@@ -1029,6 +1306,15 @@ function Session({
 				<UsageSheet
 					client={companionClient}
 					canGithub={companion?.snap.canGithub === true}
+					limits={
+						limitsOn
+							? {
+									info: snap.usageLimits,
+									activeProvider: snap.state?.model?.provider,
+									onRefresh: () => sendSessionCommand("usage-limits", "refresh"),
+								}
+							: undefined
+					}
 					onClose={() => setStatsSheet(null)}
 				/>
 			)}
@@ -1037,6 +1323,8 @@ function Session({
 					client={companionClient}
 					canStart={companion.snap.canStart}
 					canSearch={companion.snap.canSearch}
+					initial={sessionsSearch ?? undefined}
+					canGitFlow={companion.snap.canGitFlow}
 					currentSessionId={sessionId}
 					onOpenHost={onOpenHost}
 					onOpenLink={onOpenLink}
@@ -1053,6 +1341,7 @@ function Session({
 									client: companionClient,
 									instanceId: hostId,
 									canPr: companion?.snap.canPr ?? false,
+									canGitFlow: companion?.snap.canGitFlow ?? false,
 									busy: hostRow?.busy ?? null,
 									title: hostRow?.sessionName ?? null,
 								}
@@ -1061,9 +1350,19 @@ function Session({
 					sessionId={sessionId}
 					onSendToAgent={snap.readOnly ? null : sendReviewToAgent}
 					onClose={() => setChangesOpen(false)}
+					initialTab={changesTab}
 				/>
 			)}
 			{screensOpen && <ScreensSheet screens={screens} onJump={setJumpTarget} onClose={closeScreens} />}
+			{timelineOpen && canTimeline && (
+				<TimelineSheet
+					info={snap.inspect}
+					preview={snap.requestPreview}
+					noticeId={snap.notices.at(-1)?.id ?? 0}
+					onSessionCommand={sendSessionCommand}
+					onClose={closeTimeline}
+				/>
+			)}
 			{codemap !== null && canCodemap && companion !== null && (
 				<LazyCodemapSheet
 					key={codemap.file ?? ""}
@@ -1111,7 +1410,25 @@ function Session({
 				/>
 			)}
 			{helpOpen && <ShortcutsSheet onClose={closeHelp} />}
+			<PaletteHost
+				actions={paletteActions}
+				control={paletteControl}
+				title={title}
+				exportMarkdown={exportMarkdown}
+				commands={snap.commands}
+				followsRoom={companionClient !== null && instanceId !== null}
+				entries={snap.entries}
+				sessionId={sessionId}
+				companion={companion}
+				rooms={rooms}
+				currentRoomId={roomId}
+				insertDraft={insertDraft}
+				onOpenHost={onOpenHost}
+				onOpenLink={onOpenLink}
+				onOpenAllSessions={openSessionsSearch}
+			/>
 			{!ideDocked && ideSheet}
+			<DiagramHost onAttach={snap.readOnly ? null : attachDrawing} files={diagramFiles} />
 			{file !== null && companionClient !== null && hostId !== null && (
 				<FileSheet
 					client={companionClient}

@@ -1,11 +1,14 @@
 name: "omp"
 description: >
-   Run the omp coding agent from a GitHub issue or pull request comment. A comment
-   that mentions the trigger phrase (default `@omp`) becomes the prompt; the agent
-   runs headlessly in the checked-out repository, its final answer is posted back
-   as a comment, and any file changes are pushed (to the PR branch, or to a new
-   branch with a new pull request). See docs/github-action.md for the workflow to
-   wire this up and the safety model.
+   Run the omp coding agent from GitHub events. A comment that mentions the trigger
+   phrase (default `@omp`) becomes the prompt: the agent runs headlessly in the
+   checked-out repository, its final answer is posted back as a comment, and any
+   file changes are pushed (to the PR branch, or to a new branch with a new pull
+   request). Pull requests are reviewed automatically (read-only; one summary plus
+   inline review comments), new issues are triaged (one comment, optional labels),
+   and `schedule` / `workflow_dispatch` runs execute a prompt and open a pull
+   request. See docs/github-action.md for the workflows to wire this up and the
+   safety model.
 
 inputs:
    trigger-phrase:
@@ -13,7 +16,7 @@ inputs:
       default: "@omp"
    allowed-associations:
       description: >
-         Comma-separated `author_association` values allowed to trigger a run
+         Comma-separated `author_association` values allowed to trigger a run by a comment mention
          (OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, ...). Checked again here even
          if the workflow already filters.
       default: "OWNER,MEMBER,COLLABORATOR"
@@ -42,7 +45,7 @@ inputs:
       description: Load extensions discovered in the checked-out repository. Off by default because they are executable code from the checked-out ref.
       default: "false"
    allow-fork-prs:
-      description: Run on pull requests whose head is in a fork. The agent then sees untrusted code with the job's secrets available. Changes are never pushed to the fork.
+      description: Run on pull requests whose head is in a fork (comment mentions and automatic reviews; automatic reviews stay read-only). The agent then sees untrusted code with the job's secrets available. Changes are never pushed to the fork.
       default: "false"
    create-pr:
       description: Publish changes (push to the PR branch, or push a new branch and open a pull request). When `false`, changes stay in the runner and only the reply is posted.
@@ -64,6 +67,35 @@ inputs:
          Build omp from a fork instead of installing from npm, as `owner/repo@branch-or-tag`
          (public repository; requires the Rust toolchain, which GitHub-hosted runners include).
       default: ""
+   prompt:
+      description: >
+         The task for `schedule` and `workflow_dispatch` runs (for example `Update outdated dependencies and run the tests`).
+         For `workflow_dispatch` an empty value falls back to the `prompt` input of the dispatch event. Ignored for other events.
+      default: ""
+   pr-actions:
+      description: >
+         Comma-separated `pull_request` activity types that start an automatic review
+         (`opened`, `ready_for_review`, `synchronize`, `reopened`). The workflow's own `types:` must include them too.
+      default: "opened,ready_for_review,synchronize"
+   pr-associations:
+      description: >
+         Comma-separated `author_association` values of pull request authors whose pull requests are reviewed
+         automatically. Widen it (for example add `CONTRIBUTOR,FIRST_TIME_CONTRIBUTOR,FIRST_TIMER,NONE`) only
+         if you accept that strangers can spend your model budget; fork pull requests also need `allow-fork-prs`.
+      default: "OWNER,MEMBER,COLLABORATOR"
+   triage-associations:
+      description: >
+         Comma-separated `author_association` values of issue authors whose new issues are triaged automatically.
+      default: "OWNER,MEMBER,COLLABORATOR"
+   apply-labels:
+      description: Apply the labels proposed by issue triage (only labels that already exist in the repository). When `false` the comment only suggests them.
+      default: "false"
+   bot-login:
+      description: Login that posts reviews (`github-actions[bot]` for the workflow token). Used to recognize earlier omp reviews so a new push replaces them. Set it when `github-token` is a personal access token or app token.
+      default: "github-actions[bot]"
+   max-inline-comments:
+      description: Most inline comments one automatic review posts; further findings go into the review summary.
+      default: "20"
    github-token:
       description: Token used to read the thread, post comments, push and open pull requests. It is never exposed to the agent process.
       default: ${{ github.token }}
@@ -79,7 +111,7 @@ outputs:
       description: Path of the file holding omp's final answer.
       value: ${{ steps.run.outputs.answer-file }}
    pull-request-url:
-      description: URL of the pull request opened for an issue request, if any.
+      description: URL of the pull request opened for an issue request or a scheduled / dispatched run, if any.
       value: ${{ steps.publish.outputs.pull-request-url }}
 
 runs:
@@ -94,6 +126,11 @@ runs:
            OMP_TRIGGER: ${{ inputs.trigger-phrase }}
            OMP_ALLOWED_ASSOCIATIONS: ${{ inputs.allowed-associations }}
            OMP_ALLOW_FORK_PRS: ${{ inputs.allow-fork-prs }}
+           OMP_PR_ACTIONS: ${{ inputs.pr-actions }}
+           OMP_PR_ASSOCIATIONS: ${{ inputs.pr-associations }}
+           OMP_TRIAGE_ASSOCIATIONS: ${{ inputs.triage-associations }}
+           OMP_BOT_LOGIN: ${{ inputs.bot-login }}
+           OMP_PROMPT: ${{ inputs.prompt }}
            OMP_WORK_DIR: ${{ runner.temp }}/omp-action
         run: bash "$ACTION_PATH/prepare.sh"
 
@@ -139,5 +176,8 @@ runs:
            OMP_BRANCH_PREFIX: ${{ inputs.branch-prefix }}
            OMP_GIT_USER_NAME: ${{ inputs.git-user-name }}
            OMP_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
+           OMP_APPLY_LABELS: ${{ inputs.apply-labels }}
+           OMP_BOT_LOGIN: ${{ inputs.bot-login }}
+           OMP_MAX_INLINE_COMMENTS: ${{ inputs.max-inline-comments }}
            OMP_WORK_DIR: ${{ runner.temp }}/omp-action
         run: bash "$ACTION_PATH/publish.sh"

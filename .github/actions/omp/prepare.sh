@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Parse the triggering event, decide whether to run, check out the right ref and
-# write the prompt. Outputs: skip, number. Files in $OMP_WORK_DIR: meta.json, prompt.md.
+# write the prompt. Outputs: skip, number. Files in $OMP_WORK_DIR: meta.json, prompt.md,
+# and for review and triage runs also the files named in prepare-review.sh / prepare-triage.sh.
 #
-# Environment: OMP_TRIGGER, OMP_ALLOWED_ASSOCIATIONS, OMP_ALLOW_FORK_PRS, OMP_WORK_DIR,
+# Environment: OMP_TRIGGER, OMP_ALLOWED_ASSOCIATIONS, OMP_ALLOW_FORK_PRS, OMP_PR_ACTIONS,
+#   OMP_PR_ASSOCIATIONS, OMP_TRIAGE_ASSOCIATIONS, OMP_BOT_LOGIN, OMP_PROMPT, OMP_WORK_DIR,
 #   GH_TOKEN, GITHUB_EVENT_NAME, GITHUB_EVENT_PATH, GITHUB_REPOSITORY, GITHUB_WORKSPACE,
 #   GITHUB_OUTPUT
 set -euo pipefail
@@ -11,11 +13,16 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 mkdir -p "$OMP_WORK_DIR"
 
-skip() {
-	echo "::notice::omp skipped: $1"
-	output skip true
-	exit 0
-}
+# Events other than a comment mention each have their own script, which writes
+# meta.json and prompt.md (or skips). Anything else, notably `push`, never runs.
+actions_dir="$(dirname "${BASH_SOURCE[0]}")"
+case "$GITHUB_EVENT_NAME" in
+issue_comment | pull_request_review_comment) ;;
+pull_request | pull_request_target) exec bash "$actions_dir/prepare-review.sh" ;;
+issues) exec bash "$actions_dir/prepare-triage.sh" ;;
+schedule | workflow_dispatch) exec bash "$actions_dir/prepare-task.sh" ;;
+*) skip "event '$GITHUB_EVENT_NAME' is not supported" ;;
+esac
 
 ctx="$(jq -c --arg ev "$GITHUB_EVENT_NAME" '
 	if $ev == "issue_comment" then {
@@ -56,7 +63,7 @@ field() { jq -r --arg k "$1" '.[$k] | select(. != null)' <<<"$ctx"; }
 
 # A trigger phrase counts only as a whole word: `@omp` matches "@omp fix it" but
 # not "@ompx" or "@omp-bot".
-trigger_re="$(printf '%s' "$OMP_TRIGGER" | sed 's/[][\.*^$(){}?+|/]/\\&/g')"
+trigger_re="$(printf '%s' "$OMP_TRIGGER" | sed "s/[][\\.*^\$(){}?+|/]/\\\\&/g")"
 grep -qiE "(^|[^[:alnum:]_-])${trigger_re}([^[:alnum:]_-]|$)" <<<"$(field comment)" ||
 	skip "comment does not mention '$OMP_TRIGGER'"
 
@@ -104,7 +111,7 @@ start_sha="$(git rev-parse HEAD)"
 
 jq -n --argjson ctx "$ctx" --arg head_ref "$head_ref" --arg base_ref "$base_ref" \
 	--argjson cross "$cross_repo" --arg start_sha "$start_sha" \
-	'{number: $ctx.number, is_pr: $ctx.is_pr, title: $ctx.title, author: $ctx.author,
+	'{kind: "mention", number: $ctx.number, is_pr: $ctx.is_pr, title: $ctx.title, author: $ctx.author,
 	  comment_url: $ctx.comment_url, head_ref: $head_ref, base_ref: $base_ref,
 	  cross_repo: $cross, start_sha: $start_sha}' >"$OMP_WORK_DIR/meta.json"
 

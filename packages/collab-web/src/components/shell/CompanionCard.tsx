@@ -36,6 +36,7 @@ import { extractLink } from "../../lib/rooms";
 import type { CompanionHandle } from "../../lib/use-companion";
 import { DiagnosticsSheet } from "./DiagnosticsSheet";
 import { DevicesSheet } from "./DevicesSheet";
+import { FanoutChip, FanoutGroups } from "./FanoutSheet";
 import { InboxEntry } from "./InboxSheet";
 import { QrScanner } from "./QrScanner";
 import { SchedulesEntry } from "./SchedulesSheet";
@@ -163,6 +164,7 @@ export function CompanionCard({ companion, push, onJoin, onPair, onUnpair }: Com
 					<div className="sh-companion-empty">Connecting…</div>
 				) : (
 					<>
+						{live && <FanoutGroups hosts={snap.hosts} client={client} onOpen={open} />}
 						{snap.hosts.length === 0 ? (
 							<div className="sh-companion-empty">
 								No session is sharing. Run <code>/collab</code> in omp.
@@ -206,6 +208,7 @@ export function CompanionCard({ companion, push, onJoin, onPair, onUnpair }: Com
 										<SchedulesEntry
 											client={client}
 											canSandbox={snap.canSandbox}
+											canCron={snap.canScheduleCron}
 											onOpenHost={open}
 											variant="card"
 										/>
@@ -220,6 +223,7 @@ export function CompanionCard({ companion, push, onJoin, onPair, onUnpair }: Com
 				<StartSessionSheet
 					client={client}
 					canSandbox={snap.canSandbox}
+					canFanout={snap.canFanout}
 					onOpen={open}
 					onClose={() => setStarting(false)}
 				/>
@@ -245,6 +249,7 @@ export function CompanionCard({ companion, push, onJoin, onPair, onUnpair }: Com
 					client={client}
 					canStart={snap.canStart}
 					canSearch={snap.canSearch}
+					canGitFlow={snap.canGitFlow}
 					onOpenHost={open}
 					onOpenLink={onJoin}
 					onClose={() => setStatsSheet(null)}
@@ -323,6 +328,7 @@ export function HostList({
 								<span className="sh-recent-name">{hostTitle(host)}</span>
 								{current && <span className="sh-chip">here</span>}
 								{host.sandboxed && <SandboxedChip />}
+								{host.fanout && <FanoutChip fanout={host.fanout} />}
 								{joining === host.instanceId && <LoaderCircle size={13} className="sh-spin" />}
 							</span>
 							<span className="sh-recent-meta">
@@ -404,7 +410,7 @@ export function IdleList({ idle, joining, disabled, onShare }: IdleListProps): R
 	);
 }
 
-function HostState({ host }: { host: CompanionHost }): ReactNode {
+export function HostState({ host }: { host: CompanionHost }): ReactNode {
 	if (!host.relayConnected) return <span className="sh-host-state">offline</span>;
 	if (host.inputRequired) return <span className="sh-host-state sh-host-state-input">needs input</span>;
 	if (host.busy) return <span className="sh-host-state sh-host-state-busy">working</span>;

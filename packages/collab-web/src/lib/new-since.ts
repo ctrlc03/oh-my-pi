@@ -6,6 +6,7 @@
 import type { SessionEntry } from "@oh-my-pi/pi-wire";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GuestClient } from "./client";
+import { ASYNC_RESULT_TYPE } from "./async-result";
 import { loadSeen, saveSeen } from "./rooms";
 
 export interface NewSince {
@@ -28,7 +29,12 @@ export function newSinceLeft(entries: readonly SessionEntry[], seenId: string | 
 	for (const entry of entries.slice(at + 1)) {
 		ids.add(entry.id);
 		if (entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant")) count++;
-		else if (entry.type === "custom_message" && (entry.customType === "collab-prompt" || entry.display)) count++;
+		else if (
+			entry.type === "custom_message" &&
+			entry.customType !== ASYNC_RESULT_TYPE &&
+			(entry.customType === "collab-prompt" || entry.display)
+		)
+			count++;
 	}
 	return count > 0 ? { ids, count } : null;
 }

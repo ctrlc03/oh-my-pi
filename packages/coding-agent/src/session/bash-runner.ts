@@ -123,6 +123,10 @@ export class BashRunner {
 					env: shellEnv,
 					useUserShell: options?.useUserShell,
 					pty: options?.pty,
+					sandbox: {
+						settings: this.#host.settings,
+						additionalDirectories: this.#host.sessionManager.getAdditionalDirectories(),
+					},
 				});
 			} finally {
 				this.#abortControllers.delete(abortController);

@@ -9,6 +9,7 @@ import { type ConfiguredThinkingLevel, parseConfiguredThinkingLevel } from "@oh-
 import { parseArrayOrCSV } from "../discovery/helpers";
 import { normalizeToolNames } from "../tools/builtin-names";
 import { type PathRule, parsePathRules } from "../tools/path-rules";
+import { SANDBOX_MODES, type SandboxMode } from "../sandbox/settings";
 
 export type ProfileSource = "builtin" | "settings" | "user" | "project";
 export type ProfileApprovalMode = "always-ask" | "write" | "yolo";
@@ -41,6 +42,8 @@ export interface ProfileDefinition {
 	pathRules?: PathRule[];
 	/** Combined with `tools.outsideProject` by taking the stricter of the two. */
 	outsideProject?: ProfileOutsideProject;
+	/** Combined with `sandbox.mode` by taking the stricter of the two; a profile never turns the sandbox down. */
+	sandbox?: SandboxMode;
 	/** Model selector (`provider/id`, a pattern, or a role alias such as `@review`), optionally with a `:level` suffix. */
 	model?: string;
 	thinkingLevel?: ConfiguredThinkingLevel;
@@ -186,6 +189,18 @@ export function parseProfile(
 		const value = typeof fields.outsideProject === "string" ? fields.outsideProject.trim().toLowerCase() : "";
 		if (Object.hasOwn(POLICIES, value)) profile.outsideProject = value as ProfileOutsideProject;
 		else fieldWarnings.push("outsideProject must be allow, prompt or deny");
+	}
+
+	if (fields.sandbox !== undefined) {
+		// A bare YAML `off` can arrive as the boolean false.
+		const value =
+			fields.sandbox === false
+				? "off"
+				: typeof fields.sandbox === "string"
+					? fields.sandbox.trim().toLowerCase()
+					: "";
+		if (SANDBOX_MODES.includes(value as SandboxMode)) profile.sandbox = value as SandboxMode;
+		else fieldWarnings.push("sandbox must be off, read-only or workspace-write");
 	}
 
 	if (fields.lspReadOnly !== undefined) {

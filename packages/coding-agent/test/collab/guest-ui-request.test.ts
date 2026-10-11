@@ -740,6 +740,44 @@ describe("collab host dialog vs teardown (#4049 follow-up)", () => {
 			await race.cleanup();
 		}
 	});
+
+	it("sends the approval choices to the guest and reports that the guest answered", async () => {
+		const ctx = makeHostContext();
+		const host = new CollabHost(ctx);
+		await host.start("ws://localhost:8787");
+		ctx.collabHost = host;
+		const controller = new StubDialogController(ctx);
+		const guest = await joinRawGuest(host.link, COLLAB_PROTO);
+		try {
+			const welcome = await guest.nextFrame();
+			if (welcome.t !== "welcome") throw new Error(`expected welcome, got ${welcome.t}`);
+			expect(welcome.features).toContain("approval-grants");
+			const approval = {
+				tool: "bash",
+				rule: "bash: bun test *",
+				guestProject: false,
+				choices: [
+					{ label: "Allow once", kind: "once" as const },
+					{ label: "Deny", kind: "deny" as const },
+				],
+			};
+			const answeredBy: string[] = [];
+			const result = controller.showCollabAwareSelector("Allow tool: bash", ["Allow once", "Deny"], {
+				approval,
+				onAnswer: source => answeredBy.push(source),
+			});
+			const request = await guest.nextFrame();
+			if (request.t !== "ui-request" || request.request.kind !== "select")
+				throw new Error("expected a select ui-request");
+			expect(request.request.approval).toEqual(approval);
+			guest.socket.send({ t: "ui-response", reqId: request.request.reqId, value: "Allow once" });
+			expect(await result).toBe("Allow once");
+			expect(answeredBy).toEqual(["remote"]);
+		} finally {
+			guest.socket.close();
+			await host.stop("test done");
+		}
+	});
 });
 
 // ── Guest ask "unavailable" literal answer (#4375: tagged guest results) ────

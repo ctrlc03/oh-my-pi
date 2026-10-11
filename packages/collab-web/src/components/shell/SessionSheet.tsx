@@ -25,9 +25,13 @@ import { exportFilename } from "../../lib/export";
 import { TRIM_CHOICES } from "../../lib/trim";
 import { fmtPercent, fmtTokens } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
+import { type EnterWhileRunning, setEnterWhileRunning, useEnterWhileRunning } from "../../lib/composer-prefs";
+import { openPalette } from "../../lib/palette";
+import { effectiveKeys, formatCombo, IS_MAC, useOverrides } from "../../lib/shortcuts";
 import { type ThemePreference, useThemePreference } from "../../lib/theme";
 import { formatUsage, type SessionUsage } from "../../lib/usage";
 import { ContextItems } from "./ContextItems";
+import { PrWatch } from "./PrWatch";
 import { PushButton, SandboxedChip } from "./CompanionCard";
 import { ModelList } from "./ModelControls";
 import { Sheet } from "./Sheet";
@@ -44,6 +48,12 @@ const VIEWS: readonly { chat: boolean; label: string; Icon: LucideIcon }[] = [
 	{ chat: false, label: "Full", Icon: Rows3 },
 ];
 
+/** What Enter does while the agent works: steers the running turn, or holds the message until the turn ends (Alt+Enter does the other). */
+const ENTER_CHOICES: readonly { value: EnterWhileRunning; label: string; title: string }[] = [
+	{ value: "steer", label: "Steers", title: "Enter sends into the running turn; Alt+Enter waits for it to end" },
+	{ value: "queue", label: "Queues", title: "Enter waits for the running turn to end; Alt+Enter sends into it" },
+];
+
 const PUSH_LABEL: Record<PushControl["status"], string> = {
 	unsupported: "",
 	off: "Off",
@@ -52,12 +62,14 @@ const PUSH_LABEL: Record<PushControl["status"], string> = {
 	denied: "Blocked in settings",
 };
 
-/** Desktop shortcuts, wired in app.tsx; shown only where a pointer can use them. */
-const SHORTCUTS: readonly { keys: string; action: string }[] = [
-	{ keys: "⌘K / Ctrl K", action: "switch session" },
-	{ keys: "/", action: "find in session" },
-	{ keys: "Esc", action: "close, or stop a running turn" },
-];
+/** Desktop shortcuts, wired in app.tsx with the keys the reader chose; shown only where a pointer can use them. */
+function shortcutHints(): readonly { keys: string; action: string }[] {
+	return [
+		{ keys: formatCombo(effectiveKeys("palette"), IS_MAC), action: "command palette" },
+		{ keys: formatCombo(effectiveKeys("find"), IS_MAC), action: "find in session" },
+		{ keys: formatCombo(effectiveKeys("escape"), IS_MAC), action: "close, or stop a running turn" },
+	];
+}
 
 export interface SessionSheetProps {
 	title: string;
@@ -91,6 +103,8 @@ export interface SessionSheetProps {
 	onOpenGithub: (() => void) | null;
 	/** File tree and editor of the session's folder; null unless the paired computer can edit its files. */
 	onOpenEditor: (() => void) | null;
+	/** Per-request timeline (timing, cache, injected context); null unless the host advertises `inspect` and this guest may write. */
+	onOpenTimeline: (() => void) | null;
 	/** Scripts and build targets of the session's repository, run on the computer; null unless the companion can run them (and never for view-only or sandboxed sessions). */
 	onOpenRun: (() => void) | null;
 	/** Images the agent's tools produced this session. */
@@ -110,6 +124,8 @@ export interface SessionSheetProps {
 	turnUndo: TurnUndoControl | undefined;
 	/** The host's latest "what fills the context" ranking; undefined unless the host advertises `context-items`, null until it replies. */
 	contextItems: ContextItemsInfo | null | undefined;
+	/** The host can watch pull requests (feature `pr-watch`). */
+	canWatchPr: boolean;
 	/** The session as Markdown, built on demand from every entry (not the trimmed view). */
 	exportMarkdown(title: string): string;
 }
@@ -141,6 +157,7 @@ export function SessionSheet({
 	onOpenPreview,
 	onOpenGithub,
 	onOpenEditor,
+	onOpenTimeline,
 	onOpenRun,
 	screenCount,
 	onOpenScreens,
@@ -150,12 +167,16 @@ export function SessionSheet({
 	onSessionCommand,
 	turnUndo,
 	contextItems,
+	canWatchPr,
 	exportMarkdown,
 	push,
 	onLeave,
 	onClose,
 }: SessionSheetProps): ReactNode {
 	const { preference, setPreference } = useThemePreference();
+	const enterWhileRunning = useEnterWhileRunning();
+	useOverrides();
+	const hints = shortcutHints();
 	const [pickerOpen, setPickerOpen] = useState(false);
 	const [compacting, setCompacting] = useState(false);
 	const [instructions, setInstructions] = useState("");
@@ -257,6 +278,22 @@ export function SessionSheet({
 			{state?.cwd && <div className="sh-sheet-cwd">{state.cwd}</div>}
 
 			<dl className="sh-sheet-rows">
+				<div className="sh-sheet-row">
+					<dt>Search</dt>
+					<dd>
+						<button
+							type="button"
+							className="sh-sheet-link"
+							onClick={() => {
+								onClose();
+								openPalette();
+							}}
+						>
+							Actions, commands, sessions, messages
+							<ChevronRight size={14} />
+						</button>
+					</dd>
+				</div>
 				<div className="sh-sheet-row">
 					<dt>Connection</dt>
 					<dd>
@@ -431,6 +468,29 @@ export function SessionSheet({
 						</dd>
 					</div>
 				)}
+				{state && ((state.prWatch?.length ?? 0) > 0 || (canControl && canWatchPr)) && (
+					<div className="sh-sheet-row sh-sheet-row-top">
+						<dt>Pull requests</dt>
+						<dd className="sh-sheet-compact">
+							<PrWatch
+								prs={state.prWatch ?? []}
+								canWatch={canControl && canWatchPr}
+								onSessionCommand={onSessionCommand}
+							/>
+						</dd>
+					</div>
+				)}
+				{canControl && onOpenTimeline && (
+					<div className="sh-sheet-row">
+						<dt>Timeline</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onOpenTimeline}>
+								Requests, timing and cache
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
 				{state && state.participants.length > 0 && (
 					<div className="sh-sheet-row sh-sheet-row-top">
 						<dt>People</dt>
@@ -495,6 +555,26 @@ export function SessionSheet({
 						</dd>
 					</div>
 				)}
+				<div className="sh-sheet-row">
+					<dt>Enter</dt>
+					<dd>
+						<div className="sh-segmented" role="radiogroup" aria-label="Enter while the agent is working">
+							{ENTER_CHOICES.map(choice => (
+								<button
+									key={choice.value}
+									type="button"
+									role="radio"
+									aria-checked={enterWhileRunning === choice.value}
+									className={enterWhileRunning === choice.value ? "sh-segment sh-segment-on" : "sh-segment"}
+									onClick={() => setEnterWhileRunning(choice.value)}
+									title={choice.title}
+								>
+									{choice.label}
+								</button>
+							))}
+						</div>
+					</dd>
+				</div>
 				<div className="sh-sheet-row">
 					<dt>Changes</dt>
 					<dd>
@@ -666,7 +746,7 @@ export function SessionSheet({
 			</dl>
 			<div className="sh-shortcuts">
 				<div className="sh-shortcuts-title">Shortcuts</div>
-				{SHORTCUTS.map(shortcut => (
+				{hints.map(shortcut => (
 					<div key={shortcut.keys} className="sh-shortcut">
 						<kbd>{shortcut.keys}</kbd>
 						<span>{shortcut.action}</span>

@@ -1,0 +1,1 @@
+The state is a user's request to a coding agent. Choose which model tier should handle it: the cheapest tier whose description fits what the request needs. Judge its inherent difficulty and scope, not politeness or verbosity. Tiers run from cheapest to strongest; if torn between two, choose the cheaper one.

@@ -13,9 +13,15 @@
 # defined there, so `filter=x` in an agent-written .gitattributes names nothing, and
 # system and global git config are disabled.
 #
+# Pull request reviews and issue triage (meta.json `kind`) are read-only: nothing is
+# staged or pushed, and publish-review.sh / publish-triage.sh post the reply. A `task`
+# (schedule, workflow_dispatch) has no thread: its pull request is opened as for an
+# issue and the reply goes to the job summary.
+#
 # Environment: OMP_CREATE_PR, OMP_BRANCH_PREFIX, OMP_GIT_USER_NAME, OMP_GIT_USER_EMAIL,
-#   OMP_WORK_DIR, GH_TOKEN, GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_SERVER_URL,
-#   GITHUB_WORKSPACE, GITHUB_OUTPUT
+#   OMP_APPLY_LABELS, OMP_BOT_LOGIN, OMP_MAX_INLINE_COMMENTS (the last three are read by
+#   the review and triage scripts), OMP_WORK_DIR, GH_TOKEN, GITHUB_REPOSITORY,
+#   GITHUB_RUN_ID, GITHUB_SERVER_URL, GITHUB_WORKSPACE, GITHUB_OUTPUT, GITHUB_STEP_SUMMARY
 set -uo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -25,7 +31,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0
 
 work="$OMP_WORK_DIR"
-meta() { jq -r --arg k "$1" '.[$k]' "$work/meta.json"; }
+meta() { jq -r --arg k "$1" '.[$k] | if . == null then "" else . end' "$work/meta.json"; }
 
 status="$(<"$work/status")"
 cost="$(printf '%.2f' "$(<"$work/cost")")"
@@ -38,11 +44,15 @@ head_ref="$(meta head_ref)"
 base_ref="$(meta base_ref)"
 cross_repo="$(meta cross_repo)"
 start_sha="$(meta start_sha)"
+kind="$(meta kind)"
+[ -n "$kind" ] || kind=mention
 run_url="${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
 answer="$(<"$work/answer.md")"
 exit_code=0
 note=""
+# Set once the review or triage script posted the reply itself.
+posted=false
 
 # Push to the repository the workflow runs in, not to whatever `origin` points at now.
 remote="${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY.git"
@@ -92,13 +102,15 @@ publish() {
 		return 0
 	fi
 	local branch="${OMP_BRANCH_PREFIX}issue-${number}-${GITHUB_RUN_ID}"
+	[ "$kind" != task ] || branch="${OMP_BRANCH_PREFIX}task-${GITHUB_RUN_ID}"
 	commit_staged || return 1
 	git_auth push --no-verify "$remote" "HEAD:refs/heads/$branch" || return 1
 	# Everything below talks to GitHub only, from outside any repository.
 	unset GIT_DIR GIT_WORK_TREE
 	cd "$work" || return 1
 	{
-		printf 'Requested by @%s in %s.\n\nRefs #%s\n\n' "$author" "$comment_url" "$number"
+		printf 'Requested by @%s in %s.\n\n' "$author" "$comment_url"
+		[ -z "$number" ] || printf 'Refs #%s\n\n' "$number"
 		printf '%s\n' "$answer"
 	} >"$work/pr-body.md"
 	local url
@@ -111,7 +123,20 @@ publish() {
 case "$status" in
 0)
 	[ -n "$answer" ] || answer="_omp finished without a text reply._"
-	if ! stage_changes; then
+	if [ "$kind" = review ] || [ "$kind" = triage ]; then
+		# Read-only runs: nothing is staged or pushed, whatever the workspace holds.
+		if bash "$(dirname "${BASH_SOURCE[0]}")/publish-$kind.sh"; then
+			posted=true
+		elif [ "$kind" = triage ]; then
+			# It already tried to post the comment; the failure is in the log.
+			posted=true
+			exit_code=1
+		else
+			exit_code=1
+			note="Could not post a pull request review; see the [run log]($run_url). The review is posted here as a comment instead."
+			[ ! -s "$work/fallback.md" ] || answer="$(<"$work/fallback.md")"
+		fi
+	elif ! stage_changes; then
 		note="Could not stage the changes for publication; see the [run log]($run_url). Nothing was pushed."
 		exit_code=1
 	elif [ "$changed" = true ]; then
@@ -139,13 +164,19 @@ esac
 unset GIT_DIR GIT_WORK_TREE
 cd "$work" || exit 1
 
+# The review or triage script already posted the reply.
+[ "$posted" != true ] || exit "$exit_code"
+
 {
 	printf '%s' "${answer:0:60000}"
 	[ -z "$note" ] || printf '\n\n%s' "$note"
 	printf '\n\n<sub>omp · [run](%s) · ≈$%s</sub>\n' "$run_url" "$cost"
 } >"$work/comment.md"
 
-if ! post_comment "$number" "$work/comment.md"; then
+if [ "$kind" = task ]; then
+	# No thread to answer on: the run summary is the reply.
+	cat "$work/comment.md" >>"${GITHUB_STEP_SUMMARY:-/dev/null}"
+elif ! post_comment "$number" "$work/comment.md"; then
 	echo "::error::could not post the reply comment on #$number"
 	[ "$exit_code" -ne 0 ] || exit_code=1
 fi

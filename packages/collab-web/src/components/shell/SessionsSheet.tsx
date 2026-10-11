@@ -1,4 +1,4 @@
-import { LoaderCircle, Play, RefreshCw, Search, Share2, Trash2, X } from "lucide-react";
+import { GitBranch, LoaderCircle, Play, RefreshCw, Search, Share2, Trash2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CompanionClient, SessionOverview, SessionSearchHit } from "../../lib/companion";
@@ -10,6 +10,7 @@ import { useRequest } from "../../lib/use-request";
 import { MessageSearch } from "./MessageSearch";
 import { useOpenElsewhere } from "./OpenElsewhere";
 import { Sheet } from "./Sheet";
+import { WorktreeSettings } from "./WorktreeSettings";
 import "./review.css";
 import "./stats.css";
 
@@ -22,6 +23,10 @@ export interface SessionsSheetProps {
 	canStart: boolean;
 	/** The companion answers message searches (`canSearch`); without it only the title and folder search is offered. */
 	canSearch?: boolean;
+	/** The companion keeps git worktree settings (`canGitFlow`): a toggle shows them above the list. */
+	canGitFlow?: boolean;
+	/** A search to open on (from the command palette): sessions by title or folder, or messages. */
+	initial?: { mode: "sessions" | "messages"; query: string };
 	/** Session on screen: marked and not openable. */
 	currentSessionId?: string | null;
 	/** Fetch a link for a hosting session and join it; rejects with a readable message. */
@@ -35,21 +40,24 @@ export function SessionsSheet({
 	client,
 	canStart,
 	canSearch,
+	canGitFlow,
+	initial,
 	currentSessionId,
 	onOpenHost,
 	onOpenLink,
 	onClose,
 }: SessionsSheetProps): ReactNode {
-	const [query, setQuery] = useState("");
-	const [q, setQ] = useState("");
+	const [query, setQuery] = useState(initial?.mode === "sessions" ? initial.query : "");
+	const [q, setQ] = useState(query.trim());
 	useEffect(() => {
 		const timer = setTimeout(() => setQ(query.trim()), SEARCH_DEBOUNCE_MS);
 		return () => clearTimeout(timer);
 	}, [query]);
-	const [mode, setMode] = useState<"sessions" | "messages">("sessions");
+	const [mode, setMode] = useState<"sessions" | "messages">(initial?.mode ?? "sessions");
 	const messages = canSearch === true && mode === "messages";
-	const [msgQuery, setMsgQuery] = useState("");
-	const [mq, setMq] = useState("");
+	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [msgQuery, setMsgQuery] = useState(initial?.mode === "messages" ? initial.query : "");
+	const [mq, setMq] = useState(msgQuery.trim());
 	useEffect(() => {
 		const timer = setTimeout(() => setMq(msgQuery.trim()), SEARCH_DEBOUNCE_MS);
 		return () => clearTimeout(timer);
@@ -160,6 +168,18 @@ export function SessionsSheet({
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">All sessions</div>
 				<span className="sh-stats-head-actions">
+					{canGitFlow === true && (
+						<button
+							type="button"
+							className="sh-btn sh-btn-icon"
+							onClick={() => setSettingsOpen(open => !open)}
+							aria-pressed={settingsOpen}
+							aria-label="worktree settings"
+							title="worktree settings"
+						>
+							<GitBranch size={15} />
+						</button>
+					)}
 					<button
 						type="button"
 						className="sh-btn sh-btn-icon"
@@ -176,6 +196,7 @@ export function SessionsSheet({
 				</span>
 			</div>
 			{openElsewhere.notice}
+			{canGitFlow === true && settingsOpen && <WorktreeSettings client={client} />}
 			{error && <div className="sh-connect-error">{error}</div>}
 			{canSearch === true && (
 				<div className="sh-segmented" role="radiogroup" aria-label="search in">

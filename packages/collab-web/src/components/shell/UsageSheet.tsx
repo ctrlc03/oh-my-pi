@@ -5,6 +5,7 @@ import type { CompanionClient, UsageRange, UsageReport } from "../../lib/compani
 import { fmtCost, fmtTokens, relTime, shortenPath } from "../../lib/format";
 import { readJson, writeJson } from "../../lib/storage";
 import { useRequest } from "../../lib/use-request";
+import { LimitWindows, type LimitWindowsProps } from "./LimitWindows";
 import { PrAlerts } from "./PrAlerts";
 import { Sheet } from "./Sheet";
 import { SpendAlerts } from "./SpendAlerts";
@@ -30,6 +31,8 @@ export interface UsageSheetProps {
 	client: CompanionClient;
 	/** The companion reads GitHub (`gh` signed in), so pull request alerts can work. */
 	canGithub: boolean;
+	/** The open session's subscription limit windows (host feature `usage-limits`); absent hides the Limits section. */
+	limits?: LimitWindowsProps;
 	onClose(): void;
 }
 
@@ -39,7 +42,7 @@ function storedRange(): UsageRange {
 }
 
 /** Spend and token totals across every omp session on the paired computer. */
-export function UsageSheet({ client, canGithub, onClose }: UsageSheetProps): ReactNode {
+export function UsageSheet({ client, canGithub, limits, onClose }: UsageSheetProps): ReactNode {
 	const [range, setRange] = useState(storedRange);
 	const [metric, setMetric] = useState<Metric>("cost");
 	const load = useCallback(() => client.requestUsage(range), [client, range]);
@@ -75,6 +78,7 @@ export function UsageSheet({ client, canGithub, onClose }: UsageSheetProps): Rea
 					</button>
 				</span>
 			</div>
+			{limits !== undefined && <LimitWindows {...limits} />}
 			<div className="sh-segmented" role="radiogroup" aria-label="time range">
 				{RANGES.map(r => (
 					<button

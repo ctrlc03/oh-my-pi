@@ -63,6 +63,8 @@ export interface ComposerHandle {
 	insert(prompt: string): void;
 	/** Replace the draft text and attachments (an edited earlier prompt), put the caret at the end and focus. */
 	replace(text: string, images?: readonly ImageContent[]): void;
+	/** Put the caret in the message box. */
+	focus(): void;
 }
 
 /** Textarea metrics: line-height 20px + 8px vertical padding × 2 (kept in sync with shell.css). */
@@ -253,6 +255,9 @@ export const Composer = memo(function Composer({
 				const next = text.trim() ? `${text.trimEnd()}\n\n${prompt}` : prompt;
 				pendingCaretRef.current = next.length;
 				setText(next);
+			},
+			focus(): void {
+				taRef.current?.focus();
 			},
 			replace(next: string, nextImages: readonly ImageContent[] = []): void {
 				pendingCaretRef.current = next.length;

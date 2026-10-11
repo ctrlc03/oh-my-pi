@@ -28,12 +28,15 @@ import { SplitPane } from "./components/shell/SplitPane";
 import { TaskProgress } from "./components/shell/TaskProgress";
 import { Toasts } from "./components/shell/Toasts";
 import { UpdateBar } from "./components/shell/UpdateBar";
+import { ShortcutsSheet } from "./components/shell/ShortcutsSheet";
 import { UsageSheet } from "./components/shell/UsageSheet";
 import { Transcript } from "./components/transcript/Transcript";
 import { collectChanges } from "./lib/changes";
 import { GuestClient } from "./lib/client";
 import { extractPairing, loadPairing, type Pairing, savePairing } from "./lib/companion";
 import { subscribeDraft } from "./lib/draft-bus";
+import { adjacentRoom, IS_MAC, type ShortcutId, shortcutFires } from "./lib/shortcuts";
+import { useEdgeGestures } from "./lib/use-edge-gestures";
 import { sessionMarkdown } from "./lib/export";
 import { blobToBase64 } from "./lib/images";
 import { useAppBadge } from "./lib/badge";
@@ -717,25 +720,25 @@ function Session({
 	entriesRef.current = snap.entries;
 	const exportMarkdown = useCallback((title: string) => sessionMarkdown(entriesRef.current, { title }), []);
 
-	// Desktop shortcuts. Typing in a field suppresses everything but Esc; an open sheet or
-	// drawer owns Esc itself, and the composer aborts a running turn on its own Esc.
+	// Desktop shortcuts (the keymap lives in lib/shortcuts.ts, which the help sheet lists too). Typing in a
+	// field suppresses everything but Esc; an open sheet or drawer owns Esc itself, and the composer aborts a
+	// running turn on its own Esc. The transcript handles its own keys (blocks, jump, copy, edit).
 	const canShowSidebar = canSwitch || companion !== null;
 	const showSidebar = sidebarOpen && canShowSidebar;
 	const readOnly = snap.readOnly;
 	const working = snap.working;
 	const searchOpen = search !== null;
+	const [sessionSheetOpen, setSessionSheetOpen] = useState(false);
+	const [helpOpen, setHelpOpen] = useState(false);
+	const closeHelp = useCallback(() => setHelpOpen(false), []);
+	const openHelp = useCallback(() => setHelpOpen(true), []);
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent): void => {
 			if (e.isComposing || e.defaultPrevented) return;
-			const target = e.target;
-			const typing =
-				target instanceof HTMLElement &&
-				(target.isContentEditable ||
-					target.tagName === "INPUT" ||
-					target.tagName === "TEXTAREA" ||
-					target.tagName === "SELECT");
+			const target = e.target instanceof HTMLElement ? e.target : null;
+			const fires = (id: ShortcutId): boolean => shortcutFires(id, e, target, IS_MAC);
 			const dialogOpen = document.querySelector('[role="dialog"]') !== null;
-			if (e.key === "Escape") {
+			if (fires("escape")) {
 				// A sheet owns Esc, and so does the pane the user last touched when it is not this one.
 				if (dialogOpen || focusedPane() !== "main") return;
 				if (searchOpen) closeSearch();
@@ -743,19 +746,63 @@ function Session({
 				else if (live && !readOnly && working) client.sendAbort();
 				return;
 			}
-			if (typing || dialogOpen || e.altKey) return;
-			if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k" && !e.shiftKey) {
+			if (dialogOpen) return;
+			if (fires("sidebar")) {
 				if (!canShowSidebar) return;
 				e.preventDefault();
 				toggleSidebar();
-			} else if (e.key === "/" && !e.metaKey && !e.ctrlKey && !searchOpen && focusedPane() === "main") {
+			} else if (fires("help")) {
+				e.preventDefault();
+				setHelpOpen(true);
+			} else if (focusedPane() !== "main") {
+				return;
+			} else if (fires("find")) {
+				if (searchOpen) return;
 				e.preventDefault();
 				setSearch({ query: "", target: null });
+			} else if (fires("focusComposer")) {
+				e.preventDefault();
+				composerRef.current?.focus();
+			} else if (fires("toggleChat")) {
+				e.preventDefault();
+				changeChat(!chat);
+			} else if (fires("sessionSheet")) {
+				e.preventDefault();
+				setSessionSheetOpen(true);
+			} else if (fires("prevSession") || fires("nextSession")) {
+				const room = adjacentRoom(rooms, roomId, fires("nextSession") ? 1 : -1);
+				if (room === null) return;
+				e.preventDefault();
+				onOpenLink(room.link);
 			}
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [canShowSidebar, client, closeSearch, live, readOnly, searchOpen, showSidebar, toggleSidebar, working]);
+	}, [
+		canShowSidebar,
+		chat,
+		changeChat,
+		client,
+		closeSearch,
+		live,
+		onOpenLink,
+		readOnly,
+		roomId,
+		rooms,
+		searchOpen,
+		showSidebar,
+		toggleSidebar,
+		working,
+	]);
+
+	// Touch: edge swipes open and close the sessions sidebar and the agents rail; a swipe down on the composer hides the keyboard.
+	useEdgeGestures({
+		canOpenSidebar: canShowSidebar,
+		sidebarDrawerOpen: showSidebar && !matchMedia(SIDEBAR_DOCK_QUERY).matches,
+		railOpen,
+		setSidebar: changeSidebar,
+		setRail: setRailOpen,
+	});
 
 	// Split view: the editor docks beside the transcript where there is room, unless a second
 	// session is open and the screen is too narrow for both (the session keeps the room, the editor is a sheet).
@@ -812,6 +859,8 @@ function Session({
 				sidebarAlert={otherHosts.some(host => host.inputRequired)}
 				chat={chat}
 				onChatChange={changeChat}
+				sheetOpen={sessionSheetOpen}
+				setSheetOpen={setSessionSheetOpen}
 				keepTurns={sessionId === null ? undefined : trim.keep}
 				onKeepTurnsChange={changeKeepTurns}
 				changeCount={changes.length}
@@ -821,6 +870,7 @@ function Session({
 				onSessionCommand={sendSessionCommand}
 				exportMarkdown={exportMarkdown}
 				onOpenChanges={openChanges}
+				onOpenShortcuts={openHelp}
 				onOpenUsage={companion ? openUsage : null}
 				onOpenSessions={companion ? openSessions : null}
 				onOpenCodemap={canCodemap ? openCodemap : null}
@@ -874,6 +924,7 @@ function Session({
 							onCancelQueued={cancelQueued}
 							trimmed={trimmed}
 							onEditPrompt={editPrompt.onEditPrompt}
+							onSendToAgent={snap.readOnly ? undefined : sendToAgent}
 							sessionModel={snap.state?.model?.id}
 						/>
 					</div>
@@ -1050,6 +1101,7 @@ function Session({
 					onClose={() => setGithubOpen(false)}
 				/>
 			)}
+			{helpOpen && <ShortcutsSheet onClose={closeHelp} />}
 			{!ideDocked && ideSheet}
 			{file !== null && companionClient !== null && hostId !== null && (
 				<FileSheet

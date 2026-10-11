@@ -142,6 +142,14 @@ const delay = Math.min(1000 * 2 ** attempt, 30_000);
 
 Checking the actual implementation now.`;
 
+/** A long bash result with ANSI colours: pass and fail marks over sixty lines, to exercise a sticky tool header. */
+const LONG_BASH_OUTPUT = Array.from({ length: 60 }, (_, i) => {
+	const name = `collab/relay-${String(i).padStart(2, "0")}.test.ts`;
+	return i % 17 === 16
+		? `\u001b[31m✗\u001b[0m ${name} \u001b[2m(${40 + i} ms)\u001b[0m`
+		: `\u001b[32m✓\u001b[0m ${name} \u001b[2m(${12 + i} ms)\u001b[0m`;
+}).join("\n");
+
 export const fixtureEntries: SessionEntry[] = [
 	{
 		id: "e01",
@@ -183,6 +191,20 @@ export const fixtureEntries: SessionEntry[] = [
 					arguments: { path: "packages/coding-agent/src/collab/relay-clinet.ts", offset: 160, limit: 60 },
 					intent: "Reading the close handler",
 				},
+				{
+					type: "toolCall",
+					id: "call-bash-02",
+					name: "bash",
+					arguments: { command: "bun test packages/coding-agent/test/collab" },
+					intent: "Running the collab suite",
+				},
+				{
+					type: "toolCall",
+					id: "call-bash-03",
+					name: "bash",
+					arguments: { command: "bun run check:close-codes" },
+					intent: "Checking close codes",
+				},
 			],
 			model: fixtureModel.id,
 			usage: mkUsage(2_410, 386, 18_200, 0.0119),
@@ -210,8 +232,43 @@ export const fixtureEntries: SessionEntry[] = [
 		},
 	},
 	{
-		id: "e04",
+		id: "e03a",
 		parentId: "e03",
+		timestamp: iso(NOW - 30 * MIN + 4_500),
+		type: "message",
+		message: {
+			role: "toolResult",
+			toolCallId: "call-bash-02",
+			toolName: "bash",
+			content: [{ type: "text", text: LONG_BASH_OUTPUT }],
+			details: { exitCode: 0, wallTimeMs: 12_400 },
+			isError: false,
+			timestamp: NOW - 30 * MIN + 4_500,
+		},
+	},
+	{
+		id: "e03b",
+		parentId: "e03a",
+		timestamp: iso(NOW - 30 * MIN + 4_800),
+		type: "message",
+		message: {
+			role: "toolResult",
+			toolCallId: "call-bash-03",
+			toolName: "bash",
+			content: [
+				{
+					type: "text",
+					text: "\u001b[31mrelay-client.ts:41\u001b[0m  expected 1001 to be transient\n\u001b[2mexited with code 2\u001b[0m",
+				},
+			],
+			details: { exitCode: 2, wallTimeMs: 840 },
+			isError: true,
+			timestamp: NOW - 30 * MIN + 4_800,
+		},
+	},
+	{
+		id: "e04",
+		parentId: "e03b",
 		timestamp: iso(NOW - 30 * MIN + 5_000),
 		type: "message",
 		message: {

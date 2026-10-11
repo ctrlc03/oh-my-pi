@@ -1,0 +1,51 @@
+/* Shortcuts sheet: group headings over label / keycap rows. sh-keys-* namespace. */
+
+.sh-keys {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.sh-keys-group {
+	margin: 10px 0 2px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--fg-faint);
+}
+
+.sh-keys-list {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	gap: 6px 16px;
+	margin: 0;
+	font-size: 13.5px;
+}
+
+.sh-keys-list dt {
+	color: var(--fg);
+}
+
+.sh-keys-list dd {
+	margin: 0;
+	text-align: right;
+}
+
+.sh-keys-gesture {
+	font-size: 12.5px;
+	color: var(--fg-muted);
+}
+
+.sh-kbd {
+	display: inline-block;
+	min-width: 22px;
+	padding: 1px 7px;
+	font-family: var(--font-mono);
+	font-size: 12px;
+	text-align: center;
+	color: var(--fg);
+	background: var(--bg-raised);
+	border: 1px solid var(--border-strong);
+	border-radius: 6px;
+}

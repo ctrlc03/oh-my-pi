@@ -23,6 +23,18 @@ export interface ToolViewProps {
 	defaultOpen?: boolean;
 	/** Host capabilities (sub-session drill-down, …). */
 	host?: ToolRenderHost;
+	/** Replaces the card header: a host that frames the card itself (the transcript's blocks) draws its own. */
+	head?: (state: ToolHeadState) => ReactNode;
+}
+
+/** What a host-drawn card header needs: the display name and one-line summary, the status, and the open state with its toggle. */
+export interface ToolHeadState {
+	name: string;
+	status: "run" | "err" | "ok" | "pending";
+	open: boolean;
+	toggle(): void;
+	intent: string | undefined;
+	summary: ReactNode;
 }
 
 function normalizeArgs(raw: unknown): { args: Record<string, unknown>; intent: string | undefined } {
@@ -99,24 +111,35 @@ export function ToolView(props: ToolViewProps): ReactNode {
 
 	return (
 		<div className={`tv-card${isError ? " tv-card--error" : ""}`}>
-			<button
-				type="button"
-				className="tv-head"
-				aria-expanded={open}
-				onClick={() => setOpen(v => !v)}
-				title={intent || undefined}
-			>
-				{status === "run" ? (
-					<span className="tv-spin" aria-label="running" />
-				) : (
-					<span className={`tv-status tv-status--${status}`} aria-hidden="true" />
-				)}
-				<span className="tv-name">{xdev ? `xd://${name}` : name}</span>
-				<span className="tv-sum">
-					<renderer.Summary {...renderProps} />
-				</span>
-				<span className="tv-chev" aria-hidden="true" />
-			</button>
+			{props.head ? (
+				props.head({
+					name: xdev ? `xd://${name}` : name,
+					status,
+					open,
+					toggle: () => setOpen(v => !v),
+					intent: intent || undefined,
+					summary: <renderer.Summary {...renderProps} />,
+				})
+			) : (
+				<button
+					type="button"
+					className="tv-head"
+					aria-expanded={open}
+					onClick={() => setOpen(v => !v)}
+					title={intent || undefined}
+				>
+					{status === "run" ? (
+						<span className="tv-spin" aria-label="running" />
+					) : (
+						<span className={`tv-status tv-status--${status}`} aria-hidden="true" />
+					)}
+					<span className="tv-name">{xdev ? `xd://${name}` : name}</span>
+					<span className="tv-sum">
+						<renderer.Summary {...renderProps} />
+					</span>
+					<span className="tv-chev" aria-hidden="true" />
+				</button>
+			)}
 			{open && (
 				<div className="tv-body">
 					{intent && <div className="tv-intent">{intent}</div>}

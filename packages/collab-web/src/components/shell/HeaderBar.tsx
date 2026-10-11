@@ -1,7 +1,7 @@
 import type { SessionCommand, SessionHeader, SessionState, WireModel } from "@oh-my-pi/pi-wire";
 import { Ellipsis, LogOut, PanelLeft, PanelRight, Search, ShieldCheck, SquareCode, Waypoints } from "lucide-react";
 import type { ReactNode } from "react";
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback } from "react";
 import type { ConnectionPhase } from "../../lib/client";
 import { fmtPercent, shortenPath } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
@@ -37,12 +37,16 @@ export interface HeaderBarProps {
 	/** Another session on the paired computer is waiting for input. */
 	sidebarAlert: boolean;
 	chat: boolean;
+	/** The session sheet; the app owns it so a shortcut can open it. */
+	sheetOpen: boolean;
+	setSheetOpen(open: boolean): void;
 	onChatChange(chat: boolean): void;
 	/** Latest turns this device keeps showing (null: all); undefined until the session is known. */
 	keepTurns: number | null | undefined;
 	onKeepTurnsChange(keep: number | null): void;
 	changeCount: number;
 	onOpenChanges(): void;
+	onOpenShortcuts(): void;
 	/** Usage and all-sessions screens; null when no computer is paired. */
 	onOpenUsage: (() => void) | null;
 	onOpenSessions: (() => void) | null;
@@ -90,11 +94,14 @@ export const HeaderBar = memo(function HeaderBar({
 	sidebarOpen,
 	sidebarAlert,
 	chat,
+	sheetOpen,
+	setSheetOpen,
 	onChatChange,
 	keepTurns,
 	onKeepTurnsChange,
 	changeCount,
 	onOpenChanges,
+	onOpenShortcuts,
 	onOpenUsage,
 	onOpenSessions,
 	onOpenCodemap,
@@ -114,8 +121,7 @@ export const HeaderBar = memo(function HeaderBar({
 }: HeaderBarProps): ReactNode {
 	// The live name first: `header.title` is the session file's title as of joining.
 	const title = state?.sessionName ?? header?.title ?? "session";
-	const [sheetOpen, setSheetOpen] = useState(false);
-	const closeSheet = useCallback(() => setSheetOpen(false), []);
+	const closeSheet = useCallback(() => setSheetOpen(false), [setSheetOpen]);
 	const usage = state?.contextUsage;
 	let pct: number | null = null;
 	if (usage) {
@@ -293,6 +299,10 @@ export const HeaderBar = memo(function HeaderBar({
 					onOpenChanges={() => {
 						setSheetOpen(false);
 						onOpenChanges();
+					}}
+					onOpenShortcuts={() => {
+						setSheetOpen(false);
+						onOpenShortcuts();
 					}}
 					onOpenUsage={
 						onOpenUsage &&

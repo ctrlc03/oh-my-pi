@@ -27,7 +27,7 @@ export function turnRanges(entries: readonly SessionEntry[]): TurnRange[] {
 	return ranges;
 }
 
-function contentMarkdown(content: string | readonly (TextContent | ImageContent)[]): string {
+export function contentMarkdown(content: string | readonly (TextContent | ImageContent)[]): string {
 	if (typeof content === "string") return content.trim();
 	const parts: string[] = [];
 	for (const block of content) {
@@ -42,7 +42,7 @@ function contentMarkdown(content: string | readonly (TextContent | ImageContent)
 }
 
 /** Gutter names the transcript shows: the host user's prompts are "host", a guest's carry their name. */
-function authorOf(entry: SessionEntry): string {
+export function authorOf(entry: SessionEntry): string {
 	if (entry.type !== "custom_message") return "host";
 	const from = (entry.details as { from?: unknown } | null | undefined)?.from;
 	return typeof from === "string" && from ? from : "guest";

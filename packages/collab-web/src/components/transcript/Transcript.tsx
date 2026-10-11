@@ -3,14 +3,20 @@ import { ArrowDown, ArrowUp, Check, ChevronRight, Copy, Pencil, Share2, X } from
 import type { ReactNode } from "react";
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ActiveTool, ConnectionPhase } from "../../lib/client";
+import { IS_MAC, shortcutFires } from "../../lib/shortcuts";
 import { replyText, turnMarkdown, type TurnRange, turnRanges } from "../../lib/export";
+import { buildBlocks, buildChatBlocks, replyId, toolResults } from "../../lib/blocks";
 import { fmtTokens } from "../../lib/format";
 import type { NewSince } from "../../lib/new-since";
 import { answeredByOtherModel } from "../../lib/prompt-model";
 import type { QueuedPrompt } from "../../lib/rooms";
+import { copyText, shareText } from "../../lib/share";
+import { focusedPane } from "../../lib/use-split";
 import type { ToolRenderHost } from "../../tool-render";
+import { useBlocks } from "./use-blocks";
 import { buildChatItems, type ChatItem, type ChatToolCall } from "./chat-items";
 import { Markdown, StreamingMarkdown } from "./Markdown";
+import { BlockShell, BlocksContext, useFlash } from "./Block";
 import { ToolCard } from "./ToolCard";
 import "./transcript.css";
 
@@ -48,6 +54,8 @@ export interface TranscriptProps {
 	trimmed?: { from: number; hiddenTurns: number; onShowAll(): void };
 	/** Id of the session's model: replies from any other model since its last change carry a note. */
 	sessionModel?: string;
+	/** Blocks offer *Send to agent*: this puts the quoted excerpt into the message box. */
+	onSendToAgent?: (text: string) => void;
 }
 
 interface ScrollGeometry {
@@ -95,7 +103,6 @@ function Row({
 	title,
 	entryId,
 	alsoEntries,
-	action,
 	children,
 }: {
 	kind: "user" | "assistant" | "custom" | "marker";
@@ -105,8 +112,6 @@ function Row({
 	entryId?: string;
 	/** Further entries this row also renders (a folded tool run spans several). */
 	alsoEntries?: readonly string[];
-	/** Hover action beside the body (outside the bubble's flow). */
-	action?: ReactNode;
 	children: ReactNode;
 }): ReactNode {
 	return (
@@ -118,10 +123,7 @@ function Row({
 			<div className="tr-gutter" title={title}>
 				{gutter}
 			</div>
-			<div className="tr-body">
-				{children}
-				{action}
-			</div>
+			<div className="tr-body">{children}</div>
 		</div>
 	);
 }
@@ -175,12 +177,15 @@ function MsgContent({ content }: { content: string | readonly (TextContent | Ima
 
 function AssistantBody({
 	message,
+	entryId,
 	results,
 	active,
 	pending,
 	host,
 }: {
 	message: AssistantMessage;
+	/** Entry the message is, which names its blocks; null while it streams and is not in the session yet. */
+	entryId: string | null;
 	results: ReadonlyMap<string, ToolResultMessage>;
 	active: ReadonlyMap<string, ActiveTool>;
 	/** Still streaming — suppress stop-reason chips on the partial message. */
@@ -194,23 +199,30 @@ function AssistantBody({
 			case "redactedThinking":
 				return <ThinkingBlock key={i} text="" redacted />;
 			case "text":
-				return pending ? <StreamingMarkdown key={i} text={block.text} /> : <Markdown key={i} text={block.text} />;
+				if (!block.text.trim()) return null;
+				return (
+					<BlockShell key={i} id={entryId === null ? null : replyId(entryId, i)} kind="reply">
+						{pending ? <StreamingMarkdown text={block.text} /> : <Markdown text={block.text} />}
+					</BlockShell>
+				);
 			case "toolCall": {
 				const act = active.get(block.id);
 				const result = results.get(block.id);
 				const args = act?.args ?? block.arguments;
 				return (
-					<ToolCard
-						key={block.id}
-						toolCallId={block.id}
-						name={block.name}
-						intent={block.intent ?? act?.intent}
-						args={args}
-						result={result}
-						host={host}
-						running={!result && (act !== undefined || pending)}
-						partialResult={act?.partialResult}
-					/>
+					<BlockShell key={block.id} id={entryId === null ? null : block.id} kind="tool">
+						<ToolCard
+							toolCallId={block.id}
+							name={block.name}
+							intent={block.intent ?? act?.intent}
+							args={args}
+							result={result}
+							host={host}
+							running={!result && (act !== undefined || pending)}
+							partialResult={act?.partialResult}
+							framed
+						/>
+					</BlockShell>
 				);
 			}
 			default:
@@ -238,7 +250,7 @@ function EditPrompt({ entryId, onEdit }: { entryId: string; onEdit: (entryId: st
 	return (
 		<button
 			type="button"
-			className="tr-edit"
+			className="tr-act tr-edit"
 			onClick={() => onEdit(entryId)}
 			aria-label="edit and resend"
 			title="edit and resend"
@@ -247,9 +259,6 @@ function EditPrompt({ entryId, onEdit }: { entryId: string; onEdit: (entryId: st
 		</button>
 	);
 }
-
-/** How long a copy button reads "Copied" before it goes back. */
-const COPIED_MS = 1500;
 
 /** What the agent did in one turn, tallied for its action row. */
 interface PlannedTurn extends TurnRange {
@@ -263,34 +272,15 @@ interface PlannedTurn extends TurnRange {
 
 /** Copy the reply or share the turn: quiet actions at the end of a finished agent turn. */
 function TurnActions({ entries, turn }: { entries: readonly SessionEntry[]; turn: PlannedTurn }): ReactNode {
-	const [done, setDone] = useState<"reply" | "share" | null>(null);
-	const timer = useRef<number | undefined>(undefined);
-	useEffect(() => () => window.clearTimeout(timer.current), []);
-	const flash = (what: "reply" | "share"): void => {
-		setDone(what);
-		window.clearTimeout(timer.current);
-		timer.current = window.setTimeout(() => setDone(null), COPIED_MS);
-	};
-	const copy = async (text: string, what: "reply" | "share"): Promise<void> => {
-		try {
-			await navigator.clipboard.writeText(text);
-			flash(what);
-		} catch {
-			// Clipboard blocked (insecure origin, permission): nothing to confirm.
-		}
-	};
+	const [done, flash] = useFlash();
 	const slice = (): readonly SessionEntry[] => entries.slice(turn.from, turn.to);
+	const copyReply = async (): Promise<void> => {
+		if (await copyText(replyText(slice()))) flash("reply");
+	};
 	const share = async (): Promise<void> => {
 		const turnEntries = slice();
-		const text = turnMarkdown(turnEntries);
-		if (typeof navigator.share !== "function") return copy(text, "share");
 		const title = replyText(turnEntries).split("\n", 1)[0]?.slice(0, 80) || "omp reply";
-		try {
-			await navigator.share({ title, text });
-		} catch (error) {
-			// Dismissing the sheet is a choice, not a failure.
-			if (!(error instanceof DOMException && error.name === "AbortError")) await copy(text, "share");
-		}
+		if ((await shareText(title, turnMarkdown(turnEntries))) === "copied") flash("share");
 	};
 	return (
 		<div className="tr-turn-actions">
@@ -299,7 +289,7 @@ function TurnActions({ entries, turn }: { entries: readonly SessionEntry[]; turn
 					type="button"
 					className="tr-turn-btn"
 					data-copied={done === "reply" ? "" : undefined}
-					onClick={() => void copy(replyText(slice()), "reply")}
+					onClick={() => void copyReply()}
 				>
 					{done === "reply" ? <Check size={12} /> : <Copy size={12} />}
 					{done === "reply" ? "Copied" : "Copy reply"}
@@ -367,20 +357,29 @@ const EntryRow = memo(function EntryRow({
 			switch (msg.role) {
 				case "user":
 					return (
-						<Row
-							kind="user"
-							gutter="host"
-							title={entry.timestamp}
-							entryId={entry.id}
-							action={onEdit && !msg.synthetic && <EditPrompt entryId={entry.id} onEdit={onEdit} />}
-						>
-							<MsgContent content={msg.content} />
+						<Row kind="user" gutter="" entryId={entry.id}>
+							<BlockShell
+								id={entry.id}
+								kind="prompt"
+								label="host"
+								title={entry.timestamp}
+								extra={onEdit && !msg.synthetic && <EditPrompt entryId={entry.id} onEdit={onEdit} />}
+							>
+								<MsgContent content={msg.content} />
+							</BlockShell>
 						</Row>
 					);
 				case "assistant":
 					return (
 						<Row kind="assistant" gutter="agent" title={entry.timestamp} entryId={entry.id}>
-							<AssistantBody message={msg} results={results} active={active} pending={false} host={host} />
+							<AssistantBody
+								message={msg}
+								entryId={entry.id}
+								results={results}
+								active={active}
+								pending={false}
+								host={host}
+							/>
 							{answeredBy && <ModelNote model={answeredBy} />}
 						</Row>
 					);
@@ -399,14 +398,16 @@ const EntryRow = memo(function EntryRow({
 						? ((details as Record<string, unknown>).from as string)
 						: "guest";
 				return (
-					<Row
-						kind="user"
-						gutter={<span className="tr-badge">{from}</span>}
-						title={entry.timestamp}
-						entryId={entry.id}
-						action={onEdit && <EditPrompt entryId={entry.id} onEdit={onEdit} />}
-					>
-						<MsgContent content={entry.content} />
+					<Row kind="user" gutter="" entryId={entry.id}>
+						<BlockShell
+							id={entry.id}
+							kind="prompt"
+							label={<span className="tr-badge">{from}</span>}
+							title={entry.timestamp}
+							extra={onEdit && <EditPrompt entryId={entry.id} onEdit={onEdit} />}
+						>
+							<MsgContent content={entry.content} />
+						</BlockShell>
 					</Row>
 				);
 			}
@@ -550,7 +551,9 @@ function ChatRow({
 			const answeredBy = item.entryId === null ? undefined : otherModels.get(item.entryId);
 			return (
 				<Row kind="assistant" gutter={item.lead ? "agent" : ""} entryId={item.entryId ?? undefined}>
-					{item.pending ? <StreamingMarkdown text={item.text} /> : <Markdown text={item.text} />}
+					<BlockShell id={item.entryId === null ? null : item.key} kind="reply">
+						{item.pending ? <StreamingMarkdown text={item.text} /> : <Markdown text={item.text} />}
+					</BlockShell>
 					{answeredBy && <ModelNote model={answeredBy} />}
 				</Row>
 			);
@@ -563,7 +566,9 @@ function ChatRow({
 					entryId={item.entryId ?? undefined}
 					alsoEntries={item.entryIds}
 				>
-					<ToolRun calls={item.calls} results={results} active={active} host={host} />
+					<BlockShell id={item.entryId === null ? null : item.key} kind="run">
+						<ToolRun calls={item.calls} results={results} active={active} host={host} />
+					</BlockShell>
 				</Row>
 			);
 		case "stop":
@@ -638,6 +643,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		onEditPrompt,
 		trimmed,
 		sessionModel,
+		onSendToAgent,
 	} = props;
 
 	// null follows the tail. A number pins the first mounted entry while the
@@ -652,15 +658,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	const otherModels = useMemo(() => answeredByOtherModel(entries, sessionModel), [entries, sessionModel]);
 
 	// A tool result always follows its call, so visible rows only pair with visible results.
-	const results = useMemo(() => {
-		const map = new Map<string, ToolResultMessage>();
-		for (const entry of visible) {
-			if (entry.type === "message" && entry.message.role === "toolResult") {
-				map.set(entry.message.toolCallId, entry.message);
-			}
-		}
-		return map;
-	}, [visible]);
+	const results = useMemo(() => toolResults(visible), [visible]);
 
 	const rootRef = useRef<HTMLDivElement | null>(null);
 	const lockRef = useRef(true);
@@ -784,6 +782,22 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	const canEdit = onEditPrompt !== undefined && compact !== true;
 	const onEdit = useMemo(() => (canEdit ? (entryId: string) => editRef.current?.(entryId) : undefined), [canEdit]);
 
+	// The blocks the view renders, in order, for selecting and copying. Chat items are built here without
+	// the live stream, so token updates do not churn the list.
+	const blockItems = useMemo(() => (chat ? buildChatItems(visible, null, true, []) : null), [chat, visible]);
+	const blocks = useMemo(
+		() => (blockItems === null ? buildBlocks(visible, results) : buildChatBlocks(blockItems, results)),
+		[blockItems, visible, results],
+	);
+	const blockUi = useBlocks({
+		blocks,
+		rootRef,
+		active: activeTools,
+		compact: compact === true,
+		onSendToAgent,
+		onEdit,
+	});
+
 	// Where each turn's agent work ends, for the copy/share row. Computed over all
 	// entries, so a turn whose start is above the mounted window still copies whole.
 	const turnPlan = useMemo(() => {
@@ -871,6 +885,37 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		followTranscriptTail(el, lockRef, true);
 	};
 
+	// Keys for this transcript: jump to the latest message, copy the last reply, edit the last prompt.
+	// They act on the pane the reader last touched, and the agent drawer's compact transcript leaves them out.
+	const keysRef = useRef({ blocks, jumpToLatest, copyBlock: blockUi.copyBlock, onEdit });
+	keysRef.current = { blocks, jumpToLatest, copyBlock: blockUi.copyBlock, onEdit };
+	useEffect(() => {
+		if (compact === true) return;
+		const onKey = (e: KeyboardEvent): void => {
+			const root = rootRef.current;
+			if (e.isComposing || e.defaultPrevented || root === null || document.querySelector('[role="dialog"]') !== null)
+				return;
+			if ((root.closest("[data-pane]")?.getAttribute("data-pane") ?? "main") !== focusedPane()) return;
+			const current = keysRef.current;
+			if (shortcutFires("jumpLatest", e, e.target, IS_MAC)) {
+				e.preventDefault();
+				current.jumpToLatest();
+			} else if (shortcutFires("copyReply", e, e.target, IS_MAC)) {
+				const reply = current.blocks.findLast(block => block.kind === "reply");
+				if (reply === undefined) return;
+				e.preventDefault();
+				current.copyBlock(reply.id);
+			} else if (shortcutFires("editPrompt", e, e.target, IS_MAC)) {
+				const prompt = current.blocks.findLast(block => block.kind === "prompt" && block.editable);
+				if (prompt === undefined || current.onEdit === undefined) return;
+				e.preventDefault();
+				current.onEdit(prompt.entryId ?? prompt.id);
+			}
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [compact]);
+
 	// "New since you left": the divider sits before the first new row that renders.
 	// When that entry is above the mounted window, the divider waits for the window to reach it.
 	const dividerAt = useMemo(() => {
@@ -951,7 +996,9 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		<div
 			ref={rootRef}
 			className={`tr-root${compact === true ? " tr-root--compact" : ""}`}
+			{...blockUi.rootProps}
 			onScroll={() => {
+				blockUi.cancelPress();
 				const el = rootRef.current;
 				if (el === null) return;
 				const top = el.scrollTop;
@@ -976,127 +1023,133 @@ export function Transcript(props: TranscriptProps): ReactNode {
 				if (pillActive && dividerInView()) onNewSeen?.();
 			}}
 		>
-			{settled && entries.length === 0 && stream === null && !working && (
-				<div className="tr-empty">no activity yet</div>
-			)}
-			{start > floor && (
-				<button type="button" className="tr-earlier" onClick={showEarlier}>
-					show {(start - floor).toLocaleString("en-US")} earlier
-				</button>
-			)}
-			{start === floor && trimmed !== undefined && trimmed.hiddenTurns > 0 && (
-				<div className="tr-trimmed">
-					<span>
-						{trimmed.hiddenTurns.toLocaleString("en-US")} earlier turn{trimmed.hiddenTurns === 1 ? "" : "s"}{" "}
-						hidden on this device
-					</span>
-					<button type="button" className="tr-trimmed-show" onClick={showAll}>
-						Show all
+			<BlocksContext.Provider value={blockUi.context}>
+				{settled && entries.length === 0 && stream === null && !working && (
+					<div className="tr-empty">no activity yet</div>
+				)}
+				{start > floor && (
+					<button type="button" className="tr-earlier" onClick={showEarlier}>
+						show {(start - floor).toLocaleString("en-US")} earlier
 					</button>
-				</div>
-			)}
-			{pillActive && (
-				<div className="tr-new-dock">
-					<button type="button" className="tr-new-pill" onClick={jumpToNew}>
-						<ArrowUp size={13} /> {newSince.count} new
-					</button>
-				</div>
-			)}
-			{chatItems !== null
-				? chatItems.map((item, i) => (
-						<Fragment key={item.key}>
-							{i === dividerAt && <NewDivider />}
-							<ChatRow
-								item={item}
-								results={results}
-								active={activeTools}
-								host={host}
-								onEdit={onEdit}
-								otherModels={otherModels}
-							/>
-							{Object.hasOwn(chatTurnEnds, i) && turnActions(chatTurnEnds[i])}
-						</Fragment>
-					))
-				: visible.map((entry, i) => (
-						<Fragment key={entry.id}>
-							{i === dividerAt && <NewDivider />}
-							<EntryRow
-								entry={entry}
-								results={results}
-								active={activeTools}
-								host={host}
-								onEdit={onEdit}
-								answeredBy={otherModels.get(entry.id)}
-							/>
-							{Object.hasOwn(turnPlan.endOf, entry.id) && turnActions(turnPlan.endOf[entry.id])}
-						</Fragment>
-					))}
-			{chatItems === null && stream !== null && (
-				<Row kind="assistant" gutter="agent">
-					<AssistantBody
-						message={stream}
-						results={results}
-						active={activeTools}
-						pending={!streamDone}
-						host={host}
-					/>
-				</Row>
-			)}
-			{chatItems === null && tailTools.length > 0 && (
-				<Row kind="assistant" gutter={stream === null ? "agent" : ""}>
-					{tailTools.map(tool => (
-						<ToolCard
-							key={tool.toolCallId}
-							toolCallId={tool.toolCallId}
-							name={tool.toolName}
-							intent={tool.intent}
-							args={tool.args}
-							running
-							partialResult={tool.partialResult}
-							host={host}
-						/>
-					))}
-				</Row>
-			)}
-			{quietTurn && (
-				<Row kind="assistant" gutter="agent">
-					<div className="tr-shimmer">thinking…</div>
-				</Row>
-			)}
-			{queued?.map(prompt => (
-				<Row key={prompt.id} kind="user" gutter="queued">
-					<div className="tr-queued">
-						<div className="tr-queued-text">{prompt.text}</div>
-						{prompt.images !== undefined && prompt.images.length > 0 && (
-							<span className="tr-queued-meta">
-								{prompt.images.length} image{prompt.images.length === 1 ? "" : "s"}
-							</span>
-						)}
-						{prompt.model !== undefined && (
-							<span className="tr-queued-meta">
-								{prompt.model}
-								{prompt.thinking !== undefined && ` · ${prompt.thinking}`}
-							</span>
-						)}
-						<button
-							type="button"
-							className="tr-queued-cancel"
-							onClick={() => onCancelQueued?.(prompt.id)}
-							aria-label="cancel queued prompt"
-							title="cancel — not sent yet"
-						>
-							<X size={13} />
+				)}
+				{start === floor && trimmed !== undefined && trimmed.hiddenTurns > 0 && (
+					<div className="tr-trimmed">
+						<span>
+							{trimmed.hiddenTurns.toLocaleString("en-US")} earlier turn{trimmed.hiddenTurns === 1 ? "" : "s"}{" "}
+							hidden on this device
+						</span>
+						<button type="button" className="tr-trimmed-show" onClick={showAll}>
+							Show all
 						</button>
 					</div>
-				</Row>
-			))}
-			{away && (
-				<div className="tr-jump-dock">
-					<button type="button" className="tr-jump" onClick={jumpToLatest}>
-						<ArrowDown size={14} /> Latest
-					</button>
-				</div>
-			)}
+				)}
+				{pillActive && (
+					<div className="tr-new-dock">
+						<button type="button" className="tr-new-pill" onClick={jumpToNew}>
+							<ArrowUp size={13} /> {newSince.count} new
+						</button>
+					</div>
+				)}
+				{chatItems !== null
+					? chatItems.map((item, i) => (
+							<Fragment key={item.key}>
+								{i === dividerAt && <NewDivider />}
+								<ChatRow
+									item={item}
+									results={results}
+									active={activeTools}
+									host={host}
+									onEdit={onEdit}
+									otherModels={otherModels}
+								/>
+								{Object.hasOwn(chatTurnEnds, i) && turnActions(chatTurnEnds[i])}
+							</Fragment>
+						))
+					: visible.map((entry, i) => (
+							<Fragment key={entry.id}>
+								{i === dividerAt && <NewDivider />}
+								<EntryRow
+									entry={entry}
+									results={results}
+									active={activeTools}
+									host={host}
+									onEdit={onEdit}
+									answeredBy={otherModels.get(entry.id)}
+								/>
+								{Object.hasOwn(turnPlan.endOf, entry.id) && turnActions(turnPlan.endOf[entry.id])}
+							</Fragment>
+						))}
+				{chatItems === null && stream !== null && (
+					<Row kind="assistant" gutter="agent">
+						<AssistantBody
+							message={stream}
+							entryId={null}
+							results={results}
+							active={activeTools}
+							pending={!streamDone}
+							host={host}
+						/>
+					</Row>
+				)}
+				{chatItems === null && tailTools.length > 0 && (
+					<Row kind="assistant" gutter={stream === null ? "agent" : ""}>
+						{tailTools.map(tool => (
+							<BlockShell key={tool.toolCallId} id={null} kind="tool">
+								<ToolCard
+									toolCallId={tool.toolCallId}
+									name={tool.toolName}
+									intent={tool.intent}
+									args={tool.args}
+									running
+									partialResult={tool.partialResult}
+									host={host}
+									framed
+								/>
+							</BlockShell>
+						))}
+					</Row>
+				)}
+				{quietTurn && (
+					<Row kind="assistant" gutter="agent">
+						<div className="tr-shimmer">thinking…</div>
+					</Row>
+				)}
+				{queued?.map(prompt => (
+					<Row key={prompt.id} kind="user" gutter="queued">
+						<div className="tr-queued">
+							<div className="tr-queued-text">{prompt.text}</div>
+							{prompt.images !== undefined && prompt.images.length > 0 && (
+								<span className="tr-queued-meta">
+									{prompt.images.length} image{prompt.images.length === 1 ? "" : "s"}
+								</span>
+							)}
+							{prompt.model !== undefined && (
+								<span className="tr-queued-meta">
+									{prompt.model}
+									{prompt.thinking !== undefined && ` · ${prompt.thinking}`}
+								</span>
+							)}
+							<button
+								type="button"
+								className="tr-queued-cancel"
+								onClick={() => onCancelQueued?.(prompt.id)}
+								aria-label="cancel queued prompt"
+								title="cancel — not sent yet"
+							>
+								<X size={13} />
+							</button>
+						</div>
+					</Row>
+				))}
+				{away && (
+					<div className="tr-jump-dock">
+						<button type="button" className="tr-jump" onClick={jumpToLatest}>
+							<ArrowDown size={14} /> Latest
+						</button>
+					</div>
+				)}
+			</BlocksContext.Provider>
+			{blockUi.overlay}
 		</div>
 	);
 }

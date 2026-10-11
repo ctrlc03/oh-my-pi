@@ -75,4 +75,20 @@ describe.skipIf(tmuxBin === null)("launchInTmux with a real tmux", () => {
 		]);
 		expect(await Bun.file(path.join(root, "pwned")).exists()).toBe(false);
 	});
+
+	it("passes a per-run spend limit as --max-cost, before the prompt", async () => {
+		await fs.rm(path.join(root, "out"), { force: true });
+		await launchInTmux({
+			tmux: wrapper,
+			ompBin: fakeOmp,
+			overlayPath: path.join(root, "overlay.yml"),
+			cwd: root,
+			prompt: "fix it",
+			maxCostUsd: 1.5,
+		});
+		const lines = (await report()).trim().split("\n");
+		const at = lines.indexOf("[--max-cost]");
+		expect(lines.slice(at, at + 2)).toEqual(["[--max-cost]", "[1.5]"]);
+		expect(at).toBeLessThan(lines.indexOf("[--]"));
+	});
 });

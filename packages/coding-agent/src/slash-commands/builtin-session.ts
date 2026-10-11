@@ -12,7 +12,12 @@ import {
 	selectChangelogEntries,
 } from "../utils/changelog";
 import { formatTokenCount, refreshStatusLine } from "./builtin-modes";
-import { buildContextReportText } from "./helpers/context-report";
+import {
+	buildContextReportText,
+	CONTEXT_USAGE,
+	parseContextArgs,
+	pruneContextSelectors,
+} from "./helpers/context-report";
 import { formatCoarseDuration } from "@oh-my-pi/pi-tui/chrome/format";
 import { truncateToWidth } from "@oh-my-pi/pi-tui/render/render-utils";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
@@ -37,6 +42,7 @@ import {
 import { StatsNotice } from "@oh-my-pi/pi-tui/overlays/stats-notice";
 import { handleTodoAcp } from "./helpers/todo";
 import { buildUsageReportText } from "./helpers/usage-report";
+import { runRedoCommand, runUndoCommand } from "./helpers/turn-undo";
 import type { SlashCommandRuntime, SlashCommandSpec } from "./types";
 
 async function handleUsageResetCommand(
@@ -528,6 +534,24 @@ export const BUILTIN_SESSION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 		},
 	},
 	{
+		name: "undo",
+		icon: "history",
+		description: "Undo the last turn: rewind before your last prompt, restore its files, and edit the prompt again",
+		handleTui: async (_command, runtime) => {
+			clearSubmittedText(runtime);
+			await runUndoCommand(runtime.ctx);
+		},
+	},
+	{
+		name: "redo",
+		icon: "redo",
+		description: "Redo the turn the last /undo removed (conversation and files), until something new is sent",
+		handleTui: async (_command, runtime) => {
+			clearSubmittedText(runtime);
+			await runRedoCommand(runtime.ctx);
+		},
+	},
+	{
 		name: "tools",
 		icon: "tools",
 		description: "Show tools currently visible to the agent",
@@ -560,19 +584,41 @@ export const BUILTIN_SESSION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 		name: "context",
 		icon: "context",
 		description: "Show estimated context usage breakdown",
-		acpDescription: "Show context usage",
+		acpDescription: "Show context usage, or prune the items that fill it",
+		subcommands: [
+			{ name: "prune", description: "Elide the largest items from context (rank numbers from /context)" },
+		],
+		acpInputHint: "[prune <rank>[,<rank>…]]",
+		allowArgs: true,
 		getTuiAutocompleteDescription: runtime => {
 			const usage = runtime.ctx.session.getContextUsage();
 			if (!usage) return "Context: unavailable";
 			return `Context: ${Math.round(usage.percent)}% (${formatTokenCount(usage.tokens)}/${formatTokenCount(usage.contextWindow)})`;
 		},
-		handle: async (_command, runtime) => {
+		handle: async (command, runtime) => {
+			const parsed = parseContextArgs(command.args);
+			if ("error" in parsed) return usage(parsed.error, runtime);
+			if (parsed.action === "prune") {
+				if (parsed.selectors.length === 0) return usage(CONTEXT_USAGE, runtime);
+				const pruned = await pruneContextSelectors(runtime.session, parsed.selectors);
+				await runtime.output(pruned.text);
+				return commandConsumed();
+			}
 			await runtime.output(buildContextReportText(runtime));
 			return commandConsumed();
 		},
-		handleTui: (_command, runtime) => {
-			runtime.ctx.handleContextCommand();
+		handleTui: async (command, runtime) => {
 			clearSubmittedText(runtime);
+			const parsed = parseContextArgs(command.args);
+			if ("error" in parsed) {
+				runtime.ctx.showWarning(parsed.error);
+				return;
+			}
+			if (parsed.action === "prune") {
+				await runtime.ctx.handleContextPruneCommand(parsed.selectors);
+				return;
+			}
+			runtime.ctx.handleContextCommand();
 		},
 	},
 	{

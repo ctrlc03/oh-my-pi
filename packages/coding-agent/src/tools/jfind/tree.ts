@@ -245,6 +245,8 @@ export interface ListFilesOptions {
 	/** Filesystem URL roots and their entries resolve through. */
 	filesystem: natives.ShellFilesystem;
 	signal?: AbortSignal;
+	/** Whether a file (absolute host path or internal URL) may be listed; `tools.pathRules` plugs in here. */
+	visible?: (filePath: string) => boolean;
 }
 
 /**
@@ -255,7 +257,7 @@ export interface ListFilesOptions {
  */
 export async function listFiles(root: SearchRoot, options: ListFilesOptions): Promise<FileEntry[]> {
 	if (root.type === "file") {
-		return eligibleFile(path.basename(root.path), root.size, true)
+		return eligibleFile(path.basename(root.path), root.size, true) && (options.visible?.(root.path) ?? true)
 			? [{ path: root.path, rel: root.path, size: root.size }]
 			: [];
 	}
@@ -276,8 +278,10 @@ export async function listFiles(root: SearchRoot, options: ListFilesOptions): Pr
 	for (const match of result.matches) {
 		const size = match.size ?? 0;
 		if (!eligibleFile(match.path, size, options.includeHidden)) continue;
+		const filePath = resolveSearchResultPath(root.path, match.path);
+		if (options.visible && !options.visible(filePath)) continue;
 		entries.push({
-			path: resolveSearchResultPath(root.path, match.path),
+			path: filePath,
 			rel: match.path,
 			size,
 			mtimeMs: match.mtime,

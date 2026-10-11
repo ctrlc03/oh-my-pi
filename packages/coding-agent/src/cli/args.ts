@@ -43,6 +43,10 @@ export interface Args {
 	planYolo?: boolean;
 	planYoloInto?: string;
 	maxTime?: number;
+	/** `--max-cost`: spend cap in USD for this session (see `session.maxCostUsd`). */
+	maxCostUsd?: number;
+	/** `--max-tokens`: token cap for this session (see `session.maxTokens`). */
+	maxTokens?: number;
 	apiKey?: string;
 	systemPrompt?: string;
 	systemPromptTemplate?: string;

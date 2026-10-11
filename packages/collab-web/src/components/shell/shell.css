@@ -1973,6 +1973,14 @@
 	color: var(--accent);
 }
 
+/* Profile row: the name over its description, which can run long. */
+.sh-profile-text {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
 /* Picker opened from a composer pill: a compact menu rising from the pill (the
  * phone rules below turn it back into a bottom sheet). Position comes from Sheet. */
 .sh-sheet-anchored {

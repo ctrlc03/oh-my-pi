@@ -85,6 +85,29 @@ export function buildEffortArgumentCompletions(
 	};
 }
 
+/** Build getArgumentCompletions for `/profile <name>` from the profiles the session can switch to. */
+export function buildProfileArgumentCompletions(
+	runtime: TuiSlashCommandRuntime,
+): (argumentPrefix: string) => AutocompleteItem[] | null {
+	return (argumentPrefix: string) => {
+		if (argumentPrefix.includes(" ")) return null;
+		const lower = argumentPrefix.toLowerCase();
+		const controller = runtime.ctx.session.profiles;
+		const active = controller.active.name.toLowerCase();
+		const matches = controller
+			.catalog()
+			.profiles.filter(profile => profile.name.toLowerCase().startsWith(lower))
+			.map(profile => ({
+				value: profile.name,
+				label: profile.name,
+				description: [profile.description, profile.name.toLowerCase() === active ? "(current)" : undefined]
+					.filter(Boolean)
+					.join(" "),
+			}));
+		return matches.length > 0 ? matches : null;
+	};
+}
+
 /**
  * Build getInlineHint for `/effort <level>` from the same live list as the
  * dropdown, so the ghost text never completes a tier the active model lacks.

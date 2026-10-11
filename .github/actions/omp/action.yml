@@ -1,0 +1,143 @@
+name: "omp"
+description: >
+   Run the omp coding agent from a GitHub issue or pull request comment. A comment
+   that mentions the trigger phrase (default `@omp`) becomes the prompt; the agent
+   runs headlessly in the checked-out repository, its final answer is posted back
+   as a comment, and any file changes are pushed (to the PR branch, or to a new
+   branch with a new pull request). See docs/github-action.md for the workflow to
+   wire this up and the safety model.
+
+inputs:
+   trigger-phrase:
+      description: Mention that triggers a run. Matched case-insensitively as a whole word in the comment.
+      default: "@omp"
+   allowed-associations:
+      description: >
+         Comma-separated `author_association` values allowed to trigger a run
+         (OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, ...). Checked again here even
+         if the workflow already filters.
+      default: "OWNER,MEMBER,COLLABORATOR"
+   model:
+      description: Model to use (`--model`). Empty uses the configured default.
+      default: ""
+   thinking:
+      description: Thinking level (`--thinking`). Empty uses the default.
+      default: ""
+   max-cost:
+      description: Spend cap in USD (`--max-cost`, e.g. `2.50`). Empty means no cap. A run that reaches the cap publishes nothing.
+      default: ""
+   max-time:
+      description: Wall-clock limit for the agent (`--max-time`), seconds or a duration such as `20m` or `1h`.
+      default: "30m"
+   approval-mode:
+      description: >
+         Tool approval mode: `always-ask`, `write` or `yolo`. The run is
+         non-interactive, so any call that would prompt is denied. `write` (default)
+         lets the agent read and edit files but denies shell commands; `yolo` auto-approves everything.
+      default: "write"
+   tools:
+      description: Comma-separated tool allowlist (`--tools`), e.g. `read,grep,find,edit,write`. Empty keeps the default tool set.
+      default: ""
+   project-extensions:
+      description: Load extensions discovered in the checked-out repository. Off by default because they are executable code from the checked-out ref.
+      default: "false"
+   allow-fork-prs:
+      description: Run on pull requests whose head is in a fork. The agent then sees untrusted code with the job's secrets available. Changes are never pushed to the fork.
+      default: "false"
+   create-pr:
+      description: Publish changes (push to the PR branch, or push a new branch and open a pull request). When `false`, changes stay in the runner and only the reply is posted.
+      default: "true"
+   branch-prefix:
+      description: Prefix for branches created for issue requests.
+      default: "omp/"
+   git-user-name:
+      description: Author name for commits.
+      default: "github-actions[bot]"
+   git-user-email:
+      description: Author email for commits.
+      default: "41898282+github-actions[bot]@users.noreply.github.com"
+   omp-version:
+      description: npm version or dist-tag of `@oh-my-pi/pi-coding-agent` to install. Ignored when `omp-source` is set.
+      default: "latest"
+   omp-source:
+      description: >
+         Build omp from a fork instead of installing from npm, as `owner/repo@branch-or-tag`
+         (public repository; requires the Rust toolchain, which GitHub-hosted runners include).
+      default: ""
+   github-token:
+      description: Token used to read the thread, post comments, push and open pull requests. It is never exposed to the agent process.
+      default: ${{ github.token }}
+
+outputs:
+   exit-code:
+      description: Exit status of the omp run (0 success, 3 spend cap reached).
+      value: ${{ steps.run.outputs.exit-code }}
+   events-file:
+      description: Path of the JSON event stream written by `--mode json`.
+      value: ${{ steps.run.outputs.events-file }}
+   answer-file:
+      description: Path of the file holding omp's final answer.
+      value: ${{ steps.run.outputs.answer-file }}
+   pull-request-url:
+      description: URL of the pull request opened for an issue request, if any.
+      value: ${{ steps.publish.outputs.pull-request-url }}
+
+runs:
+   using: composite
+   steps:
+      - name: Parse event
+        id: prepare
+        shell: bash
+        env:
+           ACTION_PATH: ${{ github.action_path }}
+           GH_TOKEN: ${{ inputs.github-token }}
+           OMP_TRIGGER: ${{ inputs.trigger-phrase }}
+           OMP_ALLOWED_ASSOCIATIONS: ${{ inputs.allowed-associations }}
+           OMP_ALLOW_FORK_PRS: ${{ inputs.allow-fork-prs }}
+           OMP_WORK_DIR: ${{ runner.temp }}/omp-action
+        run: bash "$ACTION_PATH/prepare.sh"
+
+      - name: Set up bun
+        if: steps.prepare.outputs.skip != 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+           bun-version: latest
+
+      - name: Install omp
+        if: steps.prepare.outputs.skip != 'true'
+        shell: bash
+        env:
+           ACTION_PATH: ${{ github.action_path }}
+           OMP_VERSION: ${{ inputs.omp-version }}
+           OMP_SOURCE: ${{ inputs.omp-source }}
+        run: bash "$ACTION_PATH/install.sh"
+
+      - name: Run omp
+        id: run
+        if: steps.prepare.outputs.skip != 'true'
+        shell: bash
+        env:
+           ACTION_PATH: ${{ github.action_path }}
+           OMP_MODEL: ${{ inputs.model }}
+           OMP_THINKING: ${{ inputs.thinking }}
+           OMP_MAX_COST: ${{ inputs.max-cost }}
+           OMP_MAX_TIME: ${{ inputs.max-time }}
+           OMP_APPROVAL_MODE: ${{ inputs.approval-mode }}
+           OMP_TOOLS: ${{ inputs.tools }}
+           OMP_PROJECT_EXTENSIONS: ${{ inputs.project-extensions }}
+           OMP_WORK_DIR: ${{ runner.temp }}/omp-action
+        run: bash "$ACTION_PATH/run.sh"
+
+      - name: Publish result
+        id: publish
+        if: steps.prepare.outputs.skip != 'true'
+        shell: bash
+        env:
+           ACTION_PATH: ${{ github.action_path }}
+           GH_TOKEN: ${{ inputs.github-token }}
+           OMP_CREATE_PR: ${{ inputs.create-pr }}
+           OMP_BRANCH_PREFIX: ${{ inputs.branch-prefix }}
+           OMP_GIT_USER_NAME: ${{ inputs.git-user-name }}
+           OMP_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
+           OMP_WORK_DIR: ${{ runner.temp }}/omp-action
+        run: bash "$ACTION_PATH/publish.sh"

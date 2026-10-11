@@ -19,6 +19,7 @@ import type {
 	CollabCommand,
 	CollabFeature,
 	CollabUiRequest,
+	ContextItemRow,
 	CollabUiResponseValue,
 	HostFrame,
 	ImageContent,
@@ -30,6 +31,7 @@ import type {
 	SubagentLifecyclePayload,
 	SubagentProgressPayload,
 	WireModel,
+	WireProfile,
 } from "@oh-my-pi/pi-wire";
 import { CAN_INFLATE, importRoomKey } from "./codec";
 import { recordEvent } from "./diag-log";
@@ -73,6 +75,31 @@ export interface FileRestoreInfo {
 	canRedo: boolean;
 }
 
+/** What the host's last `undo` or `redo` did; every reply is a new object, so a consumer acts on each exactly once. */
+export interface TurnUndoInfo {
+	kind: "undo" | "redo";
+	/** `undo`: the prompt that was undone, to put back in the message box. */
+	text?: string;
+	images?: readonly ImageContent[];
+	/** `redo`: the draft the matching undo handed out, to drop if the message box still holds it. */
+	staleText?: string;
+	/** The file restore that ran; absent when the files already matched or the host does not snapshot. */
+	files?: RewindFilesPlan;
+	skipped?: number;
+	/** The host snapshots files but recorded none before that prompt, so only the conversation moved. */
+	filesUnavailable?: true;
+}
+
+/** The host's latest ranking of what fills the context (`context-items` frame). */
+export interface ContextItemsInfo {
+	items: readonly ContextItemRow[];
+	usedTokens: number;
+	/** 0 when the host has no model selected. */
+	contextWindow: number;
+	/** Present on the reply to a prune: the session entries it elided and the tokens it freed. */
+	pruned?: { entries: number; tokensFreed: number };
+}
+
 export interface Notice {
 	id: number;
 	level: "info" | "warning" | "error";
@@ -109,6 +136,8 @@ export interface GuestSnapshot {
 	queued: readonly QueuedPrompt[];
 	/** Models the host lets this writer switch to; null when the host predates `session-cmd`. */
 	models: readonly WireModel[] | null;
+	/** Profiles the host lets this writer switch to; null for view-only guests and hosts that predate `profiles`. The active one is `state.profile`. */
+	profiles: readonly WireProfile[] | null;
 	/** Optional host capabilities from the latest welcome; `{}` until welcomed and on hosts that predate the field. */
 	features: Readonly<Partial<Record<CollabFeature, true>>>;
 	/** Slash commands the host lets this writer run (`/name args` as a prompt); `[]` for read-only links and hosts that predate `commands`. */
@@ -119,6 +148,10 @@ export interface GuestSnapshot {
 	rewindPreview: RewindPreview | null;
 	/** The file restore the host last reported, while it can still be undone or just happened; cleared when a turn starts. */
 	fileRestore: FileRestoreInfo | null;
+	/** The host's reply to the last `undo` or `redo` this guest ran; null until one arrives and after a reconnect. */
+	turnUndo: TurnUndoInfo | null;
+	/** Latest ranking of what fills the context, from a `context-items` request; null until one arrives and after a reconnect. */
+	contextItems: ContextItemsInfo | null;
 }
 
 const MAX_NOTICES = 50;
@@ -245,10 +278,13 @@ export class GuestClient {
 	#working = false;
 	#readOnly = false;
 	#models: readonly WireModel[] | null = null;
+	#profiles: readonly WireProfile[] | null = null;
 	#features: Readonly<Partial<Record<CollabFeature, true>>> = NO_FEATURES;
 	#commands: readonly CollabCommand[] = NO_COMMANDS;
 	#rewindPreview: RewindPreview | null = null;
 	#fileRestore: FileRestoreInfo | null = null;
+	#turnUndo: TurnUndoInfo | null = null;
+	#contextItems: ContextItemsInfo | null = null;
 	/** Room the offline prompt queue is persisted under. */
 	readonly #roomId: string;
 	#queue: QueuedPrompt[] = [];
@@ -516,6 +552,8 @@ export class GuestClient {
 		this.#commands = NO_COMMANDS;
 		this.#rewindPreview = null;
 		this.#fileRestore = null;
+		this.#turnUndo = null;
+		this.#contextItems = null;
 		this.#socket.send({
 			t: "hello",
 			proto: COLLAB_PROTO,
@@ -668,6 +706,7 @@ export class GuestClient {
 				this.#working = frame.state.isStreaming;
 				this.#readOnly = frame.readOnly === true;
 				this.#models = frame.models ?? null;
+				this.#profiles = frame.profiles ?? null;
 				this.#features = featureMap(frame.features);
 				this.#commands = frame.commands ?? NO_COMMANDS;
 				this.#clearUiRequests();
@@ -821,6 +860,25 @@ export class GuestClient {
 				break;
 			case "files-restored":
 				this.#fileRestore = { kind: frame.kind, plan: frame.plan, skipped: frame.skipped, canRedo: frame.canRedo };
+				break;
+			case "turn-undone":
+				this.#turnUndo = {
+					kind: frame.kind,
+					text: frame.text,
+					images: frame.images,
+					staleText: frame.staleText,
+					files: frame.files,
+					skipped: frame.skipped,
+					filesUnavailable: frame.filesUnavailable,
+				};
+				break;
+			case "context-items":
+				this.#contextItems = {
+					items: frame.items,
+					usedTokens: frame.usedTokens,
+					contextWindow: frame.contextWindow,
+					pruned: frame.pruned,
+				};
 				break;
 			case "bye":
 				this.#end(frame.reason);
@@ -1038,11 +1096,14 @@ export class GuestClient {
 			},
 			queued: this.#queue,
 			models: this.#models,
+			profiles: this.#profiles,
 			features: this.#features,
 			commands: this.#commands,
 			followUps: this.#state?.followUps ?? NO_FOLLOW_UPS,
 			rewindPreview: this.#rewindPreview,
 			fileRestore: this.#fileRestore,
+			turnUndo: this.#turnUndo,
+			contextItems: this.#contextItems,
 		};
 	}
 

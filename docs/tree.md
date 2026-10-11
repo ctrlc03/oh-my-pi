@@ -232,6 +232,8 @@ Label edits in tree UI call `appendLabelChange(targetId, label)`.
 | --------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/tree`   | Current session file                             | Moves leaf to selected point (same file)                                                                                                                 |
 | `/branch` (alias `/rewind`) | Current session file | Opens transcript rewind; moves the leaf in place and restores user-request drafts |
+| `/undo` | Current session file | Moves the leaf to before the last user prompt in place (same navigation as `/branch`; the undone turns stay as a branch), restores that prompt's file snapshot when one exists, and puts the prompt back in the editor. Repeats walk further back |
+| `/redo` | Current session file | Returns to the tip and file state the last `/undo` left (one step per undo); valid only until something new is sent |
 | `/fork`   | Whole current session                            | Duplicates session into a new persisted session file                                                                                                     |
 | `/resume` | Session list                                     | Switches to another session file                                                                                                                         |
 

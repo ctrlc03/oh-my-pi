@@ -34,6 +34,7 @@ import { getDiagnosticsLedger } from "../lsp/diagnostics-ledger";
 import type { ToolSession } from "../tools";
 import { routeWriteThroughBridge } from "../tools/acp-bridge";
 import { strictestApproval, truncateForPrompt } from "../tools/approval";
+import { assertPathNotDenied, pathArgCandidates, pathRuleApproval } from "../tools/path-rules";
 import {
 	deleteFileWithFallback,
 	hasFileWriteFallback,
@@ -378,15 +379,25 @@ export class EditTool implements AgentTool<TInput> {
 
 	/**
 	 * Strictest write decision ({@link strictestApproval}) over every path the payload writes:
-	 * section targets plus move/rename destinations. "write" while no target is known.
+	 * section targets plus move/rename destinations, folded with `tools.pathRules` over the same
+	 * targets. "write" while no target is known.
 	 */
 	readonly approval = (args: unknown): ToolApprovalDecision => {
 		const { paths, fileOps } = this.#inspect(args);
 		const targets = [...paths];
-		for (const op of fileOps) if (op.kind === "move" && op.to !== undefined) targets.push(op.to);
+		for (const op of fileOps) {
+			targets.push(op.path);
+			if (op.kind === "move" && op.to !== undefined) targets.push(op.to);
+		}
 		if (targets.length === 0) return "write";
 		const router = InternalUrlRouter.instance();
-		return strictestApproval(targets.map(target => router.writeTier(target, undefined, this.session)));
+		const base = strictestApproval(targets.map(target => router.writeTier(target, undefined, this.session)));
+		return pathRuleApproval(
+			this.session,
+			"edit",
+			base,
+			targets.flatMap(target => pathArgCandidates(target)),
+		);
 	};
 
 	readonly formatApprovalDetails = (args: unknown): string[] => {
@@ -638,6 +649,13 @@ export class EditTool implements AgentTool<TInput> {
 	}
 
 	async #write(request: EditWriteRequest, signal?: AbortSignal): Promise<EditWriteResponse> {
+		// The approval gate judged the spelled paths; this judges the absolute paths the apply step
+		// actually mutates. Targets the harness resolved from internal URLs skip `tools.outsideProject`.
+		const urlTarget = InternalUrlRouter.instance().canHandle(request.displayPath);
+		assertPathNotDenied(this.session, "edit", request.path, { ignoreOutsideProject: urlTarget });
+		if (request.moveTo !== undefined) {
+			assertPathNotDenied(this.session, "edit", request.moveTo, { ignoreOutsideProject: urlTarget });
+		}
 		if (request.op === "delete") {
 			await deleteFileWithFallback(request.path, Bun.file(request.path));
 			if (this.session.enableLsp ?? true) {

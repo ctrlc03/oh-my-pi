@@ -44,6 +44,7 @@ import { invalidateFsScanAfterWrite } from "./fs-cache-invalidation";
 
 import { outputMeta } from "./output-meta";
 import { formatPathRelativeToCwd, probeLiteralPathExists, specialFileKind } from "./path-utils";
+import { assertPathNotDenied, pathArgCandidates, pathRuleApproval } from "./path-rules";
 import { splitPathAndSel } from "@oh-my-pi/pi-tui/tools/read";
 import {
 	enforcePlanModeWrite,
@@ -464,11 +465,13 @@ export class WriteTool implements AgentTool<typeof writeSchema, WriteToolDetails
 		if (typeof rawPath !== "string") return "write";
 		// Unwrap a hashline `[path#TAG]` wrapper first (parity with execute) so a
 		// wrapped `[scheme://h/x#ABCD]` gets the same tier as the bare URL.
-		return InternalUrlRouter.instance().writeTier(
-			unwrapHashlineHeaderPath(rawPath),
+		const targetPath = unwrapHashlineHeaderPath(rawPath);
+		const base = InternalUrlRouter.instance().writeTier(
+			targetPath,
 			typeof content === "string" ? content : undefined,
 			this.session,
 		);
+		return pathRuleApproval(this.session, "write", base, pathArgCandidates(targetPath));
 	};
 	readonly formatApprovalDetails = (args: unknown, options?: ApprovalDetailsOptions): string[] => {
 		const params = args as Partial<WriteParams>;
@@ -863,6 +866,7 @@ export class WriteTool implements AgentTool<typeof writeSchema, WriteToolDetails
 
 			const resolvedArchivePath = await this.#resolveArchiveWritePath(path, signal);
 			if (resolvedArchivePath) {
+				assertPathNotDenied(this.session, "write", resolvedArchivePath.absolutePath);
 				await enforcePlanModeWrite(this.session, resolvedArchivePath.archivePath, {
 					op: resolvedArchivePath.exists ? "update" : "create",
 					signal,
@@ -891,6 +895,7 @@ export class WriteTool implements AgentTool<typeof writeSchema, WriteToolDetails
 
 			const resolvedSqlitePath = await this.#resolveSqliteWritePath(path, signal);
 			if (resolvedSqlitePath) {
+				assertPathNotDenied(this.session, "write", resolvedSqlitePath.absolutePath);
 				await enforcePlanModeWrite(this.session, resolvedSqlitePath.sqlitePath, { op: "update", signal });
 
 				emitWriteProgress(onUpdate, cleanBytes, path, resolvedSqlitePath.absolutePath);
@@ -910,6 +915,7 @@ export class WriteTool implements AgentTool<typeof writeSchema, WriteToolDetails
 			await assertNotReadSelectorMisfire(path, cleanContent, this.session.cwd);
 			await enforcePlanModeWrite(this.session, path, { op: "create", signal });
 			const absolutePath = await resolvePlanPath(this.session, path, signal);
+			assertPathNotDenied(this.session, "write", absolutePath, { ignoreOutsideProject: target !== undefined });
 			// A located URL write keeps its URL identity in progress, results, and the hashline header.
 			const displayPath = target ? path : formatPathRelativeToCwd(absolutePath, this.session.cwd);
 			const batchRequest = getLspBatchRequest(context?.toolCall);

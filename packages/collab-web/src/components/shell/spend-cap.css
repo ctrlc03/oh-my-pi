@@ -1,0 +1,47 @@
+/* Spend-cap bar: the host's session stopped at its spend cap.
+ * Same floating pill as the other shell banners; token colours only. */
+
+.sh-spendcap-bar {
+	position: fixed;
+	top: calc(var(--topbar-h) + env(safe-area-inset-top, 0px) + 54px);
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 48;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	max-width: calc(100vw - 24px);
+	padding: 6px 14px 6px 12px;
+	font-size: 12.5px;
+	color: var(--fg);
+	background: var(--glass);
+	backdrop-filter: blur(14px) saturate(160%);
+	-webkit-backdrop-filter: blur(14px) saturate(160%);
+	border: 1px solid var(--warn);
+	border-radius: 999px;
+	box-shadow: var(--shadow-overlay);
+	animation: rise 360ms var(--ease-out) backwards;
+}
+
+.sh-spendcap-bar svg {
+	flex: none;
+	color: var(--warn);
+}
+
+.sh-spendcap-msg {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-spendcap-hint {
+	flex: none;
+	color: var(--fg-faint);
+}
+
+@media (max-width: 520px) {
+	.sh-spendcap-hint {
+		display: none;
+	}
+}

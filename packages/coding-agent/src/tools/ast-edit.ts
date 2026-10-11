@@ -33,7 +33,13 @@ import { parseReadUrlTarget } from "./fetch";
 import { createFileRecorder, formatResultPath, resultSnapshotPath } from "./file-recorder";
 import { formatGroupedFiles } from "@oh-my-pi/pi-tui/tools/grouped-file-output";
 
-import { relativeSearchResultPath, resolveSearchResultPath, resolveToolSearchScope } from "./path-utils";
+import {
+	formatPathRelativeToCwd,
+	relativeSearchResultPath,
+	resolveSearchResultPath,
+	resolveToolSearchScope,
+} from "./path-utils";
+import { createPathRuleFilter, pathRuleApproval, searchRootCandidates } from "./path-rules";
 import {
 	capParseErrors,
 	formatCodeFrameLine,
@@ -161,10 +167,18 @@ type AstEditSchemaInfer = typeof astEditSchema.infer;
 
 export class AstEditTool implements AgentTool<typeof astEditSchema, AstEditToolDetails> {
 	readonly name = "ast_edit";
-	/** Strictest write decision ({@link strictestApproval}) over every path; "write" when none is given. */
+	/**
+	 * Strictest write decision ({@link strictestApproval}) over every path; "write" when none is given.
+	 * Folded with `tools.pathRules` over each path's non-glob base directory; files the rewrite would
+	 * reach are judged again once the preview has run.
+	 */
 	readonly approval = (args: unknown): ToolApprovalDecision => {
 		const paths = isRecord(args) ? args.paths : undefined;
-		if (!Array.isArray(paths) || paths.length === 0) return "write";
+		const roots = searchRootCandidates(
+			Array.isArray(paths) ? paths.filter(entry => typeof entry === "string") : undefined,
+		);
+		if (!Array.isArray(paths) || paths.length === 0)
+			return pathRuleApproval(this.session, "ast_edit", "write", roots);
 		const router = InternalUrlRouter.instance();
 		const decisions: ToolApprovalDecision[] = [];
 		for (const target of paths) {
@@ -172,7 +186,7 @@ export class AstEditTool implements AgentTool<typeof astEditSchema, AstEditToolD
 			if (typeof target !== "string") return "exec";
 			decisions.push(router.writeTier(target, undefined, undefined));
 		}
-		return strictestApproval(decisions);
+		return pathRuleApproval(this.session, "ast_edit", strictestApproval(decisions), roots);
 	};
 	readonly formatApprovalDetails = (args: unknown, options?: ApprovalDetailsOptions): string[] => {
 		const params = args as Partial<AstEditSchemaInfer>;
@@ -304,6 +318,20 @@ export class AstEditTool implements AgentTool<typeof astEditSchema, AstEditToolD
 					filesystem: urlFilesystem.shellFilesystem(),
 				}),
 			);
+			// A rewrite cannot be filtered after the fact, so it is refused when the preview reaches a protected file.
+			const pathFilter = createPathRuleFilter(this.session, this.name, searchRootCandidates(params.paths));
+			if (pathFilter) {
+				const blocked = result.fileChanges
+					.map(change => resolveSearchResultPath(resolvedSearchPath, change.path))
+					.filter(filePath => !filePath.includes("://") && pathFilter.hides(filePath));
+				if (blocked.length > 0) {
+					throw new ToolError(
+						`ast_edit would modify files protected by tools.pathRules / tools.outsideProject: ${blocked
+							.map(filePath => formatPathRelativeToCwd(filePath, this.session.cwd))
+							.join(", ")}. Narrow \`paths\` to exclude them.`,
+					);
+				}
+			}
 			const grammarNote = result.missingGrammars?.length ? missingGrammarsNote(result.missingGrammars) : undefined;
 
 			const { errors: cappedParseErrors, total: parseErrorsTotal } = capParseErrors(result.parseErrors);

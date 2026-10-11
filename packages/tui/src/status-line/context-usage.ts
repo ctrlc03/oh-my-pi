@@ -68,6 +68,8 @@ export interface ContextUsageOptions {
 	sourceRevision?: number;
 	skillful?: boolean;
 	snapcompact?: ContextSavingsEstimate;
+	/** Largest individual items, already ranked; shown under the legend. */
+	items?: ContextRankedItem[];
 }
 
 const GRID_COLS = 20;
@@ -90,6 +92,18 @@ interface CategoryInfo {
 	glyph: string;
 }
 
+/** One row of the "what fills the context" ranking shown by `/context`. */
+export interface ContextRankedItem {
+	/** 1-based position in the full ranking (the number `/context prune <n>` takes). */
+	rank: number;
+	label: string;
+	tokens: number;
+	/** Fraction (0–1) of the estimated total context. */
+	share: number;
+	/** Whether `/context prune` can elide it. */
+	prunable: boolean;
+}
+
 export interface ContextBreakdown {
 	model: Model | undefined;
 	contextWindow: number;
@@ -101,6 +115,7 @@ export interface ContextBreakdown {
 	thresholdTokens?: number;
 	/** Estimated snapcompact wire savings; set when requested and a snapcompact.* setting is enabled. */
 	snapcompact?: ContextSavingsEstimate;
+	items?: ContextRankedItem[];
 }
 
 /** Percent positions (0–100 of the context window) for the auto-compaction boundaries. */
@@ -494,6 +509,7 @@ export function computeContextBreakdown(session: ContextUsageSession, options: C
 		freeTokens,
 		thresholdTokens,
 		snapcompact: options.snapcompact,
+		items: options.items,
 	};
 }
 
@@ -635,6 +651,27 @@ function buildLegendParts(breakdown: ContextBreakdown): LegendPart[][] {
 
 	const snap = buildSnapcompactParts(breakdown);
 	if (snap.length > 0) lines.push([], ...snap);
+	const items = buildItemParts(breakdown);
+	if (items.length > 0) lines.push([], ...items);
+	return lines;
+}
+
+/** "What fills the context" lines of the legend; empty when the host supplied no ranking. */
+function buildItemParts(breakdown: ContextBreakdown): LegendPart[][] {
+	const items = breakdown.items;
+	if (!items || items.length === 0) return [];
+	const lines: LegendPart[][] = [[{ t: "What fills the context", s: "muted" }]];
+	for (const item of items) {
+		lines.push([
+			{ t: `${String(item.rank).padStart(2)}. `, s: "dim" },
+			{ t: item.label },
+			{ t: "  " },
+			{ t: formatNumber(item.tokens), s: "strong" },
+			{ t: ` tokens (${percentString(item.share, 1)})`, s: "dim" },
+			...(item.prunable ? [] : [{ t: "  fixed", s: "dim" as const }]),
+		]);
+	}
+	lines.push([{ t: "Prune an item with /context prune <n>", s: "dim" }]);
 	return lines;
 }
 
@@ -909,6 +946,17 @@ function describeContextFrame(breakdown: ContextBreakdown): NativeNode {
 	const children = [summary, bar, node("col", { role: "omp.context.cats" }, shares, "cats")];
 	const snap = describeSnapcompact(breakdown);
 	if (snap) children.push(snap);
+	const itemLines = buildItemParts(breakdown);
+	if (itemLines.length > 0) {
+		children.push(
+			node(
+				"section",
+				{},
+				itemLines.map((line, index) => node("text", { spans: line, wrap: "word" }, undefined, `item-${index}`)),
+				"items",
+			),
+		);
+	}
 	return col(children, { role: "omp.context" });
 }
 

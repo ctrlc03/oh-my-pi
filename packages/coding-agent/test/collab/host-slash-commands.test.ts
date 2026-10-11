@@ -17,6 +17,7 @@ import { CollabSocket } from "@oh-my-pi/pi-coding-agent/collab/relay-client";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import { TurnUndoError } from "@oh-my-pi/pi-coding-agent/session/turn-undo";
 import { installInMemoryRelay, uninstallInMemoryRelay } from "./helpers/in-memory-relay";
 
 interface PromptCall {
@@ -40,12 +41,15 @@ interface Harness {
 		goalModeEnabled: boolean;
 		busy: boolean;
 		streaming: boolean;
+		undoRefusal: string | undefined;
 	};
 	modelSwitches: string[];
 	thinkingLevels: string[];
 	compactions: (string | undefined)[];
 	/** Session-replacing handlers the host ran, by command name. */
 	switches: string[];
+	/** Turn undo and redo calls the session double received, in order. */
+	turns: string[];
 	/** Resolves once `ready()` holds; re-checked each time the session double records something. */
 	until(ready: () => boolean): Promise<void>;
 }
@@ -70,7 +74,14 @@ function makeHost(options: HostOptions = {}): Harness {
 	const prompts: PromptCall[] = [];
 	const waiters: (() => void)[] = [];
 	const notices: string[] = [];
-	const state = { planModeEnabled: false, retryResult: true, goalModeEnabled: false, busy: false, streaming: false };
+	const state = {
+		planModeEnabled: false,
+		retryResult: true,
+		goalModeEnabled: false,
+		busy: false,
+		streaming: false,
+		undoRefusal: undefined as string | undefined,
+	};
 	const hostInputs: string[] = [];
 	const harness = {
 		prompts,
@@ -83,6 +94,7 @@ function makeHost(options: HostOptions = {}): Harness {
 		thinkingLevels: [] as string[],
 		compactions: [] as (string | undefined)[],
 		switches: [] as string[],
+		turns: [] as string[],
 	} as Harness;
 	harness.until = async ready => {
 		while (!ready()) await new Promise<void>(resolve => waiters.push(resolve));
@@ -143,6 +155,26 @@ function makeHost(options: HostOptions = {}): Harness {
 				wake();
 			},
 			getQueuedMessages: () => ({ steering: [], followUp: [] }),
+			// The turn undo itself is covered against a real session; here only the host's routing is.
+			turnUndo: {
+				redoDepth: 0,
+				undo: () => {
+					harness.turns.push("undo");
+					wake();
+					if (state.undoRefusal) return Promise.reject(new TurnUndoError(state.undoRefusal));
+					return Promise.resolve({
+						editorText: "second",
+						files: { plan: { revert: 1, remove: 0, recreate: 0 }, skipped: 0 },
+						redoDepth: 1,
+					});
+				},
+				redo: () => {
+					harness.turns.push("redo");
+					wake();
+					if (state.undoRefusal) return Promise.reject(new TurnUndoError(state.undoRefusal));
+					return Promise.resolve({ staleDraft: "second", redoDepth: 0 });
+				},
+			},
 			slashCommands: [
 				{
 					name: "review",
@@ -320,6 +352,8 @@ describe("collab slash command list", () => {
 			"plan",
 			"model",
 			"effort",
+			"undo",
+			"redo",
 			"compact",
 			"retry",
 			"rename",
@@ -577,6 +611,62 @@ describe("collab guest session controls as slash commands", () => {
 		expect(harness.thinkingLevels).toEqual([]);
 		expect(harness.compactions).toEqual([]);
 		expect(ran()).toEqual([]);
+	});
+});
+
+describe("collab undo and redo", () => {
+	it("advertises the undo feature and lists /undo and /redo without arguments", async () => {
+		const guest = await startAndJoin();
+		const welcome = await guest.next("welcome");
+		expect(welcome.features).toContain("undo");
+		expect(welcome.commands?.map(command => command.name)).toEqual(expect.arrayContaining(["undo", "redo"]));
+
+		guest.socket.send({ t: "prompt", text: "/undo everything" });
+		expect(await errorAt(guest, 0)).toBe("/undo takes no arguments");
+		expect(harness.turns).toEqual([]);
+	});
+
+	it("runs /undo and /redo for the guest, answers with the prompt to edit, and announces each once", async () => {
+		const guest = await startAndJoin();
+		guest.socket.send({ t: "prompt", text: "/undo" });
+		await harness.until(() => ran().length === 1);
+		expect(await guest.next("turn-undone")).toEqual({
+			t: "turn-undone",
+			kind: "undo",
+			text: "second",
+			files: { revert: 1, remove: 0, recreate: 0 },
+			skipped: 0,
+		});
+		expect(ran()).toEqual(["guest ran /undo"]);
+
+		guest.socket.send({ t: "session-cmd", cmd: "redo" });
+		await harness.until(() => harness.notices.includes("guest redid the turn"));
+		expect(harness.turns).toEqual(["undo", "redo"]);
+		while (guest.frames.filter(frame => frame.t === "turn-undone").length < 2) await guest.nextFrame();
+		expect(guest.frames.filter(frame => frame.t === "turn-undone").at(-1)).toEqual({
+			t: "turn-undone",
+			kind: "redo",
+			staleText: "second",
+		});
+	});
+
+	it("reports a refusal as an error and moves nothing", async () => {
+		const guest = await startAndJoin();
+		harness.state.undoRefusal = "nothing to undo";
+		guest.socket.send({ t: "session-cmd", cmd: "undo" });
+		expect(await errorAt(guest, 0)).toBe("undo: nothing to undo");
+		guest.socket.send({ t: "prompt", text: "/redo" });
+		expect(await errorAt(guest, 1)).toBe("/redo: nothing to undo");
+		expect(guest.frames.some(frame => frame.t === "turn-undone")).toBe(false);
+		expect(ran()).toEqual([]);
+	});
+
+	it("refuses both from a read-only link", async () => {
+		const guest = await startAndJoin(true);
+		guest.socket.send({ t: "session-cmd", cmd: "undo" });
+		guest.socket.send({ t: "session-cmd", cmd: "redo" });
+		await errorAt(guest, 1);
+		expect(harness.turns).toEqual([]);
 	});
 });
 

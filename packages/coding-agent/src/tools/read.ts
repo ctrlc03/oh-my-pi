@@ -13,6 +13,7 @@ import type {
 	ToolSpeculationCommitContext,
 	ToolSpeculationDiscardContext,
 	ToolSpeculationExecutionContext,
+	ToolApprovalDecision,
 	ToolTier,
 } from "@oh-my-pi/pi-agent-core";
 import { completeSimple, type ImageContent, type TextContent } from "@oh-my-pi/pi-ai";
@@ -94,6 +95,7 @@ import {
 	splitMixedUrlPathList,
 	splitPathAndSelPreferringLiteral,
 } from "./path-utils";
+import { assertPathNotDenied, pathArgCandidates, pathRuleApproval } from "./path-rules";
 import { type LineRange } from "@oh-my-pi/pi-tui/tools/line-ranges";
 import { splitPathAndSel } from "@oh-my-pi/pi-tui/tools/read";
 import { readArchive, resolveArchiveReadPath } from "./read-archive";
@@ -973,15 +975,18 @@ async function assessLocalReadSpeculation(
 export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 	readonly name = "read";
 	readonly readsSkillUris = true;
-	readonly approval = (args: unknown): ToolTier => {
+	readonly approval = (args: unknown): ToolApprovalDecision => {
 		let readPath = "";
 		if (args && typeof args === "object" && "path" in args) readPath = String(args.path ?? "");
-		const urlTier = InternalUrlRouter.instance().readTier(readPath);
+		return pathRuleApproval(this.session, "read", this.#baseTier(readPath), pathArgCandidates(readPath));
+	};
+	#baseTier(rawPath: string): ToolTier {
+		const urlTier = InternalUrlRouter.instance().readTier(rawPath);
 		if (urlTier !== "read") return urlTier;
-		readPath = splitImageQuestionTarget(readPath).path;
+		const readPath = splitImageQuestionTarget(rawPath).path;
 		const target = splitPathAndSel(readPath);
 		return target.sel === undefined && splitPdfImageReadPath(readPath) ? "exec" : "read";
-	};
+	}
 	readonly label = "Read";
 	readonly loadMode = "essential";
 	/** Rendered per access so the hashline guidance follows a live `edit.mode` change. */
@@ -1771,6 +1776,11 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 		return { ...result, details };
 	}
 
+	/** Judge what resolution actually landed on (suffix recovery, symlinks); internal-URL targets skip `tools.outsideProject`. */
+	#assertPathAllowed(absolutePath: string, located: boolean): void {
+		assertPathNotDenied(this.session, "read", absolutePath, { ignoreOutsideProject: located });
+	}
+
 	/**
 	 * The filesystem read pipeline: directories, archives, sqlite, PDFs, video,
 	 * images, documents, notebooks, and streamed/paged text. `located` carries
@@ -1824,6 +1834,7 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 				const archiveSubPath = located
 					? { path: archivePath.archiveSubPath, sel: located.sel }
 					: splitPathAndSel(archivePath.archiveSubPath);
+				this.#assertPathAllowed(archivePath.absolutePath, located !== undefined);
 				const archiveParsed = parseSel(archiveSubPath.sel);
 				return readArchive(
 					this.session,
@@ -1836,10 +1847,12 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 
 			const sqlitePath = await resolveSqliteReadPath(this.session, readPath, suffixCache, signal);
 			if (sqlitePath) {
+				this.#assertPathAllowed(sqlitePath.absolutePath, located !== undefined);
 				return readSqlite(sqlitePath, signal);
 			}
 			const jsonPath = await resolveJsonReadPath(this.session, literalSplit.path, suffixCache, signal);
 			if (jsonPath) {
+				this.#assertPathAllowed(jsonPath.absolutePath, located !== undefined);
 				return readJson(this.session, jsonPath, literalSplit.sel, signal);
 			}
 
@@ -1849,7 +1862,10 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 				const binaryParsed = parseSel(literalSplit.sel);
 				if (!isRawSelector(binaryParsed)) {
 					const binaryView = await resolveBinaryViewPath(this.session, literalSplit.path);
-					if (binaryView) return readBinary(this.session, binaryView, binaryParsed, signal);
+					if (binaryView) {
+						this.#assertPathAllowed(binaryView.absolutePath, located !== undefined);
+						return readBinary(this.session, binaryView, binaryParsed, signal);
+					}
 				}
 			}
 
@@ -1943,6 +1959,8 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 				throw error;
 			}
 		}
+		// The approval gate judges the path as spelled; this judges what resolution actually landed on.
+		this.#assertPathAllowed(absolutePath, located !== undefined);
 		if (specialKind) {
 			throw new ToolError(
 				`Cannot read '${localReadPath}': it is a ${specialKind}, not a regular file or directory.`,

@@ -443,6 +443,7 @@ export interface InteractiveModeContext {
 	handleHotkeysCommand(): void;
 	handleToolsCommand(): void;
 	handleContextCommand(): void;
+	handleContextPruneCommand(selectors: string[]): Promise<void>;
 	handleDumpCommand(): Promise<void>;
 	handleDumpAllCommand(): Promise<void>;
 	handleDumpAnonCommand(): Promise<void>;

@@ -731,6 +731,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 	#loopModeStatus: SegmentContext["loopMode"] = null;
 	#goalModeStatus: { enabled: boolean; paused: boolean } | null = null;
 	#vibeModeStatus: { enabled: boolean } | null = null;
+	#profileStatus: { name: string } | null = null;
 	#vimStatus: SegmentContext["vim"] = null;
 	/**
 	 * Injected aggregator that returns the aggregate tok/s of this session's
@@ -1145,6 +1146,13 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 		const next = status ?? null;
 		if (this.#vibeModeStatus === next || this.#vibeModeStatus?.enabled === next?.enabled) return;
 		this.#vibeModeStatus = next;
+		this.#invalidateStatusLineRenderCache();
+	}
+
+	/** The active agent profile's name; `undefined` clears it (the default profile shows nothing). */
+	setProfileStatus(name: string | undefined): void {
+		if (this.#profileStatus?.name === name) return;
+		this.#profileStatus = name === undefined ? null : { name };
 		this.#invalidateStatusLineRenderCache();
 	}
 
@@ -2540,6 +2548,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 			goalMode: this.#goalModeStatus,
 			goalStatusInFooter: this.#goalModeStatus ? this.host.goalStatusInFooter(this.session) : false,
 			vibeMode: this.#vibeModeStatus,
+			profile: this.#profileStatus,
 			vim: this.#vimStatus,
 			collab: this.#collabStatus,
 			stream: this.#streamStatus,

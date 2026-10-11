@@ -450,6 +450,7 @@ export class Agent {
 	#interruptMode: "immediate" | "wait";
 	#sessionId?: string;
 	#deadline?: number;
+	#shouldStop?: () => boolean;
 	#promptCacheKey?: string;
 	#metadata?: Record<string, unknown>;
 	#metadataResolver?: (provider: string) => Record<string, unknown> | undefined;
@@ -1164,6 +1165,11 @@ export class Agent {
 	setOnBeforeYield(fn: (() => Promise<void> | void) | undefined): void {
 		this.#onBeforeYield = fn;
 	}
+
+	/** Install the boundary stop predicate; see {@link AgentLoopConfig.shouldStop}. */
+	setShouldStop(fn: (() => boolean) | undefined): void {
+		this.#shouldStop = fn;
+	}
 	setOnTurnEnd(
 		fn:
 			| ((messages: AgentMessage[], signal?: AbortSignal, context?: AgentTurnEndContext) => Promise<void> | void)
@@ -1869,6 +1875,7 @@ export class Agent {
 			interruptMode: this.#interruptMode,
 			sessionId: this.#sessionId,
 			deadline: this.#deadline,
+			shouldStop: () => this.#shouldStop?.() === true,
 			promptCacheKey: this.#promptCacheKey,
 			metadata: this.#metadataResolver ? undefined : this.#metadata,
 			metadataResolver: this.#metadataResolver,

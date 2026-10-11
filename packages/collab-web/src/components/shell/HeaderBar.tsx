@@ -2,12 +2,13 @@ import type { SessionCommand, SessionHeader, SessionState, WireModel } from "@oh
 import { Ellipsis, LogOut, PanelLeft, PanelRight, Search, ShieldCheck, SquareCode, Waypoints } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
-import type { ConnectionPhase } from "../../lib/client";
+import type { ConnectionPhase, ContextItemsInfo } from "../../lib/client";
 import { fmtPercent, shortenPath } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
 import type { SessionUsage } from "../../lib/usage";
 import { OmpMark } from "./OmpMark";
 import { SessionSheet } from "./SessionSheet";
+import type { TurnUndoControl } from "./TurnUndo";
 import { ThemeToggle } from "./ThemeToggle";
 
 const PHASE_LABEL: Record<ConnectionPhase, string> = {
@@ -72,6 +73,10 @@ export interface HeaderBarProps {
 	/** Models this writer may switch to; null when the host predates session controls. */
 	models: readonly WireModel[] | null;
 	onSessionCommand(cmd: SessionCommand, arg?: string): void;
+	/** Undo and redo of the last turn; undefined unless the host advertises `undo` and this guest may write. */
+	turnUndo: TurnUndoControl | undefined;
+	/** Host ranking of what fills the context; undefined unless the host advertises `context-items`, null until it replies. */
+	contextItems: ContextItemsInfo | null | undefined;
 	/** The session as Markdown, built on demand from every entry (not the trimmed view). Stable across renders. */
 	exportMarkdown(title: string): string;
 	push: PushControl;
@@ -116,6 +121,8 @@ export const HeaderBar = memo(function HeaderBar({
 	sessionUsage,
 	models,
 	onSessionCommand,
+	turnUndo,
+	contextItems,
 	exportMarkdown,
 	push,
 }: HeaderBarProps): ReactNode {
@@ -369,6 +376,8 @@ export const HeaderBar = memo(function HeaderBar({
 					usage={sessionUsage}
 					models={models}
 					onSessionCommand={onSessionCommand}
+					turnUndo={turnUndo}
+					contextItems={contextItems}
 					exportMarkdown={exportMarkdown}
 					push={push}
 					onLeave={onLeave}

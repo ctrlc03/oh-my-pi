@@ -33,6 +33,7 @@
 import { isServiceTierOpenAISettingValue, SERVICE_TIER_OPENAI_VALUES } from "../config/service-tier";
 import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
 import type { Args } from "./args";
+import { parseTokenCount, parseUsdAmount } from "../session/spend-cap-input";
 import { CliUsageError } from "./usage-error";
 
 /**
@@ -109,6 +110,22 @@ function parseMaxTimeSeconds(value: string): number {
 	);
 }
 
+function parseMaxCostUsd(value: string): number {
+	const usd = parseUsdAmount(value);
+	if (usd !== undefined) return usd;
+	throw new CliUsageError(
+		`Invalid --max-cost value: ${JSON.stringify(value)}. Expected a positive amount in USD, e.g. 2.50.`,
+	);
+}
+
+function parseMaxTokens(value: string): number {
+	const tokens = parseTokenCount(value);
+	if (tokens !== undefined) return tokens;
+	throw new CliUsageError(
+		`Invalid --max-tokens value: ${JSON.stringify(value)}. Expected a positive token count like 200000 or 200k.`,
+	);
+}
+
 /**
  * Setters for flags with string values. Most built-ins consume the next argv
  * token even when it starts with `-`; flags listed in
@@ -164,6 +181,12 @@ export const STRING_SETTERS: Record<string, StringSetter> = {
 	},
 	"--max-time": (result, value) => {
 		result.maxTime = parseMaxTimeSeconds(value);
+	},
+	"--max-cost": (result, value) => {
+		result.maxCostUsd = parseMaxCostUsd(value);
+	},
+	"--max-tokens": (result, value) => {
+		result.maxTokens = parseMaxTokens(value);
 	},
 	"--service-tier": (result, value) => {
 		if (!isServiceTierOpenAISettingValue(value)) {

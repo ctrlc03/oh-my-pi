@@ -11,23 +11,27 @@ import {
 	Monitor,
 	Moon,
 	Pencil,
+	Redo2,
 	Rows3,
 	Share2,
 	Sun,
+	Undo2,
 	X,
 } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import type { ConnectionPhase } from "../../lib/client";
+import type { ConnectionPhase, ContextItemsInfo } from "../../lib/client";
 import { exportFilename } from "../../lib/export";
 import { TRIM_CHOICES } from "../../lib/trim";
 import { fmtPercent, fmtTokens } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
 import { type ThemePreference, useThemePreference } from "../../lib/theme";
 import { formatUsage, type SessionUsage } from "../../lib/usage";
+import { ContextItems } from "./ContextItems";
 import { PushButton, SandboxedChip } from "./CompanionCard";
 import { ModelList } from "./ModelControls";
 import { Sheet } from "./Sheet";
+import type { TurnUndoControl } from "./TurnUndo";
 
 const THEMES: readonly { value: ThemePreference; label: string; Icon: LucideIcon }[] = [
 	{ value: "system", label: "System", Icon: Monitor },
@@ -102,6 +106,10 @@ export interface SessionSheetProps {
 	/** Models this writer may switch to; null when the host predates session controls. */
 	models: readonly WireModel[] | null;
 	onSessionCommand(cmd: SessionCommand, arg?: string): void;
+	/** Undo and redo of the last turn; undefined unless the host advertises `undo` and this guest may write. */
+	turnUndo: TurnUndoControl | undefined;
+	/** The host's latest "what fills the context" ranking; undefined unless the host advertises `context-items`, null until it replies. */
+	contextItems: ContextItemsInfo | null | undefined;
 	/** The session as Markdown, built on demand from every entry (not the trimmed view). */
 	exportMarkdown(title: string): string;
 }
@@ -140,6 +148,8 @@ export function SessionSheet({
 	usage,
 	models,
 	onSessionCommand,
+	turnUndo,
+	contextItems,
 	exportMarkdown,
 	push,
 	onLeave,
@@ -375,6 +385,49 @@ export function SessionSheet({
 									Compact…
 								</button>
 							)}
+						</dd>
+					</div>
+				)}
+				{turnUndo !== undefined && (
+					<div className="sh-sheet-row sh-sheet-row-top">
+						<dt>Last turn</dt>
+						<dd className="sh-sheet-compact">
+							<span className="sh-sheet-actions">
+								<button
+									type="button"
+									className="sh-btn"
+									disabled={!turnUndo.canUndo}
+									onClick={() => {
+										turnUndo.onUndo();
+										onClose();
+									}}
+								>
+									<Undo2 size={13} /> Undo
+								</button>
+								<button
+									type="button"
+									className="sh-btn"
+									disabled={!turnUndo.canRedo}
+									onClick={() => {
+										turnUndo.onRedo();
+										onClose();
+									}}
+								>
+									<Redo2 size={13} /> Redo
+								</button>
+							</span>
+							<span className="sh-sheet-faint">
+								Undo rewinds the conversation to before your last prompt, puts the prompt back in the message
+								box, and restores the files the turn changed.
+							</span>
+						</dd>
+					</div>
+				)}
+				{canControl && contextItems !== undefined && (
+					<div className="sh-sheet-row sh-sheet-row-top">
+						<dt>Fills context</dt>
+						<dd className="sh-sheet-compact">
+							<ContextItems info={contextItems} canPrune onSessionCommand={onSessionCommand} />
 						</dd>
 					</div>
 				)}

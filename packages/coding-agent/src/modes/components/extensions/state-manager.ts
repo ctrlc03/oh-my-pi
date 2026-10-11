@@ -23,6 +23,8 @@ import {
 	isUserSourceEnabled,
 	loadCapability,
 } from "../../../discovery";
+import { loadClaudeHookExtensions } from "../../../claude-compat/dashboard";
+import { settings } from "../../../config/settings";
 import { readDisabledServers, readEnabledServers } from "../../../mcp/config-writer";
 import { commandPreview } from "@oh-my-pi/pi-tui/overlays/extensions/inspector-model";
 import { inferMcpTransport } from "@oh-my-pi/pi-tui/overlays/extensions/mcp-runtime";
@@ -255,6 +257,13 @@ export async function loadAllExtensions(cwd?: string, disabledIds?: string[]): P
 		}
 	} catch (error) {
 		logger.warn("Failed to load hooks capability", { error: String(error) });
+	}
+
+	// Claude Code settings.json hooks (only present when `claude.hooks` admits them)
+	try {
+		extensions.push(...(await loadClaudeHookExtensions(cwd ?? process.cwd(), settings, effectiveDisabledIds)));
+	} catch (error) {
+		logger.warn("Failed to load Claude Code hooks", { error: String(error) });
 	}
 
 	// Load context files

@@ -19,12 +19,14 @@
 
 import type {
 	AgentSnapshot,
+	ContextItemRow,
 	HostFrame,
 	ImageContent,
 	RewindFilesPlan,
 	SessionCommand,
 	SessionEntry,
 	SessionState,
+	TextContent,
 	WireFrame,
 	WireModel,
 } from "@oh-my-pi/pi-wire";
@@ -46,6 +48,7 @@ import {
 	fixtureResumeChoices,
 	fixtureModel,
 	fixtureModels,
+	fixtureProfiles,
 	fixtureThinkingLevels,
 	HOST_DISPLAY_NAME,
 	makeProbeProgress,
@@ -97,6 +100,9 @@ function parseLocalRelayPort(argv: string[], mainPort: number): number | null {
 const argv = Bun.argv.slice(2);
 const port = parsePort(argv);
 const localPort = parseLocalRelayPort(argv, port);
+/** `--max-cost <usd>`: report a spend cap in the state; the mock "spends" one cent per entry, so a low cap shows the capped banner. */
+const maxCostAt = argv.indexOf("--max-cost");
+const mockMaxCostUsd = maxCostAt >= 0 ? Number(argv[maxCostAt + 1]) : Number.NaN;
 const relay = startLocalRelay(port);
 let localRelay: LocalRelay | null =
 	localPort === null ? null : startLocalRelay(localPort, { refuseMissingRooms: true });
@@ -120,10 +126,13 @@ const transcriptDecoder = new TextDecoder();
 
 let currentModel: WireModel = fixtureModel;
 let thinkingLevel = "medium";
+let profile = fixtureProfiles[0]?.name ?? "build";
 let lastEntryId: string | null = entries[entries.length - 1]?.id ?? null;
 let streaming = false;
 /** Whether the last mock file restore can still be undone with `redo-files`. */
 let fileRestoreRedoable = false;
+/** Turns `/undo` removed from the mock's single active path, newest undo last; `redo` puts them back until the path moves on. */
+const undoneTurns: UndoneTurn[] = [];
 let queuedPrompts = 0;
 /** The per-prompt model (id) of each queued prompt, oldest first; `undefined` = the session's model. */
 let queuedModels: (string | undefined)[] = [];
@@ -177,10 +186,12 @@ function buildState(): SessionState {
 		isStreaming: streaming,
 		queuedMessageCount: queuedPrompts + followUps.length,
 		followUps: followUps.map(followUp => followUp.text),
+		redoTurns: liveRedoSteps().length,
 		sessionName,
 		cwd: fixtureHeader.cwd,
 		model: currentModel,
 		thinkingLevel,
+		profile,
 		thinkingLevels: fixtureThinkingLevels[`${currentModel.provider}/${currentModel.id}`] ?? ["off"],
 		contextUsage: {
 			tokens,
@@ -191,6 +202,14 @@ function buildState(): SessionState {
 					: null,
 		},
 		participants,
+		spend: Number.isFinite(mockMaxCostUsd)
+			? {
+					costUsd: entries.length * 0.01,
+					tokens,
+					maxCostUsd: mockMaxCostUsd,
+					capped: entries.length * 0.01 >= mockMaxCostUsd,
+				}
+			: undefined,
 	};
 }
 
@@ -315,7 +334,18 @@ function handleHello(name: string, proto: number, token: string | undefined, fro
 						thinkingLevels: fixtureThinkingLevels[`${model.provider}/${model.id}`] ?? ["off"],
 					}))
 				: undefined,
-			features: ["follow-up", "rewind", "commands", "rewind-files", "prompt-model"],
+			profiles: writer ? fixtureProfiles.map(candidate => ({ ...candidate })) : undefined,
+			features: [
+				"follow-up",
+				"rewind",
+				"commands",
+				"rewind-files",
+				"prompt-model",
+				"context-items",
+				"spend-cap",
+				"undo",
+				"profiles",
+			],
 			commands: writer ? fixtureCommands : undefined,
 		},
 		fromPeer,
@@ -340,6 +370,70 @@ function mockFilePlan(at: number): RewindFilesPlan {
 		remove: dropped.filter(entry => entry.type === "message" && entry.message.role === "user").length,
 		recreate: 0,
 	};
+}
+
+interface UndoneTurn {
+	removed: SessionEntry[];
+	leafAfter: string | null;
+	draft: string;
+}
+
+function isPromptEntry(entry: SessionEntry): boolean {
+	if (entry.type === "message") return entry.message.role === "user";
+	return entry.type === "custom_message" && entry.customType === "collab-prompt";
+}
+
+/** The text and images of a prompt entry, as `/undo` hands them back to the message box. */
+function promptDraft(entry: SessionEntry): { text: string; images: ImageContent[] } {
+	let content: string | readonly (TextContent | ImageContent)[] = "";
+	if (entry.type === "custom_message") content = entry.content;
+	else if (entry.type === "message" && entry.message.role === "user") content = entry.message.content;
+	if (typeof content === "string") return { text: content, images: [] };
+	return {
+		text: content.flatMap(block => (block.type === "text" ? [block.text] : [])).join("\n"),
+		images: content.flatMap(block => (block.type === "image" ? [block] : [])),
+	};
+}
+
+/** The redo steps still valid: all dropped once the active path moved on from where the newest undo left it. */
+function liveRedoSteps(): UndoneTurn[] {
+	if (undoneTurns.at(-1)?.leafAfter !== lastEntryId) undoneTurns.length = 0;
+	return undoneTurns;
+}
+
+/** What the mock reports as filling the context; pruning an item drops its row and the tokens it held. */
+const CONTEXT_WINDOW = 200_000;
+let contextUsed = 100_000;
+let contextItems: ContextItemRow[] = (
+	[
+		["sys:0", "systemPrompt", "System prompt", 9_200, false],
+		["tr:mock-bash", "toolResult", "bash bun test", 14_800, true],
+		["file:/repo/src/app.tsx", "file", "src/app.tsx (3 reads)", 7_400, true],
+		["tool:bash", "toolSchema", "tool schema: bash", 2_100, false],
+		["img:mock-shot", "attachment", "attachment (user message)", 1_600, true],
+	] as const
+)
+	.map(([id, kind, label, tokens, prunable]) => ({
+		id,
+		kind,
+		label,
+		tokens,
+		share: tokens / contextUsed,
+		prunable,
+	}))
+	.sort((a, b) => b.tokens - a.tokens);
+
+function sendContextItems(fromPeer: number, pruned?: { entries: number; tokensFreed: number }): void {
+	sendFrame(
+		{
+			t: "context-items",
+			items: contextItems,
+			usedTokens: contextUsed,
+			contextWindow: CONTEXT_WINDOW,
+			...(pruned ? { pruned } : {}),
+		},
+		fromPeer,
+	);
 }
 
 function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer: number, restoreFiles = false): void {
@@ -386,6 +480,17 @@ function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer
 				thinkingLevel: arg,
 			});
 			notice("info", `${who} set thinking to ${arg}`);
+			broadcastState();
+			break;
+		}
+		case "profile": {
+			const next = fixtureProfiles.find(candidate => candidate.name === arg);
+			if (!next) {
+				sendFrame({ t: "error", message: `unknown profile: ${arg ?? "(none)"}` }, fromPeer);
+				return;
+			}
+			profile = next.name;
+			notice("info", `${who} switched profile to ${next.name}`);
 			broadcastState();
 			break;
 		}
@@ -441,6 +546,72 @@ function handleSessionCmd(cmd: SessionCommand, arg: string | undefined, fromPeer
 			broadcastState();
 			break;
 		}
+		case "undo": {
+			if (streaming || isReplaying()) {
+				sendFrame({ t: "error", message: "undo: wait for the agent to finish its turn" }, fromPeer);
+				return;
+			}
+			const steps = liveRedoSteps();
+			const at = entries.findLastIndex(isPromptEntry);
+			if (at < 0) {
+				sendFrame({ t: "error", message: "undo: nothing to undo" }, fromPeer);
+				return;
+			}
+			const plan = mockFilePlan(at);
+			const removed = entries.splice(at);
+			const draft = promptDraft(removed[0]);
+			lastEntryId = entries.at(-1)?.id ?? null;
+			steps.push({ removed, leafAfter: lastEntryId, draft: draft.text });
+			sendFrame({ t: "branch", keep: lastEntryId, entries: [] });
+			const changed = plan.revert + plan.remove + plan.recreate > 0;
+			sendFrame(
+				{
+					t: "turn-undone",
+					kind: "undo",
+					text: draft.text,
+					images: draft.images.length > 0 ? draft.images : undefined,
+					files: changed ? plan : undefined,
+					skipped: changed ? 0 : undefined,
+				},
+				fromPeer,
+			);
+			notice("info", `${who} undid the last turn`);
+			broadcastState();
+			break;
+		}
+		case "redo": {
+			if (streaming || isReplaying()) {
+				sendFrame({ t: "error", message: "redo: wait for the agent to finish its turn" }, fromPeer);
+				return;
+			}
+			const step = liveRedoSteps().pop();
+			if (!step) {
+				sendFrame({ t: "error", message: "redo: nothing to redo" }, fromPeer);
+				return;
+			}
+			sendFrame({ t: "branch", keep: lastEntryId, entries: step.removed });
+			entries.push(...step.removed);
+			lastEntryId = entries.at(-1)?.id ?? null;
+			sendFrame({ t: "turn-undone", kind: "redo", staleText: step.draft }, fromPeer);
+			notice("info", `${who} redid the turn`);
+			broadcastState();
+			break;
+		}
+		case "context-items":
+			sendContextItems(fromPeer);
+			break;
+		case "context-prune": {
+			const item = contextItems.find(candidate => candidate.id === arg);
+			if (!item?.prunable) {
+				sendFrame({ t: "error", message: "context-prune: that item cannot be pruned" }, fromPeer);
+				return;
+			}
+			contextItems = contextItems.filter(candidate => candidate !== item);
+			contextUsed -= item.tokens;
+			sendContextItems(fromPeer, { entries: 1, tokensFreed: item.tokens });
+			notice("info", `${who} pruned ${item.label} from the context`);
+			break;
+		}
 		case "rewind-preview": {
 			const at = entries.findIndex(entry => entry.id === arg);
 			sendFrame({ t: "rewind-preview", entryId: arg ?? "", files: at < 0 ? null : mockFilePlan(at) }, fromPeer);
@@ -482,6 +653,8 @@ const MOCK_SLASH_COMMANDS: Record<
 	effort: { cmd: "thinking", takes: "required", hint: "<level>" },
 	compact: { cmd: "compact", takes: "optional" },
 	rename: { cmd: "rename", takes: "required", hint: "<title>" },
+	undo: { cmd: "undo", takes: "none" },
+	redo: { cmd: "redo", takes: "none" },
 	new: { takes: "none" },
 	fork: { takes: "none" },
 	resume: { takes: "required", hint: "<session>" },

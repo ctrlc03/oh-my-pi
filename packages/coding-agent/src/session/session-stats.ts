@@ -90,6 +90,16 @@ export class SessionStatsTracker {
 	#pendingContextSnapshot: PendingContextSnapshot | undefined;
 	#contextUsageRevision = 0;
 	#compactionEpoch = 0;
+	/** Highest spend seen for {@link #spendLedgerSessionId}; the cap never reads less than this. */
+	#spendLedger = { costUsd: 0, tokens: 0 };
+	#spendLedgerSessionId: string | undefined;
+	/**
+	 * Settled assistant / `task` result messages the session journal has not recorded yet. Messages are held
+	 * weakly (a transcript swap or dispose must not keep them alive); only their spend is kept as numbers.
+	 */
+	#unrecordedUsage: Array<{ message: WeakRef<AgentMessage>; sessionId: string; costUsd: number; tokens: number }> = [];
+	/** Spend of unrecorded messages that were collected, i.e. dropped without the journal ever holding them. */
+	#droppedSpend = { sessionId: undefined as string | undefined, costUsd: 0, tokens: 0 };
 
 	constructor(host: SessionStatsTrackerHost) {
 		this.#host = host;
@@ -126,24 +136,91 @@ export class SessionStatsTracker {
 	 */
 	getTokenTotals(): SessionStats["tokens"] {
 		const tokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
-		const addUsage = (usage: Usage): void => {
+		this.#forEachUsage(usage => {
 			tokens.input += usage.input;
 			tokens.output += usage.output;
 			tokens.reasoning += usage.reasoningTokens ?? 0;
 			tokens.cacheRead += usage.cacheRead;
 			tokens.cacheWrite += usage.cacheWrite;
 			tokens.total += usage.totalTokens;
+		});
+		return tokens;
+	}
+
+	/**
+	 * Notes a settled message so its spend counts before the session journal records it (journal appends
+	 * trail `message_end`) and even if it is never recorded (a turn dropped by an abort or undo).
+	 */
+	recordSettledMessage(message: AgentMessage): void {
+		let usage: Usage | undefined;
+		if (message.role === "assistant") usage = message.usage;
+		else if (message.role === "toolResult" && message.toolName === "task") usage = taskToolUsage(message.details);
+		if (!usage) return;
+		this.#unrecordedUsage.push({
+			message: new WeakRef(message),
+			sessionId: this.#host.sessionId(),
+			costUsd: usage.cost.total,
+			tokens: usage.input + usage.output + usage.cacheWrite,
+		});
+		this.#settleUnrecorded();
+	}
+
+	/** Drops messages the journal now holds; folds the spend of collected ones into {@link #droppedSpend}. */
+	#settleUnrecorded(): void {
+		const sessionId = this.#host.sessionId();
+		const manager = this.#host.sessionManager;
+		if (this.#droppedSpend.sessionId !== sessionId) this.#droppedSpend = { sessionId, costUsd: 0, tokens: 0 };
+		this.#unrecordedUsage = this.#unrecordedUsage.filter(pending => {
+			if (pending.sessionId !== sessionId) return false;
+			const message = pending.message.deref();
+			if (message === undefined) {
+				this.#droppedSpend.costUsd += pending.costUsd;
+				this.#droppedSpend.tokens += pending.tokens;
+				return false;
+			}
+			return !manager.hasUsageOf(message);
+		});
+	}
+
+	/**
+	 * Cumulative spend for the session spend cap: cost in USD and "new work" tokens
+	 * (input + output + cache writes; cache reads are reused prefix, as in goal budgets).
+	 * Never decreases within a session: it reads the journal's running totals over every entry
+	 * (all branches, compacted history, `model_usage`, `task` subagent results), so compaction, `/undo`,
+	 * `/tree` and resume do not shed spend, plus the settled messages the journal has not recorded yet.
+	 * The high-water mark also keeps entries the journal later discards counted.
+	 */
+	getSpendUsage(): { costUsd: number; tokens: number } {
+		const sessionId = this.#host.sessionId();
+		if (this.#spendLedgerSessionId !== sessionId) {
+			this.#spendLedgerSessionId = sessionId;
+			this.#spendLedger = { costUsd: 0, tokens: 0 };
+		}
+		this.#settleUnrecorded();
+		const recorded = this.#host.sessionManager.getUsageStatistics();
+		let costUsd = recorded.cost + this.#droppedSpend.costUsd;
+		let tokens = recorded.input + recorded.output + recorded.cacheWrite + this.#droppedSpend.tokens;
+		for (const pending of this.#unrecordedUsage) {
+			costUsd += pending.costUsd;
+			tokens += pending.tokens;
+		}
+		this.#spendLedger = {
+			costUsd: Math.max(this.#spendLedger.costUsd, costUsd),
+			tokens: Math.max(this.#spendLedger.tokens, tokens),
 		};
+		return { ...this.#spendLedger };
+	}
+
+	#forEachUsage(visit: (usage: Usage) => void): void {
 		for (const message of this.#host.agent.state.messages) {
 			if (message.role === "assistant") {
-				if (message.usage) addUsage(message.usage);
+				if (message.usage) visit(message.usage);
 			} else if (message.role === "toolResult" && message.toolName === "task") {
 				const usage = taskToolUsage(message.details);
-				if (usage) addUsage(usage);
+				if (usage) visit(usage);
 			}
 		}
-		forEachActiveModelUsage(this.#host.sessionManager.getBranchView(), addUsage);
-		return tokens;
+		forEachActiveModelUsage(this.#host.sessionManager.getBranchView(), visit);
 	}
 
 	/** Returns aggregate message, token, and cost statistics for the session. */

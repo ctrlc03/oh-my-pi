@@ -49,7 +49,7 @@ export interface CollabRunnableBuiltin {
  *   reversible, no credentials or settings. Leaving it can open a confirm dialog
  *   on the host terminal, so the host refuses `/plan` while plan mode is on.
  * - `retry`: re-runs the last failed turn; no UI, no arguments.
- * - `compact`, `model` / `switch`, `effort`, `rename`: the guest session controls
+ * - `compact`, `model` / `switch`, `effort`, `rename`, `undo`, `redo`: the guest session controls
  *   (`session-cmd`) with a slash spelling. `/model` is the session-only switch
  *   (what `/switch` does): the host's `/model` opens a selector that can also
  *   change saved defaults, which a guest never reaches.
@@ -84,6 +84,12 @@ export const COLLAB_RUNNABLE_BUILTINS: Record<string, CollabRunnableBuiltin> = {
 		sessionCmd: "thinking",
 	},
 	rename: { description: "Rename this session", args: "<title>", takes: "required", sessionCmd: "rename" },
+	undo: {
+		description: "Undo the last turn: rewind before your last prompt and restore its files",
+		takes: "none",
+		sessionCmd: "undo",
+	},
+	redo: { description: "Redo the turn the last /undo removed", takes: "none", sessionCmd: "redo" },
 	new: { description: "Start a new session; the room follows it", takes: "none", switchesSession: true },
 	resume: {
 		description: "Resume another session from this folder",

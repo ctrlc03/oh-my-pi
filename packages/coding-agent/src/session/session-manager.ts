@@ -523,6 +523,8 @@ class SessionEntryIndex {
 	#labels = new Map<string, string>();
 	#leaf: string | null = null;
 	#usage = emptyUsageStatistics();
+	/** Message objects whose usage is already in {@link #usage}; lets live tails avoid double counting. */
+	#usageMessages = new WeakSet<object>();
 	// Branch memo: getBranch() walks leaf-to-root per call (array + Set +
 	// reverse) on per-frame/per-turn paths. The branch only changes on
 	// insert/rebuild/setLeaf, so cache the array keyed on (leaf, generation).
@@ -586,6 +588,7 @@ class SessionEntryIndex {
 
 		const usage = entryUsage(entry);
 		addUsage(this.#usage, usage);
+		if (entry.type === "message" && usage) this.#usageMessages.add(entry.message);
 		// Completed `task` results carry the child's spend; tracked apart so the
 		// status line can split the session's own cost from its subagents'.
 		if (usage && entry.type === "message" && entry.message.role === "toolResult") {
@@ -647,6 +650,11 @@ class SessionEntryIndex {
 
 	usageSnapshot(): UsageStatistics {
 		return { ...this.#usage };
+	}
+
+	/** Whether the usage carried by this message object is already in {@link usageSnapshot}. */
+	hasUsageOf(message: object): boolean {
+		return this.#usageMessages.has(message);
 	}
 
 	pathTo(id: string | null | undefined = this.#leaf): SessionEntry[] {
@@ -3136,6 +3144,11 @@ export class SessionManager {
 
 	getUsageStatistics(): UsageStatistics {
 		return this.#index.usageSnapshot();
+	}
+
+	/** Whether this message object's usage is already counted in {@link getUsageStatistics}. */
+	hasUsageOf(message: object): boolean {
+		return this.#index.hasUsageOf(message);
 	}
 
 	/**

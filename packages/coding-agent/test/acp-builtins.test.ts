@@ -1556,7 +1556,7 @@ describe("wave 5 — adapters and polish", () => {
 	// /context breakdown
 	it("/context: lists more than one breakdown line for session with messages", async () => {
 		const { output, session, runtime } = createRuntime();
-		// computeContextBreakdown needs model.contextWindow; fake session falls back gracefully
+		// The report ranks what fills the context through the session, so the fake session supplies that too.
 		(session as unknown as Record<string, unknown>).model = {
 			provider: "anthropic",
 			id: "claude-test",
@@ -1565,6 +1565,9 @@ describe("wave 5 — adapters and polish", () => {
 		(session as unknown as Record<string, unknown>).skills = [];
 		(session as unknown as Record<string, unknown>).agent = { state: { tools: [] }, tokenizer: new Tokenizer() };
 		(session as unknown as Record<string, unknown>).systemPrompt = ["You are a helpful assistant."];
+		(session as unknown as Record<string, unknown>).getContextItems = () => [
+			{ id: "system", kind: "systemPrompt", label: "System prompt", tokens: 8, share: 0.5, count: 1, targets: [] },
+		];
 		session.messages = [
 			{ role: "user", content: "Hello, how are you?" },
 			{ role: "assistant", content: [{ type: "text", text: "I am doing well." }] },
@@ -1573,7 +1576,10 @@ describe("wave 5 — adapters and polish", () => {
 		expect(result).toEqual({ consumed: true });
 		// Should show the breakdown with multiple lines (Messages category visible)
 		const text = output[0] ?? "";
-		expect(text).toContain("tokens");
+		expect(text).not.toBe("Context usage is unavailable.");
+		expect(text).toContain("Context window: 200000 tokens");
+		expect(text).toContain("What fills the context:");
+		expect(text).toContain("System prompt");
 		expect(text.split("\n").length).toBeGreaterThan(1);
 	});
 

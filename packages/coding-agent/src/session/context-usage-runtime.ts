@@ -5,10 +5,12 @@ import {
 	computeContextBreakdown,
 	type CompactionBoundaries,
 	type ContextBreakdown,
+	type ContextRankedItem,
 	type ContextSavingsEstimate,
 } from "@oh-my-pi/pi-tui/status-line/context-usage";
 import type { ScopeLike } from "../config/registry";
 import type { AgentSession } from "./agent-session";
+import type { ContextItem } from "./context-items";
 import { resolveSpeculationMethod } from "./compaction-methods";
 import { estimateInlineSavings } from "./snapcompact-inline";
 import { resolveModelCompactionSettings } from "./model-compaction-threshold";
@@ -37,10 +39,27 @@ export function getSessionCompactionBoundaries(
 	);
 }
 
-/** Read host settings and optionally run the provider's inline-image planner. */
+/** Rows of the "what fills the context" ranking `/context` shows by default. */
+export const CONTEXT_ITEM_ROWS = 12;
+
+/** Number the ranking (1-based, over the full list) and keep its top `limit` rows. */
+export function toRankedContextRows(items: readonly ContextItem[], limit: number): ContextRankedItem[] {
+	return items.slice(0, limit).map((item, index) => ({
+		rank: index + 1,
+		label: item.label,
+		tokens: item.tokens,
+		share: item.share,
+		prunable: item.targets.length > 0,
+	}));
+}
+
+/**
+ * Read host settings and optionally run the provider's inline-image planner
+ * and rank the largest context items (`items` = how many rows to keep).
+ */
 export function computeSessionContextBreakdown(
 	session: AgentSession,
-	options?: { snapcompactSavings?: boolean },
+	options?: { snapcompactSavings?: boolean; items?: number },
 ): ContextBreakdown {
 	let snapcompact: ContextSavingsEstimate | undefined;
 	if (options?.snapcompactSavings) {
@@ -60,5 +79,6 @@ export function computeSessionContextBreakdown(
 		sourceRevision: session.settings.revision,
 		skillful: cfgSkillful.get(session.settings),
 		snapcompact,
+		items: options?.items ? toRankedContextRows(session.getContextItems(), options.items) : undefined,
 	});
 }

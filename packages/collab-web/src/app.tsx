@@ -14,6 +14,7 @@ import { FileRestoreBar } from "./components/shell/FileRestoreBar";
 import { FileSheet } from "./components/shell/FileSheet";
 import { FixItHost } from "./components/shell/FixItHost";
 import { HeaderBar } from "./components/shell/HeaderBar";
+import { useTurnUndo } from "./components/shell/TurnUndo";
 import { useMedia } from "./components/codemap/shared";
 import { PaneSheet } from "./components/shell/PaneSheet";
 import { GithubSheet } from "./components/shell/GithubSheet";
@@ -25,6 +26,7 @@ import { SessionAlert } from "./components/shell/SessionAlert";
 import { SessionsSheet } from "./components/shell/SessionsSheet";
 import { SessionsSidebar } from "./components/shell/SessionsSidebar";
 import { SplitPane } from "./components/shell/SplitPane";
+import { SpendCapBar } from "./components/shell/SpendCapBar";
 import { TaskProgress } from "./components/shell/TaskProgress";
 import { Toasts } from "./components/shell/Toasts";
 import { UpdateBar } from "./components/shell/UpdateBar";
@@ -515,6 +517,7 @@ function Session({
 	}, []);
 	const composerRef = useRef<ComposerHandle>(null);
 	const editPrompt = useEditPrompt(client, snap, composerRef);
+	const turnUndo = useTurnUndo(client, snap, composerRef);
 	const sendToAgent = useCallback((prompt: string) => {
 		setGithubOpen(false);
 		composerRef.current?.insert(prompt);
@@ -868,6 +871,8 @@ function Session({
 				sessionUsage={sessionUsage}
 				models={snap.models}
 				onSessionCommand={sendSessionCommand}
+				turnUndo={turnUndo.control}
+				contextItems={Object.hasOwn(snap.features, "context-items") ? snap.contextItems : undefined}
 				exportMarkdown={exportMarkdown}
 				onOpenChanges={openChanges}
 				onOpenShortcuts={openHelp}
@@ -948,6 +953,8 @@ function Session({
 						model={snap.state?.model}
 						thinkingLevel={snap.state?.thinkingLevel}
 						thinkingLevels={snap.state?.thinkingLevels}
+						profiles={Object.hasOwn(snap.features, "profiles") ? snap.profiles : null}
+						profile={snap.state?.profile}
 						followsRoom={companionClient !== null && instanceId !== null}
 						promptModel={Object.hasOwn(snap.features, "prompt-model") && !snap.readOnly && snap.models !== null}
 						onSessionCommand={sendSessionCommand}
@@ -1014,6 +1021,8 @@ function Session({
 				readOnly={snap.readOnly}
 				onUndo={() => client.sendSessionCommand("redo-files")}
 			/>
+			{turnUndo.bar}
+			<SpendCapBar spend={Object.hasOwn(snap.features, "spend-cap") ? snap.state?.spend : undefined} />
 			<Toasts notices={snap.notices} />
 			{companion && <SessionAlert hosts={companion.snap.hosts} currentSessionId={sessionId} onOpen={onOpenHost} />}
 			{statsSheet === "usage" && companionClient !== null && (

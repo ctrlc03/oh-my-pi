@@ -112,6 +112,14 @@ export const launchHelp = {
 		}),
 		"print-thoughts": Flags.boolean({ description: "Include thinking blocks in print mode text output" }),
 		"max-time": Flags.string({ description: "Stop the session after this duration (e.g., 600, 10m, 1h)" }),
+		"max-cost": Flags.string({
+			description:
+				"Stop the session once its spend reaches this many USD (e.g., 2.50); headless runs exit with status 3",
+		}),
+		"max-tokens": Flags.string({
+			description:
+				"Stop the session once it has used this many tokens (e.g., 200000 or 200k); headless runs exit with status 3",
+		}),
 		"auto-approve": Flags.boolean({
 			aliases: ["yolo"],
 			description: "Auto-approve all tool calls (skip approval prompts)",

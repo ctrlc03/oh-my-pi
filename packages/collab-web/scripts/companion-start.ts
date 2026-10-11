@@ -55,6 +55,8 @@ export interface TmuxLaunch {
 	sandbox?: Omit<SandboxLaunch, "folder">;
 	/** First message omp works on as soon as it is up (`omp … -- <prompt>`); handed over through a file, because tmux refuses commands over ~16 KB. */
 	prompt?: string;
+	/** Stop the session at a safe point once it has spent this many USD (`omp --max-cost`). */
+	maxCostUsd?: number;
 }
 
 /**
@@ -92,6 +94,7 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 		launch.overlayPath,
 		...(sandbox?.ompArgs ?? []),
 		...(launch.resume ? ["-r", launch.resume] : []),
+		...(launch.maxCostUsd !== undefined ? ["--max-cost", String(launch.maxCostUsd)] : []),
 	];
 	let promptFile: string | null = null;
 	// tmux format-expands `-c` (`#(cmd)` would run in the tmux server, outside any sandbox), so the folder is never a

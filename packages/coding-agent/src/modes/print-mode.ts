@@ -13,6 +13,7 @@ import { resolveMCPTimeoutMs } from "../mcp/timeout";
 import { type AgentSession, type AgentSessionEvent, SHUTDOWN_CONSOLIDATE_BUDGET_MS } from "../session/agent-session";
 import { CREDENTIAL_DISABLED_NOTICE_SOURCE } from "../session/credential-disabled-notice";
 import { isSilentAbort } from "../session/messages";
+import { SPEND_CAP_EXIT_CODE, SPEND_CAP_NOTICE_SOURCE, SpendCapExceededError } from "../session/spend-cap";
 import { flushTelemetryExport } from "../telemetry-export";
 import {
 	formatPersistenceDurabilityFailure,
@@ -229,8 +230,13 @@ async function runPrintModeCore(
 		writeStderrLine(`Warning: ${formatPersistenceNotice(notice)}`);
 	});
 
+	// The cap notice (or a prompt refused at the cap) ends the run with SPEND_CAP_EXIT_CODE.
+	let spendCapMessage: string | undefined;
 	// Always subscribe to enable session persistence via _handleAgentEvent
 	session.subscribe(event => {
+		if (event.type === "notice" && event.source === SPEND_CAP_NOTICE_SOURCE && event.level === "error") {
+			spendCapMessage = event.message;
+		}
 		// In JSON mode, output all events
 		if (mode === "json") {
 			writeStdoutLine(`${JSON.stringify(printableEvent(event))}\n`);
@@ -276,19 +282,25 @@ async function runPrintModeCore(
 		wroteTextWorkingIndicator = true;
 	};
 
-	// Send initial message with attachments
-	if (!strictMCPFailure && initialMessage !== undefined) {
+	// Send initial message with attachments, then the remaining messages; a session that reached its
+	// spend cap stops sending (the cap is reported and decides the exit status below).
+	const runPrompt = async (label: string, text: string, images?: ImageContent[]): Promise<void> => {
 		writeTextWorkingIndicator();
 		if (mode === "text") session.setTextOutputCommitted(false);
-		await logger.time("print:prompt:initial", () => session.prompt(initialMessage, { images: initialImages }));
+		try {
+			await logger.time(label, () => session.prompt(text, images ? { images } : undefined));
+		} catch (error) {
+			if (!(error instanceof SpendCapExceededError)) throw error;
+			spendCapMessage = error.message;
+		}
+	};
+	if (!strictMCPFailure && initialMessage !== undefined) {
+		await runPrompt("print:prompt:initial", initialMessage, initialImages);
 	}
-
-	// Send remaining messages
 	if (!strictMCPFailure) {
 		for (const message of messages) {
-			writeTextWorkingIndicator();
-			if (mode === "text") session.setTextOutputCommitted(false);
-			await logger.time("print:prompt:next", () => session.prompt(message));
+			if (spendCapMessage !== undefined) break;
+			await runPrompt("print:prompt:next", message);
 		}
 	}
 
@@ -384,6 +396,9 @@ async function runPrintModeCore(
 		}
 	}
 
+	if (spendCapMessage !== undefined) writeStderrLine(spendCapMessage);
 	await stderrTail;
-	return terminalFailure || durabilityFailure || strictMCPFailure ? 1 : 0;
+	if (durabilityFailure || strictMCPFailure) return 1;
+	if (spendCapMessage !== undefined) return SPEND_CAP_EXIT_CODE;
+	return terminalFailure ? 1 : 0;
 }

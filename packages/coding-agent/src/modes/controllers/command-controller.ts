@@ -52,7 +52,8 @@ import { ContextUsageView, contextUsageHead } from "@oh-my-pi/pi-tui/status-line
 import type { OverlayHandle } from "@oh-my-pi/pi-tui";
 import { ReportPanel } from "@oh-my-pi/pi-tui/overlays/report-panel";
 import type { TspText } from "@oh-my-pi/pi-wire";
-import { computeSessionContextBreakdown } from "../../session/context-usage-runtime";
+import { CONTEXT_ITEM_ROWS, computeSessionContextBreakdown } from "../../session/context-usage-runtime";
+import { type ContextPruneOutcome, pruneContextSelectors } from "../../slash-commands/helpers/context-report";
 import { buildHotkeysMarkdown, HotkeysSheetComponent } from "@oh-my-pi/pi-tui/hotkeys-markdown";
 import { isNativeRendering } from "@oh-my-pi/pi-tui/native/state";
 import { buildToolsMarkdown } from "@oh-my-pi/pi-tui/prompt/tools-markdown";
@@ -925,7 +926,10 @@ export class CommandController {
 	}
 
 	handleContextCommand(): void {
-		const breakdown = computeSessionContextBreakdown(this.ctx.session, { snapcompactSavings: true });
+		const breakdown = computeSessionContextBreakdown(this.ctx.session, {
+			snapcompactSavings: true,
+			items: CONTEXT_ITEM_ROWS,
+		});
 		if (breakdown.contextWindow <= 0) {
 			this.ctx.showWarning("Context usage is unavailable: no model is selected for this session.");
 			return;
@@ -936,6 +940,51 @@ export class CommandController {
 			head: contextUsageHead(breakdown),
 			body: new ContextUsageView(breakdown, theme),
 		});
+	}
+
+	/**
+	 * `/context prune`: with ranks (or item ids) prune those items; without,
+	 * list the prunable ones in a selector and keep pruning the picked item
+	 * until the selector is dismissed.
+	 */
+	async handleContextPruneCommand(selectors: string[]): Promise<void> {
+		if (selectors.length > 0) {
+			await this.#pruneContextItems(selectors);
+			return;
+		}
+		for (;;) {
+			const items = this.ctx.session.getContextItems();
+			const prunable = items.filter(item => item.targets.length > 0).slice(0, CONTEXT_ITEM_ROWS * 2);
+			if (prunable.length === 0) {
+				this.ctx.showStatus("Nothing prunable in the context.");
+				return;
+			}
+			const options = prunable.map(
+				item => `${item.label} — ${item.tokens.toLocaleString()} tokens (${(item.share * 100).toFixed(1)}%)`,
+			);
+			const choice = await this.ctx.showHookSelector("Prune context (Esc to finish)", options);
+			const picked = choice === undefined ? undefined : prunable[options.indexOf(choice)];
+			if (!picked || !(await this.#pruneContextItems([picked.id]))) return;
+		}
+	}
+
+	async #pruneContextItems(selectors: string[]): Promise<boolean> {
+		let outcome: ContextPruneOutcome;
+		try {
+			outcome = await pruneContextSelectors(this.ctx.session, selectors);
+		} catch (error) {
+			this.ctx.showError(`Context prune failed: ${error instanceof Error ? error.message : String(error)}`);
+			return false;
+		}
+		if (!outcome.ok) {
+			this.ctx.showWarning(outcome.text);
+			return false;
+		}
+		this.ctx.rebuildChatFromMessages();
+		this.ctx.statusLine.invalidate();
+		this.ctx.ui.requestRender();
+		this.ctx.showStatus(outcome.text);
+		return true;
 	}
 
 	async handleMemoryCommand(text: string): Promise<void> {

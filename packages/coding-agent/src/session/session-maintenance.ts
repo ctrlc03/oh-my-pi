@@ -109,6 +109,7 @@ import { buildSessionContext, getLatestCompactionEntry, getOpenAiRemoteCompactio
 import type { CompactionEntry, SessionEntry } from "./session-entries";
 import type { SessionManager } from "./session-manager";
 import type { ShakeMode, ShakeResult } from "./shake-types";
+import { type ContextItem, type ContextPruneResult, PRUNED_PREFIX, rankContextItems } from "./context-items";
 import { resolveSpeculationLeadTokens, SPECULATION_LEAD_MIN_TOKENS } from "./speculation-lead";
 import experimentalContextNotesReminderPrompt from "../prompts/system/experimental-context-notes-reminder.md" with { type: "text" };
 import experimentalContextRolloverPrompt from "../prompts/system/experimental-context-rollover.md" with { type: "text" };
@@ -804,30 +805,7 @@ export class SessionMaintenance {
 	async dropImages(): Promise<{ removed: number }> {
 		const branchEntries = this.#host.sessionManager.getBranch();
 		let removed = 0;
-		for (const entry of branchEntries) {
-			if (entry.type === "message") {
-				removed += stripImagesFromMessage(entry.message);
-				continue;
-			}
-			if (entry.type === "custom_message" && typeof entry.content !== "string") {
-				const kept: typeof entry.content = [];
-				let dropped = 0;
-				for (const part of entry.content) {
-					if (part.type === "image") {
-						dropped++;
-					} else {
-						kept.push(part);
-					}
-				}
-				if (dropped > 0) {
-					if (kept.length === 0) {
-						kept.push({ type: "text", text: "[image removed]" });
-					}
-					entry.content = kept;
-					removed += dropped;
-				}
-			}
-		}
+		for (const entry of branchEntries) removed += this.#stripEntryImages(entry);
 		if (removed === 0) {
 			return { removed: 0 };
 		}
@@ -837,6 +815,201 @@ export class SessionMaintenance {
 		this.#host.resetAdvisorRuntimes("drop-images");
 		this.#host.closeCodexProviderSessionsForHistoryRewrite();
 		return { removed };
+	}
+
+	/** Strip image blocks from one entry in place; returns how many were removed. */
+	#stripEntryImages(entry: SessionEntry): number {
+		if (entry.type === "message") return stripImagesFromMessage(entry.message);
+		if (entry.type !== "custom_message" || typeof entry.content === "string") return 0;
+		const kept: typeof entry.content = [];
+		let dropped = 0;
+		for (const part of entry.content) {
+			if (part.type === "image") {
+				dropped++;
+			} else {
+				kept.push(part);
+			}
+		}
+		if (dropped === 0) return 0;
+		if (kept.length === 0) {
+			kept.push({ type: "text", text: "[image removed]" });
+		}
+		entry.content = kept;
+		return dropped;
+	}
+
+	/** Shake config for user-selected pruning: no protected tail, no savings gate, whole tool results only. */
+	#contextPruneConfig(latestCompaction: CompactionEntry | null | undefined): ShakeConfig {
+		return this.#withPlanProtection({
+			...AGGRESSIVE_SHAKE_CONFIG,
+			protectTokens: 0,
+			minSavings: 0,
+			fenceMinTokens: Number.POSITIVE_INFINITY,
+			keepBoundaryId: latestCompaction?.firstKeptEntryId,
+		});
+	}
+
+	/**
+	 * Rank what fills the context window (tool results, per-file reads,
+	 * attachments, system prompt parts, tool schemas) largest first. Items with
+	 * a non-empty `targets` list can be passed to {@link pruneContextItems}.
+	 */
+	getContextItems(): ContextItem[] {
+		const branchEntries = this.#host.sessionManager.getBranch();
+		const config = this.#contextPruneConfig(getLatestCompactionEntry(branchEntries));
+		const prunableToolResultIds = new Set<string>();
+		for (const region of collectShakeRegions(branchEntries, this.#tokenizer, config)) {
+			if (region.kind === "toolResult") prunableToolResultIds.add(region.entry.id);
+		}
+		const boundaryIndex =
+			config.keepBoundaryId === undefined
+				? 0
+				: Math.max(
+						0,
+						branchEntries.findIndex(entry => entry.id === config.keepBoundaryId),
+					);
+		const source = this.#host.nonMessageTokenSource();
+		return rankContextItems({
+			entries: branchEntries.slice(boundaryIndex),
+			tokenizer: this.#tokenizer,
+			systemPrompt: source.systemPrompt ?? [],
+			tools: source.agent?.state?.tools ?? [],
+			prunableToolResultIds,
+			cwd: this.#host.sessionManager.getCwd(),
+			totalTokens: this.#host.getContextBreakdown()?.usedTokens,
+		});
+	}
+
+	/**
+	 * Elide the given context items. Tool results go through the shake elision
+	 * (placeholder + `artifact://` recovery link, `prunedAt` stamped, rewrite
+	 * persisted); `@file` mention contents get the same placeholder; image
+	 * blocks are removed like {@link dropImages}. Tool calls and their result
+	 * messages stay in place, so the provider transcript remains valid.
+	 */
+	async pruneContextItems(items: readonly ContextItem[]): Promise<ContextPruneResult> {
+		const toolResultIds = new Set<string>();
+		const mentionPaths = new Map<string, Set<string>>();
+		const imageTokens = new Map<string, number>();
+		for (const item of items) {
+			for (const target of item.targets) {
+				if (target.kind === "toolResult") toolResultIds.add(target.entryId);
+				else if (target.kind === "images") imageTokens.set(target.entryId, target.tokens);
+				else {
+					const paths = mentionPaths.get(target.entryId) ?? new Set<string>();
+					paths.add(target.path);
+					mentionPaths.set(target.entryId, paths);
+				}
+			}
+		}
+
+		const result: ContextPruneResult = { entriesRewritten: 0, tokensFreed: 0 };
+		if (toolResultIds.size > 0) {
+			const config = this.#contextPruneConfig(getLatestCompactionEntry(this.#host.sessionManager.getBranch()));
+			const shaken = await this.shake("elide", { config, entryIds: toolResultIds });
+			result.entriesRewritten += shaken.toolResultsDropped;
+			result.tokensFreed += shaken.tokensFreed;
+			result.artifactId = shaken.artifactId;
+		}
+		if (mentionPaths.size > 0 || imageTokens.size > 0) {
+			const attachments = await this.#pruneMentionsAndImages(mentionPaths, imageTokens);
+			result.entriesRewritten += attachments.entriesRewritten;
+			result.tokensFreed += attachments.tokensFreed;
+			result.artifactId ??= attachments.artifactId;
+		}
+		return result;
+	}
+
+	async #pruneMentionsAndImages(
+		mentionPaths: ReadonlyMap<string, ReadonlySet<string>>,
+		imageTokens: ReadonlyMap<string, number>,
+	): Promise<ContextPruneResult> {
+		const branchEntries = this.#host.sessionManager.getBranch();
+		const latestCompaction = getLatestCompactionEntry(branchEntries);
+		const compactionIndex = latestCompaction ? branchEntries.lastIndexOf(latestCompaction) : -1;
+		const hasRemoteReplacementHistory = getOpenAiRemoteCompactionPayload(latestCompaction) !== undefined;
+		let anchorIndex = -1;
+		for (let index = branchEntries.length - 1; index > compactionIndex; index--) {
+			const entry = branchEntries[index];
+			if (entry.type !== "message" || !isTranscriptUsageAnchor(entry.message)) continue;
+			anchorIndex = index;
+			break;
+		}
+
+		interface MentionEdit {
+			index: number;
+			file: { path: string; content: string };
+		}
+		const mentionEdits: MentionEdit[] = [];
+		const imageEntries: Array<{ index: number; entry: SessionEntry }> = [];
+		const sections: string[] = [];
+		for (const [index, entry] of branchEntries.entries()) {
+			if (imageTokens.has(entry.id)) imageEntries.push({ index, entry });
+			const paths = mentionPaths.get(entry.id);
+			if (!paths || entry.type !== "message" || entry.message.role !== "fileMention") continue;
+			for (const file of entry.message.files) {
+				if (!paths.has(file.path) || file.content.length === 0 || file.content.startsWith(PRUNED_PREFIX)) continue;
+				mentionEdits.push({ index, file });
+				sections.push(`### ${file.path} (@file mention)`, "", file.content, "");
+			}
+		}
+		if (mentionEdits.length === 0 && imageEntries.length === 0) return { entriesRewritten: 0, tokensFreed: 0 };
+
+		let artifactId: string | undefined;
+		if (sections.length > 0) {
+			try {
+				artifactId = await this.#host.sessionManager.saveArtifact(sections.join("\n"), "shake");
+			} catch {
+				artifactId = undefined;
+			}
+		}
+
+		const snapshots = new Map<SessionEntry, SessionEntry>();
+		for (const { index } of mentionEdits) snapshots.set(branchEntries[index], structuredClone(branchEntries[index]));
+		for (const { entry } of imageEntries) snapshots.set(entry, structuredClone(entry));
+
+		let tokensFreed = 0;
+		let anchoredTokensRemoved = 0;
+		const noteFreed = (index: number, freed: number): void => {
+			tokensFreed += freed;
+			if (index < anchorIndex && (!hasRemoteReplacementHistory || index > compactionIndex)) {
+				anchoredTokensRemoved += freed;
+			}
+		};
+		const touched = new Set<string>();
+		for (const { index, file } of mentionEdits) {
+			const before = this.#tokenizer.countTokens(file.content);
+			const placeholder = artifactId
+				? `${PRUNED_PREFIX}~${before} tokens — recover: artifact://${artifactId} (${file.path})]`
+				: `${PRUNED_PREFIX}~${before} tokens]`;
+			file.content = placeholder;
+			noteFreed(index, Math.max(0, before - this.#tokenizer.countTokens(placeholder)));
+			touched.add(branchEntries[index].id);
+		}
+		for (const { index, entry } of imageEntries) {
+			if (this.#stripEntryImages(entry) === 0) continue;
+			noteFreed(index, imageTokens.get(entry.id) ?? 0);
+			touched.add(entry.id);
+		}
+		for (const entry of branchEntries) {
+			if (touched.has(entry.id) && entry.type === "message") invalidateMessageCache(entry.message);
+		}
+		if (touched.size === 0) return { entriesRewritten: 0, tokensFreed: 0 };
+
+		try {
+			this.#host.recordAnchoredHistoryRewrite(anchoredTokensRemoved);
+			await this.#host.sessionManager.rewriteEntries();
+		} catch (error) {
+			for (const [entry, snapshot] of snapshots) Object.assign(entry, snapshot);
+			const sessionContext = this.#host.buildDisplaySessionContext();
+			this.#host.agent.replaceMessages(sessionContext.messages);
+			throw error;
+		}
+		const sessionContext = this.#host.buildDisplaySessionContext();
+		this.#host.agent.replaceMessages(sessionContext.messages);
+		this.#host.resetAdvisorRuntimes("context-prune");
+		this.#host.closeCodexProviderSessionsForHistoryRewrite();
+		return { entriesRewritten: touched.size, tokensFreed, artifactId };
 	}
 
 	/**
@@ -861,6 +1034,8 @@ export class SessionMaintenance {
 			requireArtifact?: boolean;
 			isCurrent?: () => boolean;
 			toolResultsOnly?: boolean;
+			/** Restrict the elision to these tool-result entry ids (whole results only). */
+			entryIds?: ReadonlySet<string>;
 		} = {},
 	): Promise<ShakeResult> {
 		if (mode === "images") {
@@ -933,6 +1108,10 @@ export class SessionMaintenance {
 		});
 		let regions = collectShakeRegions(branchEntries, this.#tokenizer, config);
 		if (opts.toolResultsOnly) regions = regions.filter(region => region.kind === "toolResult");
+		if (opts.entryIds) {
+			const { entryIds } = opts;
+			regions = regions.filter(region => region.kind === "toolResult" && entryIds.has(region.entry.id));
+		}
 		if (regions.length === 0) {
 			return { mode, toolResultsDropped: 0, blocksDropped: 0, tokensFreed: 0 };
 		}

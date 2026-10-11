@@ -177,6 +177,8 @@ import {
 	cfgHideThinkingBlock,
 	cfgOmitThinking,
 	cfgPrewalkEnabled,
+	cfgSessionMaxCostUsd,
+	cfgSessionMaxTokens,
 } from "./session/settings";
 import { cfgDisabledProviders, cfgEnabledModels } from "./config/model-settings";
 import { cfgTaskAgentIdleTtlMs } from "./task/settings";
@@ -1911,6 +1913,9 @@ export async function runRootCommand(
 			// setup-time checks (e.g. #wrapToolForAcpPermission) also see the yolo intent.
 			cfgToolsApprovalMode.override(settingsInstance, "yolo");
 		}
+		// Runtime spend-cap overrides (not persisted); `/budget` replaces them for the session.
+		if (parsedArgs.maxCostUsd !== undefined) cfgSessionMaxCostUsd.override(settingsInstance, parsedArgs.maxCostUsd);
+		if (parsedArgs.maxTokens !== undefined) cfgSessionMaxTokens.override(settingsInstance, parsedArgs.maxTokens);
 		if (parsedArgs.mode === "rpc" || parsedArgs.mode === "rpc-ui") {
 			applyProtocolDefaults("rpc", settingsInstance);
 		} else if (parsedArgs.mode === "acp") {

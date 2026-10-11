@@ -952,6 +952,53 @@ describe("GuestClient capabilities and branches", () => {
 	});
 });
 
+describe("GuestClient context items", () => {
+	it("keeps the host's latest ranking and the prune it reports, and sends the commands as given", () => {
+		const sent: GuestFrame[] = [];
+		const sendSpy = vi.spyOn(CollabSocket.prototype, "send").mockImplementation((frame: GuestFrame) => {
+			sent.push(frame);
+		});
+		try {
+			const client = liveClient();
+			expect(client.getSnapshot().contextItems).toBeNull();
+			const rows = [
+				{
+					id: "tr:a",
+					kind: "toolResult" as const,
+					label: "bash bun test",
+					tokens: 900,
+					share: 0.09,
+					prunable: true,
+				},
+			];
+			client.applyFrameForTest({ t: "context-items", items: rows, usedTokens: 10_000, contextWindow: 200_000 });
+			expect(client.getSnapshot().contextItems).toEqual({
+				items: rows,
+				usedTokens: 10_000,
+				contextWindow: 200_000,
+				pruned: undefined,
+			});
+			client.applyFrameForTest({
+				t: "context-items",
+				items: [],
+				usedTokens: 9_100,
+				contextWindow: 200_000,
+				pruned: { entries: 1, tokensFreed: 900 },
+			});
+			expect(client.getSnapshot().contextItems?.pruned).toEqual({ entries: 1, tokensFreed: 900 });
+
+			client.sendSessionCommand("context-items");
+			client.sendSessionCommand("context-prune", "tr:a");
+			expect(sent).toEqual([
+				{ t: "session-cmd", cmd: "context-items" },
+				{ t: "session-cmd", cmd: "context-prune", arg: "tr:a" },
+			]);
+		} finally {
+			sendSpy.mockRestore();
+		}
+	});
+});
+
 describe("GuestClient file restore", () => {
 	const restored: HostFrame = {
 		t: "files-restored",
@@ -995,5 +1042,30 @@ describe("GuestClient file restore", () => {
 		} finally {
 			sendSpy.mockRestore();
 		}
+	});
+});
+
+describe("GuestClient turn undo", () => {
+	it("publishes each undo or redo reply as its own object", () => {
+		const client = liveClient();
+		expect(client.getSnapshot().turnUndo).toBeNull();
+		client.applyFrameForTest({
+			t: "turn-undone",
+			kind: "undo",
+			text: "fix it",
+			files: { revert: 1, remove: 0, recreate: 0 },
+		});
+		const undone = client.getSnapshot().turnUndo;
+		expect(undone).toMatchObject({ kind: "undo", text: "fix it", files: { revert: 1, remove: 0, recreate: 0 } });
+		// An identical reply must still be a new object so the composer acts on it again.
+		client.applyFrameForTest({
+			t: "turn-undone",
+			kind: "undo",
+			text: "fix it",
+			files: { revert: 1, remove: 0, recreate: 0 },
+		});
+		expect(client.getSnapshot().turnUndo).not.toBe(undone);
+		client.applyFrameForTest({ t: "turn-undone", kind: "redo", staleText: "fix it" });
+		expect(client.getSnapshot().turnUndo).toMatchObject({ kind: "redo", staleText: "fix it" });
 	});
 });

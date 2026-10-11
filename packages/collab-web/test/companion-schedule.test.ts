@@ -389,6 +389,15 @@ describe("parseScheduleInput", () => {
 		await expect(parse({ sandboxed: true }, { ...deps, sandboxAvailable: false })).rejects.toThrow("sandbox");
 		expect((await parse({ sandboxed: true })).sandboxed).toBe(true);
 	});
+
+	it("takes an optional per-run spend limit, never for a resumed session", async () => {
+		expect((await parse({})).maxCostUsd).toBeUndefined();
+		expect((await parse({ maxCostUsd: 2.5 })).maxCostUsd).toBe(2.5);
+		for (const bad of [0, -1, Number.NaN, "5", Number.POSITIVE_INFINITY]) {
+			await expect(parse({ maxCostUsd: bad })).rejects.toThrow("spend limit");
+		}
+		await expect(parse({ mode: "resume", sessionId: "abc123", maxCostUsd: 1 })).rejects.toThrow("spend limit");
+	});
 });
 
 describe("schedule file", () => {

@@ -44,6 +44,7 @@ import { formatSlowModeResetClock } from "../session/anthropic-slow-mode";
 import { cfgExtendedContext } from "../session/context-settings";
 import { cfgGoalEnabled } from "../goals/settings";
 import { cfgPlanEnabled } from "../plan-mode/settings";
+import { describeProfiles, describeSwitch } from "../profiles/command";
 
 export function refreshStatusLine(ctx: InteractiveModeContext): void {
 	ctx.statusLine.invalidate();
@@ -341,6 +342,25 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 			await runWithDetachedModeDraft(command, runtime, () =>
 				runtime.ctx.handlePlanModeCommand(command.args || undefined, runtime.input),
 			);
+		},
+	},
+	{
+		name: "profile",
+		icon: "agents",
+		description: "Show or switch the agent profile (tools, approval, model and prompt bundle)",
+		acpDescription: "Show or switch the agent profile",
+		acpInputHint: "[name]",
+		inlineHint: "[name]",
+		allowArgs: true,
+		getTuiAutocompleteDescription: runtime => `Profile: ${runtime.ctx.session.profiles.active.name}`,
+		handle: async (command, runtime) => {
+			const name = command.args.trim();
+			if (!name) {
+				await runtime.output(describeProfiles(runtime.session));
+				return commandConsumed();
+			}
+			await runtime.output(describeSwitch(await runtime.session.profiles.switch(name)));
+			return commandConsumed();
 		},
 	},
 	{

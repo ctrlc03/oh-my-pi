@@ -230,6 +230,31 @@ bashInterceptor:
 
 The named replacement tool must be available in the current session or the interceptor does not block the Bash call. For a detailed comparison of permission policy and dedicated-tool routing, including compound-command behavior and ordering, see [the Bash tool documentation](tools/bash.md#command-policy-and-dedicated-tool-routing).
 
+### File path rules
+
+`tools.pathRules` is an ordered array of `{ glob, action, tools? }` items (`action`: `allow`, `deny`, or `prompt`; default `[]`) that restrict which paths the file tools (`read`, `edit`, `write`, `ast_edit`, `ast_grep`, `grep`, `glob`, `find`) may touch. The first matching rule wins, so list exceptions before the rule they carve out of. `tools.outsideProject` (`allow` default, `prompt`, or `deny`) applies the same choice to paths outside the session cwd and repo root. Like all arrays, `tools.pathRules` is replaced wholesale by a higher-precedence layer.
+
+```yaml
+tools:
+  outsideProject: prompt
+  pathRules:
+    - glob: "**/.env*"
+      action: deny
+```
+
+Search tools omit denied paths from results instead of failing. Glob syntax, symlink handling, the `prompt`/`allow` semantics, and the limits (it does not cover `bash` or `eval`) are in [Tool approval mode](./approval-mode.md#path-rules).
+
+### Claude Code hooks and permissions
+
+Two enum settings, both default `off`, let omp honor the `hooks` and `permissions` keys of Claude Code's `settings.json` files. Nothing is read from disk while they are `off`.
+
+| Key                  | Type | Default | Notes                                                                                                                                                                                               |
+| -------------------- | ---- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude.hooks`       | enum | `off`   | `off`, `user` (only `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR`), or `all` (also `<project>/.claude/settings.json` and `settings.local.json`). Runs the command hooks; see [Hooks](./hooks.md#claude-code-hooks). |
+| `claude.permissions` | enum | `off`   | Same values. Maps `permissions.allow` / `deny` / `ask` onto `bash.patterns`, `tools.pathRules`, and `tools.approval` for the session; see [Tool approval](./approval-mode.md#claude-code-permissions). |
+
+Project files execute arbitrary commands and can widen approvals, so a **project layer cannot set these keys**: a `claude.hooks` or `claude.permissions` value that comes from `<repo>/.omp/config.yml` or `<repo>/.claude/settings.json` is ignored (a warning is logged) and the user-level value applies. Set them in `~/.omp/agent/config.yml`, with `omp config set claude.hooks all`, or per run with a `--config` overlay. Disabling the `claude` provider (`disabledProviders`) turns both off. The loaded hooks are listed in the `/extensions` dashboard.
+
 ### Worked example: global vs. project
 
 ```yaml
@@ -587,6 +612,15 @@ When the active chat model keeps failing (429s, quota walls, provider outages) a
 
 A prefixed wildcard such as `openrouter/google/*` can be used as a chain key or entry: it matches ids under that prefix or prepends the prefix to the failing model's bare id when changing providers. Bare fallback entries inherit the failing turn's thinking level; an explicit suffix can replace it. When a chain is exhausted, recovery can consult the current fallback model's own chain as well, and each hop still consumes a retry attempt. See [Retry policy](./non-compaction-retry-policy.md) for recovery ordering and quota behavior.
 
+### Spend cap
+
+| Setting              | Type   | Default | Description |
+| -------------------- | ------ | ------- | ----------- |
+| `session.maxCostUsd` | number | `0`     | Hard per-session cost cap in USD; `0` means no cap. |
+| `session.maxTokens`  | number | `0`     | Hard per-session token cap; `0` means no cap. Counts input, output, and cache-write tokens (cache reads excluded, as in `/goal` budgets). |
+
+Both are off by default and have no settings-panel entry. Spend is the session's cumulative usage across every entry in the session — all branches, compacted history, and `task` subagents (advisor and compaction side calls are not counted) — so it never drops on compaction, `/undo`, `/tree`, or resume. When either limit is reached the current turn ends at the next safe point — the turn that crossed the cap finishes its tool calls, and no further model call starts — and the session then refuses new prompts with a clear message. The TUI warns at 80% and shows a notice at the cap. Headless `-p` runs print the notice on stderr and exit with status `3` (`1` stays "failed", `2` "usage"). `--max-cost <usd>` and `--max-tokens <n>` (accepts `200k`, `1.5m`) override these for one run, and `/budget [<usd>|off]` / `/budget tokens <n|off>` raise or clear the cap for the current session without persisting; `/budget` alone shows spend against the cap. `/budget` is separate from `/goal budget`, which bounds one goal's tokens. Subagent sessions do not enforce the cap themselves; their spend counts toward the parent once the `task` call returns. Collab hosts advertise feature `spend-cap` and include `state.spend` while a cap is set.
+
 ### Tools and approvals
 
 ```yaml
@@ -733,6 +767,30 @@ read:
 | `read.toolResultPreview`  | boolean | `false`    | Inline preview of tool results.                   |
 | `read.renderMarkdown` | boolean | `false` | Render Markdown document reads in the TUI. |
 | `readLineNumbers`         | boolean | `false`    | Show plain line numbers.                          |
+
+### Verification after edits
+
+An optional check that runs after the agent changes files and feeds a failure back so the agent keeps fixing. Off until `verify.command` is set; see [Verification step](./hooks.md#verification-step).
+
+```yaml
+# <repo>/.omp/config.yml
+verify:
+  command: bun test # or a list: [bun run lint, bun test]
+  when: turn-end
+  paths: ["src/**", "test/**"]
+  maxAttempts: 3
+```
+
+| Key                     | Type          | Default    | Notes                                                                                                                                                                                                                                              |
+| ----------------------- | ------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `verify.command`        | string / list | `[]`       | Shell command, or a list run in order until one fails, executed in the session working directory. A bare string is a one-command list; `omp config set verify.command 'bun test'` stores that. Empty = feature off.                                  |
+| `verify.when`           | enum          | `turn-end` | `turn-end` verifies when the agent stops; `after-edit` also verifies after every turn that edited files while the run continues, so the failure reaches the agent on its next step.                                                                  |
+| `verify.paths`          | string / list | `[]`       | Globs (relative to the working directory) of files that must have changed for the check to run. A change whose files the tool cannot name (e.g. `ast_edit`) always counts. Empty = any changed file.                                                 |
+| `verify.timeoutMs`      | number        | `120000`   | Per-command deadline in milliseconds; a command that exceeds it is killed and reported as a timed-out failure. `0` = no deadline.                                                                                                                     |
+| `verify.maxOutputChars` | number        | `6000`     | Characters of the failing command's output, taken from the end, included in the message to the agent.                                                                                                                                              |
+| `verify.maxAttempts`    | number        | `3`        | Automatic fix rounds per user prompt. Once spent, further failures only produce a notice. `0` reports failures without ever prompting the agent.                                                                                                      |
+
+These keys are config-file settings (they are not in the settings panel) and work in project config, so a repository can ship its own check. A project config that sets `verify.command` makes omp run that command on your machine, so treat it like any other repository script you would run.
 
 ### Context, compaction, and memory
 
@@ -889,6 +947,8 @@ The `cost` segment shows recorded session costs. For an active provider/model wi
 | `autoResume`           | boolean | `false`         | Auto-resume the most recent session in the cwd.                                                         |
 | `plan.enabled`         | boolean | `true`          | Enable plan mode.                                                                                       |
 | `plan.defaultOnStartup` | boolean | `false`         | Start each fresh interactive session in plan mode when plan mode is enabled. Print/JSON (`--print`) mode ignores this and prints a note; use `--plan-yolo` for a headless plan flow. |
+| `profile.default`      | string  | unset           | Agent profile a session starts in until it switches (`/profile`). Unset starts in `build`, which changes nothing. See [Agent profiles](./profiles.md). |
+| `profiles`             | record  | `{}`            | Named agent profiles (tools, approval, path rules, model, thinking, prompt) by name. See [Agent profiles](./profiles.md). |
 | `ask.timeout`          | number  | `0`             | Auto-select the recommended ask option after this many seconds; `0` disables automatic selection. Also bounds `cfg://` approval prompts; an unanswered approval denies the write instead of auto-selecting. |
 | `ask.notify`           | enum    | `on`            | `on`, `off`.                                                                                            |
 | `input.bareExitOnEmptySession` | boolean | `true` | Submitting exactly `exit`, `quit`, or `q` (case-insensitive) before the first message quits. |
@@ -997,7 +1057,7 @@ Every schema path not individually tabulated in this catalog is explicitly defer
 - Agent behavior and safety: `ask.*`, `dev.*`, `eval.*`, `features.*`, `goal.*`, `loop.*`, `model.loopGuard.*`, `model.toolCallLoopGuard.*`, `prewalk.*`, `recap.*`, `sharpshooter.*`, `task.*`, `tools.*`, and `vault.*`.
 - Execution and content: `commit.*`, `completion.*`, `edit.*`, `error.*`, `extensionHandlers.*`, `generate_image.*`, `git.*`, `images.*`, `live.*`, `paste.*`, `power.*`, `read.*`, `shellMinimizer.*`, `speech.*`, `terminal.*`, and `title.*`.
 - Interface and startup: `composer.*`, `display.*`, `input.*`, `marketplace.*`, `spelling.*`, `statusLine.*`, `startup.*`, `stt.*`, `tui.*`, `ttsr.*`, and `update.*`.
-- Discovery, sharing, and auth: `auth.*`, `browser.*`, `claudeResets.*`, `codexResets.*`, `collab.*`, `commands.*`, `contextFiles.*`, `gc.*`, `ida.*`, `mcp.*`, `share.*`, `skills.*`, `stream.*`, and `telemetry.*`. `contextFiles.extra` is documented in [Context files](./context-files.md#extra-filenames).
+- Discovery, sharing, and auth: `auth.*`, `browser.*`, `claude.*`, `claudeResets.*`, `codexResets.*`, `collab.*`, `commands.*`, `contextFiles.*`, `gc.*`, `ida.*`, `mcp.*`, `share.*`, `skills.*`, `stream.*`, and `telemetry.*`. `contextFiles.extra` is documented in [Context files](./context-files.md#extra-filenames).
 - Ungrouped keys: `setupVersion`, `proseOnlyThinking`, `omitThinking`, `externalThinking`, `includeWorkspaceTree`, `autocompleteMaxVisible`, `emojiAutocomplete`, `disabledExtensions`, `inlineToolDescriptors`, and `treeFilterMode`.
 
 These settings follow the same schema-defined type and default rules shown above.

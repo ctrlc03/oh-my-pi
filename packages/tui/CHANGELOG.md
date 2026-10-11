@@ -142,6 +142,8 @@
 - Fixed dead-key input on older Windows Terminal versions so quotes are entered correctly with Space, Enter, and Tab.
 - Fixed SIXEL graphics detection on terminals, including native Windows Terminal, so SVG figures and inline images work without forcing a graphics protocol.
 - Fixed overflow transcript rendering so user messages no longer appear as blank padding bars or leave stray prompt markers across terminal rows.
+- Added the `app.profile.cycle` keybinding (default `Alt+O`) and an agent-profile badge in the status line's `mode` segment (`SegmentContext.profile`, `StatusLineComponent.setProfileStatus`).
+- Added a ranked "What fills the context" block to the context usage report (`ContextUsageOptions.items`, `ContextRankedItem`), listing the largest items with their token estimate, share and whether they can be pruned.
 
 ## [18.8.9] - 2026-10-10
 

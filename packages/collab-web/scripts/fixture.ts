@@ -18,6 +18,7 @@ import type {
 	ToolCallContent,
 	ToolResultMessage,
 	WireModel,
+	WireProfile,
 	WireUsage,
 } from "@oh-my-pi/pi-wire";
 
@@ -48,6 +49,12 @@ export const fixtureThinkingLevels: Record<string, string[]> = {
 	"openai/gpt-5": ["minimal", "low", "medium", "high"],
 	"openai/gpt-5-mini": ["minimal", "low", "medium", "high"],
 };
+
+/** Profiles the mock host offers a writer through `welcome.profiles`. The first is the session's profile. */
+export const fixtureProfiles: WireProfile[] = [
+	{ name: "build" },
+	{ name: "review", description: "Read-only tools and a review prompt" },
+];
 
 const NOW = Date.now();
 const MIN = 60_000;
@@ -103,6 +110,14 @@ export const fixtureCommands: CollabCommand[] = [
 	{ name: "compact", description: "Compact the conversation to free context", args: "[instructions]" },
 	{ name: "retry", description: "Retry the last turn" },
 	{ name: "rename", description: "Rename this session", args: "<title>" },
+	{
+		name: "undo",
+		description: "Undo the last turn: rewind before your last prompt, restore its files, and edit the prompt again",
+	},
+	{
+		name: "redo",
+		description: "Redo the turn the last /undo removed (conversation and files), until something new is sent",
+	},
 	{ name: "new", description: "Start a new session; the room follows it", switchesSession: true },
 	{
 		name: "resume",

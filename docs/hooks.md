@@ -406,6 +406,61 @@ export default function (pi: HookAPI): void {
 }
 ```
 
+## Claude Code hooks
+
+omp can run the command hooks defined in Claude Code's `settings.json` files, so a project's existing Claude guard scripts keep working. It is implemented as an inline extension (`packages/coding-agent/src/claude-compat/`) on top of the same events described above, not a separate hook system: tool-call timeouts, fail-closed `tool_call` handling, and the approval pipeline are the ones documented here.
+
+### Enabling
+
+`claude.hooks` (default `off`) selects which files are read:
+
+| Value  | Files                                                                                                  |
+| ------ | ------------------------------------------------------------------------------------------------------ |
+| `off`  | None. Nothing is read from disk.                                                                       |
+| `user` | `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`).                                     |
+| `all`  | The user file, then `<project>/.claude/settings.json`, then `<project>/.claude/settings.local.json`.   |
+
+Project hooks run arbitrary shell commands with your privileges, so enable `all` only for repositories you trust. A project cannot enable itself: the setting is read from the user config, a `--config` overlay, or a runtime override; a value that comes from the project layer is ignored (see [Settings](./settings.md#claude-code-hooks-and-permissions)). Setting `disableAllHooks: true` in any admitted file, or disabling the `claude` provider (`disabledProviders`), turns every Claude hook off. The loaded hooks are listed in the `/extensions` dashboard (kind `hook`, provider "Claude Code"); toggling one there adds its id to `disabledExtensions`.
+
+### Supported shape
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/no-rm-rf.sh", "timeout": 10 }]
+      }
+    ]
+  }
+}
+```
+
+Only `"type": "command"` hooks are supported; other types are skipped with a warning. `timeout` is in seconds (default 60). Hooks matching one event run in parallel; identical entries from several files run once. The command runs through `sh -c` (`cmd /c` on Windows) in the session cwd with `CLAUDE_PROJECT_DIR` set to it.
+
+| Claude event       | omp event        | Behavior                                                                                                                                                                                  |
+| ------------------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PreToolUse`       | `tool_call`      | Exit 2 or a deny decision blocks the call; the reason is returned to the model as the tool error. `ask` prompts (blocks when there is no UI).                                              |
+| `PostToolUse`      | `tool_result`    | Runs after successful calls only. Exit 2 stderr, a `block` reason, and `additionalContext` reach the model as trusted context; the tool result is not changed.                              |
+| `UserPromptSubmit` | `input`          | Exit 2 or `block` discards the prompt and tells the user. Plain stdout or `additionalContext` is added to the model's context for that turn. Fires for interactive and RPC prompts, not print mode. |
+| `Stop`             | `session_stop`   | Exit 2 or `{"decision":"block","reason":"…"}` makes the agent continue with the reason. `stop_hook_active` is true on a continuation, so guard against loops as in Claude.                   |
+| `SessionStart`     | `session_start`, `session_switch` | stdout or `additionalContext` is added to the first prompt that follows. `source` is `startup`, `resume`, or `clear`.                                            |
+
+Other Claude events (`Notification`, `SubagentStop`, `PreCompact`, …) are not supported and are skipped with a warning. The main-agent-only events (`UserPromptSubmit`, `Stop`, `SessionStart`) do not fire for subagents; `PreToolUse` and `PostToolUse` fire for their tool calls too.
+
+**Matchers.** `matcher` is a case-sensitive, anchored regular expression over the Claude tool name (`Edit|Write`, `Notebook.*`); `*` or an empty matcher selects every tool. omp tools answer to these names: `bash`→`Bash`, `read`→`Read` (a URL read is `WebFetch`), `edit` and `ast_edit`→`Edit`/`MultiEdit`, `write`→`Write`, `grep`→`Grep`, `glob`→`Glob`, `web_search`→`WebSearch`, `task`→`Task`, `todo`→`TodoWrite`. Any other tool (including `mcp__…`) is matched by its omp name.
+
+**stdin.** The documented JSON object: `session_id`, `transcript_path`, `cwd`, `permission_mode` (`yolo`→`bypassPermissions`, `write`→`acceptEdits`, `always-ask`→`default`), `hook_event_name`, plus `tool_name`, `tool_input`, `tool_use_id` (tool events), `tool_response` (`PostToolUse`: `{ content }`, and `stdout`/`stderr`/`interrupted` for `bash`), `prompt` (`UserPromptSubmit`), `stop_hook_active` (`Stop`), or `source` (`SessionStart`). `tool_input` carries Claude's field names (`file_path`, `url`, `pattern`) next to omp's own fields (`path`, `content`, …).
+
+**Results.**
+
+- Exit `0`: success. stdout that parses as a JSON object is read for `decision` (`block`), `reason`, `continue` (`false` blocks with `stopReason`; on `Stop` it just lets the agent stop, so only `decision: "block"` or exit 2 keep it running), `systemMessage` (shown to the user), and `hookSpecificOutput` (`permissionDecision` `deny`/`ask`, `permissionDecisionReason`, `additionalContext`). The older `"decision": "approve"` is accepted. An `allow`/`approve` result does not bypass omp's own approval policy.
+- Exit `2`: blocking error; stderr is the reason fed back to the model.
+- Any other exit code, a timeout, or a failure to start: non-blocking. The user sees a notice and execution continues, as in Claude.
+
+Not supported: `updatedInput`, `suppressOutput`, and prompt/agent hook types. Hook timeouts are capped just under the runner's own limit (`extensionHandlers.toolCallTimeoutMs`, default 30s, for `PreToolUse`; 30s for the other events) so a slow hook is cut by the hook runner as a non-blocking error instead of the extension runner's fail-closed timeout.
+
 ## Export surface
 
 `packages/coding-agent/src/extensibility/hooks/index.ts` and the package subpath `@oh-my-pi/pi-coding-agent/extensibility/hooks` export:
@@ -416,3 +471,21 @@ export default function (pi: HookAPI): void {
 - `execCommand` re-export
 
 The package root (`@oh-my-pi/pi-coding-agent`) does not re-export `HookAPI`; import legacy hook types from the hooks subpath.
+
+## Verification step
+
+Running the tests (or a linter, or a type check) after the agent edits files and showing it the failure does not need a hook. Set `verify.command` and omp does it itself:
+
+```yaml
+# <repo>/.omp/config.yml
+verify:
+  command: bun test
+```
+
+- **When it runs.** At turn end, once the agent has stopped and files were changed since the last check (successful `edit`, `write`, or `ast_edit` calls; `bash` writes do not count). With `verify.when: after-edit` it also runs after each turn that edited files while the run is still going. `verify.paths` narrows which changed files count.
+- **What the agent sees.** On a non-zero exit or a timeout, the tail of the output (`verify.maxOutputChars`) is added as a hidden, automated message and the agent continues. The message says it came from the harness, not the user. The check reruns only after the agent changes files again, and a passing run restores the fix budget.
+- **Limits.** `verify.maxAttempts` (default 3) automatic fix rounds per user prompt; after that a failure is only reported as a notice. A check that is cancelled because the user aborted never feeds anything back, and one that was cancelled or could not start leaves the edits pending for the next check. While the session is at its [spend cap](./settings.md#spend-cap) no check runs and no fix round is spent; the edits stay pending.
+- **Progress.** Each run reports `verify:` notices ("running", "passed", "failed … attempt n/N"): a status line in the TUI and a notice for collab guests.
+- **Where it does not run.** Sub-agent (task) sessions, sessions whose tools exclude `bash` (sandboxed sessions), and plan mode.
+
+See [Settings](./settings.md#verification-after-edits) for every key. A `session_stop` extension handler remains the tool for checks that need custom logic.

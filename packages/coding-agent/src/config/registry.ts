@@ -158,6 +158,12 @@ export interface ArrayDefinition<T = unknown> extends DefinitionBase {
 	 * one load unchanged with a single warning per entry, so a retired id never breaks startup.
 	 */
 	items?: { values: readonly string[]; label: string };
+	/**
+	 * A bare string is accepted as a one-entry list: configured, parsed from text (`omp config set`), or
+	 * written. Reads always return the list. For settings that are naturally one value but may be several
+	 * (e.g. a command or a list of commands).
+	 */
+	scalar?: true;
 	ui?: UiArray;
 }
 
@@ -574,15 +580,30 @@ export class Setting<T, Id extends string = string> extends Derived<T> {
 				if (!Number.isFinite(parsed)) throw new Error(`Invalid number: ${text}`);
 				return parsed as T;
 			}
-			case "array":
+			case "array": {
+				const scalar = this.definition.type === "array" && this.definition.scalar === true;
+				let parsed: unknown;
+				try {
+					parsed = JSON.parse(trimmed);
+				} catch {
+					if (scalar && trimmed !== "") return [trimmed] as T;
+					throw new Error(`Invalid array JSON: ${text}`);
+				}
+				if (scalar && typeof parsed === "string") return [parsed] as T;
+				if (!this.accepts(parsed)) {
+					if (scalar && trimmed !== "") return [trimmed] as T;
+					throw new Error(`Invalid array JSON: ${text}`);
+				}
+				return parsed as T;
+			}
 			case "record": {
 				let parsed: unknown;
 				try {
 					parsed = JSON.parse(trimmed);
 				} catch {
-					throw new Error(`Invalid ${this.definition.type} JSON: ${text}`);
+					throw new Error(`Invalid record JSON: ${text}`);
 				}
-				if (!this.accepts(parsed)) throw new Error(`Invalid ${this.definition.type} JSON: ${text}`);
+				if (!this.accepts(parsed)) throw new Error(`Invalid record JSON: ${text}`);
 				return parsed as T;
 			}
 			case "string":
@@ -617,7 +638,7 @@ export class Setting<T, Id extends string = string> extends Derived<T> {
 			case "enum":
 				return typeof value === "string" && this.definition.values.includes(value);
 			case "array":
-				return Array.isArray(value);
+				return Array.isArray(value) || (this.definition.scalar === true && typeof value === "string");
 			case "record":
 				return typeof value === "object" && value !== null && !Array.isArray(value);
 		}
@@ -642,7 +663,8 @@ export class Setting<T, Id extends string = string> extends Derived<T> {
 		if (raw === undefined || this.accepts(raw)) {
 			// A fixed value re-arms this instance's warning, so breaking it again is reported again.
 			settings.warnState.invalid.delete(this.id);
-			return raw === undefined ? this.default : (raw as T);
+			if (raw === undefined) return this.default;
+			return (this.definition.type === "array" && typeof raw === "string" ? [raw] : raw) as T;
 		}
 		const warned = settings.warnState.invalid;
 		if (!warned.has(this.id) || !Bun.deepEquals(warned.get(this.id), raw)) {

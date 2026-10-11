@@ -841,6 +841,29 @@ export const cfgRetry = combine({
 /** Retry/backoff policy ({@link cfgRetry}). */
 export type RetrySettings = SettingValueOf<typeof cfgRetry>;
 
+function validateNonNegativeNumber(raw: unknown): void {
+	if (raw !== undefined && (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0)) {
+		throw new Error(`Expected a number ≥ 0 (0 = no cap), got ${Bun.inspect(raw)}`);
+	}
+}
+
+/** Hard per-session spend cap in USD; `0` = no cap. `--max-cost` and `/budget` override it for one session. */
+export const cfgSessionMaxCostUsd = register({
+	id: "session.maxCostUsd",
+	type: "number",
+	default: 0,
+	validate: validateNonNegativeNumber,
+});
+
+/** Hard per-session token cap (input + output + cache writes); `0` = no cap. `--max-tokens` overrides it for one session. */
+export const cfgSessionMaxTokens = register({
+	id: "session.maxTokens",
+	type: "number",
+	default: 0,
+	validate: validateNonNegativeNumber,
+	normalize: value => (typeof value === "number" ? Math.floor(value) : value),
+});
+
 export const cfgProvidersAnthropicServerSideFallback = register({
 	id: "providers.anthropic.serverSideFallback",
 	type: "boolean",

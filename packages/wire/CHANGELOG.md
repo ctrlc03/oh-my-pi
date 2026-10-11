@@ -15,6 +15,10 @@
 - Added `TspToolProps.command` (the command line Copy command copies), `TspToolProps.preview: "children"` (the collapsed body stays whole while its children clamp) and `TspCodeProps.preview`
 ### Added
 
+- The `undo` feature: `undo` and `redo` session commands, `SessionState.redoTurns`, and the targeted `turn-undone` host frame (`kind`, the undone prompt's `text`/`images`, `staleText`, `files`, `skipped`, `filesUnavailable`) (protocol version unchanged).
+- The `profiles` feature: `session-cmd` `profile` (arg: a profile name), `welcome.profiles` (`WireProfile`: name, description; writers only) and `SessionState.profile` (the active profile) (protocol version unchanged).
+- The `context-items` feature: `session-cmd` `context-items` and `context-prune` (arg: a row id), answered by the targeted `context-items` frame (`ContextItemRow`: id, kind, label, tokens, share, prunable; `usedTokens`, `contextWindow`, and `pruned` after a prune) (protocol version unchanged).
+- The `spend-cap` feature and `SessionState.spend` (`SessionSpend`: spent, cap, `capped`), present while the host's session has a spend cap (protocol version unchanged).
 - `hello.resume` and `hello.zip` guest fields, `welcome.resumed`, and the `ZIP_MARKER` / `ZIP_MIN_BYTES` constants for resuming from a known entry and compressed frames (protocol version unchanged).
 - `rename` session command: `session-cmd` with the new session name as `arg`.
 - `CollabFeature` and `welcome.features`; `prompt.deliver: "follow-up"`; `rewind` and `unqueue` session commands; `SessionState.followUps`; the `branch` host frame for active-path changes (protocol version unchanged).

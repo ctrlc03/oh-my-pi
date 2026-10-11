@@ -1,5 +1,5 @@
-import type { SessionCommand, WireModel } from "@oh-my-pi/pi-wire";
-import { Brain, ChevronDown } from "lucide-react";
+import type { SessionCommand, WireModel, WireProfile } from "@oh-my-pi/pi-wire";
+import { Brain, ChevronDown, UserCog } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 import { useCallback, useState } from "react";
 import { fmtTokens } from "../../lib/format";
@@ -68,12 +68,16 @@ export interface ModelControlsProps {
 	thinkingLevels: readonly string[] | undefined;
 	disabled: boolean;
 	onSessionCommand(cmd: SessionCommand, arg?: string): void;
+	/** Profiles the host offers; null or empty (host without `profiles`, view-only guest) hides the profile pill. */
+	profiles?: readonly WireProfile[] | null;
+	/** Name of the active profile. */
+	profile?: string;
 	/** Extra pills after the thinking pill. */
 	children?: ReactNode;
 }
 
 interface OpenMenu {
-	kind: "model" | "thinking";
+	kind: "model" | "thinking" | "profile";
 	/** The pill that opened it: the menu opens upward from there. */
 	anchor: DOMRect;
 }
@@ -87,6 +91,8 @@ export function ModelControls({
 	disabled,
 	onSessionCommand,
 	children,
+	profiles,
+	profile,
 }: ModelControlsProps): ReactNode {
 	const [menu, setMenu] = useState<OpenMenu | null>(null);
 	const close = useCallback(() => setMenu(null), []);
@@ -122,6 +128,20 @@ export function ModelControls({
 					<span className="sh-pill-text">{level}</span>
 				</button>
 			)}
+			{profiles && profiles.length > 0 && (
+				<button
+					type="button"
+					className="sh-pill"
+					onClick={open("profile")}
+					disabled={disabled}
+					aria-haspopup="dialog"
+					aria-expanded={menu?.kind === "profile"}
+					title="switch profile"
+				>
+					<UserCog size={13} aria-hidden />
+					<span className="sh-pill-text">{profile ?? "profile"}</span>
+				</button>
+			)}
 			{menu?.kind === "model" && (
 				<Sheet label="model" anchor={menu.anchor} onClose={close}>
 					<ModelList
@@ -151,6 +171,34 @@ export function ModelControls({
 								{option}
 							</button>
 						))}
+					</div>
+				</Sheet>
+			)}
+			{menu?.kind === "profile" && profiles && (
+				<Sheet label="profile" anchor={menu.anchor} onClose={close}>
+					<div className="sh-model-list" role="radiogroup" aria-label="profile">
+						<div className="sh-model-provider">Profile</div>
+						{profiles.map(option => {
+							const on = option.name === profile;
+							return (
+								<button
+									key={option.name}
+									type="button"
+									role="radio"
+									aria-checked={on}
+									className={on ? "sh-model sh-model-on" : "sh-model"}
+									onClick={() => {
+										close();
+										if (!on) onSessionCommand("profile", option.name);
+									}}
+								>
+									<span className="sh-profile-text">
+										<span>{option.name}</span>
+										{option.description && <span className="sh-sheet-faint">{option.description}</span>}
+									</span>
+								</button>
+							);
+						})}
 					</div>
 				</Sheet>
 			)}

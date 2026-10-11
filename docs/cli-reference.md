@@ -146,6 +146,8 @@ See [providers](./providers.md) and [models](./models.md) for model resolution.
 | `--auto-approve`, `--yolo` | Force yolo tier approval; explicit tool/user policies and provider safety checks still apply. |
 | `--advisor` | Enable the advisor runtime (passively reviews each turn and injects notes). See [advisor / watchdog](./advisor-watchdog.md). |
 | `--max-time <duration>` | Stop the session after this duration (e.g. `600`, `10m`, `1h`). |
+| `--max-cost <usd>` | Hard per-session cost cap in USD (e.g. `0.5`). The run stops at the next safe point once spend reaches it; headless `-p` exits with status `3`. See [spend cap](./settings.md#spend-cap). |
+| `--max-tokens <n>` | Hard per-session token cap (e.g. `500000`, `200k`, `1.5m`; input + output + cache-write). Same stop behavior and exit status as `--max-cost`. |
 
 #### Extensions, hooks, skills, and rules
 
@@ -210,11 +212,15 @@ Related flags for headless runs:
 - `--mode json` — emit structured events instead of rendered text.
 - `--no-title` — skip title auto-generation (also `PI_NO_TITLE`).
 - `--max-time <duration>` — bound the run.
+- `--max-cost <usd>` / `--max-tokens <n>` — cap spend; a capped run exits with status `3`.
+
+To run omp from issue and pull request comments in GitHub Actions, see [Run omp from GitHub](./github-action.md).
 
 `--mode json` emits a session header followed by events as JSON lines.
 Incremental `message_update` events omit full partial-message snapshots; completed
 messages arrive in `message_end`, and opaque provider replay payloads are omitted.
 Terminal turn failures produce a nonzero exit status in both text and JSON modes.
+A run that reaches `--max-cost` / `--max-tokens` (or `session.maxCostUsd` / `session.maxTokens`) stops at the next safe point, prints the spend-cap notice on stderr, and exits with status `3`; in `--mode json` the same notice is also a `notice` event with `source: "budget"`. Remaining `-p` messages are skipped.
 
 `plan.defaultOnStartup` is ignored in print mode because there is no plan-review
 UI. Use `--plan-yolo` for unattended planning and implementation.

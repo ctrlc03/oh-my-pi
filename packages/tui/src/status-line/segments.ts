@@ -485,7 +485,7 @@ function formatLoopLimit(
 	return `${seconds}s left`;
 }
 
-const modeSegment: StatusLineSegment = {
+const sessionModeSegment: StatusLineSegment = {
 	id: "mode",
 	render(ctx) {
 		const pauseSuffix = theme.icon.pause ? ` ${theme.icon.pause}` : " (paused)";
@@ -560,6 +560,24 @@ const modeSegment: StatusLineSegment = {
 			);
 		}
 		return null;
+	},
+};
+
+/** The session modes (plan, goal, vibe, loop), preceded by the agent profile when one other than the default is active. */
+const modeSegment: StatusLineSegment = {
+	id: "mode",
+	render(ctx) {
+		const modes = sessionModeSegment.render(ctx);
+		if (!ctx.profile) return modes;
+		const badge = accentFg(ctx, "accent", withIcon(theme.icon.agents, ctx.profile.name));
+		return { content: modes.visible ? `${badge} ${modes.content}` : badge, visible: true };
+	},
+	describe(ctx) {
+		const modes = sessionModeSegment.describe(ctx);
+		if (!ctx.profile) return modes;
+		const badge = span(ctx.profile.name, accentToken(ctx, "accent"));
+		if (!modes) return segView([badge], "agents");
+		return segView([badge, span(" "), ...modes.spans], modes.icon ?? "agents", modes.tone);
 	},
 };
 

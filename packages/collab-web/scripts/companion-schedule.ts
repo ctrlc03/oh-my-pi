@@ -9,6 +9,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import {
+	MAX_SCHEDULE_COST_USD,
 	MAX_SCHEDULE_PROMPT_CHARS,
 	MAX_SCHEDULE_TITLE_CHARS,
 	type Schedule,
@@ -105,6 +106,17 @@ function parseFields(raw: unknown): ScheduleInput {
 	} else if (input.sessionId !== undefined) {
 		throw new Error("only a resumed run names a session");
 	}
+	if (input.maxCostUsd !== undefined) {
+		if (
+			typeof input.maxCostUsd !== "number" ||
+			!Number.isFinite(input.maxCostUsd) ||
+			input.maxCostUsd <= 0 ||
+			input.maxCostUsd > MAX_SCHEDULE_COST_USD
+		)
+			throw new Error(`the spend limit must be between $0 and $${MAX_SCHEDULE_COST_USD}`);
+		if (input.mode === "resume")
+			throw new Error("a spend limit needs a new session: a resumed session's cap counts all it has spent");
+	}
 	if (input.enabled !== undefined && typeof input.enabled !== "boolean") throw new Error("invalid enabled");
 	return {
 		id: input.id,
@@ -115,6 +127,7 @@ function parseFields(raw: unknown): ScheduleInput {
 		sessionId,
 		worktree,
 		sandboxed,
+		maxCostUsd: input.maxCostUsd,
 		when: parseWhen(input.when),
 		enabled: input.enabled !== false,
 	};

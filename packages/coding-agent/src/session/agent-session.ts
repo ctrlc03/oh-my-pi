@@ -125,6 +125,7 @@ import {
 	type ResolvedModelRoleValue,
 	resolveCliModel,
 	resolveSessionModelSelector,
+	resolveModelRoleValue,
 	sessionModelDiscoveryProviders,
 } from "../config/model-resolver";
 import { expandPromptTemplate, type PromptTemplate } from "../config/prompt-templates";
@@ -265,6 +266,7 @@ import {
 } from "../utils/title-card";
 import { generateSessionTitle, nerdGlyphsActive } from "../utils/title-generator";
 import { buildNamedToolChoice, isToolChoiceActive } from "../utils/tool-choice";
+import { runVerifyCommands } from "../verify/run";
 import type { VibeModeState } from "../vibe/state";
 import type { AgentSessionEvent, AgentSessionEventListener } from "./agent-session-events";
 import type {
@@ -449,6 +451,8 @@ import { SessionStatsTracker, type SessionStatsTrackerHost } from "./session-sta
 import { SessionTools, type SessionToolsHost } from "./session-tools";
 import { resolveOpenAIWebsocketPreference } from "./settings-stream-fn";
 import type { ShakeMode, ShakeResult } from "./shake-types";
+import { SpendCapController, type SpendCapLimits, type SpendCapStatus } from "./spend-cap";
+import type { ContextItem, ContextPruneResult } from "./context-items";
 import { ToolChoiceQueue } from "./tool-choice-queue";
 import { planTurnPersistence, sameMessageContent, sessionMessagePersistenceKey } from "./turn-persistence";
 import { TurnRecovery, type TurnRecoveryHost } from "./turn-recovery";
@@ -466,7 +470,9 @@ const TITLE_FORK_TIMEOUT_MS = 15_000;
 
 import { LoopGuards, type StreamGuardsHost, StreamingEditGuard } from "./stream-guards";
 import { TodoTracker, type TodoTrackerHost } from "./todo-tracker";
+import { PROFILE_ENTRY_TYPE, readPersistedProfileName, SessionProfiles } from "../profiles/controller";
 import { TtsrCoordinator, type TtsrCoordinatorHost } from "./ttsr-coordinator";
+import { VERIFY_FAILURE_MESSAGE_TYPE, VerifyTracker, writePathsOfCall } from "./verify-tracker";
 
 import { cfgAdvisorEnabled, cfgAdvisorMaxNotesPerUpdate } from "../advisor/settings";
 import { cfgBrowserEnabled, cfgBrowserFreezeOnTurnEnd, cfgBrowserIdleCloseSec } from "../tools/browser/settings";
@@ -501,8 +507,10 @@ import {
 	FileSnapshotError,
 	FileSnapshotStore,
 	type FileRestorePlan,
+	type FileRestorePoint,
 	type FileRestoreResult,
 } from "./file-snapshots";
+import { TurnUndo } from "./turn-undo";
 import type { UsageLimitState } from "./usage-limit";
 import { cfgInterruptMode } from "../modes/settings";
 import { cfgFollowUpMode } from "../modes/settings";
@@ -922,7 +930,10 @@ export class AgentSession implements SettingsScope {
 	#planModeReminderCount = 0;
 	#planModeReminderAwaitingProgress = false;
 	readonly #todo: TodoTracker;
+	readonly #verify: VerifyTracker;
 	readonly #modelMentions: ModelMentionRegistry;
+	/** Agent profile state; created on first use so subagent sessions never load profile definitions. */
+	#profilesInstance: SessionProfiles | undefined;
 	#workPoolYieldItems: readonly WorkPoolYieldItem[] = [];
 	/** Item set matching the last successfully rebuilt provider prompt. The base
 	 *  prompt starts consistent with the empty set; every later value is a
@@ -1057,6 +1068,7 @@ export class AgentSession implements SettingsScope {
 
 	readonly #ttsr: TtsrCoordinator;
 	readonly #stats: SessionStatsTracker;
+	readonly #spendCap: SpendCapController;
 
 	/** One-shot flag for expected internal plan-mode aborts. Approval actions may
 	 *  abort the post-approval continuation before compaction, execution, or
@@ -1161,6 +1173,8 @@ export class AgentSession implements SettingsScope {
 	});
 	/** The working-tree snapshot taken before each prompt, until its entry is persisted and bound. */
 	#turnFileSnapshots = new WeakMap<object, CapturedSnapshot>();
+	/** `/undo` and `/redo`: one-step walks back and forth over the last turns, conversation and files together. */
+	readonly turnUndo = new TurnUndo(this);
 	#lastSuccessfulYieldToolCallId: string | undefined = undefined;
 	/**
 	 * Sticky across an in-flight prompt run: a successful `yield` makes the run
@@ -1811,6 +1825,19 @@ export class AgentSession implements SettingsScope {
 			consumeLastServedToolChoiceLabel: () => this.#toolChoiceQueue.consumeLastServedLabel(),
 		};
 		this.#todo = new TodoTracker(todoHost);
+		this.#verify = new VerifyTracker({
+			settings: this.settings,
+			cwd: () => this.sessionManager.getCwd(),
+			sessionKey: () => `verify:${this.sessionManager.getSessionId()}`,
+			agentKind: () => this.#agentKind,
+			planModeEnabled: () => this.#planModeState?.enabled === true,
+			getEnabledToolNames: () => this.getEnabledToolNames(),
+			toolWritePaths: (toolName, args) =>
+				writePathsOfCall(toolName, args, this.#tools.registry.get(toolName)?.matcherPaths?.(args)),
+			spendCapped: () => this.#spendCap.shouldStop(),
+			emitNotice: (level, message, source) => this.emitNotice(level, message, source),
+			run: runVerifyCommands,
+		});
 		this.#modelMentions = new ModelMentionRegistry({
 			sessionManager: this.sessionManager,
 			modelRegistry: this.#modelRegistry,
@@ -1945,6 +1972,16 @@ export class AgentSession implements SettingsScope {
 			sessionId: () => this.sessionId,
 		};
 		this.#stats = new SessionStatsTracker(statsHost);
+		this.#spendCap = new SpendCapController(
+			{
+				settings: this.settings,
+				readSpend: () => this.#stats.getSpendUsage(),
+				emitNotice: (level, message, source) => this.emitNotice(level, message, source),
+			},
+			config.enforceSpendCap !== false,
+		);
+		// Runs end at the next boundary after the turn that crossed a cap; its tools have finished by then.
+		this.agent.setShouldStop(() => this.#spendCap.shouldStop());
 		const memoryHost: SessionMemoryHost = {
 			agent: this.agent,
 			settings: this.settings,
@@ -2022,6 +2059,10 @@ export class AgentSession implements SettingsScope {
 			await this.#prewalk.advanceAtTurnEnd(messages, context);
 			if (context?.willContinue) this.#steerAnthropicWrapUp();
 			await this.#advisors.onPrimaryTurnEnd(messages, context?.willContinue, signal);
+			if (context?.willContinue && signal) {
+				const verifyFailure = await this.#verify.verifyAfterEdit(signal);
+				if (verifyFailure) this.agent.steer(verifyFailure);
+			}
 			await this.#maintenance.maintainContextMidRun(messages, signal, context);
 		});
 		this.yieldQueue = new YieldQueue({
@@ -2450,6 +2491,7 @@ export class AgentSession implements SettingsScope {
 			syncTodoPhasesFromBranch: () => {
 				this.#todo.syncFromBranch();
 				this.#modelMentions.syncFromBranch();
+				this.#profilesInstance?.syncFromBranch();
 			},
 			resetAdvisorRuntimes: (reason, options) => this.#advisors.resetAllRuntimes(reason, options),
 			rebaseAdvisorPrefix: reason => this.#advisors.rebaseDeliveredPrefixes(reason),
@@ -3875,6 +3917,8 @@ export class AgentSession implements SettingsScope {
 		// This must happen before event fan-out awaits: streamed tool-call deltas
 		// can otherwise queue validation that a delayed turn-start reset erases.
 		if (event.type === "turn_start") this.#streamingEditGuard.reset();
+		// Spend counts from message_end, before the journal append that trails it.
+		if (event.type === "message_end") this.#stats.recordSettledMessage(event.message);
 		// Step the mid-run todo counter synchronously, BEFORE any await in this
 		// handler. The agent loop's next-turn `getAsideMessages` poll can run
 		// before queued microtasks drain, so `#takeMidRunTodoNudge` MUST see the
@@ -3888,6 +3932,7 @@ export class AgentSession implements SettingsScope {
 		// not progress an agent could mark done.
 		if (event.type === "message_end" && event.message.role === "toolResult") {
 			this.#todo.onToolResult(event.message.toolName, event.message.isError);
+			this.#verify.onToolResult(event.message.toolCallId, event.message.toolName, event.message.isError);
 		}
 		// Track the settled assistant turn synchronously as well: agent_end
 		// maintenance reads `#lastAssistantMessage`, and when a turn's events all
@@ -3896,6 +3941,7 @@ export class AgentSession implements SettingsScope {
 		// toolUse) assistant message and skipping settle-only work.
 		if (event.type === "message_end" && event.message.role === "assistant") {
 			this.#lastAssistantMessage = event.message;
+			this.#verify.onAssistantMessage(event.message);
 			this.#cacheWarmer?.onResponse(event.message);
 			const deferred = this.#deferredTitle;
 			if (deferred && !deferred.replied) {
@@ -4073,6 +4119,7 @@ export class AgentSession implements SettingsScope {
 		}
 
 		if (event.type === "turn_end") this.#ttsr.onTurnEnd();
+		if (event.type === "turn_end") this.#spendCap.onTurnEnd();
 		// Finalize the tool-choice queue's in-flight yield after tools have executed.
 		// This must happen at turn_end (not message_end) because onInvoked handlers
 		// run during tool execution, which happens between message_end and turn_end.
@@ -4605,6 +4652,16 @@ export class AgentSession implements SettingsScope {
 				await emitAgentEndNotification({ willContinue: true, awaitingAsyncWork: true });
 				return;
 			}
+			// Verification runs only at the true stop (the pending-async-wake pass above defers it) and
+			// never on an errored turn, which has no finished work to check.
+			if (
+				msg.stopReason !== "error" &&
+				emptyOutputRecovery !== "terminal" &&
+				(await this.#scheduleVerifyFollowUp())
+			) {
+				await emitAgentEndNotification({ willContinue: true });
+				return;
+			}
 			const sessionStopWillContinue = await this.#emitSessionStopEvent(activeMessages, msg);
 			await emitAgentEndNotification(sessionStopWillContinue ? { willContinue: true } : undefined);
 		}
@@ -5123,6 +5180,7 @@ export class AgentSession implements SettingsScope {
 			yielded: !options?.willContinue || awaitingAsyncWork,
 			...(awaitingAsyncWork ? { awaitingAsyncWork } : {}),
 		});
+		if (!options?.willContinue) await this.#profilesInstance?.applyPending();
 		void this.#emitAgentEndNotification([...activeMessages], options).catch(err => {
 			logger.error("Agent end extension notification failed", { err });
 		});
@@ -5134,6 +5192,27 @@ export class AgentSession implements SettingsScope {
 			messages,
 			willContinue: options?.willContinue,
 		});
+	}
+
+	/** @returns true when a failed verification scheduled a hidden follow-up turn carrying its output. */
+	async #scheduleVerifyFollowUp(): Promise<boolean> {
+		if (this.#abortInProgress || this.#isDisposed || this.#activeAgentPromptGeneration !== this.#promptGeneration) {
+			return false;
+		}
+		const generation = this.#promptGeneration;
+		const signal = this.#postPromptTasksAbortController.signal;
+		const failure = await this.#verify.verify(signal);
+		if (
+			!failure ||
+			signal.aborted ||
+			this.#abortInProgress ||
+			this.#isDisposed ||
+			this.#promptGeneration !== generation
+		) {
+			return false;
+		}
+		this.#queueHiddenNextTurnMessage(failure, true);
+		return true;
 	}
 
 	/** @returns true when a hidden session_stop continuation turn was scheduled. */
@@ -6043,6 +6122,62 @@ export class AgentSession implements SettingsScope {
 		return this.agent.state.model;
 	}
 
+	/** The agent profile controller: switching, listing, and the active profile's prompt section. */
+	get profiles(): SessionProfiles {
+		this.#profilesInstance ??= new SessionProfiles({
+			settings: this.settings,
+			cwd: () => this.sessionManager.getCwd(),
+			setToolFilter: filter => this.#tools.setToolFilter(filter),
+			refreshPrompt: () => this.refreshBaseSystemPrompt(),
+			resolveModel: selector => {
+				const resolved = resolveModelRoleValue(selector, this.#modelRegistry.getAvailable(), {
+					settings: this.settings,
+					matchPreferences: getModelMatchPreferences(this.settings),
+				});
+				return resolved.model
+					? {
+							model: resolved.model,
+							thinkingLevel: resolved.explicitThinkingLevel ? resolved.thinkingLevel : undefined,
+						}
+					: undefined;
+			},
+			currentModel: () => this.model,
+			currentThinkingLevel: () => this.configuredThinkingLevel(),
+			setModel: (model, level) => this.setModelTemporary(model, level),
+			setThinkingLevel: level => this.setThinkingLevel(level),
+			isBusy: () => this.isStreaming || this.isCompacting,
+			switchBlocker: () => {
+				if (this.#planModeState?.enabled) return "exit plan mode first";
+				if (this.#goalModeState?.enabled) return "exit goal mode first";
+				if (this.#vibeModeState?.enabled) return "exit vibe mode first";
+				return undefined;
+			},
+			persistedName: () => readPersistedProfileName(this.sessionManager.getBranch()),
+			persist: name => {
+				this.sessionManager.appendCustomEntry(PROFILE_ENTRY_TYPE, { name });
+			},
+			notify: (level, message) => this.emitNotice(level, message, "profile"),
+		});
+		return this.#profilesInstance;
+	}
+
+	/** Extra system-prompt section of the active agent profile, if any. */
+	get profilePromptSection(): string | undefined {
+		return this.#profilesInstance?.promptSection;
+	}
+
+	/** Whether the active agent profile limits the `lsp` tool to navigation and diagnostics. */
+	get profileLspReadOnly(): boolean {
+		return this.#profilesInstance?.active.lspReadOnly === true;
+	}
+
+	/** Puts a main session into its recorded (or default) agent profile once its tools exist. */
+	async initializeProfile(): Promise<void> {
+		if (this.#agentKind !== "main") return;
+		this.profiles.syncFromBranch();
+		await this.profiles.idle();
+	}
+
 	/**
 	 * On the first successful response from a lazy-load local model, re-probe its
 	 * runtime context window and fold the result into the live session model.
@@ -6566,6 +6701,20 @@ export class AgentSession implements SettingsScope {
 		return this.#maintenance.shake(mode, opts);
 	}
 
+	/** What fills the context window, ranked by estimated tokens (see `/context`). */
+	getContextItems(): ContextItem[] {
+		return this.#maintenance.getContextItems();
+	}
+
+	/**
+	 * Elide the given {@link getContextItems} rows, keeping the transcript provider-valid.
+	 * @throws SessionBusyError while a turn, compaction, or command could still write into the transcript.
+	 */
+	async pruneContextItems(items: readonly ContextItem[]): Promise<ContextPruneResult> {
+		this.#assertIdleForSnapshot("prune the context");
+		return this.#maintenance.pruneContextItems(items);
+	}
+
 	/** Compact the active session history. */
 	compact(customInstructions?: string, options?: CompactOptions): Promise<CompactionResult> {
 		return this.#maintenance.compact(customInstructions, options);
@@ -6890,10 +7039,18 @@ export class AgentSession implements SettingsScope {
 		return this.#fileSnapshots.restoreBefore(entryId);
 	}
 
-	/** Undo the last file restore. Refuses (FileSnapshotError) while busy or when files changed since. */
-	redoFileRestore(): Promise<FileRestoreResult> {
+	/** The point the last file restore (or redo) can be reverted to, for {@link redoFileRestore} to return to later. */
+	get fileRestorePoint(): FileRestorePoint | undefined {
+		return this.#fileSnapshots.restorePoint;
+	}
+
+	/**
+	 * Undo the last file restore, or return to an earlier `point`. Refuses (FileSnapshotError) while
+	 * busy or when files changed since.
+	 */
+	redoFileRestore(point?: FileRestorePoint): Promise<FileRestoreResult> {
 		this.#assertIdleForFileRestore();
-		return this.#fileSnapshots.redo();
+		return this.#fileSnapshots.redo(point);
 	}
 
 	/** Snapshot the working tree before the user prompts in `messages` reach the agent; their entries get bound to it. */
@@ -7453,6 +7610,8 @@ export class AgentSession implements SettingsScope {
 
 		const promptAttribution = options?.attribution ?? (options?.synthetic ? "agent" : "user");
 
+		// A session at its spend cap neither starts nor queues work; /budget raises or clears the cap.
+		this.#spendCap.assertCanPrompt();
 		// If streaming, queue via steer()/followUp()/aside based on option
 		if (this.isStreaming) {
 			const streamingBehavior = options?.streamingBehavior;
@@ -7977,6 +8136,7 @@ export class AgentSession implements SettingsScope {
 		// every pre-dispatch bail (generation bump from abort, disposal, usage
 		// preflight denial) exits silently, and prompt() uses the outcome to hand
 		// the typed text back to the host instead of losing it.
+		this.#spendCap.assertCanPrompt();
 		this.#beginInFlight();
 		const generation = this.#promptGeneration;
 		this.#promptSequence++;
@@ -7993,6 +8153,11 @@ export class AgentSession implements SettingsScope {
 			this.#irc.flushPending();
 
 			this.#todo.resetCycle();
+			this.#verify.onPromptStart(
+				[...(options?.prependMessages ?? []), message].some(
+					queued => queued.role === "custom" && queued.customType === VERIFY_FAILURE_MESSAGE_TYPE,
+				),
+			);
 			this.#resetPromptMaintenanceState();
 			this.#recovery.setAcceptTerminalEmptyStop(options?.acceptTerminalEmptyStop === true);
 
@@ -9910,6 +10075,9 @@ export class AgentSession implements SettingsScope {
 			this.#resetInFlight();
 			this.#resetSessionStopContinuationState();
 			this.#clearPendingSessionStopContinuations();
+			this.#pendingNextTurnMessages = this.#pendingNextTurnMessages.filter(
+				queued => queued.customType !== VERIFY_FAILURE_MESSAGE_TYPE,
+			);
 			// Safety net: if the agent loop aborted without producing an assistant
 			// message (e.g. failed before the first stream), the in-flight yield was
 			// never resolved or rejected by the normal message_end path. Reject it now
@@ -10033,6 +10201,7 @@ export class AgentSession implements SettingsScope {
 			this.sessionManager.appendServiceTierChange(this.#models.serviceTierEntry());
 
 			this.#todo.resetCycle();
+			this.#verify.reset();
 			this.#planReferenceSent = false;
 			this.#planReferencePath = "local://PLAN.md";
 			this.#advisors.resetSessionState();
@@ -10775,6 +10944,7 @@ export class AgentSession implements SettingsScope {
 		this.#advisors.resetSessionState({ preserveCost: true });
 		this.#todo.syncFromBranch();
 		this.#modelMentions.syncFromBranch();
+		this.#profilesInstance?.syncFromBranch();
 		this.#closeCodexProviderSessionsForHistoryRewrite();
 		this.#checkpointState = undefined;
 		this.#pendingRewindReport = undefined;
@@ -11731,6 +11901,7 @@ export class AgentSession implements SettingsScope {
 			this.#advisors.resetSessionState({ preserveCost: true });
 			this.#todo.syncFromBranch();
 			this.#modelMentions.syncFromBranch();
+			this.#profilesInstance?.syncFromBranch();
 			if (switchingToDifferentSession) {
 				this.#closeAllProviderSessions("session switch");
 			} else if (didReloadConversationChange) {
@@ -11904,6 +12075,7 @@ export class AgentSession implements SettingsScope {
 			}
 			this.#todo.syncFromBranch();
 			this.#modelMentions.syncFromBranch();
+			this.#profilesInstance?.syncFromBranch();
 			this.#advisors.resetAllRuntimes();
 			this.#advisors.reattachRecorderFeeds();
 			this.#reconnectToAgent();
@@ -12072,6 +12244,7 @@ export class AgentSession implements SettingsScope {
 			this.#rehydrateCheckpointRewindState();
 			this.#todo.syncFromBranch();
 			this.#modelMentions.syncFromBranch();
+			this.#profilesInstance?.syncFromBranch();
 			this.#freshProviderSessionId = undefined;
 			this.#clearInheritedProviderPromptCacheKey();
 			this.#syncAgentSessionId();
@@ -12195,6 +12368,7 @@ export class AgentSession implements SettingsScope {
 			this.sessionManager.appendMessage(sanitizeAssistantForReparentedHistory(assistantMessage));
 			this.#todo.syncFromBranch();
 			this.#modelMentions.syncFromBranch();
+			this.#profilesInstance?.syncFromBranch();
 			this.#freshProviderSessionId = undefined;
 			this.#syncAgentSessionId();
 			this.#memory.rekeyForCurrentSessionId();
@@ -12263,6 +12437,12 @@ export class AgentSession implements SettingsScope {
 			 * the original one.
 			 */
 			reanswerAskResult?: AgentToolResult<AskToolDetails>;
+			/**
+			 * Put the leaf on `targetId` itself even when it is a user request or a custom
+			 * message, which otherwise rewind past themselves and hand their text back
+			 * for the editor. Lets `/redo` return to a conversation tip that is a prompt.
+			 */
+			landOnTarget?: boolean;
 		} = {},
 	): Promise<{
 		editorText?: string;
@@ -12303,7 +12483,8 @@ export class AgentSession implements SettingsScope {
 			targetEntry.type === "message" &&
 			targetEntry.message.role === "toolResult" &&
 			targetEntry.message.toolName === "ask";
-		const targetIsUserRequest = isTranscriptEntry(targetEntry) && isUserRequestEntry(targetEntry);
+		const targetIsUserRequest =
+			!options.landOnTarget && isTranscriptEntry(targetEntry) && isUserRequestEntry(targetEntry);
 
 		// No-op if already at target — except for a user request (a prompt, or a
 		// user-invoked skill/collab prompt), which always rewinds PAST itself
@@ -12455,7 +12636,7 @@ export class AgentSession implements SettingsScope {
 		// model consumes it, mirroring a live `ask` completion (issue #6483).
 		let isAskReanswerCompletion = false;
 
-		if (isTranscriptEntry(targetEntry) && isUserRequestEntry(targetEntry)) {
+		if (!options.landOnTarget && isTranscriptEntry(targetEntry) && isUserRequestEntry(targetEntry)) {
 			// User request (plain prompt, or a user-invoked skill/collab prompt): leaf = parent
 			// (null if root), the draft the user typed goes back to the editor with its images.
 			newLeafId = targetEntry.parentId;
@@ -12466,7 +12647,11 @@ export class AgentSession implements SettingsScope {
 					? this.#extractUserMessageImages(request.content)
 					: [];
 			if (targetImages.length > 0) editorImages = targetImages;
-		} else if (targetEntry.type === "custom_message" && targetEntry.customType !== SKILL_PROMPT_MESSAGE_TYPE) {
+		} else if (
+			!options.landOnTarget &&
+			targetEntry.type === "custom_message" &&
+			targetEntry.customType !== SKILL_PROMPT_MESSAGE_TYPE
+		) {
 			// Other custom message: leaf = parent (null if root), text goes to editor
 			newLeafId = targetEntry.parentId;
 			editorText =
@@ -12542,6 +12727,7 @@ export class AgentSession implements SettingsScope {
 		this.#advisors.resetSessionState({ preserveCost: true });
 		this.#todo.syncFromBranch();
 		this.#modelMentions.syncFromBranch();
+		this.#profilesInstance?.syncFromBranch();
 		this.#closeCodexProviderSessionsForHistoryRewrite();
 
 		this.#branchSummaryAbortController = undefined;
@@ -12711,6 +12897,16 @@ export class AgentSession implements SettingsScope {
 	 */
 	getSessionStats(): SessionStats {
 		return this.#stats.getSessionStats();
+	}
+
+	/** The session spend cap (`session.maxCostUsd` / `session.maxTokens`) and what has been spent against it. */
+	getSpendCap(): SpendCapStatus {
+		return this.#spendCap.status();
+	}
+
+	/** Replaces the spend cap limits for this session only; `0` clears one, `undefined` keeps it. */
+	setSpendCap(limits: Partial<SpendCapLimits>): SpendCapStatus {
+		return this.#spendCap.setLimits(limits);
 	}
 
 	#goalUsage(): GoalTokenUsage {

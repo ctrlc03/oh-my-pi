@@ -1,9 +1,11 @@
 import { Activity, ChartColumn, LayoutList, Laptop, Plus, Smartphone, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import type { CompanionHost, CompanionIdleSession } from "../../lib/companion";
+import type { CompanionHost, CompanionIdleSession, SessionOverview } from "../../lib/companion";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
+import { endedSettledKeys } from "../../lib/session-org";
 import type { CompanionHandle } from "../../lib/use-companion";
+import { useEndedSettled } from "../../lib/use-ended-settled";
 import type { SessionOrgControl } from "../../lib/use-session-org";
 import type { BesideControl } from "../../lib/use-split";
 import { PowerNote } from "./CompanionCard";
@@ -11,6 +13,7 @@ import { DevicesSheet } from "./DevicesSheet";
 import { DiagnosticsSheet } from "./DiagnosticsSheet";
 import { FanoutGroups } from "./FanoutSheet";
 import { InboxEntry } from "./InboxSheet";
+import { useOpenElsewhere } from "./OpenElsewhere";
 import { OrgSessions } from "./OrgSessions";
 import { SchedulesEntry } from "./SchedulesSheet";
 import { StartSessionSheet } from "./StartSessionSheet";
@@ -62,6 +65,33 @@ export function SessionsSidebar({
 	const recents = rooms.filter(room => room.roomId !== currentRoomId);
 	const snap = companion?.snap;
 	const live = snap?.phase === "live";
+	const liveIds = new Set([...(snap?.hosts ?? []), ...(snap?.idle ?? [])].map(session => session.sessionId));
+	// Sessions that ended while settled (the computer ends them when they settle, if asked) stay under Settled.
+	const ended = useEndedSettled(companion?.client ?? null, live, endedSettledKeys(org.doc, liveIds));
+	const openElsewhere = useOpenElsewhere();
+
+	/** Resume an ended session with the all-sessions list's own request, then open it when `open`; false (with the reason shown) when it did not come back. */
+	const resumeEnded = async (session: SessionOverview, open: boolean, force = false): Promise<boolean> => {
+		if (!companion?.client) return false;
+		setJoining(session.sessionId);
+		setError(null);
+		openElsewhere.dismiss();
+		try {
+			const instanceId = await companion.client.startSession(session.folder, {
+				resume: session.sessionId,
+				agent: session.agent?.id,
+				force: force || undefined,
+			});
+			if (open) await onOpenHost(instanceId);
+			return true;
+		} catch (err) {
+			if (!openElsewhere.intercept(err, () => void resumeEnded(session, open, true)))
+				setError(err instanceof Error ? err.message : String(err));
+			return false;
+		} finally {
+			setJoining(null);
+		}
+	};
 
 	const join = (host: CompanionHost): void => {
 		setJoining(host.instanceId);
@@ -160,12 +190,16 @@ export function SessionsSidebar({
 					onShare={share}
 					onOpenRoom={room => onOpenLink(room.link)}
 					onOpenRoomBeside={beside === null ? undefined : room => openRoomBeside(room.link)}
+					ended={ended}
+					canResume={snap?.canStart === true}
+					onResumeEnded={resumeEnded}
 				/>
 				{!snap && recents.length === 0 && (
 					<div className="sh-companion-empty">
 						No other sessions yet. Pair your computer from the start screen to list all of them here.
 					</div>
 				)}
+				{openElsewhere.notice}
 				{error && <div className="sh-connect-error">{error}</div>}
 			</div>
 			{snap && live && (

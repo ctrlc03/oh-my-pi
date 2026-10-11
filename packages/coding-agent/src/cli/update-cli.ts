@@ -39,8 +39,10 @@ import {
 } from "./npm-registry";
 
 import { cfgUpdateChannel } from "../modes/settings";
+import { BUILD_TAG, IS_FORK_BUILD, RELEASE_REPO } from "../build-identity";
+import { compareForkTags, forkInstallerHint, selectLatestForkRelease, versionFromTag } from "./fork-release";
 
-const REPO = "can1357/oh-my-pi";
+const REPO = RELEASE_REPO;
 const PACKAGE = "@oh-my-pi/pi-coding-agent";
 const HOMEBREW_FORMULA = "can1357/tap/omp";
 const MISE_TOOL = "github:can1357/oh-my-pi";
@@ -245,7 +247,7 @@ export function resolveReleaseBinaryAsset(
 	release: unknown,
 	expectedTag: string,
 	binaryName: string,
-	options: { allowPrerelease?: boolean } = {},
+	options: { allowPrerelease?: boolean; repo?: string } = {},
 ): ReleaseBinaryAsset {
 	if (!isRecord(release)) {
 		throw new Error("Invalid GitHub release metadata");
@@ -283,13 +285,13 @@ export function resolveReleaseBinaryAsset(
 		throw new Error(`GitHub release asset ${binaryName} has an unsupported digest`);
 	}
 
-	const expectedUrl = `https://github.com/${REPO}/releases/download/${expectedTag}/${binaryName}`;
+	const expectedUrl = `https://github.com/${options.repo ?? REPO}/releases/download/${expectedTag}/${binaryName}`;
 	if (asset.browser_download_url !== expectedUrl) {
 		throw new Error(`GitHub release asset ${binaryName} has an unexpected download URL`);
 	}
 
 	return {
-		version: expectedTag.replace(/^v/, ""),
+		version: versionFromTag(expectedTag),
 		url: expectedUrl,
 		size: asset.size,
 		digest: `sha256:${digest.toLowerCase()}`,
@@ -373,8 +375,9 @@ async function getReleaseBinaryAsset(
 	fetchImpl: Fetch = fetch,
 	githubToken?: string,
 	allowPrerelease = false,
+	releaseTag?: string,
 ): Promise<ReleaseBinaryAsset> {
-	const tag = `v${expectedVersion}`;
+	const tag = releaseTag ?? `v${expectedVersion}`;
 	const token = githubToken ?? (await resolveGitHubToken());
 	const response = await fetchReleaseMetadata(
 		`${GITHUB_API}/repos/${REPO}/releases/tags/${encodeURIComponent(tag)}`,
@@ -387,6 +390,7 @@ async function getReleaseBinaryAsset(
 	if (response.status !== 404) {
 		throw new Error(`Failed to fetch GitHub release metadata: ${response.statusText}`);
 	}
+	if (releaseTag) throw new Error(`GitHub release ${tag} is not published on ${REPO}`);
 
 	const listing = await fetchReleaseMetadata(
 		`${GITHUB_API}/repos/${REPO}/releases?per_page=${RELEASE_LISTING_PAGE_SIZE}`,
@@ -1026,6 +1030,7 @@ async function fetchLatestManifest(
 export async function getLatestRelease(
 	options: { timeoutMs?: number; channel?: UpdateChannel; registries?: NpmRegistryResolver } = {},
 ): Promise<ReleaseInfo> {
+	if (IS_FORK_BUILD) return await getLatestForkRelease();
 	const timeoutMs = options.timeoutMs ?? RELEASE_METADATA_TIMEOUT_MS;
 	const channel = options.channel ?? "stable";
 	const registries = options.registries ?? (await loadNpmRegistryResolver());
@@ -1049,6 +1054,30 @@ export async function getLatestRelease(
 		dist: resolveReleaseDist(latest.manifest),
 		packages,
 		registry: registry.url,
+	};
+}
+
+/**
+ * Latest release of a fork build, read from the fork repository's GitHub release
+ * listing: forks publish binaries only (no npm package), tagged `collab-v<semver>-<n>`.
+ */
+async function getLatestForkRelease(): Promise<ReleaseInfo> {
+	const listing = await fetchReleaseMetadata(
+		`${GITHUB_API}/repos/${REPO}/releases?per_page=${RELEASE_LISTING_PAGE_SIZE}`,
+		fetch,
+		await resolveGitHubToken(),
+	);
+	if (!listing.ok) {
+		throw new Error(`Failed to list releases of ${REPO}: ${listing.status} ${listing.statusText}`);
+	}
+	const latest = selectLatestForkRelease(await listing.json());
+	if (!latest) throw new Error(`${REPO} has no published collab-v<version>-<n> release`);
+	return {
+		tag: latest.tag,
+		version: latest.version,
+		dist: "binary",
+		packages: { ...CURRENT_PACKAGES },
+		registry: GITHUB_API,
 	};
 }
 
@@ -2023,6 +2052,8 @@ export async function updateViaBinaryAt(
 		fetchImpl?: Fetch;
 		githubToken?: string;
 		allowPrerelease?: boolean;
+		/** Exact release tag to install; fork builds pass theirs because it is not derivable from the version. */
+		tag?: string;
 		/** Refuse replacement unless the existing path is a non-script OMP executable. */
 		validateExistingTarget?: boolean;
 		verifyInstalledVersion?: typeof verifyInstalledVersion;
@@ -2048,6 +2079,7 @@ export async function updateViaBinaryAt(
 		options.fetchImpl,
 		options.githubToken,
 		options.allowPrerelease,
+		options.tag,
 	);
 	console.log(chalk.dim(`Downloading ${binaryName}…`));
 	await downloadVerifiedBinary({
@@ -2236,6 +2268,7 @@ export async function updateViaShimTakeover(
  * a user recovering from a binary-only release straight back through bun.
  */
 function installerHint(): string {
+	if (IS_FORK_BUILD) return forkInstallerHint(REPO);
 	return process.platform === "win32"
 		? "& ([scriptblock]::Create((irm https://omp.sh/install.ps1))) -Binary"
 		: "curl -fsSL https://omp.sh/install | sh -s -- --binary";
@@ -2292,7 +2325,9 @@ export async function runUpdateCommand(opts: {
 		process.exit(1);
 	}
 
-	const comparison = compareVersions(release.version, VERSION);
+	const comparison = IS_FORK_BUILD
+		? compareForkTags(release.tag, BUILD_TAG)
+		: compareVersions(release.version, VERSION);
 
 	if (comparison <= 0 && !opts.force && !isChannelSwitch) {
 		const icon = theme?.status?.success ?? "✔";
@@ -2307,9 +2342,9 @@ export async function runUpdateCommand(opts: {
 			),
 		);
 	} else if (comparison > 0) {
-		console.log(chalk.cyan(`New version available: ${release.version}`));
+		console.log(chalk.cyan(`New version available: ${IS_FORK_BUILD ? release.tag : release.version}`));
 	} else {
-		console.log(chalk.yellow(`Forcing reinstall of ${release.version}`));
+		console.log(chalk.yellow(`Forcing reinstall of ${IS_FORK_BUILD ? release.tag : release.version}`));
 	}
 	if (release.packages.pkg !== PACKAGE) {
 		console.log(chalk.cyan(`The npm package moved to ${release.packages.pkg}; updating migrates this install.`));
@@ -2367,6 +2402,7 @@ export async function runUpdateCommand(opts: {
 			await updateViaBinaryAt(target.path, release.version, {
 				allowPrerelease,
 				validateExistingTarget: target.validateExistingTarget,
+				tag: IS_FORK_BUILD ? release.tag : undefined,
 			});
 			if (forceBinary && target.replacesSymlink) {
 				console.log(

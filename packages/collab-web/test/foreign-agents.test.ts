@@ -6,6 +6,7 @@ import {
 	ADAPTER_PINS,
 	type AgentInfo,
 	adapterVersion,
+	codexNativeBinary,
 	deleteCustomAgent,
 	installAgent,
 	type LaunchOpts,
@@ -541,6 +542,10 @@ describe("launchSpec", () => {
 		expect(env.A_KEY).toBe("a");
 	});
 
+	it("is not set in a checkout, where the adapter runs its codex.js under bun", async () => {
+		expect((await spec("codex")).env.CODEX_PATH).toBeUndefined();
+	});
+
 	it("launches the adapters under bun with vendor-specific settings", async () => {
 		const claude = await spec("claude", { model: "opus" });
 		const script = path.join(
@@ -637,6 +642,25 @@ describe("launchSpec", () => {
 		await expect(spec("claude")).rejects.toThrow("adapter is not installed");
 		await fs.rm(path.join(bin, "grok"));
 		await expect(spec("grok")).rejects.toThrow("Grok is not installed");
+	});
+});
+
+describe("bundled native codex", () => {
+	const native = (pkg: string, triple: string): string =>
+		path.join(configDir, "agent", "collab-agents", "codex", "node_modules", pkg, "vendor", triple, "bin", "codex");
+
+	it("is the platform package's binary inside the managed Codex adapter, when installed", async () => {
+		expect(await codexNativeBinary(configDir, "darwin", "arm64")).toBeNull();
+		const file = native("@openai/codex-darwin-arm64", "aarch64-apple-darwin");
+		await Bun.write(file, "#!/bin/sh\n");
+		expect(await codexNativeBinary(configDir, "darwin", "arm64")).toBe(file);
+		const linux = native("@openai/codex-linux-x64", "x86_64-unknown-linux-musl");
+		await Bun.write(linux, "#!/bin/sh\n");
+		expect(await codexNativeBinary(configDir, "linux", "x64")).toBe(linux);
+	});
+
+	it("is null on a platform Codex has no package for", async () => {
+		expect(await codexNativeBinary(configDir, "freebsd", "x64")).toBeNull();
 	});
 });
 

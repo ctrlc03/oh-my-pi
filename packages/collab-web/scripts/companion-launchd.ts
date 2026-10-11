@@ -19,10 +19,8 @@ export function launchLogPath(): string {
 }
 
 export interface LaunchAgentSpec {
-	/** Absolute path of the bun executable. */
-	bun: string;
-	/** Absolute path of `companion.ts`. */
-	script: string;
+	/** Absolute argv the agent runs: the executable, then its arguments. */
+	argv: string[];
 	/** Environment the agent runs with (launchd starts it with an almost empty one). */
 	env: Record<string, string>;
 	logPath: string;
@@ -37,6 +35,7 @@ export function buildPlist(spec: LaunchAgentSpec): string {
 	const env = Object.entries(spec.env)
 		.map(([key, value]) => `\t\t<key>${xml(key)}</key>\n\t\t<string>${xml(value)}</string>`)
 		.join("\n");
+	const program = spec.argv.map(arg => `\t\t<string>${xml(arg)}</string>`).join("\n");
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -45,8 +44,7 @@ export function buildPlist(spec: LaunchAgentSpec): string {
 	<string>${LAUNCH_LABEL}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>${xml(spec.bun)}</string>
-		<string>${xml(spec.script)}</string>
+${program}
 	</array>
 	<key>EnvironmentVariables</key>
 	<dict>
@@ -65,21 +63,6 @@ ${env}
 `;
 }
 
-/** PATH for the agent: where bun, omp, tmux and git live, then the caller's PATH and the system dirs. */
-export function agentPath(tools: (string | null)[]): string {
-	const dirs = [
-		...tools.filter((t): t is string => t !== null).map(t => path.dirname(t)),
-		"/opt/homebrew/bin",
-		"/usr/local/bin",
-		...(process.env.PATH ?? "").split(":"),
-		"/usr/bin",
-		"/bin",
-		"/usr/sbin",
-		"/sbin",
-	];
-	return [...new Set(dirs.filter(Boolean))].join(":");
-}
-
 async function launchctl(args: string[]): Promise<{ code: number; err: string }> {
 	const proc = Bun.spawn(["launchctl", ...args], { stdout: "ignore", stderr: "pipe", stdin: "ignore" });
 	const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
@@ -91,8 +74,8 @@ function domain(): string {
 }
 
 /** launchd started this process: it names the job it runs in `XPC_SERVICE_NAME`. */
-export function isLaunchManaged(): boolean {
-	return process.platform === "darwin" && process.env.XPC_SERVICE_NAME === LAUNCH_LABEL;
+export function isLaunchManaged(env: Record<string, string | undefined> = process.env): boolean {
+	return process.platform === "darwin" && env.XPC_SERVICE_NAME === LAUNCH_LABEL;
 }
 
 /** Kill the running agent so launchd starts it again (`launchctl kickstart -k`); the caller is that process. */
@@ -101,24 +84,16 @@ export async function restartLaunchAgent(): Promise<void> {
 	if (result.code !== 0) throw new Error(`launchctl kickstart failed: ${result.err || `exit ${result.code}`}`);
 }
 
-export interface InstallOptions {
-	/** Absolute omp executable the agent should run sessions with. */
-	ompBin: string;
-	script: string;
+export interface LaunchInstallOptions {
+	argv: string[];
+	env: Record<string, string>;
 	/** Print the plist instead of writing and loading it. */
 	dryRun: boolean;
 }
 
 /** Write the plist and (re)load the agent; returns the plist path and text. */
-export async function installLaunchAgent(options: InstallOptions): Promise<{ plistPath: string; plist: string }> {
-	if (process.platform !== "darwin") throw new Error("--install is for macOS (launchd) only");
-	if (!path.isAbsolute(options.ompBin) || !(await Bun.file(options.ompBin).exists())) {
-		throw new Error(`omp not found at ${options.ompBin}; set OMP_BIN to its absolute path and retry`);
-	}
-	const tools = [process.execPath, options.ompBin, Bun.which("tmux"), Bun.which("git")];
-	const env: Record<string, string> = { OMP_BIN: options.ompBin, PATH: agentPath(tools) };
-	if (process.env.PI_CONFIG_DIR) env.PI_CONFIG_DIR = process.env.PI_CONFIG_DIR;
-	const plist = buildPlist({ bun: process.execPath, script: options.script, env, logPath: launchLogPath() });
+export async function installLaunchAgent(options: LaunchInstallOptions): Promise<{ plistPath: string; plist: string }> {
+	const plist = buildPlist({ argv: options.argv, env: options.env, logPath: launchLogPath() });
 	const plistPath = launchAgentPath();
 	if (options.dryRun) return { plistPath, plist };
 
@@ -137,7 +112,6 @@ export async function installLaunchAgent(options: InstallOptions): Promise<{ pli
 
 /** Unload the agent and delete its plist; true when a plist existed. */
 export async function uninstallLaunchAgent(): Promise<boolean> {
-	if (process.platform !== "darwin") throw new Error("--uninstall is for macOS (launchd) only");
 	await launchctl(["bootout", `${domain()}/${LAUNCH_LABEL}`]);
 	const plistPath = launchAgentPath();
 	const existed = await Bun.file(plistPath).exists();

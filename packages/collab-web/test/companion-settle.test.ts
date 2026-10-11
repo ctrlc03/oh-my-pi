@@ -15,7 +15,7 @@ import {
 } from "../scripts/companion-settle";
 import { createSessionOrg, loadOrgFile, type OrgFile, saveOrgFile } from "../scripts/companion-sessionorg";
 import { type GitFlowFile, parseGitFlowFile, setupHash } from "../scripts/companion-worktrees";
-import { applyOrg, emptyOrg } from "../src/lib/session-org";
+import { applyOrg, emptyOrg, withSettings } from "../src/lib/session-org";
 
 let tmp: string;
 let repo: string;
@@ -413,7 +413,7 @@ describe("which sessions are located", () => {
 });
 
 describe("from a settle to a cleanup", () => {
-	function wire(initial: OrgFile, command: string) {
+	function wire(initial: OrgFile, command: string, endSession: () => Promise<boolean> = async () => true) {
 		const clock = { now: 10_000 };
 		const cleanup = harness(flowWith(command));
 		const runs: Promise<void>[] = [];
@@ -427,6 +427,7 @@ describe("from a settle to a cleanup", () => {
 			readPrDone: async () => null,
 			prAvailable: () => false,
 			onChange: () => {},
+			endSession,
 			onSettled: sessions => {
 				runs.push(cleanup.cleanup.run(sessions));
 			},
@@ -440,7 +441,10 @@ describe("from a settle to a cleanup", () => {
 	it("runs once per transition, never blocks the settle, and not again after a repeat sync or restart", async () => {
 		const tree = await createWorktree(repo, trees, "wt-flow");
 		const log = path.join(tree.path, "runs.log");
-		const w = wire({ doc: emptyOrg(), rev: 0, activity: {}, settled: {} }, "echo x >> runs.log; sleep 0.4");
+		const w = wire(
+			{ doc: emptyOrg(), rev: 0, activity: {}, settled: {}, ending: {} },
+			"echo x >> runs.log; sleep 0.4",
+		);
 		w.cleanup.where.s = { cwd: tree.path, sandboxed: false };
 		const runsLog = async () =>
 			(await Bun.file(log).exists()) ? (await Bun.file(log).text()).trim().split("\n").length : 0;
@@ -470,5 +474,34 @@ describe("from a settle to a cleanup", () => {
 		await restarted.org.sync(applyOrg(undone, "s", { type: "settle" }, 40_000));
 		await Promise.all(restarted.runs);
 		expect(await runsLog()).toBe(2);
+	});
+
+	it("with the option on, ends the session first and runs the cleanup after it, in the worktree it left", async () => {
+		const tree = await createWorktree(repo, trees, "wt-end");
+		const flag = path.join(tree.path, "ended.flag");
+		const w = wire(
+			{
+				doc: withSettings(emptyOrg(), { endOnSettle: true }, 1),
+				rev: 0,
+				activity: {},
+				settled: {},
+				ending: {},
+			},
+			"if test -f ended.flag; then echo after-end; else echo before-end; fi >> runs.log",
+			async () => {
+				await fs.writeFile(flag, "");
+				return true;
+			},
+		);
+		w.cleanup.where.s = { cwd: tree.path, sandboxed: false };
+		await w.org.sync(applyOrg(w.org.file().doc, "s", { type: "settle" }, 20_000));
+		await Promise.all(w.runs);
+		// Settled, but nothing ran: it waits for the session to be listed and idle.
+		expect(await Bun.file(path.join(tree.path, "runs.log")).exists()).toBe(false);
+		await w.org.tick([
+			{ instanceId: "inst-s", sessionId: "s", cwd: tree.path, startedAt: 0, busy: false, inputRequired: false },
+		]);
+		await Promise.all(w.runs);
+		expect((await Bun.file(path.join(tree.path, "runs.log")).text()).trim()).toBe("after-end");
 	});
 });

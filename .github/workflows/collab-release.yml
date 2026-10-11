@@ -1,0 +1,323 @@
+# Builds this fork's collab-enabled omp binaries and publishes them as a GitHub Release,
+# which `scripts/install-collab.sh` (served at <pages>/install.sh) installs from.
+#
+#   git tag collab-v18.8.9-1 && git push origin collab-v18.8.9-1
+#
+# The tag is `collab-v<semver>-<n>`: <semver> must equal packages/coding-agent/package.json
+# `version` (it is also the pi-natives stamp every addon must carry), <n> counts releases of
+# that version. The tag name becomes the binaries' build tag (`omp companion --help`, `omp update`).
+#
+# Why not ci.yml: its release path needs the upstream-only `omp-kata` runners, bazel remote
+# cache, npm and Homebrew credentials. This workflow uses GitHub-hosted runners only and builds the
+# fork's own Rust addons (the fork changed crates/pi-natives, so upstream's addons would lack
+# its symbols), one per target on a runner of that target's OS and CPU:
+#
+#   darwin-arm64  macos-14           darwin-x64   macos-15-intel
+#   linux-x64     ubuntu-22.04       linux-arm64  ubuntu-22.04-arm
+#
+# ubuntu-22.04 (glibc 2.35) is the floor for the Linux binaries, as upstream's release builds.
+# Darwin binaries are signed ad hoc, or with a Developer ID plus notarization when the five
+# APPLE_* secrets exist (scripts/ci-macos-sign.sh). No other secrets are needed.
+#
+# Guarded off for the upstream repository.
+name: collab release
+
+on:
+  push:
+    tags: ["collab-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and (re)publish, e.g. collab-v18.8.9-1"
+        required: true
+        type: string
+      replace:
+        description: "Replace the assets of a release that already exists for this tag"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: collab-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # The ref every job builds: the tag named by the dispatch input, else the pushed tag.
+  RELEASE_REF: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+jobs:
+  meta:
+    name: Resolve and validate the release tag
+    if: github.repository != 'can1357/oh-my-pi'
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      latest: ${{ steps.release.outputs.latest }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ env.RELEASE_REF }}
+      - id: tag
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^collab-v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]; then
+            echo "::error::tag '$TAG' must look like collab-v<semver>-<n>, e.g. collab-v18.8.9-1"
+            exit 1
+          fi
+          version="${TAG#collab-v}"
+          version="${version%-*}"
+          package="$(sed -n 's/^[[:space:]]*"version": *"\([^"]*\)".*/\1/p' packages/coding-agent/package.json | sed -n '1p')"
+          if [ "$version" != "$package" ]; then
+            echo "::error::tag '$TAG' names version $version but packages/coding-agent/package.json is $package"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      # A release that exists keeps its assets unless this is a dispatch with `replace`, and only
+      # the highest collab-v* tag becomes "latest" (version, then build number: the order
+      # packages/coding-agent/src/cli/fork-release.ts uses), so rebuilding an old tag cannot roll
+      # back what the installer's releases/latest URL serves.
+      - id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          REPLACE: ${{ inputs.replace && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [ "$REPLACE" != true ]; then
+            echo "::error::a release for $TAG already exists; dispatch with 'replace' to overwrite its assets"
+            exit 1
+          fi
+          key() { sed -E 's/^collab-v//; s/-/./' | sort -V | tail -n 1; }
+          highest="$({ gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName'; echo "$TAG"; } | grep -E '^collab-v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$' | key)"
+          mine="$(echo "$TAG" | key)"
+          if [ "$highest" = "$mine" ]; then latest=true; else latest=false; fi
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "$TAG is the highest collab release: $latest"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: meta
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: darwin-arm64, runner: macos-14, x64_variants: "" }
+          - { target: darwin-x64, runner: macos-15-intel, x64_variants: "baseline" }
+          - { target: linux-x64, runner: ubuntu-22.04, x64_variants: "baseline modern" }
+          - { target: linux-arm64, runner: ubuntu-22.04-arm, x64_variants: "" }
+    env:
+      OMP_RELEASE_REPO: ${{ github.repository }}
+      OMP_BUILD_TAG: ${{ needs.meta.outputs.tag }}
+      OMP_NATIVE_CARGO_PROFILE: ci
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ env.RELEASE_REF }}
+      - uses: ./.github/actions/bun-install
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libssl-dev clang libclang-dev cmake make ninja-build
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: |
+          for tool in cmake ninja; do
+            command -v "$tool" >/dev/null || brew install "$tool"
+          done
+      # RUSTUP_TOOLCHAIN overrides rust-toolchain.toml, so only the pinned nightly itself is
+      # fetched, without the rustfmt/clippy/rust-analyzer components and Windows targets it lists.
+      - name: Install the pinned Rust toolchain
+        run: |
+          set -euo pipefail
+          channel="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$channel" --profile minimal
+          echo "RUSTUP_TOOLCHAIN=$channel" >> "$GITHUB_ENV"
+      # `host` builds the addon through cargo/napi for this runner's own OS and CPU, stamps it
+      # with the natives version, and checks that it loads. x64 hosts build one addon per ISA
+      # variant (the binary embeds them all and picks by AVX2 at run time): macOS ships the
+      # baseline only, Linux both.
+      - name: Build native addons
+        env:
+          X64_VARIANTS: ${{ matrix.x64_variants }}
+        run: |
+          set -euo pipefail
+          if [ -z "$X64_VARIANTS" ]; then
+            bun scripts/bazel-natives.ts host
+          else
+            for variant in $X64_VARIANTS; do
+              OMP_NATIVE_X64_VARIANT="$variant" bun scripts/bazel-natives.ts host
+            done
+          fi
+          ls -l packages/natives/native/*.node
+      - name: Build the omp binary
+        run: bun scripts/build-collab-binary.ts --target "${{ matrix.target }}" --outdir dist-collab
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: collab-binary-${{ matrix.target }}
+          path: dist-collab/omp-${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # scripts/ci-macos-sign.sh runs on Linux (it fetches a pinned rcodesign): it replaces the
+  # signature the macOS runner's codesign made, ad hoc without secrets, Developer ID plus
+  # notarization with them.
+  sign:
+    name: Sign ${{ matrix.target }}
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [darwin-arm64, darwin-x64]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ env.RELEASE_REF }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: collab-binary-${{ matrix.target }}
+          path: signed
+      - name: Sign
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: bash scripts/ci-macos-sign.sh "signed/omp-${{ matrix.target }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: collab-signed-${{ matrix.target }}
+          path: signed/omp-${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # Each binary runs on its own OS and CPU before anything is published.
+  smoke:
+    name: Smoke ${{ matrix.target }}
+    needs: [meta, build, sign]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: darwin-arm64, runner: macos-14, artifact: collab-signed-darwin-arm64 }
+          - { target: darwin-x64, runner: macos-15-intel, artifact: collab-signed-darwin-x64 }
+          - { target: linux-x64, runner: ubuntu-22.04, artifact: collab-binary-linux-x64 }
+          - { target: linux-arm64, runner: ubuntu-22.04-arm, artifact: collab-binary-linux-arm64 }
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ env.RELEASE_REF }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: binaries
+      - name: Smoke the binary
+        env:
+          BINARY: binaries/omp-${{ matrix.target }}
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          chmod +x "$BINARY"
+          if [ "$RUNNER_OS" = macOS ]; then codesign --verify --strict --verbose=2 "$BINARY"; fi
+          runtime_dir="$(mktemp -d)"
+          export HOME="$runtime_dir/home" XDG_DATA_HOME="$runtime_dir/xdg"
+          expected="$(sed -n 's/^[[:space:]]*"version": *"\([^"]*\)".*/\1/p' packages/coding-agent/package.json | sed -n '1p')"
+          actual="$("$BINARY" --version)"
+          # Prints "omp/<version>".
+          case "$actual" in
+            *"$expected") ;;
+            *)
+              echo "::error::--version printed '$actual', expected it to end with '$expected'"
+              exit 1
+              ;;
+          esac
+          help="$("$BINARY" companion --help)"
+          echo "$help"
+          if ! grep -qF "build: $TAG" <<< "$help"; then
+            echo "::error::companion --help does not report build tag $TAG"
+            exit 1
+          fi
+          "$BINARY" --smoke-test
+
+  # Ties each binary to this repository and this workflow (a Sigstore build provenance
+  # attestation GitHub stores), so a hand-uploaded asset does not verify:
+  #   gh attestation verify omp-linux-x64 --repo <owner>/<repo> \
+  #     --signer-workflow <owner>/<repo>/.github/workflows/collab-release.yml
+  # scripts/install-collab.sh runs that when `gh` is installed and signed in. Only this job
+  # holds the OIDC token and attestation permission; it runs no repository code.
+  attest:
+    name: Attest the binaries
+    needs: [meta, smoke]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: collab-signed-*
+          path: assets
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: collab-binary-linux-*
+          path: assets
+          merge-multiple: true
+      - uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: assets/omp-*
+
+  release:
+    name: Publish the release
+    needs: [meta, smoke, attest]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ env.RELEASE_REF }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      # The darwin binaries are the signed ones (collab-signed-*), not the build job's unsigned
+      # artifacts of the same name.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: collab-signed-*
+          path: assets
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: collab-binary-linux-*
+          path: assets
+          merge-multiple: true
+      # SHA256SUMS.txt covers exactly the four binaries the installer downloads and verifies.
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          ls -l assets
+          test "$(find assets -type f -name 'omp-*' | wc -l)" -eq 4
+          bun scripts/ci-release-checksums.ts assets/SHA256SUMS.txt assets/omp-*
+          cat assets/SHA256SUMS.txt
+      # make_latest only for the highest collab-v* tag (the installer's default URL is
+      # releases/latest); rebuilding an older tag never moves it. Existing assets of a tag
+      # are replaced only by a dispatch with `replace` (checked in the meta job).
+      - name: Create the GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          make_latest: ${{ needs.meta.outputs.latest }}
+          generate_release_notes: true
+          files: |
+            assets/omp-*
+            assets/SHA256SUMS.txt

@@ -1,14 +1,14 @@
 /**
- * Computer maintenance from the app: restarting the companion under launchd
- * and updating the installed omp, plus the (cached) `omp --version`.
+ * Computer maintenance from the app: restarting the companion under its service manager (launchd or
+ * systemd) and updating the installed omp, plus the (cached) `omp --version`.
  */
 
-import { isLaunchManaged, restartLaunchAgent } from "./companion-launchd";
+import { managedBy, restartService, startedByHandHint } from "./companion-service";
 
 /** `omp update` downloads and installs a release. */
 const UPDATE_TIMEOUT_MS = 300_000;
 const VERSION_TIMEOUT_MS = 10_000;
-/** The restart reply must reach the relay before launchd kills this process. */
+/** The restart reply must reach the relay before the service manager kills this process. */
 const RESTART_DELAY_MS = 500;
 /** Longest tail of update output returned to the app. */
 const OUTPUT_MAX_CHARS = 4_000;
@@ -48,15 +48,11 @@ export async function ompVersion(ompBin: string): Promise<string | null> {
 	return cachedVersion;
 }
 
-/** Restart through launchd after this reply is out; refused for a companion started by hand. */
+/** Restart through the service manager after this reply is out; refused for a companion started by hand. */
 export function restartCompanion(): string {
-	if (!isLaunchManaged()) {
-		throw new Error(
-			"This companion was started by hand, so the app cannot restart it. Stop it and start it again in a terminal, or run `bun scripts/companion.ts --install` once so macOS keeps it running.",
-		);
-	}
+	if (managedBy() === null) throw new Error(startedByHandHint());
 	setTimeout(() => {
-		restartLaunchAgent().catch(err => {
+		restartService().catch(err => {
 			console.error(`companion: restart failed: ${err instanceof Error ? err.message : String(err)}`);
 		});
 	}, RESTART_DELAY_MS);

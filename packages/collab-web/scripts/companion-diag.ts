@@ -5,9 +5,10 @@
 
 import * as path from "node:path";
 import type { CompanionDiag, CompanionPower, CompanionRelayEvent, CompanionRequestError } from "../src/lib/companion";
+import { BUILD_TAG, isCompiled } from "./build-identity";
 import { git } from "./companion-git";
-import { isLaunchManaged } from "./companion-launchd";
 import { ompVersion } from "./companion-maintain";
+import { managedBy } from "./companion-service";
 
 const MAX_EVENTS = 20;
 const MAX_ERRORS = 10;
@@ -33,8 +34,9 @@ export function recordRequestError(type: string, message: string): void {
 	push(requestErrors, { at: Date.now(), type, message: message.slice(0, MAX_MESSAGE_CHARS) }, MAX_ERRORS);
 }
 
-/** The checkout this script runs from, read once at startup: that is the code the process loaded. */
+/** The build this process runs: the release tag when compiled, else the checkout's HEAD, read once at startup. */
 const checkout: Promise<{ version: string | null; dirty: boolean }> = (async () => {
+	if (isCompiled) return { version: BUILD_TAG, dirty: false };
 	const cwd = path.dirname(import.meta.dir);
 	try {
 		const head = await git(cwd, ["rev-parse", "--short", "HEAD"]);
@@ -68,7 +70,7 @@ export async function collectDiag(input: DiagInput): Promise<CompanionDiag> {
 		listing: input.listing,
 		keepAwake: input.keepAwake,
 		power: input.power,
-		managed: isLaunchManaged() ? "launchd" : "manual",
+		managed: managedBy() ?? "manual",
 		devices: input.devices,
 		events: [...relayEvents],
 		errors: [...requestErrors],

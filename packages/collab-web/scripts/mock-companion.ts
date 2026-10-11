@@ -109,6 +109,8 @@ const socket = new CollabSocket<CompanionReply, CompanionRequest>({
 
 /** The worktree settings and the cleanup run when a worktree session settles, over a throw-away git repository (two sessions work in its worktrees). */
 const settle = await createMockSettle({ dir, hosts });
+/** Sessions the mock ended when they settled: they stay listed as ended, which the app resumes from. */
+const ended: CompanionHost[] = [];
 
 const sessionOrg = createSessionOrg({
 	now: Date.now,
@@ -118,6 +120,11 @@ const sessionOrg = createSessionOrg({
 	prAvailable: () => true,
 	onChange: () => broadcast(),
 	onSettled: sessions => void settle.run(sessions),
+	endSession: async session => {
+		const at = hosts.findIndex(h => h.instanceId === session.instanceId);
+		if (at !== -1) ended.push(...hosts.splice(at, 1));
+		return true;
+	},
 	onError: err => console.error(`mock-companion: ${err instanceof Error ? err.message : String(err)}`),
 });
 
@@ -179,7 +186,25 @@ const MOCK_PRS: GithubItem[] = (
 	url: `https://github.com/example/app/pull/${pr.number}`,
 }));
 /** The all-sessions list and message search, over canned sessions. */
-const search = createMockSearch(hosts, foreign.searchable);
+const search = createMockSearch(hosts, () => [
+	...foreign.searchable(),
+	...ended.map(host => ({
+		overview: {
+			sessionId: host.sessionId,
+			title: host.sessionName,
+			folder: host.cwd,
+			startedAt: host.startedAt,
+			endedAt: Date.now(),
+			requests: 12,
+			toolCalls: 40,
+			subagents: 0,
+			tokens: 120_000,
+			cost: 0.42,
+			models: host.model === null ? [] : [host.model],
+		},
+		messages: [],
+	})),
+]);
 
 function hostsFrame(): CompanionReply {
 	return {
@@ -196,6 +221,7 @@ function hostsFrame(): CompanionReply {
 		vapidKey: "",
 		sessionOrgRev: sessionOrg.file().rev,
 		canOrderSessions: true,
+		canEndOnSettle: true,
 	};
 }
 

@@ -45,6 +45,11 @@ export interface OrgSettings {
 	idleDays: number | null;
 	/** Settle sessions whose pull request merged or closed. */
 	settleOnPr: boolean;
+	/**
+	 * End a session the computer started when it settles (it stays listed under Settled and resumes when opened).
+	 * Absent: a document from before the option, which keeps whatever value the copy it merges with has; off by default.
+	 */
+	endOnSettle?: boolean;
 }
 
 export interface OrgDoc {
@@ -123,11 +128,13 @@ export function parseSettings(raw: unknown): OrgSettings {
 	const fallback = emptyOrg().settings;
 	if (typeof s !== "object" || s === null || !isTime(s.at)) return fallback;
 	const days = s.idleDays;
-	return {
+	const settings: OrgSettings = {
 		at: s.at,
 		idleDays: typeof days === "number" && Number.isInteger(days) && days >= 1 && days <= MAX_IDLE_DAYS ? days : null,
 		settleOnPr: s.settleOnPr === true,
 	};
+	if (typeof s.endOnSettle === "boolean") settings.endOnSettle = s.endOnSettle;
+	return settings;
 }
 
 /** A document from untrusted JSON (storage, the wire, the companion's file): damaged parts are dropped, never thrown. */
@@ -160,13 +167,23 @@ function newer<T extends { at: number }>(a: T, b: T): boolean {
 	return JSON.stringify(a) > JSON.stringify(b);
 }
 
-/** Entry-wise last-writer-wins merge; commutative, associative and idempotent. */
+/**
+ * The settings that win a merge. A copy from before `endOnSettle` returns without it, and that must neither switch
+ * it off nor on here: the winner without the field takes the value of the other copy.
+ */
+function mergeSettings(a: OrgSettings, b: OrgSettings): OrgSettings {
+	const [winner, other] = newer(b, a) ? [b, a] : [a, b];
+	if (winner.endOnSettle !== undefined || other.endOnSettle === undefined) return winner;
+	return { ...winner, endOnSettle: other.endOnSettle };
+}
+
+/** Entry-wise last-writer-wins merge; commutative and idempotent, and associative apart from `endOnSettle` across three generations of app. */
 export function mergeOrg(a: OrgDoc, b: OrgDoc): OrgDoc {
 	const entries: Record<string, OrgEntry> = { ...a.entries };
 	for (const [key, entry] of Object.entries(b.entries)) {
 		if (!Object.hasOwn(entries, key) || newer(entry, entries[key])) entries[key] = entry;
 	}
-	return { entries, settings: newer(b.settings, a.settings) ? b.settings : a.settings };
+	return { entries, settings: mergeSettings(a.settings, b.settings) };
 }
 
 export function sameOrg(a: OrgDoc, b: OrgDoc): boolean {
@@ -206,6 +223,17 @@ export function statusOf(doc: OrgDoc, key: string, now: number): OrgStatus {
 /** Whether the idle and pull request rules may settle the session (the default). */
 export function autoSettles(doc: OrgDoc, key: string): boolean {
 	return !Object.hasOwn(doc.entries, key) || doc.entries[key].autoSettle !== false;
+}
+
+/**
+ * Sessions of the computer settled in `doc` that are not in `live` (the ids it lists as running): ended ones, which
+ * stay under Settled (the computer may have ended them when they settled) and resume when opened. Rooms are not
+ * sessions of the computer.
+ */
+export function endedSettledKeys(doc: OrgDoc, live: ReadonlySet<string>): string[] {
+	return Object.entries(doc.entries)
+		.filter(([key, entry]) => entry.status === "settled" && !key.startsWith("room:") && !live.has(key))
+		.map(([key]) => key);
 }
 
 // ── transitions ──────────────────────────────────────────────────────────────
@@ -343,15 +371,23 @@ export function pinnedKeys(doc: OrgDoc): string[] {
 
 export function withSettings(
 	doc: OrgDoc,
-	patch: Partial<Pick<OrgSettings, "idleDays" | "settleOnPr">>,
+	patch: Partial<Pick<OrgSettings, "idleDays" | "settleOnPr" | "endOnSettle">>,
 	now: number,
 ): OrgDoc {
+	const current = doc.settings;
+	if (
+		(patch.idleDays === undefined || patch.idleDays === current.idleDays) &&
+		(patch.settleOnPr === undefined || patch.settleOnPr === current.settleOnPr) &&
+		(patch.endOnSettle === undefined || patch.endOnSettle === (current.endOnSettle === true))
+	)
+		return doc;
 	const settings: OrgSettings = {
-		at: Math.max(now, doc.settings.at + 1),
-		idleDays: patch.idleDays === undefined ? doc.settings.idleDays : patch.idleDays,
-		settleOnPr: patch.settleOnPr ?? doc.settings.settleOnPr,
+		at: Math.max(now, current.at + 1),
+		idleDays: patch.idleDays === undefined ? current.idleDays : patch.idleDays,
+		settleOnPr: patch.settleOnPr ?? current.settleOnPr,
 	};
-	if (settings.idleDays === doc.settings.idleDays && settings.settleOnPr === doc.settings.settleOnPr) return doc;
+	const endOnSettle = patch.endOnSettle ?? current.endOnSettle;
+	if (endOnSettle !== undefined) settings.endOnSettle = endOnSettle;
 	return { entries: doc.entries, settings };
 }
 

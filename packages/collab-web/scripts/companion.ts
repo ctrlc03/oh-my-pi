@@ -6,9 +6,9 @@
  *   bun scripts/companion.ts             # print the pairing link + QR, then serve
  *   bun scripts/companion.ts --rotate    # new room key: unpairs every device
  *   bun scripts/companion.ts --pair      # print a fresh one-time pairing link + QR and exit
- *   bun scripts/companion.ts --install   # macOS: run at login as a LaunchAgent
- *   bun scripts/companion.ts --install --dry-run   # print the LaunchAgent plist only
- *   bun scripts/companion.ts --uninstall # remove the LaunchAgent
+ *   bun scripts/companion.ts --install   # run at login as a service: LaunchAgent (macOS) or systemd user unit (Linux)
+ *   bun scripts/companion.ts --install --dry-run   # print the service file only
+ *   bun scripts/companion.ts --uninstall # remove the service
  *
  * Pair each device once by scanning the QR code (or pasting the link) in the web
  * app. The link carries the room key and a one-time invite (single use, valid
@@ -24,11 +24,16 @@
  * and can start omp in any folder. The app's Devices screen lists, renames and
  * removes devices and makes new invites; removing a device cuts it off at once.
  *
- * `--install` writes `~/Library/LaunchAgents/sh.omp.collab-companion.plist`
+ * `--install` on macOS writes `~/Library/LaunchAgents/sh.omp.collab-companion.plist`
  * (RunAtLoad + KeepAlive, absolute bun/script/omp paths, log in
- * `~/Library/Logs/omp-collab-companion.log`) and loads it. Only one companion
- * may hold the room: stop a manually running one first, or the two fight over
- * it (relay close 4009). `--pair` shows the link while the agent runs.
+ * `~/Library/Logs/omp-collab-companion.log`) and loads it. On Linux it writes
+ * `~/.config/systemd/user/omp-collab-companion.service` (Restart=always, log in
+ * the user journal: `journalctl --user -u omp-collab-companion.service -f`),
+ * enables and starts it; that needs `systemctl --user` with a running user
+ * manager, and `loginctl enable-linger $USER` keeps it running without a login
+ * session. Only one companion may hold the room: stop a manually running one
+ * first, or the two fight over it (relay close 4009). `--pair` shows the link
+ * while the service runs.
  *
  * Sessions are listed in-process from the collab discovery registry (falling
  * back to `omp collab list --json` when that module cannot load), and links
@@ -36,7 +41,7 @@
  * `omp collab start <id> --json`), so the companion works with whichever omp
  * version runs the sessions; features the registry lacks (listing and sharing
  * idle sessions) simply stay empty. Set OMP_BIN when `omp` is not on PATH
- * (launchd).
+ * (launchd, systemd).
  *
  * Starting a session (`start` request) needs tmux: omp runs in a detached
  * `omp-<id>` tmux session with a companion-owned config overlay
@@ -55,13 +60,16 @@
  * any host (with `agent`). Ended ones come from the session index the hosts write (`./companion-foreign`), appear in the
  * sessions list and recent folders, and are resumed through `start`. The spend limits cap them (`--max-cost`).
  *
- * Staying reachable (macOS): the companion holds a sleep assertion while it
- * runs (`caffeinate -i -s`), so the Mac does not idle-sleep and sessions stay
- * online; closing the lid still sleeps it. The hosts frame carries the power
- * state, and subscribed devices are pushed when the Mac goes on battery, runs
+ * Staying reachable: the companion holds a sleep assertion while it runs
+ * (macOS `caffeinate -i -s`, Linux `systemd-inhibit --what=sleep:idle`), so the
+ * computer does not idle-sleep and sessions stay online; closing the lid still
+ * sleeps it. The hosts frame carries the power state (`pmset`, or
+ * `/sys/class/power_supply` on Linux; none on a computer without a battery),
+ * and subscribed devices are pushed when the computer goes on battery, runs
  * low, and is plugged in again.
  */
 
+import { foreignHostLauncher, isCompiled, selfCommand } from "./build-identity";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -138,7 +146,7 @@ import { githubItem, githubList } from "./companion-github";
 import { createPrReview } from "./companion-prreview";
 import { buildInbox } from "./companion-inbox";
 import { consumeInvite, type DeviceRecord, DeviceRegistry, issueInvite, parseDevices } from "./companion-devices";
-import { installLaunchAgent, launchLogPath, uninstallLaunchAgent } from "./companion-launchd";
+import { installService, managedBy, pairCommand, uninstallService } from "./companion-service";
 import {
 	findSessionFile,
 	foreignTranscriptsDir,
@@ -155,7 +163,7 @@ import { preferredRelayPort, startCompanionRelay } from "./companion-local-relay
 import { restartCompanion, updateOmp } from "./companion-maintain";
 import { findSessionHolders } from "./companion-open";
 import { capturePane, paneSessionName } from "./companion-pane";
-import { holdAwake, powerNotice, readPower } from "./companion-power";
+import { awakeTool, holdAwake, powerNotice, readPower } from "./companion-power";
 import { capturePreview, closePreviewBrowser, findChrome, isViewport, previewTargets } from "./companion-preview";
 import { createPrWatch, ghReadPrs, loadPrWatchFile, parsePrAlertSettings, savePrWatchFile } from "./companion-prwatch";
 import { createPrWake } from "./companion-prwake";
@@ -250,8 +258,6 @@ const sessionSearch = createSessionSearch({ sessionsDir });
  * Vendor agents (Claude Code, Codex, ...): each session runs in its own detached host process (`./foreign/host-main.ts`, started in
  * tmux like omp) that outlives the companion. The hosts write the session index and the transcripts the catalog reads.
  */
-const foreignHostMain = path.join(import.meta.dir, "foreign", "host-main.ts");
-const foreignHostExists = await Bun.file(foreignHostMain).exists();
 const agentDirectory = createAgentDirectory();
 const foreignCatalog = createForeignCatalog({
 	transcriptsDir: foreignTranscriptsDir(sessionsDir),
@@ -259,9 +265,9 @@ const foreignCatalog = createForeignCatalog({
 	agentRef: agentDirectory.ref,
 });
 
-/** The computer can run vendor agents: the host entry ships with this checkout and tmux is there to run it in. */
+/** The computer can run vendor agents: tmux is there to run the host in. */
 async function foreignReady(): Promise<boolean> {
-	return foreignHostExists && (await findTmux()) !== null;
+	return (await findTmux()) !== null;
 }
 
 /** Remembers the agents' names for sessions that only know an id. */
@@ -324,7 +330,10 @@ async function recentFoldersAll(): Promise<RecentFolder[]> {
 
 const overlayPath = path.join(configDir, "agent", "collab-companion-overlay.yml");
 const sandboxOverlayPath = path.join(configDir, "agent", "collab-companion-sandbox.yml");
-const ompBin = process.env.OMP_BIN || Bun.which("omp") || path.join(os.homedir(), ".bun", "bin", "omp");
+/** The omp that runs sessions: compiled, this very binary; from a checkout, the one on PATH or bun's global bin. */
+const ompBin =
+	process.env.OMP_BIN ||
+	(isCompiled ? process.execPath : Bun.which("omp") || path.join(os.homedir(), ".bun", "bin", "omp"));
 /** How long `start` waits for the new omp to appear in `omp collab list`. */
 const START_WAIT_MS = 45_000;
 const START_POLL_MS = 1_000;
@@ -420,8 +429,12 @@ const prReview = createPrReview();
 
 const flags = Bun.argv.slice(2);
 if (flags.includes("--uninstall")) {
-	const existed = await uninstallLaunchAgent();
-	console.log(existed ? "companion LaunchAgent removed" : "companion LaunchAgent was not installed");
+	try {
+		console.log(await uninstallService());
+	} catch (err) {
+		console.error(errorText(err));
+		process.exit(1);
+	}
 	process.exit(0);
 }
 const rotate = flags.includes("--rotate");
@@ -433,8 +446,6 @@ if (rotate) await fs.rm(invitesDir, { recursive: true, force: true });
 const registry = new DeviceRegistry(state.devices, { now: Date.now, save: () => saveState(state) });
 const rawKey = decodeBase64Url(state.key) as Uint8Array;
 const roomLink = formatCollabLink(state.relayUrl, state.roomId, rawKey);
-const invite = await issueInvite(invitesDir, Date.now());
-const pairUrl = formatPairingUrl(webUrl, roomLink, invite.invite);
 const machine = os.hostname().replace(/\.local$/, "");
 const sandboxAvailable = await canSandbox();
 const worktreesDir = path.join(configDir, "worktrees");
@@ -442,24 +453,36 @@ const worktreesDir = path.join(configDir, "worktrees");
 const pushSubject = webUrl.startsWith("https://") ? new URL(webUrl).origin : "https://my.omp.sh";
 
 console.log("omp collab companion");
-console.log(`pair a device: scan the code or open ${pairUrl}`);
-console.log(
-	`the code works once and expires in ${Math.round((invite.expiresAt - Date.now()) / 60_000)} minutes; the app's Devices screen makes new ones`,
-);
-for (const row of renderQrHalfBlocks(QrCode.encodeText(pairUrl, "M"))) console.log(` ${row}`);
+// A service's output goes to a log the machine's other administrators can read (the systemd journal), and a
+// live invite there would pair a device into this computer. The service prints none; `--pair` issues one on demand.
+if (managedBy() === null) {
+	const invite = await issueInvite(invitesDir, Date.now());
+	const pairUrl = formatPairingUrl(webUrl, roomLink, invite.invite);
+	console.log(`pair a device: scan the code or open ${pairUrl}`);
+	console.log(
+		`the code works once and expires in ${Math.round((invite.expiresAt - Date.now()) / 60_000)} minutes; the app's Devices screen makes new ones`,
+	);
+	for (const row of renderQrHalfBlocks(QrCode.encodeText(pairUrl, "M"))) console.log(` ${row}`);
+} else {
+	console.log(`pair a device: run \`${pairCommand()}\` in a terminal on this computer`);
+}
 console.log(
 	`paired devices stored in ${statePath}; remove one in the app's Devices screen, or --rotate to unpair every device`,
 );
 
 if (flags.includes("--install")) {
 	const dryRun = flags.includes("--dry-run");
-	const { plistPath, plist } = await installLaunchAgent({ ompBin, script: import.meta.path, dryRun });
-	if (dryRun) {
-		console.log(`dry run: would write ${plistPath}:\n${plist}`);
-	} else {
-		console.log(`LaunchAgent installed (${plistPath}); the companion now starts at login and restarts if it exits`);
-		console.log(`log: ${launchLogPath()}`);
-		console.log("stop any manually running companion: two of them fight over the room (relay close 4009)");
+	try {
+		const service = await installService({ ompBin, argv: selfCommand(), dryRun });
+		if (dryRun) {
+			console.log(`dry run: would write ${service.file}:\n${service.text}`);
+		} else {
+			for (const line of service.lines) console.log(line);
+			console.log("stop any manually running companion: two of them fight over the room (relay close 4009)");
+		}
+	} catch (err) {
+		console.error(errorText(err));
+		process.exit(1);
 	}
 	process.exit(0);
 }
@@ -521,8 +544,11 @@ let knownPids = new Map<string, number>();
 let lastPower: CompanionPower | null = null;
 /** The low-battery push went out during this discharge. */
 let lowWarned = false;
-const awake = holdAwake();
-if (process.platform === "darwin" && !awake.held) console.error("companion: could not hold the Mac awake (caffeinate)");
+const awake = holdAwake(reason => {
+	console.error(
+		`companion: could not hold the ${process.platform === "darwin" ? "Mac" : "computer"} awake (${awakeTool()}): ${reason}`,
+	);
+});
 
 function errorText(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
@@ -712,6 +738,29 @@ const sessionOrg = createSessionOrg({
 	onChange: () => void refresh(),
 	// Never awaited: a cleanup command must not hold up the settle (or the sync that carried it).
 	onSettled: sessions => void settleCleanup.run(sessions),
+	endSession: async (session, stillWanted) => {
+		const target = await companionTmuxSession(session.instanceId);
+		// Hand-started sessions are never touched.
+		if (target === null) return true;
+		// The cleanup runs once this session is gone from the listing, and finds its worktree only through what was recorded.
+		const sandboxed = [...knownHosts, ...knownIdle].some(
+			s => s.instanceId === session.instanceId && s.sandboxed === true,
+		);
+		await settleCleanup
+			.recordSession(session.sessionId, session.cwd)
+			.catch(err => console.error(`companion: remembering session ${session.sessionId} failed: ${errorText(err)}`));
+		if (sandboxed)
+			await settleCleanup
+				.recordSandboxed(session.cwd)
+				.catch(err => console.error(`companion: remembering sandboxed ${session.cwd} failed: ${errorText(err)}`));
+		// Everything above awaited: look again at a fresh listing, so an un-settle or a prompt sent meanwhile wins.
+		await loadSessions();
+		const now = [...knownHosts, ...knownIdle].find(s => s.instanceId === session.instanceId);
+		if (now === undefined || now.busy !== false || ("inputRequired" in now && now.inputRequired)) return false;
+		if (!stillWanted()) return false;
+		await killTmuxSession(target.tmux, target.name);
+		return true;
+	},
 	onError: err => console.error(`companion: session organisation failed: ${errorText(err)}`),
 });
 
@@ -887,9 +936,10 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canSearch: true,
 		canScratch: extras.canStart,
 		canBackgroundStart: extras.canStart,
-		canForeign: extras.canStart && foreignHostExists,
+		canForeign: extras.canStart,
 		sessionOrgRev: sessionOrg.file().rev,
 		canOrderSessions: true,
+		canEndOnSettle: true,
 		transcribe: extras.transcribe ?? undefined,
 		power: power ?? undefined,
 	};
@@ -1069,8 +1119,7 @@ async function startSession(
 				model: plan ? plan.model : model,
 				foreign: plan
 					? {
-							bun: process.execPath,
-							hostMain: foreignHostMain,
+							host: foreignHostLauncher(),
 							agent: plan.agent.id,
 							permission: plan.permission,
 							worktree: created !== null || plan.row?.worktree === true,
@@ -1181,14 +1230,19 @@ async function folderCosts(): Promise<Map<string, number>> {
 	return costs;
 }
 
-/** End a session the companion started: its tmux session (named `omp-<id>`) is killed. */
-async function stopSession(instanceId: string): Promise<void> {
+/** The tmux session (named `omp-<id>`) of an omp the companion started; null for any other omp, and without tmux. */
+async function companionTmuxSession(instanceId: string): Promise<{ tmux: string; name: string } | null> {
 	const pid = knownPids.get(instanceId);
 	const tmux = await findTmux();
 	const name = pid === undefined ? null : await paneSessionName(pid);
-	if (tmux === null || name === null || !/^omp-[0-9a-f]{8}$/.test(name))
-		throw new Error("only sessions the companion started can be ended from here");
-	await killTmuxSession(tmux, name);
+	return tmux === null || name === null || !/^omp-[0-9a-f]{8}$/.test(name) ? null : { tmux, name };
+}
+
+/** End a session the companion started: its tmux session is killed. */
+async function stopSession(instanceId: string): Promise<void> {
+	const target = await companionTmuxSession(instanceId);
+	if (target === null) throw new Error("only sessions the companion started can be ended from here");
+	await killTmuxSession(target.tmux, target.name);
 }
 
 function fanoutGroup(id: unknown): FanoutGroup {

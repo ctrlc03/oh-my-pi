@@ -46,6 +46,14 @@ const CHROME_PATHS = [
 	"/Applications/Chromium.app/Contents/MacOS/Chromium",
 	"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
 	"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+	"/opt/google/chrome/chrome",
+	"/usr/bin/google-chrome-stable",
+	"/usr/bin/google-chrome",
+	"/usr/bin/chromium",
+	"/usr/bin/chromium-browser",
+	"/snap/bin/chromium",
+	"/opt/brave.com/brave/brave",
+	"/opt/microsoft/msedge/msedge",
 ];
 const CHROME_COMMANDS = [
 	"google-chrome",
@@ -87,7 +95,7 @@ export function checkPreviewUrl(value: unknown): string {
 	return url.href;
 }
 
-/** Path of a Chromium-based browser on this computer, or null: `CHROME_PATH`, then the usual macOS apps, then PATH. */
+/** Path of a Chromium-based browser on this computer, or null: `CHROME_PATH`, then the usual macOS app and Linux install paths, then PATH. */
 export async function findChrome(env: Record<string, string | undefined> = process.env): Promise<string | null> {
 	const candidates = [env.CHROME_PATH, ...CHROME_PATHS].filter((p): p is string => !!p);
 	for (const candidate of candidates) if (await Bun.file(candidate).exists()) return candidate;

@@ -39,7 +39,9 @@ export interface SessionOrgControl {
 	restore(prev: Readonly<Record<string, OrgEntry | null>>): void;
 	/** The active order and the per-session auto-settle choice are kept: always on this device, and with a paired computer only when it keeps them too. */
 	extras: boolean;
-	setSettings(patch: Partial<Pick<OrgSettings, "idleDays" | "settleOnPr">>): void;
+	/** The paired computer can end sessions when they settle ({@link CompanionSnapshot.canEndOnSettle}); the setting is only offered then. */
+	canEndOnSettle: boolean;
+	setSettings(patch: Partial<Pick<OrgSettings, "idleDays" | "settleOnPr" | "endOnSettle">>): void;
 }
 
 export interface SessionOrgSource {
@@ -49,6 +51,8 @@ export interface SessionOrgSource {
 	orgRev: number | null;
 	/** The computer keeps the active order and the auto-settle choice ({@link CompanionSnapshot.canOrderSessions}). */
 	orderSessions: boolean;
+	/** The computer ends the sessions it started when they settle, if asked ({@link CompanionSnapshot.canEndOnSettle}). */
+	endOnSettle: boolean;
 }
 
 /**
@@ -59,7 +63,7 @@ export interface SessionOrgSource {
  * computer applies it.
  */
 export function useSessionOrg(source: SessionOrgSource, rooms: readonly RecentRoom[]): SessionOrgControl {
-	const { client, live, orgRev, orderSessions } = source;
+	const { client, live, orgRev, orderSessions, endOnSettle } = source;
 	const [doc, setDoc] = useState<OrgDoc>(() => parseOrg(readJson(STORAGE_KEY)));
 	const [now, setNow] = useState(() => Date.now());
 	const docRef = useRef(doc);
@@ -134,10 +138,20 @@ export function useSessionOrg(source: SessionOrgSource, rooms: readonly RecentRo
 		[change],
 	);
 	const setSettings = useCallback(
-		(patch: Partial<Pick<OrgSettings, "idleDays" | "settleOnPr">>): void =>
+		(patch: Partial<Pick<OrgSettings, "idleDays" | "settleOnPr" | "endOnSettle">>): void =>
 			change(withSettings(docRef.current, patch, Date.now())),
 		[change],
 	);
 
-	return { doc, now, synced, act, edit, restore, extras: !synced || orderSessions, setSettings };
+	return {
+		doc,
+		now,
+		synced,
+		act,
+		edit,
+		restore,
+		extras: !synced || orderSessions,
+		canEndOnSettle: synced && endOnSettle,
+		setSettings,
+	};
 }

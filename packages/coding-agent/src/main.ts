@@ -40,6 +40,8 @@ import { buildInitialMessage } from "./cli/initial-message";
 import { formatKeyHint } from "@oh-my-pi/pi-tui/app-keybindings";
 import type { SessionPickerOptions } from "@oh-my-pi/pi-tui/apps/session-picker";
 import { applyStartupCwd } from "./cli/startup-cwd";
+import { BUILD_TAG, IS_FORK_BUILD } from "./build-identity";
+import { compareForkTags } from "./cli/fork-release";
 import { getLatestRelease, isSourceCheckout, managedInstallName } from "./cli/update-cli";
 import { findConfigFile } from "./config";
 import { ModelRegistry } from "./config/model-registry";
@@ -243,6 +245,7 @@ async function checkForNewVersion(currentVersion: string): Promise<string | unde
 		if (isSourceCheckout() || (await managedInstallName(process.execPath))) return;
 		const channel = cfgUpdateChannel.get(settings);
 		const release = await getLatestRelease({ timeoutMs: 5_000, channel });
+		if (IS_FORK_BUILD) return compareForkTags(release.tag, BUILD_TAG) > 0 ? release.tag : undefined;
 		return Bun.semver.order(release.version, currentVersion) > 0 ? release.version : undefined;
 	} catch {
 		return undefined;

@@ -375,6 +375,16 @@
 	font-size: 13.5px;
 }
 
+.sh-org-check-hinted {
+	align-items: flex-start;
+}
+
+.sh-org-check-text {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
 .sh-org-menu-sep {
 	height: 1px;
 	margin: 4px 0;
@@ -398,6 +408,10 @@
 @media (any-pointer: coarse) {
 	.sh-org-bar .sh-btn,
 	.sh-org-undo .sh-btn {
+		min-height: 44px;
+	}
+
+	.sh-org-check {
 		min-height: 44px;
 	}
 }

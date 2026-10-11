@@ -1,6 +1,8 @@
 # Deploys packages/collab-web as an installable PWA to this fork's GitHub Pages site
 # (https://<owner>.github.io/<repo>/). Point omp at it with:
 #   collab.webUrl: https://<owner>.github.io/<repo>/
+# The same site root also serves scripts/install-collab.sh as install.sh, the colleague installer:
+#   curl -fsSL https://<owner>.github.io/<repo>/install.sh | sh
 # Guarded off for the upstream repository, which serves the client from its relay.
 name: collab-web pages
 
@@ -10,13 +12,13 @@ on:
     paths:
       - "packages/collab-web/**"
       - "packages/wire/**"
+      - "scripts/install-collab.sh"
       - ".github/workflows/collab-web-pages.yml"
   workflow_dispatch:
 
+# The build job reads the repository only; the Pages token is held by the deploy job alone.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: collab-web-pages
@@ -27,26 +29,31 @@ jobs:
     if: github.repository != 'can1357/oh-my-pi'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: latest
-      - run: bun install --filter @oh-my-pi/collab-web
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      # The repo's pinned bun and `bun install --frozen-lockfile`.
+      - uses: ./.github/actions/bun-install
       # Upstream's analytics beacon is for my.omp.sh; a personal deployment drops it.
       - run: sed -i -e '/<!-- Analytics\./d' -e '/um\.can\.ac/d' packages/collab-web/index.html
       - run: bun run build
         working-directory: packages/collab-web
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v4
+      # After the build, so the service worker's precache list (written by the build) never
+      # includes it; the site is served from the root of the Pages path, next to index.html.
+      - name: Publish the installer at the site root
+        run: install -m 644 scripts/install-collab.sh packages/collab-web/dist/install.sh
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
         with:
           path: packages/collab-web/dist
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

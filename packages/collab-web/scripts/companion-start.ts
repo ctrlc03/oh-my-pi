@@ -13,7 +13,12 @@ import { MODEL_SELECTOR_RE } from "../src/lib/fanout";
 import { prepareSandbox, SANDBOX_EXEC, type SandboxLaunch } from "./companion-sandbox";
 import { SAFE_ID_RE } from "./companion-sessions";
 
-const TMUX_FALLBACKS = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"];
+const TMUX_FALLBACKS = [
+	"/opt/homebrew/bin/tmux",
+	"/usr/local/bin/tmux",
+	"/usr/bin/tmux",
+	"/home/linuxbrew/.linuxbrew/bin/tmux",
+];
 
 /** A vendor agent id: a built-in one, or `custom:<slug>`. Matches what `scripts/foreign/agents.ts` hands out. */
 export const AGENT_ID_RE = /^(?:claude|codex|cursor|grok|opencode|custom:[a-z0-9-]{1,32})$/;
@@ -76,10 +81,8 @@ export interface TmuxLaunch {
 
 /** How the detached host of a foreign agent session is started; see `scripts/foreign/host-main.ts`. */
 export interface ForeignLaunch {
-	/** Runtime that runs the host entry (bun). */
-	bun: string;
-	/** Absolute path of `host-main.ts`. */
-	hostMain: string;
+	/** Command that runs the host, before its flags (see `foreignHostLauncher`): bun and `host-main.ts`, or the compiled omp and its internal subcommand. */
+	host: readonly string[];
 	/** {@link AGENT_ID_RE}. */
 	agent: string;
 	permission: "supervised" | "full";
@@ -109,8 +112,7 @@ export function foreignHostCommand(
 	},
 ): string[] {
 	return [
-		foreign.bun,
-		foreign.hostMain,
+		...foreign.host,
 		"--agent",
 		foreign.agent,
 		"--cwd",

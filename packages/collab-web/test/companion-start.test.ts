@@ -141,8 +141,7 @@ describe.skipIf(tmuxBin === null)("launchInTmux with a real tmux", () => {
 			maxCostUsd: 2.5,
 			model: "anthropic/sonnet[1m]",
 			foreign: {
-				bun: fakeOmp,
-				hostMain: "/repo/foreign/host-main.ts",
+				host: [fakeOmp, "/repo/foreign/host-main.ts"],
 				agent: "custom:team-agent",
 				permission: "full",
 				relayUrl: "wss://relay.example",
@@ -199,8 +198,7 @@ describe.skipIf(tmuxBin === null)("launchInTmux with a real tmux", () => {
 			cwd: root,
 		};
 		const foreign = {
-			bun: fakeOmp,
-			hostMain: "/repo/foreign/host-main.ts",
+			host: [fakeOmp, "/repo/foreign/host-main.ts"],
 			agent: "claude",
 			permission: "supervised" as const,
 		};
@@ -221,8 +219,7 @@ describe.skipIf(tmuxBin === null)("launchInTmux with a real tmux", () => {
 
 describe("foreignHostCommand", () => {
 	const foreign = {
-		bun: "/usr/bin/bun",
-		hostMain: "/repo/host-main.ts",
+		host: ["/usr/bin/bun", "/repo/host-main.ts"],
 		agent: "claude",
 		permission: "supervised" as const,
 	};

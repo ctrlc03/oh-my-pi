@@ -24,6 +24,11 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { adapterLauncher, BUN_BE_BUN_ENV, isCompiled } from "../build-identity";
+import claudeManifest from "./adapters/claude/package.json" with { type: "text" };
+import claudeLock from "./adapters/claude/bun.lock" with { type: "text" };
+import codexManifest from "./adapters/codex/package.json" with { type: "text" };
+import codexLock from "./adapters/codex/bun.lock" with { type: "text" };
 
 export interface LaunchSpec {
 	command: string[];
@@ -95,6 +100,7 @@ export const ADAPTER_PINS = {
 	claude: { pkg: "@agentclientprotocol/claude-agent-acp", version: "0.89.1" },
 	codex: { pkg: "@agentclientprotocol/codex-acp", version: "2.2.2" },
 } as const satisfies Record<string, AdapterPin>;
+type AdapterId = keyof typeof ADAPTER_PINS;
 
 const CUSTOM_ID_RE = /^custom:[a-z0-9-]{1,32}$/;
 const ENV_KEY_RE = /^[A-Z_][A-Z0-9_]*$/;
@@ -468,8 +474,12 @@ async function findBin(d: Descriptor, pathValue: string): Promise<string | null>
 	return null;
 }
 
-/** Runtime for the adapters' scripts: the bun running the companion (adapters work under bun; node may be absent or old). */
+/**
+ * Runtime for the adapters' scripts and `bun install`. Compiled: the omp binary itself, which acts as bun when `BUN_BE_BUN=1`
+ * is set in the child's environment (only the install sets it; adapters run through `__collab-adapter`). Otherwise the bun running the companion (adapters work under bun; node may be absent or old).
+ */
 function bunBin(pathValue: string): string | null {
+	if (isCompiled) return process.execPath;
 	return path.basename(process.execPath).startsWith("bun") ? process.execPath : which("bun", pathValue);
 }
 
@@ -536,10 +546,17 @@ function adapterRoot(configDir: string, id: string): string {
 	return path.join(agentsDir(configDir), id);
 }
 
-/** Package manifest and lockfile shipped for `id`'s adapter. */
-function adapterSource(id: string): string {
-	return path.join(import.meta.dir, "adapters", id);
+/** A `with { type: "text" }` import is a string at runtime, though TypeScript types `.json` and `bun.lock` imports by extension. */
+function embeddedText(text: unknown): string {
+	if (typeof text !== "string") throw new Error("adapter file was not embedded as text");
+	return text;
 }
+
+/** Package manifest and lockfile of each managed adapter, embedded so a compiled binary needs no checkout. */
+const ADAPTER_FILES: Record<AdapterId, Record<"package.json" | "bun.lock", string>> = {
+	claude: { "package.json": embeddedText(claudeManifest), "bun.lock": embeddedText(claudeLock) },
+	codex: { "package.json": embeddedText(codexManifest), "bun.lock": embeddedText(codexLock) },
+};
 
 function customFile(configDir: string): string {
 	return path.join(configDir, "agent", "collab-agents.json");
@@ -577,6 +594,44 @@ export async function adapterVersion(id: string, opts: { configDir: string }): P
 	const pin = builtin(id)?.adapter;
 	if (!pin) return null;
 	return (await readPackageJson(opts.configDir, id, pin.pkg))?.version ?? null;
+}
+
+/** Platform package (`@openai/codex-<os>-<arch>`) and vendor target of the native Codex binary the Codex adapter bundles. */
+const CODEX_NATIVE: Record<string, { pkg: string; triple: string }> = {
+	"darwin-arm64": { pkg: "@openai/codex-darwin-arm64", triple: "aarch64-apple-darwin" },
+	"darwin-x64": { pkg: "@openai/codex-darwin-x64", triple: "x86_64-apple-darwin" },
+	"linux-arm64": { pkg: "@openai/codex-linux-arm64", triple: "aarch64-unknown-linux-musl" },
+	"linux-x64": { pkg: "@openai/codex-linux-x64", triple: "x86_64-unknown-linux-musl" },
+};
+
+/**
+ * The native `codex` the managed Codex adapter ships, or null when this platform has none or it is not installed. Without
+ * `CODEX_PATH` the adapter runs `process.execPath <bundled codex.js>`, which needs a bun or node there: in a compiled omp
+ * `process.execPath` is omp itself, and `BUN_BE_BUN` must not be set for the adapter (it would reach every command the agent runs).
+ * The `codex.js` wrapper only adds package-manager hints to the environment, so the native binary runs the same.
+ */
+export async function codexNativeBinary(
+	configDir: string,
+	platform: string = process.platform,
+	arch: string = process.arch,
+): Promise<string | null> {
+	const native = CODEX_NATIVE[`${platform}-${arch}`];
+	if (!native) return null;
+	const binary = path.join(
+		adapterRoot(configDir, "codex"),
+		"node_modules",
+		native.pkg,
+		"vendor",
+		native.triple,
+		"bin",
+		"codex",
+	);
+	return (await Bun.file(binary).exists()) ? binary : null;
+}
+
+async function codexNativeEnv(configDir: string): Promise<Record<string, string>> {
+	const binary = await codexNativeBinary(configDir);
+	return binary ? { CODEX_PATH: binary } : {};
 }
 
 /** Script of the adapter's single `bin`, resolved inside the managed install, or null when it is missing or escapes it. */
@@ -968,12 +1023,13 @@ export function installAgent(id: string, opts: AgentsOpts): Promise<AgentInfo[]>
 			if (!bun) throw new Error("Installing needs bun on this computer");
 			const dir = adapterRoot(opts.configDir, id);
 			await fs.mkdir(dir, { recursive: true });
-			for (const file of ["package.json", "bun.lock"]) {
-				await fs.copyFile(path.join(adapterSource(id), file), path.join(dir, file));
+			for (const [file, text] of Object.entries(ADAPTER_FILES[id as AdapterId])) {
+				await fs.writeFile(path.join(dir, file), text);
 			}
 			const spec = `${pin.pkg}@${pin.version}`;
 			const command = [bun, "install", "--frozen-lockfile", "--ignore-scripts", "--no-progress"];
-			const res = await run(command, { ...allowlistedEnv(pathValue, []), NO_COLOR: "1" }, INSTALL_TIMEOUT_MS, dir);
+			const installEnv = { ...allowlistedEnv(pathValue, []), ...(isCompiled ? BUN_BE_BUN_ENV : {}), NO_COLOR: "1" };
+			const res = await run(command, installEnv, INSTALL_TIMEOUT_MS, dir);
 			if (res.timedOut) throw new Error(`Installing ${spec} timed out`);
 			if (res.code !== 0) {
 				const tail = `${res.err}\n${res.out}`.trim().split("\n").slice(-4).join("\n");
@@ -1008,7 +1064,7 @@ export async function launchSpec(id: string, opts: LaunchOpts): Promise<LaunchSp
 		if (d.adapter) {
 			const script = await adapterScript(opts.configDir, d.id, d.adapter);
 			const bun = bunBin(pathValue);
-			if (script && bun) adapter = [bun, script];
+			if (script && bun) adapter = adapterLauncher(bun, script);
 		}
 		const launch = d.launch({
 			bin,
@@ -1017,7 +1073,11 @@ export async function launchSpec(id: string, opts: LaunchOpts): Promise<LaunchSp
 			model: opts.model,
 		});
 		const binDir = bin ? [path.dirname(bin)] : [];
-		const env = { ...allowlistedEnv(await searchPath(opts, binDir), d.passEnv), ...launch.env };
+		const env = {
+			...allowlistedEnv(await searchPath(opts, binDir), d.passEnv),
+			...(d.id === "codex" && isCompiled ? await codexNativeEnv(opts.configDir) : {}),
+			...launch.env,
+		};
 		return { command: launch.command, env, cwd: opts.cwd };
 	}
 	if (!CUSTOM_ID_RE.test(id)) throw new Error(`Unknown agent: ${id}`);

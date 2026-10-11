@@ -138,7 +138,7 @@ export function DiagnosticsSheet({ client, onClose }: DiagnosticsSheetProps): Re
 							</Row>
 							<Row label="Omp">{reading.diag.omp ?? "not answering"}</Row>
 							<Row label="Uptime">{fmtDuration(reading.diag.uptimeMs)}</Row>
-							<Row label="Started by">{reading.diag.managed === "launchd" ? "launchd" : "hand"}</Row>
+							<Row label="Started by">{reading.diag.managed === "manual" ? "hand" : reading.diag.managed}</Row>
 							<Row label="Keep awake">{reading.diag.keepAwake ? "held" : "not held"}</Row>
 							<Row label="Power">{powerText(reading.diag.power)}</Row>
 							<Row label="Session list">
@@ -217,7 +217,7 @@ export function DiagnosticsSheet({ client, onClose }: DiagnosticsSheetProps): Re
 						{reading.diag.managed === "manual" && (
 							<div className="sh-field-hint">
 								The companion was started by hand, so the app cannot restart it. <code>--install</code> makes
-								macOS run it.
+								the computer's service manager (launchd on macOS, systemd on Linux) run it.
 							</div>
 						)}
 						{outcome &&

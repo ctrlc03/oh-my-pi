@@ -41,6 +41,11 @@ export interface OrgFile {
 	activity: Record<string, number>;
 	/** session id → `at` of the settled entry the settle cleanup has been offered for; see {@link settleTransitions}. */
 	settled: Record<string, number>;
+	/**
+	 * session id → `at` of the settled entry whose session is to be ended (and its cleanup run) once it is idle: sessions that
+	 * settled while "End sessions when they settle" was on and are not resolved yet. Kept so a restart neither forgets nor repeats them.
+	 */
+	ending: Record<string, number>;
 }
 
 /**
@@ -64,28 +69,32 @@ export function settleTransitions(
 	return { handled: next, events };
 }
 
+/** A record of session id → time from untrusted JSON; damaged ids and times are dropped. */
+function parseTimes(raw: unknown): Record<string, number> {
+	const times: Record<string, number> = {};
+	if (typeof raw === "object" && raw !== null)
+		for (const [id, at] of Object.entries(raw))
+			if (KEY_RE.test(id) && typeof at === "number" && Number.isFinite(at)) times[id] = at;
+	return times;
+}
+
 export function parseOrgFile(raw: unknown): OrgFile {
-	const file = raw as { doc?: unknown; rev?: unknown; activity?: unknown; settled?: unknown } | null;
-	const activity: Record<string, number> = {};
-	if (typeof file?.activity === "object" && file.activity !== null)
-		for (const [id, at] of Object.entries(file.activity))
-			if (KEY_RE.test(id) && typeof at === "number" && Number.isFinite(at)) activity[id] = at;
+	const file = raw as { doc?: unknown; rev?: unknown; activity?: unknown; settled?: unknown; ending?: unknown } | null;
+	const activity = parseTimes(file?.activity);
+	const ending = parseTimes(file?.ending);
 	const rev = typeof file?.rev === "number" && Number.isInteger(file.rev) && file.rev >= 0 ? file.rev : 0;
 	const doc = parseOrg(file?.doc);
 	// A file from before settle cleanup existed: what is settled already is not news, or the first start would run it for every old session.
 	if (typeof file?.settled !== "object" || file.settled === null)
-		return { doc, rev, activity, settled: settleTransitions(doc, {}).handled };
-	const settled: Record<string, number> = {};
-	for (const [id, at] of Object.entries(file.settled))
-		if (KEY_RE.test(id) && typeof at === "number" && Number.isFinite(at)) settled[id] = at;
-	return { doc, rev, activity, settled };
+		return { doc, rev, activity, settled: settleTransitions(doc, {}).handled, ending };
+	return { doc, rev, activity, settled: parseTimes(file.settled), ending };
 }
 
 export async function loadOrgFile(file: string): Promise<OrgFile> {
 	try {
 		return parseOrgFile(JSON.parse(await Bun.file(file).text()));
 	} catch {
-		return { doc: emptyOrg(), rev: 0, activity: {}, settled: {} };
+		return { doc: emptyOrg(), rev: 0, activity: {}, settled: {}, ending: {} };
 	}
 }
 
@@ -130,6 +139,8 @@ export async function ghSessionPrDone(cwd: string): Promise<number | null> {
 
 /** What the organiser needs to know of a listed session. */
 export interface OrgSession {
+	/** The omp process, which {@link SessionOrgOptions.endSession} ends. */
+	instanceId: string;
 	sessionId: string;
 	cwd: string;
 	startedAt: number;
@@ -149,9 +160,20 @@ export interface SessionOrgOptions {
 	onChange(): void;
 	/**
 	 * Sessions that just went into settled, from a device's document or an auto-settle rule; each transition is
-	 * reported once, after it was persisted (so a restart does not report it again). Not awaited.
+	 * reported once, after it was persisted (so a restart does not report it again). Not awaited. While
+	 * `settings.endOnSettle` is on, a session is reported once it has been ended (or turned out not to be one
+	 * to end), so the cleanup it triggers never races a live agent; one un-settled before that is not reported.
 	 */
 	onSettled?(sessions: SettledSession[]): void;
+	/**
+	 * End a listed session that settled with the option on and went idle. The caller leaves sessions the companion did
+	 * not start alone. It resolves `true` when nothing is left to wait for (the session is gone, or is not one to end),
+	 * and `false` when it did not end it: `stillWanted` reports false once the settle was undone, replaced or the option
+	 * turned off, and the caller asks it (and re-reads whether the session is idle) after its last await, right before
+	 * the kill, so an un-settle or a new prompt that lands meanwhile still wins. A `false` is retried on a later listing,
+	 * which drops the session silently when it was un-settled. A rejection is reported to {@link onError} and the session is not retried.
+	 */
+	endSession(session: OrgSession, stillWanted: () => boolean): Promise<boolean>;
 	onError(err: unknown): void;
 }
 
@@ -174,6 +196,7 @@ export function createSessionOrg(options: SessionOrgOptions): SessionOrg {
 	let lastPrCheck = Number.NEGATIVE_INFINITY;
 	let lastSave = options.now();
 	let prRunning = false;
+	let resolving = false;
 	let saving: Promise<void> = Promise.resolve();
 
 	const persist = (): Promise<void> => {
@@ -183,14 +206,65 @@ export function createSessionOrg(options: SessionOrgOptions): SessionOrg {
 		return saving;
 	};
 
-	/** Replace the document; a real change bumps the revision and is persisted, then new settles are reported. */
+	/** Replace the document; a real change bumps the revision and is persisted, then new settles are reported (or, with the option on, queued to be ended first). */
 	const adopt = async (doc: OrgDoc): Promise<boolean> => {
 		if (sameOrg(doc, file.doc)) return false;
 		const { handled, events } = settleTransitions(doc, file.settled);
-		file = { ...file, doc, rev: file.rev + 1, settled: handled };
+		const queue = doc.settings.endOnSettle === true;
+		const ending = queue
+			? { ...file.ending, ...Object.fromEntries(events.map(e => [e.sessionId, e.at])) }
+			: file.ending;
+		file = { ...file, doc, rev: file.rev + 1, settled: handled, ending };
 		await persist();
-		if (events.length > 0) options.onSettled?.(events);
+		if (!queue && events.length > 0) options.onSettled?.(events);
 		return true;
+	};
+
+	/** Take a session out of `ending` while it still holds this settled entry. */
+	const release = async (sessionId: string, at: number): Promise<void> => {
+		if (file.ending[sessionId] !== at) return;
+		const ending = { ...file.ending };
+		delete ending[sessionId];
+		file = { ...file, ending };
+		await persist();
+	};
+
+	/**
+	 * End the settled sessions waiting in `ending` that are listed and idle, then report them (and those that are
+	 * not listed, or whose option was turned off meanwhile) for cleanup. A session working or asking waits for a later
+	 * listing; one the user un-settled meanwhile is forgotten.
+	 */
+	const resolveEnding = async (sessions: readonly OrgSession[]): Promise<void> => {
+		if (resolving || Object.keys(file.ending).length === 0) return;
+		resolving = true;
+		try {
+			const reported: SettledSession[] = [];
+			for (const [sessionId, at] of Object.entries(file.ending)) {
+				const entry = Object.hasOwn(file.doc.entries, sessionId) ? file.doc.entries[sessionId] : undefined;
+				if (entry?.status !== "settled" || entry.at !== at) {
+					await release(sessionId, at);
+					continue;
+				}
+				const live = sessions.find(s => s.sessionId === sessionId);
+				if (live !== undefined && file.doc.settings.endOnSettle === true) {
+					if (live.busy !== false || live.inputRequired) continue;
+					try {
+						const wanted = (): boolean => {
+							const now = Object.hasOwn(file.doc.entries, sessionId) ? file.doc.entries[sessionId] : undefined;
+							return now?.status === "settled" && now.at === at && file.doc.settings.endOnSettle === true;
+						};
+						if (!(await options.endSession(live, wanted))) continue;
+					} catch (err) {
+						options.onError(err);
+					}
+				}
+				await release(sessionId, at);
+				reported.push({ sessionId, at });
+			}
+			if (reported.length > 0) options.onSettled?.(reported);
+		} finally {
+			resolving = false;
+		}
 	};
 
 	const observe = (sessions: readonly OrgSession[], now: number): boolean => {
@@ -265,6 +339,7 @@ export function createSessionOrg(options: SessionOrgOptions): SessionOrg {
 			const changed = await adopt(pruneOrg(autoSettleIdle(file.doc, idle, now), now));
 			if (!changed && activityChanged && now - lastSave >= ACTIVITY_SAVE_MS) await persist();
 			if (changed) options.onChange();
+			await resolveEnding(sessions);
 			await settleOnPrs(sessions, now);
 		},
 	};

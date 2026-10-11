@@ -148,6 +148,53 @@ export const cfgCommandsEnableOpencodeProject = register({
 	},
 });
 
+const CLAUDE_COMPAT_OPTIONS = [
+	{ value: "off", label: "Off", description: "Do not load anything from Claude Code settings." },
+	{
+		value: "user",
+		label: "User only",
+		description: "Load only from ~/.claude/settings.json (or CLAUDE_CONFIG_DIR).",
+	},
+	{
+		value: "all",
+		label: "User and project",
+		description:
+			"Also load <project>/.claude/settings.json and settings.local.json. Project files run arbitrary commands: enable only for repositories you trust.",
+	},
+];
+
+// Honored from the user config, a runtime override, or `--config` only; a project layer cannot enable itself
+// (see `claude-compat/mode.ts`).
+export const cfgClaudeHooks = register({
+	id: "claude.hooks",
+	type: "enum",
+	values: ["off", "user", "all"] as const,
+	default: "off",
+	ui: {
+		tab: "tools",
+		group: "Extensions",
+		label: "Claude Code Hooks",
+		description:
+			"Run command hooks (PreToolUse, PostToolUse, UserPromptSubmit, Stop, SessionStart) from Claude Code settings.json files. Project hooks execute arbitrary commands.",
+		options: CLAUDE_COMPAT_OPTIONS,
+	},
+});
+
+export const cfgClaudePermissions = register({
+	id: "claude.permissions",
+	type: "enum",
+	values: ["off", "user", "all"] as const,
+	default: "off",
+	ui: {
+		tab: "tools",
+		group: "Extensions",
+		label: "Claude Code Permissions",
+		description:
+			"Map permissions.allow/deny/ask from Claude Code settings.json files onto bash.patterns, tools.approval, and path rules for this session.",
+		options: CLAUDE_COMPAT_OPTIONS,
+	},
+});
+
 export const cfgExtensionHandlersToolCallTimeoutMs = register({
 	id: "extensionHandlers.toolCallTimeoutMs",
 	type: "number",

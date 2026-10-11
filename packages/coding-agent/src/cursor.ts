@@ -37,6 +37,7 @@ import { sanitizeText } from "@oh-my-pi/pi-utils";
 import { cursorMcpPrefersReplaceEdit, normalizeCursorReplaceArgs } from "./cursor-bridge-tools";
 import type { MCPResourceReadResult } from "./mcp/types";
 import { resolveApproval, resolveApprovalFromContext } from "./tools/approval";
+import { applyPathRuleApproval, evaluatePathRule } from "./tools/path-rules";
 import {
 	confineToWorkspace,
 	resolveReadPathAsync,
@@ -349,9 +350,14 @@ function allowsDirectFileMutation(options: CursorExecBridgeOptions): boolean {
  * proceed, or the refusal text to answer with.
  */
 function refuseByWritePolicy(options: CursorExecBridgeOptions, toolName: string, pathArg: string): string | null {
-	const { approvalMode, userPolicies } = resolveApprovalFromContext(options.getToolContext?.());
+	const toolContext = options.getToolContext?.();
+	const { approvalMode, userPolicies } = resolveApprovalFromContext(toolContext);
+	// These frames bypass the registry, so `tools.pathRules` applies here as it does to `write`.
+	const pathRule = toolContext?.settings
+		? evaluatePathRule(toolContext.settings, "write", pathArg, options.getCwd?.() ?? options.cwd)
+		: ({ action: "allow" } as const);
 	const approval = resolveApproval(
-		{ name: toolName, approval: "write" },
+		{ name: toolName, approval: applyPathRuleApproval("write", pathRule) },
 		{ path: pathArg },
 		approvalMode,
 		userPolicies,

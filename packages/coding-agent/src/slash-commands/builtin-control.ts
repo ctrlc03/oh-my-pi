@@ -2,6 +2,8 @@ import { runPauseScreen } from "@oh-my-pi/pi-tui/overlays/pause-screen";
 import { clearSubmittedText } from "./helpers/draft";
 import { shutdownHandlerTui } from "./builtin-lifecycle";
 import { commandConsumed, errorMessage, usage } from "./helpers/parse";
+import { parseBudgetArgs } from "../session/spend-cap-input";
+import { formatBudgetStatus } from "../session/spend-cap";
 import type { SlashCommandSpec } from "./types";
 
 export const BUILTIN_CONTROL_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
@@ -80,6 +82,30 @@ export const BUILTIN_CONTROL_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 		handleTui: async (_command, runtime) => {
 			clearSubmittedText(runtime);
 			await runPauseScreen(runtime.ctx);
+		},
+	},
+	{
+		name: "budget",
+		icon: "gauge",
+		description: "Show, raise, or clear this session's spend cap",
+		inlineHint: "[<usd>|off|tokens <n>]",
+		acpInputHint: "[<usd>|off|tokens <n>]",
+		allowArgs: true,
+		getTuiAutocompleteDescription: runtime => formatBudgetStatus(runtime.ctx.session.getSpendCap()),
+		handle: async (command, runtime) => {
+			const parsed = parseBudgetArgs(command.args);
+			if (parsed.action === "error") return usage(parsed.message, runtime);
+			const status = parsed.action === "set" ? runtime.session.setSpendCap(parsed) : runtime.session.getSpendCap();
+			await runtime.output(formatBudgetStatus(status));
+			return commandConsumed();
+		},
+		// `setSpendCap` announces the change as a session notice, which the TUI renders itself.
+		handleTui: (command, runtime) => {
+			clearSubmittedText(runtime);
+			const parsed = parseBudgetArgs(command.args);
+			if (parsed.action === "error") runtime.ctx.showWarning(parsed.message);
+			else if (parsed.action === "set") runtime.ctx.session.setSpendCap(parsed);
+			else runtime.ctx.showStatus(formatBudgetStatus(runtime.ctx.session.getSpendCap()));
 		},
 	},
 	{

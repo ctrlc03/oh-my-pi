@@ -17,6 +17,7 @@ import type { CompanionClient, RecentFolder } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import {
 	describeWhen,
+	MAX_SCHEDULE_COST_USD,
 	MAX_SCHEDULE_PROMPT_CHARS,
 	MAX_SCHEDULE_TITLE_CHARS,
 	type Schedule,
@@ -52,6 +53,7 @@ interface Draft {
 	sessionId: string;
 	worktree: boolean;
 	sandboxed: boolean;
+	maxCost: string;
 	kind: ScheduleWhen["kind"];
 	at: string;
 	time: string;
@@ -82,6 +84,7 @@ function blankDraft(): Draft {
 		sessionId: "",
 		worktree: false,
 		sandboxed: false,
+		maxCost: "",
 		kind: "daily",
 		at: toLocalInput(tomorrow.getTime()),
 		time: "09:00",
@@ -102,6 +105,7 @@ function draftOf(schedule: Schedule): Draft {
 		sessionId: schedule.sessionId ?? "",
 		worktree: schedule.worktree === true,
 		sandboxed: schedule.sandboxed === true,
+		maxCost: schedule.maxCostUsd === undefined ? "" : String(schedule.maxCostUsd),
 		kind: when.kind,
 		...(when.kind === "once" ? { at: toLocalInput(when.at) } : { time: when.time, days: when.days }),
 		enabled: schedule.enabled,
@@ -123,6 +127,14 @@ function inputOf(draft: Draft): { input: ScheduleInput } | { error: string } {
 		if (draft.days.length === 0) return { error: "Pick at least one weekday." };
 		when = { kind: "daily", time: draft.time, days: draft.days };
 	}
+	const maxCostText = draft.maxCost.trim().replace(/^\$/, "");
+	const maxCostUsd = maxCostText === "" ? undefined : Number(maxCostText);
+	if (
+		draft.mode === "new" &&
+		maxCostUsd !== undefined &&
+		!(Number.isFinite(maxCostUsd) && maxCostUsd > 0 && maxCostUsd <= MAX_SCHEDULE_COST_USD)
+	)
+		return { error: "Enter a spend limit in dollars, or leave it empty." };
 	return {
 		input: {
 			id: draft.id,
@@ -133,6 +145,7 @@ function inputOf(draft: Draft): { input: ScheduleInput } | { error: string } {
 			sessionId: draft.mode === "resume" ? draft.sessionId : undefined,
 			worktree: draft.mode === "new" && draft.worktree ? true : undefined,
 			sandboxed: draft.sandboxed ? true : undefined,
+			maxCostUsd: draft.mode === "new" ? maxCostUsd : undefined,
 			when,
 			enabled: draft.enabled,
 		},
@@ -340,6 +353,7 @@ function ScheduleRow({
 						<span className="sh-recent-name">{schedule.title}</span>
 						{schedule.sandboxed && <span className="sh-chip">sandboxed</span>}
 						{schedule.worktree && <span className="sh-chip">worktree</span>}
+						{schedule.maxCostUsd !== undefined && <span className="sh-chip">limit ${schedule.maxCostUsd}</span>}
 						{schedule.mode === "resume" && <span className="sh-chip">resume</span>}
 					</span>
 					<span className="sh-recent-meta">
@@ -633,6 +647,22 @@ function ScheduleEditor({ client, canSandbox, draft, busy, onChange, onSave }: S
 						<span className="sh-field-hint">
 							Each run works on a fresh branch in its own checkout, so this folder stays untouched.
 						</span>
+					</span>
+				</label>
+			)}
+			{draft.mode === "new" && (
+				<label className="sh-sched-field">
+					<span className="sh-field-label">Spend limit per run</span>
+					<input
+						className="sh-input"
+						value={draft.maxCost}
+						onChange={e => set({ maxCost: e.currentTarget.value })}
+						placeholder="No limit"
+						inputMode="decimal"
+						autoComplete="off"
+					/>
+					<span className="sh-field-hint">
+						US dollars. The run stops at a safe point once it has spent this much, then refuses new prompts.
 					</span>
 				</label>
 			)}

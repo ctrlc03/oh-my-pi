@@ -547,7 +547,11 @@ export interface FileSnapshotStoreOptions {
 	enabled: () => boolean;
 }
 
-interface UndoSlot {
+/**
+ * What the last restore (or redo) replaced: the tree as it was before it, and the tree it left
+ * behind, which a redo to this point only runs while the files still match.
+ */
+export interface FileRestorePoint {
 	sessionId: string;
 	repo: SnapshotRepo;
 	/** Commit of the tree as it was before the last restore (or redo). */
@@ -578,7 +582,7 @@ export class FileSnapshotStore {
 	readonly #options: FileSnapshotStoreOptions;
 	readonly #repos = new Map<string, Promise<SnapshotRepo | undefined>>();
 	#queue: Promise<unknown> = Promise.resolve();
-	#undo: UndoSlot | undefined;
+	#undo: FileRestorePoint | undefined;
 	/** Repository root -> time until which prompts skip snapshotting it (it tripped a size cap). */
 	readonly #sizeSkips = new Map<string, number>();
 	/** Repository root -> consecutive prompts that gave up waiting for its snapshot. */
@@ -598,6 +602,11 @@ export class FileSnapshotStore {
 	/** Whether the last file restore (or redo) can be reverted. */
 	get canRedo(): boolean {
 		return this.#undo?.sessionId === this.#options.sessionId();
+	}
+
+	/** The point the last file restore (or redo) can be reverted to; undefined when there is none for this session. */
+	get restorePoint(): FileRestorePoint | undefined {
+		return this.canRedo ? this.#undo : undefined;
 	}
 
 	#serial<T>(task: () => Promise<T>): Promise<T> {
@@ -744,10 +753,13 @@ export class FileSnapshotStore {
 		});
 	}
 
-	/** Revert the last file restore (or redo), as long as nothing has changed the files since. */
-	redo(): Promise<FileRestoreResult> {
+	/**
+	 * Revert the last file restore (or redo), or return to `point` (an earlier one kept by the
+	 * caller), as long as nothing has changed the files since it was left.
+	 */
+	redo(point?: FileRestorePoint): Promise<FileRestoreResult> {
 		return this.#serial(async () => {
-			const slot = this.#undo;
+			const slot = point ?? this.#undo;
 			if (!slot || slot.sessionId !== this.#options.sessionId()) {
 				throw new FileSnapshotError("there is no file restore to undo");
 			}

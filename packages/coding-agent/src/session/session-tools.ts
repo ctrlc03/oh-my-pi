@@ -365,6 +365,10 @@ export class SessionTools {
 	#lastAppliedToolSignature: string | undefined;
 	/** Full enabled set, including tools demoted from the model-visible surface. */
 	#enabledToolNames = new Set<string>();
+	/** Agent-profile filter applied to every tool selection until cleared. */
+	#toolFilter: ((names: string[]) => string[]) | undefined;
+	/** Names the filter removed, offered back to the next filter (or restored when it is cleared). */
+	#filteredOutToolNames = new Set<string>();
 	/** Names currently exposed through tool-session `isToolActive` predicates. */
 	#toolPredicateNames: readonly string[] | undefined;
 	/** Wire-name snapshot for the direct Code Mode tools last applied successfully. */
@@ -1079,6 +1083,12 @@ export class SessionTools {
 	async #applyActiveToolsByName(toolNames: string[], forcePromptRefresh = false, signal?: AbortSignal): Promise<void> {
 		signal?.throwIfAborted();
 		toolNames = normalizeToolNames(toolNames);
+		if (this.#toolFilter) {
+			const kept = this.#toolFilter(toolNames);
+			const keptNames = new Set(kept);
+			for (const name of toolNames) if (!keptNames.has(name)) this.#filteredOutToolNames.add(name);
+			toolNames = kept;
+		}
 		const codeMode = resolveCodeMode({
 			provider: this.#host.model()?.provider ?? "",
 			toolMode: this.#host.model()?.toolMode,
@@ -1918,6 +1928,27 @@ export class SessionTools {
 				this.#xdev?.mountedNames ?? new Set(),
 				this.getActiveToolNames().includes("write"),
 			);
+		});
+	}
+
+	/**
+	 * Installs (or with `undefined` removes) a filter every later tool selection passes through, so
+	 * tools enabled afterwards (MCP connections, discovery) obey it too, and re-applies the current
+	 * selection. Tools a previous filter removed are offered to the new one. Resolves true once the
+	 * selection was re-applied.
+	 */
+	setToolFilter(filter: ((names: string[]) => string[]) | undefined): Promise<boolean> {
+		return this.runToolRegistryMutation(async () => {
+			const candidates = normalizeToolNames([...this.getEnabledToolNames(), ...this.#filteredOutToolNames]);
+			this.#filteredOutToolNames.clear();
+			this.#toolFilter = filter;
+			await this.#applyToolPresentation(
+				candidates,
+				this.#xdev?.mountedNames ?? new Set(),
+				this.getActiveToolNames().includes("write"),
+				true,
+			);
+			return true;
 		});
 	}
 

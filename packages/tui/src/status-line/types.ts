@@ -112,6 +112,8 @@ export interface SegmentContext {
 	vibeMode: {
 		enabled: boolean;
 	} | null;
+	/** Active agent profile other than the default, shown in the `mode` segment; null/absent when none. */
+	profile?: { name: string } | null;
 	/** Modal editing state, or null when `tui.vimMode` is off. */
 	vim: {
 		mode: "insert" | "normal" | "visual" | "visual-line" | "replace";

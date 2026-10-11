@@ -132,6 +132,7 @@ function hotkeyGroups(bindings: HotkeysMarkdownBindings): HotkeyGroup[] {
 				{ keys: [act("app.model.selectTemporary")], action: "Select model (temporary)" },
 				{ keys: [act("app.model.select")], action: "Select model (set roles)" },
 				{ keys: [act("app.plan.toggle")], action: "Toggle plan mode" },
+				{ keys: [act("app.profile.cycle")], action: "Cycle agent profile" },
 				{ keys: [act("app.history.search")], action: "Search prompt history" },
 				{ keys: [act("app.tools.expand")], action: "Toggle tool output expansion" },
 				{ keys: [act("app.tools.toggleVisibility")], action: "Toggle tool activity visibility" },

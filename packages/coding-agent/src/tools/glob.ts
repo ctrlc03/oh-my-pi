@@ -1,7 +1,13 @@
 import type { GlobToolDetails } from "@oh-my-pi/pi-tui/tools/glob";
 import * as fs from "node:fs";
 import { type } from "@oh-my-pi/omptype";
-import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
+import type {
+	AgentTool,
+	AgentToolContext,
+	AgentToolResult,
+	AgentToolUpdateCallback,
+	ToolApprovalDecision,
+} from "@oh-my-pi/pi-agent-core";
 import * as natives from "@oh-my-pi/pi-natives";
 import { formatGroupedPaths, hasFsCode, isEnoent, prompt, untilAborted } from "@oh-my-pi/pi-utils";
 import { InternalUrlRouter, sessionResolveContext } from "../internal-urls";
@@ -12,6 +18,7 @@ import { sessionDelegationBias } from "../task/prompt-policy";
 import { isScoutSpawnable } from "../task/spawn-policy";
 import type { ToolSession } from ".";
 import { resolveToolTier } from "./approval";
+import { createPathRuleFilter, searchRootApproval, searchRootCandidates } from "./path-rules";
 import { isFindEnabled } from "./jfind";
 import { applyListLimit } from "@oh-my-pi/pi-tui/tools/list-limit";
 import {
@@ -116,7 +123,17 @@ interface NativePreparedTarget {
 
 export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 	readonly name = "glob";
-	readonly approval = "read" as const;
+	readonly approval = (args: unknown): ToolApprovalDecision => {
+		const pathArg = (args as { path?: string | string[] } | null)?.path;
+		const entries = toPathList(pathArg);
+		// Only a prompt gates a search root; denied paths are filtered from the results instead.
+		return searchRootApproval(
+			this.session,
+			"glob",
+			"read",
+			searchRootCandidates(entries.length > 0 ? entries : ["."]),
+		);
+	};
 	readonly loadMode = "essential";
 	readonly label = "Glob";
 	get description(): string {
@@ -278,11 +295,20 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 			const missingPathsNote =
 				missingPaths.length > 0 ? `Skipped missing paths: ${missingPaths.join(", ")}` : undefined;
 
+			// Denied (and unapproved prompt-gated) paths never reach the model: drop them from the listing.
+			const pathFilter = createPathRuleFilter(
+				this.session,
+				this.name,
+				searchRootCandidates(scopedPaths.length > 0 ? scopedPaths : ["."]),
+			);
 			const buildResult = (
-				files: string[],
+				allFiles: string[],
 				opts?: { notice?: string; forceTruncated?: boolean; timedOut?: boolean },
 			): AgentToolResult<GlobToolDetails> => {
-				const notice = opts?.notice;
+				const files = pathFilter
+					? allFiles.filter(file => file.includes("://") || !pathFilter.hides(file))
+					: allFiles;
+				const notice = [opts?.notice, pathFilter?.note()].filter(Boolean).join("\n") || undefined;
 				const forceTruncated = opts?.forceTruncated ?? false;
 				if (files.length === 0) {
 					const details: GlobToolDetails = {

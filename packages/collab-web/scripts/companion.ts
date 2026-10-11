@@ -472,6 +472,7 @@ const scheduler = createScheduler({
 			schedule.worktree ? {} : undefined,
 			undefined,
 			schedule.prompt,
+			schedule.maxCostUsd,
 		),
 	spendLimitReached: async () => {
 		const limit = state.spend?.limits.dailyUsd ?? null;
@@ -664,6 +665,8 @@ async function startSession(
 	force: unknown,
 	/** Delivered to omp at launch (scheduled runs); a session that already hosts cannot take it, so that is refused. */
 	prompt?: string,
+	/** Scheduled runs with a per-run spend limit: `omp --max-cost` (USD). */
+	maxCostUsd?: number,
 ): Promise<string> {
 	if (
 		typeof cwd !== "string" ||
@@ -722,6 +725,7 @@ async function startSession(
 			resume,
 			sandbox,
 			prompt,
+			maxCostUsd,
 		});
 		while (Date.now() < spawnedAt + START_WAIT_MS) {
 			await Bun.sleep(START_POLL_MS);

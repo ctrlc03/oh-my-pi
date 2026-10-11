@@ -4,6 +4,10 @@
 
 ### Added
 
+- Added a profile pill after the thinking pill in the composer (hosts advertising `profiles`, writers only) that lists the host's profiles and switches the session to the picked one. The mock host supports it.
+- Added *Undo* and *Redo* of the last turn (conversation and files) to the session sheet, and a *Redo* bar after an undo, on hosts advertising `undo`: undo puts the removed prompt back in the message box, redo drops it again if untouched. The mock host supports both.
+- Added a "Fills context" row to the session sheet (hosts advertising `context-items`, writers only) listing the largest items filling the host's context with their share, and a prune button per prunable row.
+- Added a spend-cap banner shown while the host's session sits at its cap (hosts advertising `spend-cap`), and an optional per-run spend limit on new schedules that the companion passes to omp as `--max-cost`
 - Made the web client an installable app: a service worker precaches the build for instant and offline launches, and the manifest and every emitted URL are relative, so the build also works under a path prefix such as a GitHub Pages project site
 - Added recent sessions to the connect screen: a home-screen launch reopens the last session, or lists rooms joined before for one-tap rejoin. Rooms the relay reports gone are dropped
 - Added *Paste link* and *Scan QR* to the connect screen, plus Android share-sheet intake (`share_target`)

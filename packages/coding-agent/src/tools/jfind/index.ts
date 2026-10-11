@@ -6,7 +6,12 @@
  */
 import * as path from "node:path";
 import { type } from "@oh-my-pi/omptype";
-import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
+import type {
+	AgentTool,
+	AgentToolResult,
+	AgentToolUpdateCallback,
+	ToolApprovalDecision,
+} from "@oh-my-pi/pi-agent-core";
 import type { FindToolDetails } from "@oh-my-pi/pi-tui/tools/find";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 import { formatBytes, formatDuration, formatNumber } from "@oh-my-pi/pi-utils";
@@ -16,6 +21,7 @@ import { hasNativeJudge, journalJudgmentUsage, resolveJudge, sharedJudgmentCache
 import findDescription from "../../prompts/tools/find.md" with { type: "text" };
 import type { ToolSession } from "..";
 import { formatPathRelativeToCwd, normalizePathLikeInput, resolveSearchResultPath } from "../path-utils";
+import { createPathRuleFilter, searchRootApproval, searchRootCandidates } from "../path-rules";
 import { toolResult } from "../tool-result";
 import { type CascadeResult, runCascade } from "./cascade";
 import { rankedHeat } from "./passages";
@@ -52,7 +58,16 @@ export function isFindEnabled(session: ToolSession): boolean {
 /** Semantic search tool: describe a behavior, get files and line ranges that implement it. */
 export class FindTool implements AgentTool<typeof findSchema, FindToolDetails> {
 	readonly name = "find";
-	readonly approval = "read" as const;
+	readonly approval = (args: unknown): ToolApprovalDecision => {
+		const scope = (args as { path?: unknown } | null)?.path;
+		// Only a prompt gates a search root; denied paths are filtered from the results instead.
+		return searchRootApproval(
+			this.session,
+			"find",
+			"read",
+			searchRootCandidates(typeof scope === "string" ? [scope] : undefined),
+		);
+	};
 	readonly loadMode = "essential";
 	readonly label = "Find";
 	readonly summary = "Semantic grep: find files and line ranges by describing what they do";
@@ -76,7 +91,7 @@ export class FindTool implements AgentTool<typeof findSchema, FindToolDetails> {
 		// listed, scanned, and read in place through the URL filesystem.
 		const filesystem = new InternalUrlFilesystem({
 			context: sessionResolveContext(this.session, { signal }),
-			tier: this.approval,
+			tier: "read",
 		});
 		const root = await resolveSearchRoot(filesystem, rawScopeInput, cwd);
 		const scopePath =
@@ -95,6 +110,12 @@ export class FindTool implements AgentTool<typeof findSchema, FindToolDetails> {
 			cache: sharedJudgmentCache(),
 		});
 		const started = performance.now();
+		// Denied (and unapproved prompt-gated) files are neither listed nor read by the judge.
+		const pathFilter = createPathRuleFilter(
+			this.session,
+			this.name,
+			searchRootCandidates(params.path === undefined ? undefined : [params.path]),
+		);
 		const timeout = AbortSignal.timeout(FIND_TIMEOUT_MS);
 		let result: CascadeResult;
 		try {
@@ -105,6 +126,7 @@ export class FindTool implements AgentTool<typeof findSchema, FindToolDetails> {
 				extraKeywords: params.grep_keywords,
 				judge,
 				includeHidden: false,
+				visible: pathFilter && (filePath => filePath.includes("://") || !pathFilter.hides(filePath)),
 				signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
 				onProgress: message => onUpdate?.({ content: [{ type: "text", text: message }] }),
 			});
@@ -139,6 +161,8 @@ export class FindTool implements AgentTool<typeof findSchema, FindToolDetails> {
 				}
 			}
 		}
+		const pathFilterNote = pathFilter?.note();
+		if (pathFilterNote) out.push("", pathFilterNote);
 		out.push(
 			"",
 			`listed ${stats.listed} · judged ${stats.judged} · read ${stats.filesRead} files (${formatBytes(stats.fileBytes)}) · ${stats.requests} requests · ${formatNumber(stats.inputTokens)} tokens · $${stats.cost.toFixed(4)} · ${formatDuration(elapsedMs)} wall / ${formatDuration(stats.apiMs)} api`,

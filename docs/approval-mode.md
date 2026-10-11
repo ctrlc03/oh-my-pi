@@ -61,6 +61,64 @@ Policy strings are trimmed and case-normalized. Invalid user values are ignored.
 
 Approval is resolved again after extension `tool_call` handlers revise the input, against the arguments that will actually execute. A deny blocks execution before a prompt; a call that still requires a prompt fails rather than silently allowing it when no interactive UI is available.
 
+## Path rules
+
+`tools.approval` is per tool. To control which *paths* the file tools may touch, add `tools.pathRules` and, optionally, `tools.outsideProject`. They cover `read`, `edit`, `write`, `ast_edit`, `ast_grep`, `grep`, `glob`, and `find`; they do not cover `bash`, `eval`, or other tools that can reach files indirectly (use `bash.patterns` and `tools.approval.<tool>` for those). Both default to "no restriction".
+
+```yaml
+tools:
+  outsideProject: prompt # allow (default) | prompt | deny
+  pathRules:
+    - glob: "**/.env.example" # exceptions go first
+      action: allow
+    - glob: "**/.env*"
+      action: deny
+    - glob: "~/.ssh/**"
+      action: deny
+    - glob: "infra/**"
+      tools: [edit, write, ast_edit]
+      action: prompt
+```
+
+Each rule has a `glob`, an `action` (`allow`, `deny`, `prompt`), and optionally `tools` (default: every file tool above; `search` is accepted for `grep`). Malformed rules are ignored with a warning in the log.
+
+**Order.** Rules are evaluated in order and the **first matching rule wins** (the same as `bash.patterns`). Put exceptions before the broader rule they carve out of: `.env.example` above allows it while `.env*` stays denied; with the two swapped the deny would win.
+
+**Matching.** The path is normalised (`..` and `.` folded, `~` expanded, relative to the session cwd) and tested in its absolute form and relative to the cwd and repo root. Globs use [Bun.Glob](https://bun.sh/docs/api/glob) syntax. A glob without `/` matches the basename at any depth (`.env*` behaves like `**/.env*`), a glob that matches a directory covers everything beneath it, and `~/` expands to the home directory. Matching is case-insensitive on macOS and Windows.
+
+**Symlinks.** A path is judged twice, as spelled and with symlinks resolved, and the stricter verdict wins (`deny` over `prompt` over `allow`). A link inside the project to a denied file is denied, and a link that leads out of the project counts as outside it. Missing files are resolved through their existing parents, including dangling links, so a write cannot use a link to escape.
+
+**Actions.**
+
+- `deny`: the tool call is refused with a message naming the matching rule. Deny is honored in every approval mode, including `yolo`.
+- `prompt`: the usual approval prompt (in a collab session it reaches guests as other prompts do). It is honored in every mode, including `yolo`; without an interactive UI the call fails like any unanswerable prompt.
+- `allow`: no restriction from the path rules, and exempt from `tools.outsideProject`. It is not an approval grant: `tools.approvalMode` and `tools.approval` still decide whether the call prompts.
+
+**Outside the project.** `tools.outsideProject` applies to paths that match no rule and lie outside the session cwd, its repo root (a repo rooted at your home directory is ignored), and any additional workspace directories. `allow` keeps today's behavior. Internal URLs such as `local://` and `artifact://` are the harness's own resources and are not counted as outside. Directory listings from `read` show entry names only and are not filtered.
+
+**Search tools.** `grep`, `glob`, `find`, and `ast_grep` do not fail when a denied path is in scope; matches under denied paths are removed from the results (for `find`, the files are never listed or sent to the judge) and a note says how many paths were omitted. A path matching a `prompt` rule is omitted the same way unless the search root itself was a `prompt` match you approved; naming the path directly triggers the prompt. A `prompt` match on the search root asks before the search runs. `ast_edit` cannot filter a rewrite after the fact: it refuses when its preview reaches a protected file, so narrow `paths`. The limit on results is applied before filtering, so a search that mostly matches denied files may return fewer results than requested.
+
+`tools.pathRules` is an approval policy for the agent's file tools, not a sandbox: a program started through `bash` or `eval` has the process's own file access.
+
+## Agent profiles
+
+An [agent profile](./profiles.md) can set `approvalMode`, per-tool `approval` and path rules for as long as it is active. It only adds to what you configured: a `deny` in `tools.approval`, `tools.pathRules`, `tools.outsideProject` or `bash.patterns` keeps applying under every profile, and a profile's `approvalMode` never loosens one set by `--approval-mode`/`--yolo` (the stricter of the two applies).
+
+## Claude Code permissions
+
+With `claude.permissions` set to `user` or `all` (default `off`; see [Settings](./settings.md#claude-code-hooks-and-permissions)), the `permissions.allow` / `deny` / `ask` lists of Claude Code's `settings.json` files (`~/.claude/settings.json`, `<project>/.claude/settings.json`, `<project>/.claude/settings.local.json`) are mapped onto omp's own policy surfaces when a session starts. The mapped rules live in the session's runtime-override layer: they are never written to your config files and last only for that session.
+
+| Claude rule                                                                    | Becomes                                                                                                                  |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `Bash(git push:*)`, `Bash(npm run test)`, `Bash(git diff *)`                   | `bash.patterns`: `git push` and `git push *` (the `:*` prefix form), `npm run test`, `git diff *`. `ask` is `prompt`.   |
+| `Read(./.env)`, `Edit(secrets/**)`, `Write(src/**)`, `Grep(...)`, `Glob(...)`  | `tools.pathRules`. `Read` covers `read`, `grep`, `glob`, `find`, `ast_grep`; `Edit`, `Write`, `MultiEdit`, and `NotebookEdit` all cover `edit`, `write`, and `ast_edit`. |
+| `Bash`, `Edit`, `Write`, `WebSearch`, `Task`, `TodoWrite`, `mcp__server__tool`  | `tools.approval.<tool>` (`mcp__server__tool` becomes `mcp__<server>_<tool>`).                                           |
+| `WebFetch`, `WebFetch(domain:example.com)`, `mcp__server`, `mcp__server__*`    | Enforced by the Claude hook extension at `tool_call`: `deny` blocks, `ask` prompts (blocks without a UI). URL `read` calls count as `WebFetch`. |
+
+Path specifiers follow Claude: `./x` and `x` are relative to the project, `/x` is relative to the project root, `//x` is absolute, and `~/x` is under the home directory; a glob without `/` matches that name at any depth, per [path rules](#path-rules). Rules with no omp equivalent (for example `Task(explore)`) are skipped with a warning; `defaultMode` and `additionalDirectories` are ignored.
+
+**Precedence.** Claude evaluates deny, then ask, then allow. `bash.patterns` and `tools.pathRules` are first-match lists, so the mapped rules are placed Claude's `deny` rules first, then your own rules up to and including your last `deny`, then Claude's `ask` rules, then the rest of your rules, then Claude's allow rules: a Claude `deny` always applies, a Claude `ask` can never turn one of your own `deny` rules into an approvable prompt, and a Claude `allow` never overrides a rule you wrote for omp. For `tools.approval` the stricter of your value and Claude's wins (`deny` over `prompt` over `allow`). Grants follow the target surface: a `Bash(...)` allow becomes a `bash.patterns` allow, which approves a matching simple command at the `write` tier, while path-rule `allow`s and `allow` rules for `WebFetch` and server-wide MCP entries grant nothing (`tools.approvalMode` still decides whether the call prompts). The limits of [`bash.patterns`](#safety-overrides) and [path rules](#path-rules) apply (neither is containment).
+
 ## Safety overrides
 
 A tool can force a prompt with object-form approval:

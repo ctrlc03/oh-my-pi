@@ -12,6 +12,7 @@ import type {
 	BusChannel,
 	CollabCommand,
 	CollabFeature,
+	ContextItemRow,
 	CollabUiRequest,
 	GuestFrame,
 	ParsedCollabLink,
@@ -19,6 +20,7 @@ import type {
 	RewindFilesPlan,
 	AgentSnapshot as WireAgentSnapshot,
 	WireModel,
+	WireProfile,
 } from "@oh-my-pi/pi-wire";
 import {
 	DEFAULT_RELAY_URL,
@@ -79,6 +81,8 @@ export type CollabFrame =
 			readOnly?: boolean;
 			/** Models a writer may switch to with `session-cmd`; sent to writers only, its presence signals support. */
 			models?: WireModel[];
+			/** Agent profiles a writer may switch to with `session-cmd` `profile`; sent to writers only, with the `profiles` feature. */
+			profiles?: WireProfile[];
 			/** Slash commands a writer may run; sent to writers only, with the `commands` feature. */
 			commands?: CollabCommand[];
 			/** True when the host honoured `hello.resume`: the snapshot chunks carry only the entries after `resume.entryId`. */
@@ -109,6 +113,25 @@ export type CollabFrame =
 	| { t: "rewind-preview"; entryId: string; files: RewindFilesPlan | null }
 	/** Targeted reply once files were restored (`kind: "restore"`, with a rewind) or the restore was undone (`kind: "redo"`). */
 	| { t: "files-restored"; kind: "restore" | "redo"; plan: RewindFilesPlan; skipped: number; canRedo: boolean }
+	/** Targeted reply to `session-cmd` `undo` / `redo`; see the wire grammar. */
+	| {
+			t: "turn-undone";
+			kind: "undo" | "redo";
+			text?: string;
+			images?: ImageContent[];
+			staleText?: string;
+			files?: RewindFilesPlan;
+			skipped?: number;
+			filesUnavailable?: true;
+	  }
+	/** Targeted reply to `session-cmd` `context-items` / `context-prune`; see the wire grammar. */
+	| {
+			t: "context-items";
+			items: ContextItemRow[];
+			usedTokens: number;
+			contextWindow: number;
+			pruned?: { entries: number; tokensFreed: number };
+	  }
 	| { t: "ui-request-end"; reqId: number }
 	/** Targeted reply to fetch-transcript; `error` marks a terminal read failure that guests must surface without hot retrying. */
 	| { t: "transcript"; reqId: number; text: string; newSize: number; error?: string }

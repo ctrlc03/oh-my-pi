@@ -136,6 +136,43 @@ describe("agentLoop with AgentMessage", () => {
 		expect(events.map(event => event.type)).toContain("agent_end");
 	});
 
+	it("lets a running tool finish when shouldStop turns true, then ends without another provider call", async () => {
+		const executions: string[] = [];
+		let stop = false;
+		const context: AgentContext = {
+			systemPrompt: ["You are helpful."],
+			messages: [],
+			tools: [makeEchoTool(executions)],
+		};
+		const mock = createMockModel({
+			responses: [
+				{ content: [{ type: "toolCall", name: "echo", arguments: { value: "one" } }] },
+				{ content: [{ type: "toolCall", name: "echo", arguments: { value: "two" } }] },
+				{ content: ["done"] },
+			],
+		});
+		const config: AgentLoopConfig = { model: mock.model, convertToLlm: identityConverter, shouldStop: () => stop };
+		const tool = context.tools?.[0];
+		if (!tool) throw new Error("expected the echo tool");
+		const execute = tool.execute.bind(tool);
+		tool.execute = async (...args) => {
+			// The stop condition becomes true while the tool is still running.
+			stop = true;
+			return execute(...args);
+		};
+
+		const stream = agentLoop([createUserMessage("Run echo")], context, config, undefined, mock.stream);
+		for await (const _event of stream) {
+			// drain
+		}
+		const messages = await stream.result();
+
+		expect(executions).toEqual(["one"]);
+		expect(messages.map(m => m.role)).toEqual(["user", "assistant", "toolResult"]);
+		expect((messages[2] as ToolResultMessage).isError).toBeFalsy();
+		expect(mock.calls).toHaveLength(1);
+	});
+
 	it("returns detailed telemetry when awaiting detailed() directly", async () => {
 		const context: AgentContext = {
 			systemPrompt: ["You are helpful."],

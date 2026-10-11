@@ -201,6 +201,12 @@ export type AgentEvent =
 // State & agents
 // ═══════════════════════════════════════════════════════════════════════════
 
+/** An agent profile a writer may switch to with `session-cmd` `profile` (feature `profiles`). */
+export interface WireProfile {
+	name: string;
+	description?: string;
+}
+
 export interface WireModel {
 	id: string;
 	name: string;
@@ -223,6 +229,17 @@ export interface Participant {
 	readOnly?: boolean;
 }
 
+/** Spend against the host's `session.maxCostUsd` / `session.maxTokens`; a limit that is not set is absent. */
+export interface SessionSpend {
+	costUsd: number;
+	/** Input + output + cache-write tokens, as counted against `maxTokens`. */
+	tokens: number;
+	maxCostUsd?: number;
+	maxTokens?: number;
+	/** True once a limit is reached: the host stopped at a safe point and refuses prompts until it is raised. */
+	capped: boolean;
+}
+
 /** Debounced footer snapshot broadcast by the host. */
 export interface SessionState {
 	isStreaming: boolean;
@@ -239,6 +256,12 @@ export interface SessionState {
 	thinkingLevels?: string[];
 	/** Texts of the host's queued follow-ups, oldest first; present only on hosts with feature `follow-up`. */
 	followUps?: string[];
+	/** How many undone turns `session-cmd` `redo` can bring back; present only on hosts with feature `undo`. */
+	redoTurns?: number;
+	/** Session spend against its cap; present only on hosts with feature `spend-cap`, and only while a cap is set. */
+	spend?: SessionSpend;
+	/** Name of the active agent profile; present only on hosts with feature `profiles`. */
+	profile?: string;
 }
 
 export interface AgentSnapshot {
@@ -400,7 +423,16 @@ export type GuestFrame =
  * `prompt-model`: a `prompt` may carry `model`/`thinking` to run on another
  * model for that prompt only.
  */
-export type CollabFeature = "follow-up" | "rewind" | "commands" | "prompt-model" | "rewind-files";
+export type CollabFeature =
+	| "follow-up"
+	| "rewind"
+	| "commands"
+	| "prompt-model"
+	| "rewind-files"
+	| "undo"
+	| "spend-cap"
+	| "context-items"
+	| "profiles";
 
 /** A slash command a writer may run by sending it as a `prompt` (`/name args`). */
 export interface CollabCommand {
@@ -444,7 +476,17 @@ export interface CollabCommandChoice {
  * with that text. `rewind-preview` (feature `rewind-files`): `arg` is a
  * prompt entry id; the host answers with a `rewind-preview` frame. `redo-files`
  * (feature `rewind-files`): undo the last file restore, answered with a
- * `files-restored` frame.
+ * `files-restored` frame. `undo` / `redo` (feature `undo`): rewind the conversation
+ * to before the last prompt (restoring the files from that prompt's snapshot when
+ * the host has one) and return to what the last `undo` left; answered with a
+ * `turn-undone` frame, refused while the host is busy or has nothing to undo or redo.
+ * `context-items` / `context-prune` (feature `context-items`): the first asks what fills
+ * the context window and is answered with a `context-items` frame; `context-prune` takes the
+ * `id` of one listed item, elides it from the context the way the host's `/context prune`
+ * does, and is answered with a fresh `context-items` frame carrying `pruned`.
+ * `profile` (feature `profiles`): `arg` is the name of one of `welcome.profiles`; the host
+ * switches the session to it (at the next turn when it is busy) and refuses while plan, goal or
+ * vibe mode is active.
  */
 export type SessionCommand =
 	| "compact"
@@ -454,7 +496,27 @@ export type SessionCommand =
 	| "rewind"
 	| "unqueue"
 	| "rewind-preview"
-	| "redo-files";
+	| "redo-files"
+	| "undo"
+	| "redo"
+	| "context-items"
+	| "context-prune"
+	| "profile";
+
+/** One row of the host's ranking of what fills the context window (`context-items` frame). */
+export interface ContextItemRow {
+	/** Pass to `session-cmd` `context-prune`; only valid until the context changes. */
+	id: string;
+	kind: "toolResult" | "file" | "attachment" | "systemPrompt" | "toolSchema";
+	/** Human label: `bash bun test`, `src/x.ts (3 reads)`, `System prompt`, … */
+	label: string;
+	/** Estimated tokens the item occupies. */
+	tokens: number;
+	/** `tokens` as a fraction (0–1) of the estimated context in use. */
+	share: number;
+	/** Whether `context-prune` can elide it (system prompt and tool schemas cannot). */
+	prunable: boolean;
+}
 
 /**
  * What restoring the working tree to before a prompt does: files whose content
@@ -512,6 +574,12 @@ export type HostFrame =
 			resumed?: boolean;
 			/** Optional host capabilities; absent on hosts that predate the field (none). */
 			features?: CollabFeature[];
+			/**
+			 * Agent profiles a writer may switch to with `session-cmd` `profile`. Sent to
+			 * writers only, by hosts that advertise the `profiles` feature; `state.profile`
+			 * names the active one.
+			 */
+			profiles?: WireProfile[];
 	  }
 	/**
 	 * Targeted snapshot fragment delivered after `welcome`. Hosts split the
@@ -549,6 +617,38 @@ export type HostFrame =
 	 * `redo-files` can undo it (it can until files change again).
 	 */
 	| { t: "files-restored"; kind: "restore" | "redo"; plan: RewindFilesPlan; skipped: number; canRedo: boolean }
+	/**
+	 * Targeted reply to `session-cmd` `undo` / `redo`. `undo`: `text` (and `images`) is the
+	 * prompt that was undone, to put back in the message box. `redo`: `staleText` is the
+	 * draft the matching undo handed out, to drop if the message box still holds it.
+	 * `files` and `skipped` describe the file restore that ran (absent when the files
+	 * already matched or the host does not snapshot); `filesUnavailable` says the host
+	 * snapshots files but recorded none before that prompt, so only the conversation moved.
+	 */
+	| {
+			t: "turn-undone";
+			kind: "undo" | "redo";
+			text?: string;
+			images?: ImageContent[];
+			staleText?: string;
+			files?: RewindFilesPlan;
+			skipped?: number;
+			filesUnavailable?: true;
+	  }
+	/**
+	 * Targeted reply to `session-cmd` `context-items` and `context-prune`: the largest
+	 * items filling the context, largest first. `usedTokens` / `contextWindow` give the
+	 * share a row takes (`contextWindow` is 0 when no model is selected). `pruned` is
+	 * present only in the reply to `context-prune`: how many session entries were
+	 * elided and the estimated tokens freed.
+	 */
+	| {
+			t: "context-items";
+			items: ContextItemRow[];
+			usedTokens: number;
+			contextWindow: number;
+			pruned?: { entries: number; tokensFreed: number };
+	  }
 	| { t: "ui-request-end"; reqId: number }
 	/** Targeted reply to fetch-transcript; `text` is decoded JSONL from `fromByte`, `newSize` the next offset base. */
 	| { t: "transcript"; reqId: number; text: string; newSize: number; error?: string }

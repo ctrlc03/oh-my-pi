@@ -203,6 +203,8 @@ export function SplitPane({
 				model={snap.state?.model}
 				thinkingLevel={snap.state?.thinkingLevel}
 				thinkingLevels={snap.state?.thinkingLevels}
+				profiles={Object.hasOwn(snap.features, "profiles") ? snap.profiles : null}
+				profile={snap.state?.profile}
 				followsRoom={companionClient !== null && instanceId !== null}
 				promptModel={Object.hasOwn(snap.features, "prompt-model") && !snap.readOnly && snap.models !== null}
 				onSessionCommand={sendSessionCommand}

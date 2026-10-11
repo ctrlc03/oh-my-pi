@@ -16,6 +16,7 @@ import { formatModelRoleAlias, roleCandidatePool } from "../../config/model-role
 import { resolveModelRoleValue } from "../../config/model-resolver";
 import { isSettingsInitialized, settings } from "../../config/settings";
 import { InternalUrlRouter, resolveLocalRoot } from "../../internal-urls";
+import { describeSwitch } from "../../profiles/command";
 import { AskDialogComponent } from "@oh-my-pi/pi-tui/overlays/ask-dialog";
 import { AssistantMessageComponent } from "@oh-my-pi/pi-tui/chat/assistant-message";
 import { extractImagePathFromText } from "@oh-my-pi/pi-tui/prompt/custom-editor";
@@ -666,6 +667,9 @@ export class InputController {
 		const planModeKeys = this.ctx.keybindings.getKeys("app.plan.toggle");
 		for (const key of planModeKeys) {
 			this.ctx.editor.setCustomKeyHandler(key, () => void this.ctx.handlePlanModeCommand());
+		}
+		for (const key of this.ctx.keybindings.getKeys("app.profile.cycle")) {
+			this.ctx.editor.setCustomKeyHandler(key, () => void this.cycleProfile());
 		}
 
 		for (const key of this.ctx.keybindings.getKeys("app.session.new")) {
@@ -1687,6 +1691,18 @@ export class InputController {
 				this.ctx.ui.requestRender();
 			}
 		}
+	}
+
+	/** Switches to the next agent profile (the `app.profile.cycle` key). */
+	async cycleProfile(): Promise<void> {
+		if (this.ctx.collabGuest) {
+			this.ctx.showStatus("Profiles are host-only during a collab session");
+			return;
+		}
+		const profiles = this.ctx.session.profiles;
+		const result = await profiles.switch(profiles.nextName());
+		if (result.ok) this.ctx.showStatus(describeSwitch(result));
+		else this.ctx.showWarning(describeSwitch(result));
 	}
 
 	async handleRetry(): Promise<void> {

@@ -7,6 +7,8 @@
 /** A scheduled prompt longer than this is refused. */
 export const MAX_SCHEDULE_PROMPT_CHARS = 20_000;
 export const MAX_SCHEDULE_TITLE_CHARS = 120;
+/** Far above any real per-run budget: a typo like 1e9 is refused rather than silently never stopping the run. */
+export const MAX_SCHEDULE_COST_USD = 10_000;
 
 export type ScheduleWhen =
 	/** One run at `at` (ms since epoch). */
@@ -33,6 +35,8 @@ export interface Schedule {
 	/** New sessions only: run on a fresh branch in its own git worktree. */
 	worktree?: boolean;
 	sandboxed?: boolean;
+	/** New sessions only: the run stops at a safe point once it has spent this many USD (`omp --max-cost`). */
+	maxCostUsd?: number;
 	when: ScheduleWhen;
 	enabled: boolean;
 	lastRun?: ScheduleRun;

@@ -1109,6 +1109,11 @@ function isDeadlineExceeded(deadline: number | undefined): boolean {
 	return deadline !== undefined && Date.now() >= deadline;
 }
 
+/** Deadline reached, or the host asked the run to stop at its next safe boundary (`shouldStop`). */
+function isRunStopped(config: Pick<AgentLoopConfig, "deadline" | "shouldStop">): boolean {
+	return isDeadlineExceeded(config.deadline) || config.shouldStop?.() === true;
+}
+
 function endAgentStream(
 	stream: EventStream<AgentEvent, AgentMessage[]>,
 	newMessages: AgentMessage[],
@@ -1214,7 +1219,7 @@ async function runLoopBody(
 	let liveDeferred: AgentMessage[] = [];
 	try {
 		let messagesToEmit = [...initialMessages];
-		if (isDeadlineExceeded(config.deadline)) {
+		if (isRunStopped(config)) {
 			emitInputMessages(stream, messagesToEmit);
 			endAgentStream(stream, newMessages, telemetry, stepCounter.count);
 			return;
@@ -1278,7 +1283,7 @@ async function runLoopBody(
 				executionResult.additionalContext,
 			);
 			await emitTurnEnd(stream, currentContext, resumeTail, executionResult.toolResults, config, signal, {
-				willContinue: !isDeadlineExceeded(config.deadline),
+				willContinue: !isRunStopped(config),
 				...(resumeContextMessage ? { additionalMessages: [resumeContextMessage] } : {}),
 			});
 			turnOpen = false;
@@ -1296,7 +1301,7 @@ async function runLoopBody(
 
 			// Inner loop: process tool calls and steering messages
 			while (hasMoreToolCalls || pendingMessages.length > 0) {
-				if (isDeadlineExceeded(config.deadline)) {
+				if (isRunStopped(config)) {
 					emitInputMessages(stream, messagesToEmit);
 					endAgentStream(stream, newMessages, telemetry, stepCounter.count);
 					return;
@@ -1733,11 +1738,11 @@ async function runLoopBody(
 
 				await emitTurnEnd(stream, currentContext, message, toolResults, config, signal, {
 					additionalMessages,
-					willContinue: hasMoreToolCalls && !isDeadlineExceeded(config.deadline),
+					willContinue: hasMoreToolCalls && !isRunStopped(config),
 				});
 				turnOpen = false;
 
-				if (isDeadlineExceeded(config.deadline)) {
+				if (isRunStopped(config)) {
 					endAgentStream(stream, newMessages, telemetry, stepCounter.count);
 					return;
 				}
@@ -1780,7 +1785,7 @@ async function runLoopBody(
 				}
 			}
 
-			if (isDeadlineExceeded(config.deadline)) {
+			if (isRunStopped(config)) {
 				endAgentStream(stream, newMessages, telemetry, stepCounter.count);
 				return;
 			}
@@ -1788,7 +1793,7 @@ async function runLoopBody(
 			// Agent would stop here. Drain non-interrupting asides + follow-up messages.
 			await config.onBeforeYield?.();
 
-			if (isDeadlineExceeded(config.deadline)) {
+			if (isRunStopped(config)) {
 				endAgentStream(stream, newMessages, telemetry, stepCounter.count);
 				return;
 			}

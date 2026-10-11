@@ -48,6 +48,7 @@ import {
 } from "./advisor";
 import { AsyncJobManager } from "./async";
 import { AutoLearnController, buildAutoLearnInstructions } from "./autolearn/controller";
+import { setUpClaudeCompat } from "./claude-compat";
 import { createAutoresearchExtension } from "./autoresearch";
 import { loadCapability, reset as resetCapabilities } from "./capability";
 import {
@@ -2262,7 +2263,9 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 				return sessionManager.getAdditionalDirectories();
 			},
 			enableLsp,
-			lspReadOnly,
+			get lspReadOnly() {
+				return lspReadOnly || session?.profileLspReadOnly === true;
+			},
 			enableIrc: restrictToolNames ? false : options.enableIrc,
 			/**
 			 * Frozen at the last system-prompt rebuild: a mid-session `/skillful`
@@ -2616,6 +2619,8 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 
 			inlineExtensions.push(...(options.extensions ?? []));
 			inlineExtensions.push(createAutoresearchExtension);
+			const claudeCompat = await logger.time("setUpClaudeCompat", () => setUpClaudeCompat(cwd, settings));
+			if (claudeCompat?.extension) inlineExtensions.push(claudeCompat.extension);
 			if (customTools.length > 0) {
 				inlineExtensions.push(createCustomToolsExtension(customTools, customToolSourcePaths));
 			}
@@ -3882,6 +3887,8 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 					appendParts.push(`### ${srvName}\n${truncated}`);
 				}
 			}
+			const profilePrompt = hasSession ? session.profilePromptSection : undefined;
+			if (profilePrompt) appendParts.push(profilePrompt);
 			const appendPrompt = composeAppendPrompt(appendParts, options.appendSystemPrompt);
 			// Owned/in-band tool dialects (non-native) require the full functions-
 			// namespace catalog; native tool calling lets the compact name list suffice.
@@ -5340,6 +5347,11 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			await session.initializeCodeMode();
 		} catch (error) {
 			logger.warn("Code Mode initialization at session startup failed", { error: String(error) });
+		}
+		try {
+			await session.initializeProfile();
+		} catch (error) {
+			logger.warn("Agent profile initialization at session startup failed", { error: String(error) });
 		}
 
 		startupCleanup.move();

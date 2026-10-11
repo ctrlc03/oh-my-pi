@@ -103,6 +103,7 @@ import {
 	type McpConnectionStatusEvent,
 } from "../mcp/startup-events";
 import { humanizePlanTitle, type PlanApprovalDetails, resolvePlanTitle } from "../plan-mode/approved-plan";
+import { DEFAULT_PROFILE_NAME } from "../profiles/definition";
 import {
 	isJudgmentBatchProgress,
 	JUDGMENT_BATCH_PROGRESS_EVENT_CHANNEL,
@@ -2412,6 +2413,8 @@ export class InteractiveMode implements InteractiveModeContext {
 		// Config warnings can change during the same pre-subscription window; the
 		// event is not replayed, so rebuild from the live array once here too.
 		this.#syncConfigWarningHeader();
+		this.#updateProfileStatus();
+		this.#eventBusUnsubscribers.push(this.session.profiles.onChange(() => this.#updateProfileStatus()));
 		this.#eventBusUnsubscribers.push(
 			cfgModelRoles.listen(this.settings, () => this.#reapplyPlanModeModelOnRoleChange()),
 		);
@@ -4487,6 +4490,12 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	#updateVibeModeStatus(): void {
 		this.statusLine.setVibeModeStatus(this.vibeModeEnabled ? { enabled: true } : undefined);
+		this.ui.requestRender();
+	}
+
+	#updateProfileStatus(): void {
+		const profile = this.session.profiles.active;
+		this.statusLine.setProfileStatus(profile.name === DEFAULT_PROFILE_NAME ? undefined : profile.name);
 		this.ui.requestRender();
 	}
 
@@ -7672,6 +7681,10 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	handleContextCommand(): void {
 		this.#commandController.handleContextCommand();
+	}
+
+	handleContextPruneCommand(selectors: string[]): Promise<void> {
+		return this.#commandController.handleContextPruneCommand(selectors);
 	}
 
 	#vibeSessionTransitionBlocked(): boolean {

@@ -203,6 +203,14 @@ Including `shake` in `compaction.methodOrder` performs an inline, local reductio
 
 Threshold, incomplete-output, and overflow recovery advance to the next configured method when shake cannot reclaim enough context to get below the recovery band; this prevents repeated no-op shake loops. Idle shake does not use that fallback because the idle timer rechecks usage before running again. Manual `/shake` is a separate, more aggressive command that can target all eligible history.
 
+### Pruning chosen items (`/context`)
+
+`/context` ranks what fills the context window: individual tool results (`bash bun test`, `grep …`), `read` results aggregated per file (every `read` of one path, selector suffix stripped, plus `@file` mention contents, count as one row), image attachments per message, each system prompt part and each tool schema. Every row shows a token estimate and its share of the anchored used-token count; the top 12 are listed in the report (`describeContextUsage` for the TUI, the ACP/RPC text report) and the ranks are numbered over the full list.
+
+`/context prune <rank>[,<rank>…]` (rank numbers or item ids such as `tr:<entryId>` / `file:<path>`) prunes the rows. Bare `/context prune` in the TUI opens a selector listing the prunable rows, one pick at a time, until Esc. System prompt parts and tool schemas are shown but cannot be pruned. Pruning is refused while a response, compaction, or command is still running, since it would rewrite messages the turn is still producing.
+
+Pruning goes through the same elision as shake (`shake("elide")` with an `entryIds` filter, no protected recent window and no minimum saving): the tool result stays in the transcript, so every tool call keeps its result and the provider payload stays valid, but its content becomes a `[shaken ~N tokens — recover: artifact://<id>]` placeholder, `prunedAt` is set, and the original is saved as an artifact. `@file` mention contents get the same placeholder. Image attachments are removed from their message (the message stays; the pixels are not recoverable, as with the idle image drop). The rewrite is persisted as anchored history rewrite entries, so it survives resume, and the reported usage drops immediately rather than waiting for the next provider response. Skill-read results, plan content and anything inside the keep boundary after the latest compaction are not offered. Pruned rows are not offered again.
+
 ### Snapcompact method
 
 Including `snapcompact` in `compaction.methodOrder` replaces the LLM summarization call with a local, deterministic archival pass (`compact` from `@oh-my-pi/snapcompact`):

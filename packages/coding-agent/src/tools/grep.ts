@@ -8,7 +8,7 @@ import type {
 	AgentToolContext,
 	AgentToolResult,
 	AgentToolUpdateCallback,
-	ToolTier,
+	ToolApprovalDecision,
 } from "@oh-my-pi/pi-agent-core";
 import { type EditStore, type GrepMatch, GrepOutputMode, type GrepResult, grep } from "@oh-my-pi/pi-natives";
 import { prompt, untilAborted } from "@oh-my-pi/pi-utils";
@@ -30,6 +30,7 @@ import { isScoutSpawnable } from "../task/spawn-policy";
 import { resolveFileDisplayMode } from "../utils/file-display-mode";
 import type { ToolSession } from ".";
 import { resolveToolTier } from "./approval";
+import { createPathRuleFilter, pathArgCandidates, searchRootApproval, searchRootCandidates } from "./path-rules";
 import { materializeReadUrlToFile, parseReadUrlTarget } from "./fetch";
 import { createFileRecorder, formatResultPath, resultSnapshotPath } from "./file-recorder";
 import { type FileMatchSection, formatFileMatches } from "@oh-my-pi/pi-tui/tools/grouped-file-output";
@@ -411,10 +412,13 @@ export interface GrepToolOptions {
 
 export class GrepTool implements AgentTool<typeof searchSchema, GrepToolDetails> {
 	readonly name = "grep";
-	readonly approval = (args: unknown): ToolTier => {
+	readonly approval = (args: unknown): ToolApprovalDecision => {
 		const a = args as { path?: string | string[]; paths?: string | string[] };
+		const entries = toPathList(a.path ?? a.paths);
 		// Substring scan over the raw entries: delimited lists are only split after approval.
-		return InternalUrlRouter.instance().readTier(toPathList(a.path ?? a.paths).join("\n"));
+		const base = InternalUrlRouter.instance().readTier(entries.join("\n"));
+		// Only a prompt gates a search root; denied paths are filtered from the results instead.
+		return searchRootApproval(this.session, "grep", base, searchRootCandidates(entries.length > 0 ? entries : ["."]));
 	};
 	readonly label = "Grep";
 	readonly loadMode = "discoverable";
@@ -727,6 +731,31 @@ export class GrepTool implements AgentTool<typeof searchSchema, GrepToolDetails>
 					}
 					throw err;
 				}
+				// Denied (and unapproved prompt-gated) paths never reach the model: drop their matches here.
+				const pathFilter = createPathRuleFilter(
+					this.session,
+					this.name,
+					searchRootCandidates(scopedPaths.length > 0 ? scopedPaths : ["."]),
+				);
+				if (pathFilter) {
+					const scratchPaths = new Set([...archiveDisplayMap.keys(), ...materializedExternalPaths.values()]);
+					const visible = result.matches.filter(match => {
+						const abs = resolveSearchResultPath(searchPath, match.path);
+						if (abs.includes("://")) return true;
+						const archiveDisplay = archiveDisplayMap.get(abs);
+						if (archiveDisplay !== undefined)
+							return !pathArgCandidates(archiveDisplay).some(c => pathFilter.hides(c));
+						return scratchPaths.has(abs) || !pathFilter.hides(abs);
+					});
+					if (visible.length !== result.matches.length) {
+						result = {
+							...result,
+							matches: visible,
+							totalMatches: Math.max(0, result.totalMatches - (result.matches.length - visible.length)),
+							filesWithMatches: new Set(visible.map(match => match.path)).size,
+						};
+					}
+				}
 				if (rangesByAbsPath.size > 0) {
 					const filteredMatches: GrepMatch[] = [];
 					for (const match of result.matches) {
@@ -888,7 +917,7 @@ export class GrepTool implements AgentTool<typeof searchSchema, GrepToolDetails>
 				const missingPathsNote =
 					missingPathsForNote.length > 0 ? `Skipped missing paths: ${missingPathsForNote.join(", ")}` : undefined;
 				const warningNote =
-					[missingPathsNote, archiveNote, oversizedNote, oversizedScanNote]
+					[missingPathsNote, archiveNote, oversizedNote, oversizedScanNote, pathFilter?.note()]
 						.filter((s): s is string => Boolean(s))
 						.join("\n") || undefined;
 				if (selectedMatches.length === 0) {

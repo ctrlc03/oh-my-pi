@@ -185,6 +185,12 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 
 	/** Absolute wall-clock deadline in Unix epoch milliseconds. */
 	deadline?: number;
+	/**
+	 * Polled at every run boundary that also honors `deadline` (before a model call and after a turn
+	 * ends, i.e. once that turn's tools have finished). Returning `true` ends the run there without
+	 * aborting anything in flight.
+	 */
+	shouldStop?: () => boolean;
 
 	/**
 	 * Optional resolver called per LLM request to produce request metadata.

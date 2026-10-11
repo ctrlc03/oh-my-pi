@@ -59,6 +59,7 @@ interface AppKeybindings {
 	"app.tree.foldOrUp": true;
 	"app.tree.unfoldOrDown": true;
 	"app.plan.toggle": true;
+	"app.profile.cycle": true;
 	"app.history.search": true;
 	"app.stt.pushToTalk": true;
 	"app.stt.toggle": true;
@@ -233,6 +234,10 @@ export const KEYBINDINGS = {
 	"app.plan.toggle": {
 		defaultKeys: "alt+shift+p",
 		description: "Toggle plan mode",
+	},
+	"app.profile.cycle": {
+		defaultKeys: "alt+o",
+		description: "Cycle agent profile",
 	},
 	"app.history.search": {
 		defaultKeys: "ctrl+r",

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `AgentLoopConfig.shouldStop` and `Agent.setShouldStop()`: a graceful stop predicate checked at the same boundaries as `deadline` (run start, after each turn's tools, before each model call) that ends the run without aborting a running tool.
+
 ## [18.8.8] - 2026-10-10
 
 ### Added

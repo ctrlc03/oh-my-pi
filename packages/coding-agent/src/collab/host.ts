@@ -22,8 +22,10 @@ import type {
 	CollabUiRequestDraft,
 	CollabUiResponseValue,
 	SessionCommand,
+	SessionSpend,
 	AgentEvent as WireAgentEvent,
 	WireModel,
+	WireProfile,
 	SessionEntry as WireSessionEntry,
 } from "@oh-my-pi/pi-wire";
 import { buildSkillCommandPrompt } from "../modes/skill-command";
@@ -31,6 +33,7 @@ import type { InteractiveModeContext } from "../modes/types";
 import { cfgPlanEnabled } from "../plan-mode/settings";
 import { AgentLifecycleManager } from "../registry/agent-lifecycle";
 import { type AgentRef, AgentRegistry } from "../registry/agent-registry";
+import { SPEND_CAP_NOTICE_SOURCE } from "../session/spend-cap";
 import type { AgentSessionEvent, PromptModelOverride } from "../session/agent-session";
 import { parseCompactArgs } from "../session/compact-modes";
 import { stripImagesFromMessage, USER_INTERRUPT_LABEL } from "../session/messages";
@@ -87,6 +90,8 @@ import {
 	restoreFilesForRewind,
 	rollBackRestoredFiles,
 } from "./rewind-files";
+import { runGuestTurnUndo } from "./turn-undo";
+import { replyContextItems, runGuestContextPrune } from "./context-items";
 import {
 	COLLAB_ENTRY_OMITTED_CUSTOM_TYPE,
 	copyForReplication,
@@ -149,7 +154,16 @@ const COLLAB_BUS_CHANNELS = [
 ] as const satisfies readonly BusChannel[];
 
 /** Optional capabilities this host advertises in `welcome`. */
-const COLLAB_FEATURES: CollabFeature[] = ["follow-up", "rewind", "commands", "prompt-model"];
+const COLLAB_FEATURES: CollabFeature[] = [
+	"follow-up",
+	"rewind",
+	"commands",
+	"prompt-model",
+	"undo",
+	"spend-cap",
+	"context-items",
+	"profiles",
+];
 
 /** A prompt's message content: the text, plus any images the guest attached. */
 function withImages(text: string, images: ImageContent[] | undefined): string | (TextContent | ImageContent)[] {
@@ -313,6 +327,7 @@ export class CollabHost {
 	/** A flush is still queued in the socket; the next waits for it to drain. */
 	#supersedingDraining = false;
 	#registryUnsubscribe?: () => void;
+	#profileUnsubscribe?: () => void;
 	/** Set the moment `stop()` begins; `#stopped` follows once teardown has run. */
 	#stopping = false;
 	/** The in-flight or finished `stop()`; concurrent callers share it. */
@@ -570,6 +585,7 @@ export class CollabHost {
 			}
 		}
 		this.#registryUnsubscribe = AgentRegistry.global().onChange(() => this.#scheduleAgentsBroadcast());
+		this.#profileUnsubscribe = this.#ctx.session.profiles?.onChange(() => this.#scheduleStateBroadcast());
 		this.#sentPath = this.#activeWirePath().map(entry => entry.id);
 		this.#ctx.sessionManager.onEntryAppended = entry => {
 			if (isWireSessionEntry(entry)) this.#replicateAppended(entry);
@@ -679,6 +695,8 @@ export class CollabHost {
 		this.#superseding.clear();
 		this.#registryUnsubscribe?.();
 		this.#registryUnsubscribe = undefined;
+		this.#profileUnsubscribe?.();
+		this.#profileUnsubscribe = undefined;
 		clearTimeout(this.#stateDebounce ?? undefined);
 		this.#stateDebounce = null;
 		clearTimeout(this.#agentsDebounce ?? undefined);
@@ -1014,6 +1032,7 @@ export class CollabHost {
 				resumed: resumed ? true : undefined,
 				readOnly: canWrite ? undefined : true,
 				models: canWrite ? this.#welcomeModels() : undefined,
+				profiles: canWrite ? this.#welcomeProfiles() : undefined,
 				commands: canWrite ? this.#welcomeCommands() : undefined,
 				features: this.#welcomeFeatures(),
 			},
@@ -1534,6 +1553,10 @@ export class CollabHost {
 			queuedMessageCount: session.queuedMessageCount,
 			// Chip texts, oldest first: what `session-cmd` `unqueue` removes.
 			followUps: [...session.getQueuedMessages().followUp],
+			// Turns `session-cmd` `redo` can bring back; 0 once the conversation has moved on.
+			redoTurns: session.turnUndo?.redoDepth,
+			spend: this.#spendState(),
+			profile: session.profiles?.active.name,
 			sessionName: session.sessionName,
 			cwd: this.#ctx.sessionManager.getCwd(),
 			model: session.model,
@@ -1548,8 +1571,24 @@ export class CollabHost {
 		};
 	}
 
+	/** Spend against the session cap for the guests' banner; absent while no cap is set. */
+	#spendState(): SessionSpend | undefined {
+		// Collab test doubles implement only the session surface they exercise, so a missing accessor reads as no cap.
+		const cap = this.#ctx.session.getSpendCap?.();
+		if (cap === undefined || cap.level === "off") return undefined;
+		return {
+			costUsd: cap.costUsd,
+			tokens: cap.tokens,
+			maxCostUsd: cap.maxCostUsd > 0 ? cap.maxCostUsd : undefined,
+			maxTokens: cap.maxTokens > 0 ? cap.maxTokens : undefined,
+			capped: cap.level === "capped",
+		};
+	}
+
 	#onEventForState(event: AgentSessionEvent): void {
-		if (!STATE_TRIGGER_EVENTS[event.type]) return;
+		if (!STATE_TRIGGER_EVENTS[event.type] && !(event.type === "notice" && event.source === SPEND_CAP_NOTICE_SOURCE)) {
+			return;
+		}
 		this.#scheduleStateBroadcast();
 		if (event.type === "agent_start" && !this.#streamingInterval) {
 			this.#streamingInterval = setInterval(() => this.#scheduleStateBroadcast(), STREAMING_STATE_INTERVAL_MS);
@@ -1714,6 +1753,11 @@ export class CollabHost {
 		);
 	}
 
+	/** The profiles a writer's welcome offers for `session-cmd` `profile`. */
+	#welcomeProfiles(): WireProfile[] | undefined {
+		return this.#ctx.session.profiles?.catalog().profiles.map(({ name, description }) => ({ name, description }));
+	}
+
 	/** The model list a writer's welcome carries; its presence tells the guest `session-cmd` is supported. */
 	#welcomeModels(): WireModel[] | undefined {
 		try {
@@ -1786,6 +1830,32 @@ export class CollabHost {
 		const session = this.#ctx.session;
 		try {
 			switch (cmd) {
+				case "profile": {
+					const profiles = session.profiles;
+					const name = arg?.trim() ?? "";
+					if (!profiles || !name) {
+						fail(profiles ? "no profile name given" : "this host has no agent profiles");
+						return;
+					}
+					// A guest may tighten the host's profile, never widen it: only the host's own TUI
+					// can move to a looser one (wider tools, a looser approval mode, wider path rules).
+					const loosening = profiles.looseningOf(name);
+					if (loosening !== undefined) {
+						fail(
+							`refused: the ${name} profile is less strict than the active ${profiles.active.name} profile (${loosening}); the host can switch to it from their own session`,
+						);
+						return;
+					}
+					const result = await profiles.switch(name);
+					if (!result.ok) {
+						fail(result.reason);
+						return;
+					}
+					if (result.status === "applied") announce(`switched to the ${result.profile.name} profile`);
+					else if (result.status === "queued")
+						announce(`queued the ${result.profile.name} profile for the next turn`);
+					return;
+				}
 				case "model": {
 					const model = this.#selectableModels().find(
 						candidate => `${candidate.provider}/${candidate.id}` === arg,
@@ -1939,6 +2009,38 @@ export class CollabHost {
 				case "rewind-preview":
 					await previewRewindFiles(session, arg, files, fail);
 					return;
+				case "undo":
+				case "redo": {
+					const done = await runGuestTurnUndo(session, cmd, files.reply, fail);
+					if (done === undefined) return;
+					// The leaf moved before the redo step existed; tell guests whether `redo` now applies.
+					this.#scheduleStateBroadcast();
+					if (!this.#guestTrafficAllowed()) return;
+					await this.#ctx.renderInitialMessages({ clearTerminalHistory: true });
+					await this.#ctx.reloadTodos();
+					announce(done);
+					return;
+				}
+				case "context-items":
+					replyContextItems(session, this.#ctx.statusLine.getCachedContextBreakdown(), files.reply);
+					return;
+				case "context-prune": {
+					if (session.isBusyForSnapshot || session.isSessionTransitioning) {
+						fail("wait for the current response, compaction, or command to finish");
+						return;
+					}
+					// The rewrite changes what the host's own chat and meter show; refresh them before
+					// the reply reads the meter.
+					const refreshMeter = () => {
+						this.#ctx.rebuildChatFromMessages();
+						this.#ctx.statusLine.invalidate();
+						this.#ctx.ui.requestRender();
+						return this.#ctx.statusLine.getCachedContextBreakdown();
+					};
+					const pruned = await runGuestContextPrune(session, arg, refreshMeter, files.reply, fail);
+					if (pruned !== undefined) announce(pruned);
+					return;
+				}
 				case "redo-files": {
 					if (session.isBusyForSnapshot || session.isSessionTransitioning) {
 						fail("wait for the current response, compaction, or command to finish");

@@ -1,3 +1,4 @@
+import type { PathRule } from "./path-rules";
 import { combine, register } from "../config/registry";
 import { cfgAutolearnEnabled } from "../autolearn/settings";
 import { cfgBashEnabled } from "../exec/settings";
@@ -337,6 +338,43 @@ export const cfgToolsApprovalMode = register({
 				description:
 					"Auto-approve read, write, and exec tools. User policy can still require confirmation or block calls.",
 			},
+		],
+	},
+});
+
+// Per-path permission rules for the file tools. Ordered, first match wins; see tools/path-rules.ts.
+export const cfgToolsPathRules = register({
+	id: "tools.pathRules",
+	type: "array",
+	default: [] as PathRule[],
+	ui: {
+		tab: "interaction",
+		group: "Approvals",
+		label: "Path Rules",
+		description:
+			"Ordered path permission rules for read, edit, write, ast_edit, ast_grep, grep, glob, and find. Each item has glob and action (allow, prompt, deny) and optionally tools; the first matching rule wins. Search tools omit denied paths from results.",
+	},
+});
+
+export const cfgToolsOutsideProject = register({
+	id: "tools.outsideProject",
+	type: "enum",
+	values: ["allow", "prompt", "deny"] as const,
+	default: "allow",
+	ui: {
+		tab: "interaction",
+		group: "Approvals",
+		label: "Outside-Project Paths",
+		description:
+			"How file tools treat paths outside the session cwd and repo root. Symlinks are resolved first. A path rule that allows the path exempts it.",
+		options: [
+			{ value: "allow", label: "Allow", description: "No extra restriction (default)." },
+			{
+				value: "prompt",
+				label: "Prompt",
+				description: "Ask before a file tool touches a path outside the project.",
+			},
+			{ value: "deny", label: "Deny", description: "Refuse file tool access outside the project." },
 		],
 	},
 });

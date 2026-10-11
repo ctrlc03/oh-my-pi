@@ -6,6 +6,7 @@ import {
 	buildArgumentCompletions,
 	buildDirectoryArgumentCompletions,
 	buildEffortArgumentCompletions,
+	buildProfileArgumentCompletions,
 	buildEffortInlineHint,
 	buildMcpArgumentCompletions,
 	buildModelSelectorCompletions,
@@ -102,6 +103,9 @@ function materializeTuiBuiltinSlashCommand(
 		if (cmd.inlineHint) materialized.getInlineHint = buildStaticInlineHint(cmd.inlineHint);
 	} else if (cmd.name === "switch" && runtime) {
 		materialized.getArgumentCompletions = buildModelSelectorCompletions(runtime);
+		if (cmd.inlineHint) materialized.getInlineHint = buildStaticInlineHint(cmd.inlineHint);
+	} else if (cmd.name === "profile" && runtime) {
+		materialized.getArgumentCompletions = buildProfileArgumentCompletions(runtime);
 		if (cmd.inlineHint) materialized.getInlineHint = buildStaticInlineHint(cmd.inlineHint);
 	} else if (cmd.inlineHint) {
 		materialized.getInlineHint = buildStaticInlineHint(cmd.inlineHint);

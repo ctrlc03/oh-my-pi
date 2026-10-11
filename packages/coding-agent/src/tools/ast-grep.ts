@@ -1,6 +1,13 @@
 import type { AstGrepToolDetails } from "@oh-my-pi/pi-tui/tools/ast-grep";
 import { type } from "@oh-my-pi/omptype";
-import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
+import * as path from "node:path";
+import type {
+	AgentTool,
+	AgentToolContext,
+	AgentToolResult,
+	AgentToolUpdateCallback,
+	ToolApprovalDecision,
+} from "@oh-my-pi/pi-agent-core";
 import type { ToolExample } from "@oh-my-pi/pi-ai";
 import { type AstFindMatch, astGrep, type ShellFilesystem } from "@oh-my-pi/pi-natives";
 
@@ -22,6 +29,7 @@ import { createFileRecorder, formatResultPath, resultSnapshotPath } from "./file
 import { type FileMatchSection, formatFileMatches } from "@oh-my-pi/pi-tui/tools/grouped-file-output";
 import { formatMatchLine } from "@oh-my-pi/pi-tui/tools/match-line-format";
 
+import { createPathRuleFilter, searchRootApproval, searchRootCandidates } from "./path-rules";
 import { relativeSearchResultPath, resolveSearchResultPath, resolveToolSearchScope } from "./path-utils";
 import { toPathList } from "@oh-my-pi/pi-tui/render/render-utils";
 import { isRawSelector } from "./read-selector";
@@ -135,7 +143,16 @@ async function runMultiTargetAstGrep(
 
 export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolDetails> {
 	readonly name = "ast_grep";
-	readonly approval = "read" as const;
+	readonly approval = (args: unknown): ToolApprovalDecision => {
+		const entries = toPathList((args as { path?: string | string[] } | null)?.path);
+		// Only a prompt gates a search root; denied paths are filtered from the results instead.
+		return searchRootApproval(
+			this.session,
+			"ast_grep",
+			"read",
+			searchRootCandidates(entries.length > 0 ? entries : ["."]),
+		);
+	};
 	readonly label = "AST Grep";
 	readonly summary = "Search code with AST patterns (structural grep)";
 	get description(): string {
@@ -209,6 +226,7 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 				tier: resolveToolTier(this, params),
 			});
 			const filesystem = urlFilesystem.shellFilesystem();
+			const materializedUrlPaths = new Set<string>();
 			const scope = await resolveToolSearchScope({
 				rawPaths,
 				cwd: this.session.cwd,
@@ -222,6 +240,7 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 						{ path: target.path, raw: isRawSelector(target.sel) },
 						signal,
 					);
+					materializedUrlPaths.add(path.resolve(materialized.path));
 					return { sourcePath: materialized.path, immutable: true };
 				},
 			});
@@ -229,7 +248,7 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 
 			const DEFAULT_AST_LIMIT = 50;
 			if (params.lang) await ensureGrammar({ lang: params.lang });
-			const result = await rerunWithGrammars(() =>
+			const rawResult = await rerunWithGrammars(() =>
 				multiTargets
 					? runMultiTargetAstGrep(multiTargets, {
 							patterns,
@@ -251,7 +270,31 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 							filesystem,
 						}),
 			);
-			const grammarNote = result.missingGrammars?.length ? missingGrammarsNote(result.missingGrammars) : undefined;
+			// Denied (and unapproved prompt-gated) paths never reach the model: drop their matches.
+			const pathFilter = createPathRuleFilter(this.session, this.name, searchRootCandidates(rawPaths));
+			let result = rawResult;
+			if (pathFilter) {
+				const visible = rawResult.matches.filter(match => {
+					const abs = resolveSearchResultPath(resolvedSearchPath, match.path);
+					return abs.includes("://") || materializedUrlPaths.has(abs) || !pathFilter.hides(abs);
+				});
+				if (visible.length !== rawResult.matches.length) {
+					result = {
+						...rawResult,
+						matches: visible,
+						totalMatches: Math.max(0, rawResult.totalMatches - (rawResult.matches.length - visible.length)),
+						filesWithMatches: new Set(visible.map(match => match.path)).size,
+					};
+				}
+			}
+			// Grammar warnings and the omitted-paths notice share one trailing note.
+			const resultNote =
+				[
+					result.missingGrammars?.length ? missingGrammarsNote(result.missingGrammars) : undefined,
+					pathFilter?.note(),
+				]
+					.filter(Boolean)
+					.join("\n") || undefined;
 
 			const normalizedParseErrors = (result.parseErrors ?? []).map(error => {
 				const parseError = error.match(/^.+: (.+: parse error \(syntax tree contains error nodes\))$/);
@@ -293,7 +336,7 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 				const parseMessage = cappedParseErrors.length
 					? `\n${formatParseErrors(cappedParseErrors, parseErrorsTotal).join("\n")}`
 					: "";
-				const grammarMessage = grammarNote ? `\n${grammarNote}` : "";
+				const grammarMessage = resultNote ? `\n${resultNote}` : "";
 				// Zero matches is useless even with parse issues: the follow-up
 				// call has already corrected course by the time compaction runs.
 				return toolResult(baseDetails).text(`${noMatchMessage}${parseMessage}${grammarMessage}`).useless().done();
@@ -377,8 +420,8 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 			if (cappedParseErrors.length) {
 				outputLines.push("", ...formatParseErrors(cappedParseErrors, parseErrorsTotal));
 			}
-			if (grammarNote) {
-				outputLines.push("", grammarNote);
+			if (resultNote) {
+				outputLines.push("", resultNote);
 			}
 
 			return toolResult(details).text(outputLines.join("\n")).done();

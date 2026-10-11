@@ -1,4 +1,4 @@
-import type { CollabUiRequest, ImageContent, SessionCommand, WireModel } from "@oh-my-pi/pi-wire";
+import type { CollabUiRequest, ImageContent, SessionCommand, WireModel, WireProfile } from "@oh-my-pi/pi-wire";
 import { File as FileIcon, FileText, ListEnd, LoaderCircle, Paperclip, SendHorizontal, Square, X } from "lucide-react";
 import type { ClipboardEvent, KeyboardEvent, ReactNode, Ref, RefObject } from "react";
 import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
@@ -50,6 +50,10 @@ export interface ComposerProps {
 	thinkingLevel: string | undefined;
 	/** Levels the current model accepts; absent on hosts without session controls. */
 	thinkingLevels: readonly string[] | undefined;
+	/** Profiles the host offers this writer; the pill shows only when the host advertises `profiles` and the list is non-empty. */
+	profiles?: readonly WireProfile[] | null;
+	/** Active profile name. */
+	profile?: string;
 	/** A paired computer can follow this session to its next room, so slash commands that replace the session are offered. */
 	followsRoom: boolean;
 	/** The host runs a prompt on a model the writer picks for it alone: offers the per-message model pill. */
@@ -63,6 +67,8 @@ export interface ComposerHandle {
 	insert(prompt: string): void;
 	/** Replace the draft text and attachments (an edited earlier prompt), put the caret at the end and focus. */
 	replace(text: string, images?: readonly ImageContent[]): void;
+	/** Clear the draft and its images when the text is exactly `draft` (a prompt an undo handed back, untouched since). */
+	discard(draft: string): void;
 	/** Put the caret in the message box. */
 	focus(): void;
 }
@@ -189,6 +195,8 @@ export const Composer = memo(function Composer({
 	model,
 	thinkingLevel,
 	thinkingLevels,
+	profiles,
+	profile,
 	followsRoom,
 	promptModel,
 	onSessionCommand,
@@ -266,6 +274,12 @@ export const Composer = memo(function Composer({
 				setFiles([]);
 				setAttachError(null);
 				setCaretTick(tick => tick + 1);
+			},
+			discard(draft: string): void {
+				if (text !== draft) return;
+				setText("");
+				setImages([]);
+				caretRef.current = null;
 			},
 		}),
 		[text],
@@ -553,6 +567,8 @@ export const Composer = memo(function Composer({
 								model={model}
 								thinkingLevel={thinkingLevel}
 								thinkingLevels={thinkingLevels}
+								profiles={profiles}
+								profile={profile}
 								disabled={!live}
 								onSessionCommand={onSessionCommand}
 							>

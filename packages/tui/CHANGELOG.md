@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the `app.profile.cycle` keybinding (default `Alt+O`) and an agent-profile badge in the status line's `mode` segment (`SegmentContext.profile`, `StatusLineComponent.setProfileStatus`).
+- Added a ranked "What fills the context" block to the context usage report (`ContextUsageOptions.items`, `ContextRankedItem`), listing the largest items with their token estimate, share and whether they can be pruned.
+
 ## [18.8.9] - 2026-10-10
 
 ### Breaking Changes

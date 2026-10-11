@@ -1,7 +1,14 @@
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useState } from "react";
-import type { CompanionClient, GitFlowSettings, GitFlowSettingsReply, GitSettingsOptions } from "../../lib/companion";
+import type {
+	CompanionClient,
+	GitFlowSettings,
+	GitFlowSettingsReply,
+	GitSettingsOptions,
+	SettleCleanupResult,
+	WorktreeSetupStatus,
+} from "../../lib/companion";
 import { useRequest } from "../../lib/use-request";
 import "./review.css";
 
@@ -127,46 +134,56 @@ function WorktreeForm({ client, saved }: { client: CompanionClient; saved: GitFl
 				</span>
 			</label>
 			{current.projects.map(project => (
-				<div key={project.root} className="sh-field" aria-label={`Setup script of ${project.root}`}>
-					<span className="sh-field-label">Repository setup script · {project.root}</span>
-					{project.script !== null && (
-						<pre className="sh-review-cmd sh-review-script" tabIndex={0}>
-							{project.script}
-						</pre>
-					)}
-					<span className="sh-field-hint">
-						{project.trusted
-							? "Approved: it runs in each new worktree of this repository."
-							: project.script === null
-								? "The repository no longer has a setup script."
-								: project.approved
-									? "Changed since you approved it, so it does not run. Read it again before approving."
-									: "It is code from the repository and was not run. Read it, then approve it to run in new worktrees of this repository."}
-					</span>
-					<div className="sh-review-confirm-actions">
-						{project.approved && (
-							<button
-								type="button"
-								className="sh-btn"
-								disabled={busy}
-								onClick={() => void request({ trust: { root: project.root, hash: null } })}
-							>
-								Withdraw approval
-							</button>
-						)}
-						{!project.trusted && project.hash !== null && (
-							<button
-								type="button"
-								className="sh-btn sh-btn-primary"
-								disabled={busy}
-								onClick={() => void request({ trust: { root: project.root, hash: project.hash } })}
-							>
-								Approve this script
-							</button>
-						)}
-					</div>
-				</div>
+				<ScriptApproval
+					key={project.root}
+					project={project}
+					kind="setup"
+					busy={busy}
+					onTrust={hash => void request({ trust: { root: project.root, hash } })}
+				/>
 			))}
+			{current.settleCleanup !== undefined && (
+				<>
+					<label className="sh-field">
+						<span className="sh-field-label">When a worktree session settles, run</span>
+						<textarea
+							className="sh-input sh-input-mono sh-review-textarea"
+							rows={2}
+							value={draft.settleScript ?? ""}
+							onChange={e => set({ settleScript: e.currentTarget.value })}
+							placeholder="cargo clean"
+							aria-label="Worktree settle command"
+							autoCapitalize="off"
+							autoCorrect="off"
+							spellCheck={false}
+						/>
+						<span className="sh-field-hint">
+							Empty: nothing runs. Runs in the session's worktree, never in the main checkout or a plain folder,
+							each time the session settles from any device or an auto-settle rule, even while a dev server still
+							runs there. It never delays the settle and stops after 5 minutes. A worktree a sandboxed session
+							worked in is skipped. A repository's own <code>.omp/worktree-settle</code> runs instead of this
+							only after you approve it here.
+						</span>
+					</label>
+					{current.settleCleanup.projects.map(project => (
+						<ScriptApproval
+							key={project.root}
+							project={project}
+							kind="settle"
+							busy={busy}
+							onTrust={hash => void request({ trust: { root: project.root, hash, kind: "settle" } })}
+						/>
+					))}
+					{current.settleCleanup.results.length > 0 && (
+						<div className="sh-field" role="group" aria-label="Worktree cleanup results">
+							<span className="sh-field-label">Latest cleanup per worktree</span>
+							{current.settleCleanup.results.map(result => (
+								<SettleResultRow key={result.path} result={result} />
+							))}
+						</div>
+					)}
+				</>
+			)}
 			<div className="sh-field">
 				<span className="sh-field-label">Remove worktrees</span>
 				<div className="sh-segmented" role="radiogroup" aria-label="Worktree cleanup">
@@ -250,6 +267,116 @@ function WorktreeForm({ client, saved }: { client: CompanionClient; saved: GitFl
 			</div>
 			{notice && <div className="sh-field-hint">{notice}</div>}
 			{error && <div className="sh-connect-error">{error}</div>}
+		</div>
+	);
+}
+
+const SCRIPT_KINDS = {
+	setup: {
+		label: "Repository setup script",
+		aria: "Setup script of",
+		ran: "Approved: it runs in each new worktree of this repository.",
+		gone: "The repository no longer has a setup script.",
+		unapproved:
+			"It is code from the repository and was not run. Read it, then approve it to run in new worktrees of this repository.",
+	},
+	settle: {
+		label: "Repository settle script",
+		aria: "Settle script of",
+		ran: "Approved: it runs in a worktree of this repository when its session settles.",
+		gone: "The repository no longer has a settle script.",
+		unapproved:
+			"It is code from the repository and was not run. Read it, then approve it to run when a worktree session of this repository settles.",
+	},
+} as const;
+
+/** A repository's own script, shown for review: it runs only once the user approved exactly this content. */
+function ScriptApproval({
+	project,
+	kind,
+	busy,
+	onTrust,
+}: {
+	project: WorktreeSetupStatus;
+	kind: keyof typeof SCRIPT_KINDS;
+	busy: boolean;
+	onTrust: (hash: string | null) => void;
+}): ReactNode {
+	const text = SCRIPT_KINDS[kind];
+	return (
+		<div className="sh-field" role="group" aria-label={`${text.aria} ${project.root}`}>
+			<span className="sh-field-label">
+				{text.label} · {project.root}
+			</span>
+			{project.script !== null && (
+				<pre className="sh-review-cmd sh-review-script" tabIndex={0}>
+					{project.script}
+				</pre>
+			)}
+			<span className="sh-field-hint">
+				{project.trusted
+					? text.ran
+					: project.script === null
+						? text.gone
+						: project.approved
+							? "Changed since you approved it, so it does not run. Read it again before approving."
+							: text.unapproved}
+			</span>
+			<div className="sh-review-confirm-actions">
+				{project.approved && (
+					<button type="button" className="sh-btn" disabled={busy} onClick={() => onTrust(null)}>
+						Withdraw approval
+					</button>
+				)}
+				{!project.trusted && project.hash !== null && (
+					<button
+						type="button"
+						className="sh-btn sh-btn-primary"
+						disabled={busy}
+						onClick={() => onTrust(project.hash)}
+					>
+						Approve this script
+					</button>
+				)}
+			</div>
+		</div>
+	);
+}
+
+function duration(ms: number): string {
+	if (ms < 1_000) return `${Math.round(ms)} ms`;
+	if (ms < 60_000) return `${(ms / 1_000).toFixed(1)} s`;
+	return `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1_000)} s`;
+}
+
+/** The latest settle cleanup in one worktree: how it ended, when, and the end of its output. */
+function SettleResultRow({ result }: { result: SettleCleanupResult }): ReactNode {
+	const outcome =
+		result.status === "ok"
+			? "Done"
+			: result.status === "timeout"
+				? "Timed out"
+				: result.status === "skipped"
+					? "Skipped"
+					: result.code === null
+						? "Failed"
+						: `Failed (exit ${result.code})`;
+	return (
+		<div className="sh-settle-result" role="group" aria-label={`Cleanup of ${result.path}`}>
+			<div className="sh-settle-head">
+				<span className={`sh-settle-status sh-settle-${result.status}`}>{outcome}</span>
+				<span className="sh-settle-name">{result.branch || result.path}</span>
+			</div>
+			<span className="sh-field-hint">
+				{result.path} · {new Date(result.startedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+				{result.status === "skipped" ? "" : ` · ${duration(result.durationMs)}`}
+				{result.source === "project" ? " · .omp/worktree-settle" : ""}
+			</span>
+			{result.output !== "" && (
+				<pre className="sh-review-cmd sh-review-script" tabIndex={0}>
+					{result.output}
+				</pre>
+			)}
 		</div>
 	);
 }

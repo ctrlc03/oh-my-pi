@@ -8,9 +8,11 @@
  *
  * Prints a pairing link (`#pair:…`); open it in as many browsers or tabs as you like (each
  * is a new device). It never touches ~/.omp, tmux, or GitHub: listing and pull request
- * state and the open pull request list are canned; starting sessions and comparing models (best-of-N, see ./mock-fanout) work over a
+ * state and the open pull request list are canned; starting sessions (./mock-start: in the folders, in new worktrees, or without a
+ * project in a real scratch folder under `<--dir>/config/scratch`) and comparing models (best-of-N, see ./mock-fanout) work over a
  * throw-away git repository, and `--session-link` makes opening any session join that room (start
- * `scripts/mock-host.ts`). Every other request is refused. Ctrl+C stops it.
+ * `scripts/mock-host.ts`). The worktree settings and the settle cleanup (./mock-settle) run the real code over a throw-away
+ * repository too. Every other request is refused. Ctrl+C stops it.
  */
 
 import * as fs from "node:fs/promises";
@@ -32,6 +34,8 @@ import { createSessionOrg, loadOrgFile, saveOrgFile } from "./companion-sessiono
 import { startLocalRelay } from "./local-relay";
 import { createMockFanout } from "./mock-fanout";
 import { createMockSearch } from "./mock-search";
+import { createMockStart } from "./mock-start";
+import { createMockSettle } from "./mock-settle";
 
 const POLL_MS = 3000;
 const argv = Bun.argv.slice(2);
@@ -68,6 +72,11 @@ const hosts: CompanionHost[] = [
 	host(3, "docs-pass", { inputRequired: true, busy: false }),
 	host(4, "merged-feature"),
 	host(5, "spike-wasm", { busy: true }),
+	host(7, "api-pagination"),
+	host(8, "release-notes"),
+	host(9, "perf-profiling"),
+	host(10, "i18n-strings"),
+	host(11, "ci-cache"),
 ];
 const idle: CompanionIdleSession[] = [
 	{
@@ -94,6 +103,9 @@ const socket = new CollabSocket<CompanionReply, CompanionRequest>({
 	key: importRoomKey(rawKey),
 });
 
+/** The worktree settings and the cleanup run when a worktree session settles, over a throw-away git repository (two sessions work in its worktrees). */
+const settle = await createMockSettle({ dir, hosts });
+
 const sessionOrg = createSessionOrg({
 	now: Date.now,
 	initial: await loadOrgFile(orgPath),
@@ -101,6 +113,7 @@ const sessionOrg = createSessionOrg({
 	readPrDone: async cwd => prDone.get(cwd) ?? null,
 	prAvailable: () => true,
 	onChange: () => broadcast(),
+	onSettled: sessions => void settle.run(sessions),
 	onError: err => console.error(`mock-companion: ${err instanceof Error ? err.message : String(err)}`),
 });
 
@@ -110,6 +123,16 @@ const fanout = await createMockFanout({
 	hosts,
 	onChange: () => broadcast(),
 	sessionLink: flag("--session-link", "") || undefined,
+});
+/** Starting sessions (in the folders, in new worktrees, or without a project) over real folders; `folders` adds the scratch ones. */
+const starts = createMockStart({
+	dir,
+	hosts,
+	baseFolders: async () => {
+		const reply = await fanout.answer({ t: "folders", reqId: 0 });
+		return reply.t === "folders" ? reply.folders : [];
+	},
+	onChange: () => broadcast(),
 });
 /** Open pull requests `#` in the composer can mention; only the list is answered, a pull request's detail is not. */
 const MOCK_PRS: GithubItem[] = (
@@ -156,11 +179,14 @@ function hostsFrame(): CompanionReply {
 		machine: "mock-computer",
 		hosts: fanout.annotate(hosts),
 		...fanout.capabilities,
+		...starts.capabilities,
 		...search.capabilities,
+		...settle.capabilities,
 		canGithub: true,
 		idle,
 		vapidKey: "",
 		sessionOrgRev: sessionOrg.file().rev,
+		canOrderSessions: true,
 	};
 }
 
@@ -194,6 +220,15 @@ socket.onFrame = (frame, fromPeer) => {
 			socket.send({ t: "session-org", reqId: frame.reqId, doc, rev }, fromPeer);
 			broadcast();
 		});
+	else if (starts.handles(frame))
+		void starts.answer(frame).then(
+			reply => socket.send(reply, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
 	else if (fanout.handles(frame))
 		void fanout.answer(frame).then(
 			reply => socket.send(reply, fromPeer),
@@ -204,6 +239,15 @@ socket.onFrame = (frame, fromPeer) => {
 				),
 		);
 	else if (search.handles(frame)) socket.send(search.answer(frame), fromPeer);
+	else if (settle.handles(frame))
+		void settle.answer(frame).then(
+			reply => socket.send(reply, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
 	else if (frame.t === "github")
 		socket.send({ t: "github", reqId: frame.reqId, repo: "example/app", items: MOCK_PRS }, fromPeer);
 	else

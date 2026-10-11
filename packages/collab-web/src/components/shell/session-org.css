@@ -51,12 +51,219 @@
 	user-select: none;
 }
 
-.sh-org-row[draggable="true"] {
+/* Rows slide aside to open the gap a dragged row lands in; the drop itself must not replay that motion. */
+.sh-org-row {
+	position: relative;
+	transition: transform 160ms var(--ease-out);
+}
+
+.sh-org-title[data-org-slide] {
+	transition: transform 160ms var(--ease-out);
+}
+
+.sh-org[data-org-dropping] [data-org-slide] {
+	transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sh-org-row,
+	.sh-org-title[data-org-slide] {
+		transition: none;
+	}
+}
+
+.sh-org[data-org-dragging] {
+	cursor: grabbing;
+}
+
+.sh-org[data-org-dragging] .sh-org-row,
+.sh-org[data-org-dragging] .sh-recent-join {
+	cursor: grabbing;
+}
+
+.sh-org-row[data-mode="idle"] {
 	cursor: grab;
 }
 
-.sh-org-row[data-dropping] {
-	box-shadow: 0 -2px 0 0 var(--accent);
+.sh-org-row[data-mode="idle"] .sh-recent-join,
+.sh-org-row[data-mode="idle"] .sh-btn {
+	cursor: pointer;
+}
+
+/* The dragged row's place stays as an empty slot; the ghost carries it. */
+.sh-org-row[data-lifted] > * {
+	visibility: hidden;
+}
+
+.sh-org-row[data-lifted] {
+	background: var(--accent-muted);
+	border-radius: var(--radius);
+}
+
+.sh-org-row[data-swept] {
+	background: var(--accent-soft);
+	border-radius: var(--radius);
+}
+
+/* The section the pointer is over takes the accent colour. */
+.sh-org-section {
+	border-radius: var(--radius);
+	transition: background 120ms ease-out;
+}
+
+.sh-org-section[data-over] {
+	background: var(--accent-muted);
+}
+
+.sh-org-section[data-over] > .sh-org-title,
+.sh-org-section[data-over] > .sh-org-title .sh-org-fold {
+	color: var(--accent);
+}
+
+.sh-org[data-org-dragging] .sh-org-title {
+	color: var(--fg-muted);
+}
+
+.sh-org-empty {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 44px;
+	font-size: 12.5px;
+	color: var(--fg-faint);
+	border: 1px dashed var(--border-strong);
+	border-radius: var(--radius);
+}
+
+.sh-org-section[data-over] .sh-org-empty {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+
+/* What a drop does, on the row that floats under the pointer. */
+.sh-org-ghost {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 90;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	min-height: 44px;
+	padding: 6px 10px;
+	font-size: 14px;
+	font-weight: 500;
+	color: var(--fg);
+	background: var(--bg-overlay);
+	border: 1px solid var(--accent);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow-float);
+	pointer-events: none;
+}
+
+.sh-org-ghost[data-kind="range"] {
+	width: auto;
+	min-height: 0;
+	padding: 4px 8px;
+}
+
+.sh-org-ghost-title {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-org-badge {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 8px;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft);
+	border-radius: 999px;
+}
+
+/* The one-press button of a row (Settle, Un-settle, Wake): it opens on hover where there is one, and a press-and-drag on it sweeps rows. */
+.sh-org-quick {
+	flex: none;
+	width: 0;
+	min-width: 0;
+	overflow: hidden;
+	opacity: 0;
+	cursor: pointer;
+	transition:
+		width 120ms ease-out,
+		opacity 120ms ease-out;
+}
+
+@media (hover: hover) and (pointer: fine) {
+	.sh-org-row:hover .sh-org-quick,
+	.sh-org-quick:focus-visible {
+		width: 30px;
+		opacity: 1;
+	}
+
+	.sh-org[data-org-dragging] .sh-org-quick {
+		transition: none;
+	}
+}
+
+@media (hover: none) {
+	.sh-org-quick {
+		display: none;
+	}
+}
+
+.sh-org-note {
+	display: inline-flex;
+	align-items: center;
+}
+
+/* Arrange mode: a handle that a finger can grab (it keeps the page from scrolling under the drag). */
+.sh-org-row .sh-org-handle {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	align-self: stretch;
+	color: var(--fg-muted);
+	cursor: grab;
+	touch-action: none;
+}
+
+@media (any-pointer: coarse) {
+	.sh-org-row .sh-org-handle {
+		width: 44px;
+	}
+}
+
+.sh-org-row[data-mode="arrange"] .sh-recent-join {
+	pointer-events: none;
+}
+
+.sh-org-check-mark {
+	flex: none;
+	margin-left: 6px;
+	color: var(--fg-faint);
+}
+
+.sh-org-check-on {
+	color: var(--accent);
+}
+
+.sh-org-row[data-selected] {
+	background: var(--accent-muted);
+	border-radius: var(--radius);
+}
+
+.sh-org-row[data-mode="select"] {
+	cursor: pointer;
 }
 
 .sh-org-row[data-status="settled"] .sh-recent-join,
@@ -82,9 +289,21 @@
 	}
 }
 
-.sh-org-undo {
+/* Undo and the arrange and select bars stay at the bottom of the list. */
+.sh-org {
+	display: contents;
+}
+
+.sh-org-dock {
 	position: sticky;
 	bottom: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.sh-org-undo,
+.sh-org-bar {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -94,6 +313,32 @@
 	background: var(--bg-raised);
 	border: 1px solid var(--border-strong);
 	border-radius: var(--radius);
+	box-shadow: var(--shadow-float);
+}
+
+.sh-org-bar {
+	flex-wrap: wrap;
+}
+
+.sh-org-bar-msg {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	flex: 1 1 0;
+}
+
+.sh-org-bar-msg span {
+	font-size: 12px;
+	color: var(--fg-muted);
+}
+
+.sh-org-bar-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	flex: 1 1 100%;
+	order: 3;
 }
 
 .sh-org-undo-msg {
@@ -128,4 +373,31 @@
 	align-items: center;
 	gap: 8px;
 	font-size: 13.5px;
+}
+
+.sh-org-menu-sep {
+	height: 1px;
+	margin: 4px 0;
+	background: var(--border);
+}
+
+.sh-org-menu-text {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 1px;
+	text-align: left;
+}
+
+.sh-org-menu-hint {
+	font-size: 11.5px;
+	font-weight: 400;
+	color: var(--fg-faint);
+}
+
+@media (any-pointer: coarse) {
+	.sh-org-bar .sh-btn,
+	.sh-org-undo .sh-btn {
+		min-height: 44px;
+	}
 }

@@ -13,6 +13,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { SCRATCH_DIR } from "../src/lib/scratch";
 
 export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 
@@ -44,6 +45,9 @@ mcp:
 
 /** Entries under the session folder (at any depth) that run code or configure tools later: kept read-only. */
 const PROTECTED_NAMES = [".git", ".omp", ".claude", ".vscode", ".envrc", ".mcp.json"];
+
+/** Under the config dir: a folder only the companion reaches (start prompts wait here for their shell), denied to every sandbox, whose `run/` is otherwise writable. */
+export const COMPANION_RUN_DIR = "run/collab-companion";
 
 /** Credential stores under the home directory a sandboxed session may not read. */
 const SECRET_DIRS = [".ssh", ".aws", ".azure", ".gnupg", ".kube", ".docker", ".config/gh", ".config/gcloud"];
@@ -97,11 +101,14 @@ function regexEscape(value: string): string {
  * The `sandbox-exec` profile for one session folder.
  *
  * @throws Error when the folder contains the home or config dir (or lies in
- * the config dir), or a path has characters a profile string cannot hold.
+ * the config dir, except in a scratch folder under it: the project folder of a session
+ * without a project), or a path has characters a profile string cannot hold.
  */
 export function sandboxProfile(paths: SandboxPaths): string {
 	const { folder, home, configDir, tmpDir } = paths;
-	if (within(home, folder) || within(configDir, folder) || within(folder, configDir)) {
+	const scratchRoot = path.join(configDir, SCRATCH_DIR);
+	const inScratch = folder !== scratchRoot && within(folder, scratchRoot);
+	if (within(home, folder) || within(configDir, folder) || (within(folder, configDir) && !inScratch)) {
 		throw new Error("pick a project folder: a sandbox cannot cover your home or omp config folder");
 	}
 	const sub = (p: string) => `(subpath ${str(p)})`;
@@ -124,6 +131,7 @@ export function sandboxProfile(paths: SandboxPaths): string {
 		`  ${SECRET_DIRS.map(dir => sub(path.join(home, dir))).join(" ")}`,
 		`  ${SECRET_FILES.map(file => lit(path.join(home, file))).join(" ")}`,
 		`  ${lit(paths.companionState)})`,
+		`(deny file-read* file-write* ${sub(path.join(configDir, COMPANION_RUN_DIR))})`,
 		"",
 	].join("\n");
 }

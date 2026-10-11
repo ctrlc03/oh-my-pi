@@ -39,23 +39,53 @@ export interface OrgFile {
 	rev: number;
 	/** session id → last time the session was seen working or asking (ms). */
 	activity: Record<string, number>;
+	/** session id → `at` of the settled entry the settle cleanup has been offered for; see {@link settleTransitions}. */
+	settled: Record<string, number>;
+}
+
+/**
+ * Sessions that went into settled since `handled`: a settled entry whose time is not the one handled.
+ * Settling again after an un-settle is a new entry, so it is reported again; the same entry arriving
+ * once more (a device syncing the document it already sent, a restart) is not. `handled` of the result
+ * holds exactly the settled entries of `doc`. Room entries (`room:…`) are not sessions of this computer.
+ */
+export function settleTransitions(
+	doc: OrgDoc,
+	handled: Readonly<Record<string, number>>,
+): { handled: Record<string, number>; events: SettledSession[] } {
+	const next: Record<string, number> = {};
+	const events: SettledSession[] = [];
+	for (const [sessionId, entry] of Object.entries(doc.entries)) {
+		if (entry.status !== "settled" || !KEY_RE.test(sessionId)) continue;
+		next[sessionId] = entry.at;
+		if (!Object.hasOwn(handled, sessionId) || handled[sessionId] !== entry.at)
+			events.push({ sessionId, at: entry.at });
+	}
+	return { handled: next, events };
 }
 
 export function parseOrgFile(raw: unknown): OrgFile {
-	const file = raw as { doc?: unknown; rev?: unknown; activity?: unknown } | null;
+	const file = raw as { doc?: unknown; rev?: unknown; activity?: unknown; settled?: unknown } | null;
 	const activity: Record<string, number> = {};
 	if (typeof file?.activity === "object" && file.activity !== null)
 		for (const [id, at] of Object.entries(file.activity))
 			if (KEY_RE.test(id) && typeof at === "number" && Number.isFinite(at)) activity[id] = at;
 	const rev = typeof file?.rev === "number" && Number.isInteger(file.rev) && file.rev >= 0 ? file.rev : 0;
-	return { doc: parseOrg(file?.doc), rev, activity };
+	const doc = parseOrg(file?.doc);
+	// A file from before settle cleanup existed: what is settled already is not news, or the first start would run it for every old session.
+	if (typeof file?.settled !== "object" || file.settled === null)
+		return { doc, rev, activity, settled: settleTransitions(doc, {}).handled };
+	const settled: Record<string, number> = {};
+	for (const [id, at] of Object.entries(file.settled))
+		if (KEY_RE.test(id) && typeof at === "number" && Number.isFinite(at)) settled[id] = at;
+	return { doc, rev, activity, settled };
 }
 
 export async function loadOrgFile(file: string): Promise<OrgFile> {
 	try {
 		return parseOrgFile(JSON.parse(await Bun.file(file).text()));
 	} catch {
-		return { doc: emptyOrg(), rev: 0, activity: {} };
+		return { doc: emptyOrg(), rev: 0, activity: {}, settled: {} };
 	}
 }
 
@@ -117,7 +147,18 @@ export interface SessionOrgOptions {
 	prAvailable(): boolean | Promise<boolean>;
 	/** The document changed on the computer (not through `sync`): tell the devices. */
 	onChange(): void;
+	/**
+	 * Sessions that just went into settled, from a device's document or an auto-settle rule; each transition is
+	 * reported once, after it was persisted (so a restart does not report it again). Not awaited.
+	 */
+	onSettled?(sessions: SettledSession[]): void;
 	onError(err: unknown): void;
+}
+
+/** A session that went into settled: `at` is the time of the settled entry. */
+export interface SettledSession {
+	sessionId: string;
+	at: number;
 }
 
 export interface SessionOrg {
@@ -142,11 +183,13 @@ export function createSessionOrg(options: SessionOrgOptions): SessionOrg {
 		return saving;
 	};
 
-	/** Replace the document; a real change bumps the revision and is persisted. */
+	/** Replace the document; a real change bumps the revision and is persisted, then new settles are reported. */
 	const adopt = async (doc: OrgDoc): Promise<boolean> => {
 		if (sameOrg(doc, file.doc)) return false;
-		file = { ...file, doc, rev: file.rev + 1 };
+		const { handled, events } = settleTransitions(doc, file.settled);
+		file = { ...file, doc, rev: file.rev + 1, settled: handled };
 		await persist();
+		if (events.length > 0) options.onSettled?.(events);
 		return true;
 	};
 

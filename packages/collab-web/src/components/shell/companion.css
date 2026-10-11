@@ -96,6 +96,83 @@
 	color: var(--fg);
 }
 
+/* Display-less wrapper: the sheet's own column and gap lay the form out; it only catches ⌘Enter from its fields. */
+.sh-start-form {
+	display: contents;
+}
+
+/* The sheet scrolls when the form is taller than the screen; its rows keep their height instead of squeezing. */
+.sh-start-form > *,
+.sh-start-runs {
+	flex-shrink: 0;
+}
+
+.sh-start-actions {
+	display: flex;
+	gap: 8px;
+}
+
+.sh-start-actions .sh-btn {
+	flex: 1;
+}
+
+.sh-start-more-hint {
+	margin-top: -4px;
+}
+
+/* Sessions started without leaving the sheet. */
+.sh-start-runs {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.sh-start-run {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 10px;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	background: var(--bg-raised);
+}
+
+.sh-start-run-icon {
+	flex: none;
+	color: var(--fg-muted);
+}
+
+.sh-start-run-icon.sh-start-run-ok {
+	color: var(--ok);
+}
+
+.sh-start-run-text {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.sh-start-run-title {
+	font-size: 14px;
+	font-weight: 500;
+	color: var(--fg);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-start-run-open {
+	flex: none;
+}
+
+@media (any-pointer: coarse) {
+	.sh-start-run-open {
+		min-height: 44px;
+	}
+}
+
 .sh-start-prompt {
 	display: grid;
 	gap: 6px;

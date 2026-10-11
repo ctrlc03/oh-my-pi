@@ -1,6 +1,8 @@
 import {
 	ChevronLeft,
+	CircleCheck,
 	FolderOpen,
+	FolderPlus,
 	GitBranch,
 	GitCompareArrows,
 	LoaderCircle,
@@ -9,11 +11,23 @@ import {
 	ShieldCheck,
 	X,
 } from "lucide-react";
-import type { ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { CompanionClient, RecentFolder } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import { setOpenIntent } from "../../lib/inbox";
+import { type Combo, formatCombo, IS_MAC, matchCombo } from "../../lib/shortcuts";
+import {
+	folderLabel,
+	isProjectless,
+	NO_PROJECT,
+	nextDraft,
+	newSessionTarget,
+	promptTitle,
+	type StartDraft,
+	type StartTarget,
+	startOptions,
+} from "../../lib/start-session";
 import { type RequestState, useRequest } from "../../lib/use-request";
 import { useOpenElsewhere } from "./OpenElsewhere";
 import { QuickReplies } from "./QuickReplies";
@@ -32,20 +46,26 @@ export interface StartSessionSheetProps {
 	onClose(): void;
 }
 
-interface Starting {
-	cwd: string;
-	/** Session id being resumed; undefined for a new session. */
-	resume?: string;
-	sandboxed: boolean;
-	/** Run on a new branch in its own git worktree (new sessions only). */
-	worktree?: { branch?: string };
+/** Starts the session and keeps the sheet open on a new draft. */
+const START_AND_NEW: Combo = { key: "Enter", mod: true };
+/** Sessions started in the background that the sheet keeps showing. */
+const MAX_RUNS = 3;
+
+/** The folder row of a session without a project. */
+const NO_PROJECT_FOLDER: RecentFolder = { cwd: NO_PROJECT, lastActive: 0, sessions: [] };
+
+/** A session started without leaving the sheet. */
+interface BackgroundRun {
+	key: number;
+	/** The prompt's first words, else the folder. */
+	title: string;
+	/** What it runs in: folder (when the title is the prompt), sandbox, worktree. */
+	detail: string;
+	/** Set once the session hosts. */
+	instanceId?: string;
 }
 
-function folderName(cwd: string): string {
-	return cwd.split("/").filter(Boolean).pop() ?? cwd;
-}
-
-/** Pick a folder omp has run in, then start a new session there or resume one. */
+/** Pick a folder omp has run in (or none), then start a new session there or resume one. */
 export function StartSessionSheet({
 	client,
 	canSandbox,
@@ -55,8 +75,10 @@ export function StartSessionSheet({
 }: StartSessionSheetProps): ReactNode {
 	const load = useCallback(() => client.requestFolders(), [client]);
 	const { state, reload } = useRequest(load);
+	const subscribe = useCallback((listener: () => void) => client.subscribe(listener), [client]);
+	const { canScratch, canBackgroundStart } = useSyncExternalStore(subscribe, () => client.getSnapshot());
 	const [folder, setFolder] = useState<RecentFolder | null>(null);
-	const [starting, setStarting] = useState<Starting | null>(null);
+	const [starting, setStarting] = useState<StartTarget | null>(null);
 	const [sandboxed, setSandboxed] = useState(false);
 	const [worktree, setWorktree] = useState(false);
 	const [branch, setBranch] = useState("");
@@ -64,6 +86,8 @@ export function StartSessionSheet({
 	const [error, setError] = useState<string | null>(null);
 	const [fan, setFan] = useState(false);
 	const [group, setGroup] = useState<FanoutGroup | null>(null);
+	const [runs, setRuns] = useState<BackgroundRun[]>([]);
+	const runKey = useRef(0);
 	const openElsewhere = useOpenElsewhere();
 	const closedRef = useRef(false);
 	useEffect(() => {
@@ -73,17 +97,14 @@ export function StartSessionSheet({
 		};
 	}, []);
 
-	const start = async (target: Starting, force = false): Promise<void> => {
+	const draft = (cwd: string): StartDraft => ({ cwd, sandboxed, worktree, branch, prompt });
+
+	const start = async (target: StartTarget, force = false): Promise<void> => {
 		setStarting(target);
 		setError(null);
 		openElsewhere.dismiss();
 		try {
-			const instanceId = await client.startSession(target.cwd, {
-				resume: target.resume,
-				sandboxed: target.sandboxed || undefined,
-				worktree: target.worktree,
-				force: force || undefined,
-			});
+			const instanceId = await client.startSession(target.cwd, startOptions(target, { force }));
 			const first = prompt.trim();
 			// Recorded even if the sheet was closed meanwhile: opening the session later still sends it.
 			if (first) setOpenIntent(instanceId, { prompt: first });
@@ -98,8 +119,63 @@ export function StartSessionSheet({
 		}
 	};
 
+	/** Start a new session from the draft without leaving the sheet, and open the next draft in the same folder and mode. */
+	const startAndNew = (current: RecentFolder): void => {
+		const d = draft(current.cwd);
+		const target = newSessionTarget(d);
+		const first = d.prompt.trim();
+		const fromPrompt = promptTitle(first);
+		const key = ++runKey.current;
+		const run: BackgroundRun = {
+			key,
+			title: fromPrompt ?? folderLabel(current.cwd),
+			detail: [
+				fromPrompt === null ? null : folderLabel(current.cwd),
+				target.sandboxed ? "Sandboxed" : null,
+				target.worktree ? "New worktree" : null,
+			]
+				.filter(Boolean)
+				.join(" · "),
+		};
+		setRuns(prev => [run, ...prev].slice(0, MAX_RUNS));
+		setError(null);
+		const next = nextDraft(d);
+		setPrompt(next.prompt);
+		setBranch(next.branch);
+		client.startSession(target.cwd, startOptions(target, { prompt: first || undefined })).then(
+			instanceId => {
+				if (!closedRef.current) setRuns(prev => prev.map(r => (r.key === key ? { ...r, instanceId } : r)));
+			},
+			(err: unknown) => {
+				if (closedRef.current) return;
+				setRuns(prev => prev.filter(r => r.key !== key));
+				setError(`Could not start ${run.title}: ${err instanceof Error ? err.message : String(err)}`);
+				// The typed prompt comes back unless something new was typed meanwhile.
+				setPrompt(prev => (prev === "" ? first : prev));
+			},
+		);
+	};
+
+	const openRun = async (instanceId: string): Promise<void> => {
+		try {
+			await onOpen(instanceId);
+		} catch (err) {
+			if (!closedRef.current) setError(err instanceof Error ? err.message : String(err));
+		}
+	};
+
+	const onFormKey = (e: KeyboardEvent<HTMLElement>): void => {
+		if (folder === null || fan || !canBackgroundStart) return;
+		// A held key would start a session per repeat; a composing IME's Enter picks a candidate.
+		if (e.repeat || e.nativeEvent.isComposing || !matchCombo(e.nativeEvent, START_AND_NEW, IS_MAC)) return;
+		e.preventDefault();
+		startAndNew(folder);
+	};
+
 	if (group !== null)
 		return <FanoutCompareSheet client={client} groupId={group.id} onOpen={onOpen} onClose={onClose} />;
+
+	const projectless = folder !== null && isProjectless(folder.cwd);
 
 	return (
 		<Sheet label="Start a session" onClose={onClose}>
@@ -110,7 +186,7 @@ export function StartSessionSheet({
 					</button>
 				) : null}
 				<div className="sh-sheet-title sh-start-title">
-					{folder === null ? "Start a session" : folderName(folder.cwd)}
+					{folder === null ? "Start a session" : folderLabel(folder.cwd)}
 				</div>
 				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 					<X size={16} />
@@ -118,12 +194,42 @@ export function StartSessionSheet({
 			</div>
 			{openElsewhere.notice}
 			{error && <div className="sh-connect-error">{error}</div>}
+			{starting === null && runs.length > 0 && (
+				<div className="sh-start-runs" role="status">
+					{runs.map(run => (
+						<div key={run.key} className="sh-start-run">
+							{run.instanceId === undefined ? (
+								<LoaderCircle size={16} className="sh-spin sh-start-run-icon" />
+							) : (
+								<CircleCheck size={16} className="sh-start-run-icon sh-start-run-ok" />
+							)}
+							<span className="sh-start-run-text">
+								<span className="sh-start-run-title">{run.title}</span>
+								<span className="sh-field-hint">
+									{[run.instanceId === undefined ? "Starting…" : "Started", run.detail]
+										.filter(Boolean)
+										.join(" · ")}
+								</span>
+							</span>
+							{run.instanceId !== undefined && (
+								<button
+									type="button"
+									className="sh-btn sh-start-run-open"
+									onClick={() => void openRun(run.instanceId as string)}
+								>
+									Open
+								</button>
+							)}
+						</div>
+					))}
+				</div>
+			)}
 			{starting !== null ? (
 				<div className="sh-start-progress" role="status">
 					<LoaderCircle size={22} className="sh-spin" />
 					<div className="sh-start-progress-title">
 						{starting.resume ? "Resuming" : "Starting"} {starting.sandboxed ? "sandboxed " : ""}omp in{" "}
-						{folderName(starting.cwd)}
+						{starting.scratch ? "a new scratch folder" : folderLabel(starting.cwd)}
 						{starting.worktree ? " on a new worktree" : ""}…
 					</div>
 					<div className="sh-field-hint">
@@ -132,9 +238,15 @@ export function StartSessionSheet({
 					</div>
 				</div>
 			) : folder === null ? (
-				<FolderList state={state} onPick={setFolder} onRetry={reload} />
+				<FolderList state={state} canScratch={canScratch} onPick={setFolder} onRetry={reload} />
 			) : (
-				<>
+				<div className="sh-start-form" onKeyDown={onFormKey}>
+					{folder.cwd === NO_PROJECT && (
+						<div className="sh-field-hint">
+							omp starts in a fresh folder of its own on your computer, with no git repository. The folder is
+							kept when the session ends.
+						</div>
+					)}
 					{canSandbox && (
 						<label className="sh-start-sandbox">
 							<input type="checkbox" checked={sandboxed} onChange={e => setSandboxed(e.currentTarget.checked)} />
@@ -148,18 +260,20 @@ export function StartSessionSheet({
 							</span>
 						</label>
 					)}
-					<label className="sh-start-sandbox">
-						<input type="checkbox" checked={worktree} onChange={e => setWorktree(e.currentTarget.checked)} />
-						<span className="sh-start-sandbox-text">
-							<span className="sh-start-sandbox-title">
-								<GitBranch size={14} /> New git worktree
+					{!projectless && (
+						<label className="sh-start-sandbox">
+							<input type="checkbox" checked={worktree} onChange={e => setWorktree(e.currentTarget.checked)} />
+							<span className="sh-start-sandbox-text">
+								<span className="sh-start-sandbox-title">
+									<GitBranch size={14} /> New git worktree
+								</span>
+								<span className="sh-field-hint">
+									New session only: work on a fresh branch in its own checkout, so this folder stays untouched.
+								</span>
 							</span>
-							<span className="sh-field-hint">
-								New session only: work on a fresh branch in its own checkout, so this folder stays untouched.
-							</span>
-						</span>
-					</label>
-					{worktree && (
+						</label>
+					)}
+					{!projectless && worktree && (
 						<input
 							className="sh-input sh-input-mono"
 							value={branch}
@@ -183,7 +297,7 @@ export function StartSessionSheet({
 						/>
 					</label>
 					<QuickReplies disabled={false} onPick={text => setPrompt(prev => (prev ? `${prev}\n${text}` : text))} />
-					{canFanout && (
+					{canFanout && !projectless && (
 						<label className="sh-start-sandbox">
 							<input type="checkbox" checked={fan} onChange={e => setFan(e.currentTarget.checked)} />
 							<span className="sh-start-sandbox-text">
@@ -196,7 +310,7 @@ export function StartSessionSheet({
 							</span>
 						</label>
 					)}
-					{fan ? (
+					{fan && !projectless ? (
 						<FanoutPicker
 							client={client}
 							cwd={folder.cwd}
@@ -206,19 +320,33 @@ export function StartSessionSheet({
 							onStarted={setGroup}
 						/>
 					) : (
-						<button
-							type="button"
-							className="sh-btn sh-btn-primary sh-start-new"
-							onClick={() =>
-								void start({
-									cwd: folder.cwd,
-									sandboxed,
-									worktree: worktree ? { branch: branch.trim() || undefined } : undefined,
-								})
-							}
-						>
-							<Plus size={16} /> New session
-						</button>
+						<>
+							<div className="sh-start-actions">
+								<button
+									type="button"
+									className="sh-btn sh-btn-primary sh-start-new"
+									onClick={() => void start(newSessionTarget(draft(folder.cwd)))}
+								>
+									<Plus size={16} /> New session
+								</button>
+								{canBackgroundStart && (
+									<button
+										type="button"
+										className="sh-btn sh-start-new sh-start-more"
+										data-shortcut={formatCombo(START_AND_NEW, IS_MAC)}
+										onClick={() => startAndNew(folder)}
+									>
+										Start and new
+									</button>
+								)}
+							</div>
+							{canBackgroundStart && (
+								<div className="sh-field-hint sh-start-more-hint">
+									Start and new starts this session and keeps the sheet open for the next one (
+									{formatCombo(START_AND_NEW, IS_MAC)}).
+								</div>
+							)}
+						</>
 					)}
 					{folder.sessions.length > 0 && (
 						<section className="sh-switch-section" aria-label="Resume a session">
@@ -243,60 +371,96 @@ export function StartSessionSheet({
 							</ul>
 						</section>
 					)}
-				</>
+				</div>
 			)}
 		</Sheet>
 	);
 }
 
-function FolderList({
+export function FolderList({
 	state,
+	canScratch,
 	onPick,
 	onRetry,
 }: {
 	state: RequestState<RecentFolder[]>;
+	/** The companion can start a session without a project. */
+	canScratch: boolean;
 	onPick(folder: RecentFolder): void;
 	onRetry(): void;
 }): ReactNode {
+	const noProject = canScratch ? (
+		<section className="sh-switch-section" aria-label="No project">
+			<ul className="sh-recents-list">
+				<li className="sh-recent">
+					<button type="button" className="sh-recent-join" onClick={() => onPick(NO_PROJECT_FOLDER)}>
+						<span className="sh-recent-title">
+							<FolderPlus size={14} />
+							<span className="sh-recent-name">No project</span>
+						</span>
+						<span className="sh-recent-meta">
+							<span className="sh-recent-cwd">A fresh folder for one-off work</span>
+						</span>
+					</button>
+				</li>
+			</ul>
+		</section>
+	) : null;
 	if (state.status === "loading") {
 		return (
-			<div className="sh-companion-empty sh-file-status">
-				<LoaderCircle size={14} className="sh-spin" /> Loading folders…
-			</div>
+			<>
+				{noProject}
+				<div className="sh-companion-empty sh-file-status">
+					<LoaderCircle size={14} className="sh-spin" /> Loading folders…
+				</div>
+			</>
 		);
 	}
 	if (state.status === "error") {
 		return (
-			<div className="sh-tree-error">
-				<div className="sh-connect-error">{state.message}</div>
-				<button type="button" className="sh-btn" onClick={onRetry}>
-					<RefreshCw size={14} /> Retry
-				</button>
-			</div>
+			<>
+				{noProject}
+				<div className="sh-tree-error">
+					<div className="sh-connect-error">{state.message}</div>
+					<button type="button" className="sh-btn" onClick={onRetry}>
+						<RefreshCw size={14} /> Retry
+					</button>
+				</div>
+			</>
 		);
 	}
 	if (state.value.length === 0) {
-		return <div className="sh-companion-empty">No folders yet. Run omp once in a project to list it here.</div>;
+		return (
+			<>
+				{noProject}
+				<div className="sh-companion-empty">No folders yet. Run omp once in a project to list it here.</div>
+			</>
+		);
 	}
 	return (
-		<section className="sh-switch-section" aria-label="Folders">
-			<h2 className="sh-recents-title">Pick a folder</h2>
-			<ul className="sh-recents-list">
-				{state.value.map(folder => (
-					<li key={folder.cwd} className="sh-recent">
-						<button type="button" className="sh-recent-join" onClick={() => onPick(folder)} title={folder.cwd}>
-							<span className="sh-recent-title">
-								<FolderOpen size={14} />
-								<span className="sh-recent-name">{folderName(folder.cwd)}</span>
-							</span>
-							<span className="sh-recent-meta">
-								<span className="sh-recent-cwd">{shortenPath(folder.cwd)}</span>
-								<span>{relTime(folder.lastActive)}</span>
-							</span>
-						</button>
-					</li>
-				))}
-			</ul>
-		</section>
+		<>
+			{noProject}
+			<section className="sh-switch-section" aria-label="Folders">
+				<h2 className="sh-recents-title">Pick a folder</h2>
+				<ul className="sh-recents-list">
+					{state.value.map(folder => (
+						<li key={folder.cwd} className="sh-recent">
+							<button type="button" className="sh-recent-join" onClick={() => onPick(folder)} title={folder.cwd}>
+								<span className="sh-recent-title">
+									<FolderOpen size={14} />
+									<span className="sh-recent-name">{folderLabel(folder.cwd)}</span>
+								</span>
+								<span className="sh-recent-meta">
+									<span className="sh-recent-cwd">
+										{isProjectless(folder.cwd) ? "No project" : shortenPath(folder.cwd)}
+									</span>
+									<span>{relTime(folder.lastActive)}</span>
+								</span>
+							</button>
+						</li>
+					))}
+				</ul>
+			</section>
+		</>
 	);
 }

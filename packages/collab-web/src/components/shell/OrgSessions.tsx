@@ -1,66 +1,50 @@
 import {
 	Archive,
 	ArchiveRestore,
-	ArrowDown,
-	ArrowUp,
 	ChevronDown,
 	ChevronRight,
-	Ellipsis,
-	LoaderCircle,
 	Moon,
-	PanelRight,
 	Pin,
 	PinOff,
-	Share2,
 	SlidersHorizontal,
+	Sun,
 	Undo2,
-	Users,
-	X,
 } from "lucide-react";
-import type { DragEvent, PointerEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { CompanionHost, CompanionIdleSession } from "../../lib/companion";
-import { relTime, shortenPath } from "../../lib/format";
 import type { RecentRoom } from "../../lib/rooms";
 import {
+	applyMany,
+	applyOrg,
+	arrangeActive,
+	autoSettles,
+	type DropIntent,
+	type DropLayout,
+	type DropZone,
+	dropIntent,
+	dropSession,
 	moveTarget,
+	type OrgAction,
+	type OrgDoc,
 	type OrgEntry,
-	type OrgSections,
+	type OrgSection,
 	pinnedKeys,
+	placeKey,
 	roomOrgKey,
 	sectionize,
-	snoozeChoices,
+	type SnoozeChoice,
 	statusOf,
 	wakeLabel,
 } from "../../lib/session-org";
 import type { SessionOrgControl } from "../../lib/use-session-org";
-import { HostState, hostTitle, SandboxedChip } from "./CompanionCard";
-import { FanoutChip } from "./FanoutSheet";
-import { Sheet } from "./Sheet";
+import { OrgMenu, OrgSettingsSheet, OrgSnoozeSheet } from "./OrgMenu";
+import { isWorking, itemTitle, OrgRow, type OrgItem, type OrgMode } from "./OrgRow";
+import { type RangeAction, useOrgDrag } from "./use-org-drag";
 import "./session-org.css";
 
-/** Holding a row this long on a touch screen opens its menu. */
-const LONG_PRESS_MS = 450;
-/** A finger that travels further than this is scrolling, not holding. */
-const LONG_PRESS_SLOP_PX = 10;
 const UNDO_MS = 7000;
-const IDLE_DAY_CHOICES = [3, 7, 14, 30];
-/** Rows are dragged to reorder only with a mouse: on touch a long press opens the menu (and would start a native drag). */
-const FINE_POINTER = typeof matchMedia === "function" && matchMedia("(hover: hover) and (pointer: fine)").matches;
-
-type OrgItem =
-	| { kind: "host"; key: string; host: CompanionHost }
-	| { kind: "idle"; key: string; session: CompanionIdleSession }
-	| { kind: "room"; key: string; room: RecentRoom };
-
-function itemTitle(item: OrgItem): string {
-	if (item.kind === "host") return hostTitle(item.host);
-	if (item.kind === "idle") return hostTitle(item.session);
-	return item.room.title;
-}
-
-const isWorking = (item: OrgItem): boolean =>
-	item.kind === "host" ? item.host.busy === true : item.kind === "idle" && item.session.busy === true;
 
 export interface OrgSessionsProps {
 	hosts: readonly CompanionHost[];
@@ -82,13 +66,62 @@ export interface OrgSessionsProps {
 	onOpenRoomBeside?: (room: RecentRoom) => void;
 }
 
+/** One undo for the last change, however many sessions it touched: the entries as they were. */
 interface Undo {
 	message: string;
-	key: string;
-	prev: OrgEntry | null;
+	prev: Record<string, OrgEntry | null>;
 }
 
-/** Sessions sorted into Pinned, Working, Active, Snoozed and Settled, each row with a menu (⋯, right-click, long press). */
+const DROP_MESSAGE: Record<Exclude<DropIntent, "reorder">, (title: string) => string> = {
+	pin: title => `Pinned ${title}`,
+	unpin: title => `Unpinned ${title}`,
+	settle: title => `Settled ${title}`,
+	unsettle: title => `Moved ${title} back`,
+	wake: title => `Woke ${title}`,
+};
+
+const RANGE: Record<RangeAction, { action: OrgAction; past: string }> = {
+	settle: { action: { type: "settle" }, past: "Settled" },
+	unsettle: { action: { type: "unsettle" }, past: "Moved" },
+	wake: { action: { type: "wake" }, past: "Woke" },
+};
+
+/** What a drop does, as the badge on the dragged row names it. */
+export const INTENT_BADGE: Record<Exclude<DropIntent, "reorder">, { label: string; Icon: typeof Pin }> = {
+	pin: { label: "Pin", Icon: Pin },
+	unpin: { label: "Unpin", Icon: PinOff },
+	settle: { label: "Settle", Icon: Archive },
+	unsettle: { label: "Un-settle", Icon: ArchiveRestore },
+	wake: { label: "Wake", Icon: Sun },
+};
+
+const RANGE_BADGE: Record<RangeAction, { label: string; Icon: typeof Pin }> = {
+	settle: INTENT_BADGE.settle,
+	unsettle: INTENT_BADGE.unsettle,
+	wake: INTENT_BADGE.wake,
+};
+
+/** "Settled Foo" for one session, "Settled 3 sessions" for several (`Moved 3 sessions back` for un-settle). */
+function bulkMessage(past: string, titles: readonly string[]): string {
+	if (titles.length === 1) return `${past} ${titles[0]}${past === "Moved" ? " back" : ""}`;
+	return `${past} ${titles.length} sessions${past === "Moved" ? " back" : ""}`;
+}
+
+const quickOf = (section: OrgSection): RangeAction =>
+	section === "settled" ? "unsettle" : section === "snoozed" ? "wake" : "settle";
+
+/** A text field has its own undo: leave ⌘Z to it. */
+function isTextTarget(target: EventTarget | null): boolean {
+	return (
+		target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
+	);
+}
+
+/**
+ * Sessions sorted into Pinned, Working, Active, Snoozed and Settled, each row with a menu (⋯, right-click, long
+ * press). Rows are dragged between the sections with a mouse, or in arrange mode with a finger; several can be
+ * picked in select mode. Every change shows one Undo (⌘Z too).
+ */
 export function OrgSessions(props: OrgSessionsProps): ReactNode {
 	const { hosts, idle, rooms, org, currentSessionId } = props;
 	const { doc, now } = org;
@@ -96,8 +129,12 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 	const [menu, setMenu] = useState<string | null>(null);
 	const [undo, setUndo] = useState<Undo | null>(null);
 	const [organising, setOrganising] = useState(false);
-	const [dragging, setDragging] = useState<string | null>(null);
-	const [over, setOver] = useState<string | null>(null);
+	const [mode, setMode] = useState<OrgMode>("idle");
+	const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+	const [snoozingPicked, setSnoozingPicked] = useState(false);
+	const rootRef = useRef<HTMLDivElement>(null);
+	/** Where Shift-click picking extends from. */
+	const anchor = useRef<string | null>(null);
 
 	const items: OrgItem[] = [
 		...hosts.map((host): OrgItem => ({ kind: "host", key: host.sessionId, host })),
@@ -105,50 +142,128 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 		...rooms.map((room): OrgItem => ({ kind: "room", key: roomOrgKey(room.roomId), room })),
 	];
 	const sections = sectionize(items, item => item.key, isWorking, doc, now);
+	const keysOf = (list: readonly OrgItem[]): string[] => list.map(item => item.key);
 	const pinned = pinnedKeys(doc).filter(key => sections.pinned.some(item => item.key === key));
+	const activeKeys = keysOf(sections.active);
+	/** Rows as listed on screen, top to bottom (settled ones only while that shelf is open). */
+	const shown = [
+		...pinned,
+		...keysOf(sections.working),
+		...activeKeys,
+		...keysOf(sections.snoozed),
+		...(settledOpen ? keysOf(sections.settled) : []),
+	];
 	const menuItem = menu === null ? undefined : items.find(item => item.key === menu);
+	const pickedKeys = shown.filter(key => picked.has(key));
+	const titleOf = (key: string): string => {
+		const item = items.find(candidate => candidate.key === key);
+		return item === undefined ? key : itemTitle(item);
+	};
+	const layout: DropLayout = { pinned, active: org.extras ? activeKeys : null };
+
+	/** Change the document and offer one Undo for everything the change touched. */
+	const commit = (message: string, run: (doc: OrgDoc, at: number) => OrgDoc): void => {
+		const prev = org.edit(run);
+		if (message !== "" && Object.keys(prev).length > 0) setUndo({ message, prev });
+	};
+
+	const drag = useOrgDrag({
+		rootRef,
+		ordered: org.extras,
+		onDrop: (key, from, zone: DropZone, index) => {
+			const intent = dropIntent(from, zone, org.extras);
+			if (intent === null) return;
+			const message = intent === "reorder" ? "" : DROP_MESSAGE[intent](titleOf(key));
+			commit(message, (current, at) => dropSession(current, key, from, zone, index, layout, at));
+		},
+		onRange: (action, keys) => {
+			const { action: apply, past } = RANGE[action];
+			commit(bulkMessage(past, keys.map(titleOf)), (current, at) => applyMany(current, keys, apply, at));
+		},
+	});
+	const view = drag.view;
 
 	useEffect(() => {
 		if (undo === null) return;
 		const timer = setTimeout(() => setUndo(null), UNDO_MS);
-		return () => clearTimeout(timer);
-	}, [undo]);
+		const onKey = (e: KeyboardEvent): void => {
+			if (e.key.toLowerCase() !== "z" || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+			if (isTextTarget(e.target)) return;
+			e.preventDefault();
+			org.restore(undo.prev);
+			setUndo(null);
+		};
+		window.addEventListener("keydown", onKey);
+		return () => {
+			clearTimeout(timer);
+			window.removeEventListener("keydown", onKey);
+		};
+	}, [undo, org]);
 
-	const apply = (item: OrgItem, action: Parameters<SessionOrgControl["act"]>[1], message: string): void => {
-		const prev = Object.hasOwn(doc.entries, item.key) ? doc.entries[item.key] : null;
-		org.act(item.key, action);
-		setUndo(message === "" ? null : { message, key: item.key, prev });
+	const leaveMode = (): void => {
+		setMode("idle");
+		setPicked(new Set());
+		setSnoozingPicked(false);
+		anchor.current = null;
+	};
+
+	const pick = (key: string, range: boolean): void => {
+		const next = new Set(picked);
+		const from = range && anchor.current !== null ? shown.indexOf(anchor.current) : -1;
+		const to = shown.indexOf(key);
+		if (from !== -1 && to !== -1)
+			for (const between of shown.slice(Math.min(from, to), Math.max(from, to) + 1)) next.add(between);
+		else if (next.has(key)) next.delete(key);
+		else next.add(key);
+		anchor.current = key;
+		setMode("select");
+		setPicked(next);
+	};
+
+	const act = (item: OrgItem, action: OrgAction, message: string): void => {
+		commit(message, (current, at) => applyOrg(current, item.key, action, at));
 		setMenu(null);
 	};
 
-	const drop = (target: string): void => {
-		const from = dragging === null ? -1 : pinned.indexOf(dragging);
-		setDragging(null);
-		setOver(null);
-		const to = pinned.indexOf(target);
-		if (from === -1 || to === -1 || from === to) return;
-		org.act(pinned[from], moveTarget(pinned, from, to));
+	/** The same change for every picked session, then back to the plain list with its Undo showing. */
+	const actPicked = (action: OrgAction, past: string): void => {
+		const keys = pickedKeys;
+		commit(bulkMessage(past, keys.map(titleOf)), (current, at) => applyMany(current, keys, action, at));
+		leaveMode();
 	};
 
-	const row = (item: OrgItem, section: keyof OrgSections<OrgItem>): ReactNode => (
+	const move = (item: OrgItem, to: number): void => {
+		const section = sections.pinned.includes(item) ? "pinned" : "active";
+		if (section === "pinned") {
+			commit("", (current, at) => applyOrg(current, item.key, moveTarget(pinned, pinned.indexOf(item.key), to), at));
+		} else {
+			commit("", (current, at) => arrangeActive(current, placeKey(activeKeys, item.key, to), at));
+		}
+		setMenu(null);
+	};
+
+	const row = (item: OrgItem, section: OrgSection): ReactNode => (
 		<OrgRow
 			key={item.key}
 			item={item}
-			status={section}
+			section={section}
+			mode={mode}
 			wake={section === "snoozed" ? wakeLabel(doc.entries[item.key].until ?? now, now) : null}
 			settledBy={section === "settled" ? doc.entries[item.key].reason : undefined}
 			current={item.kind === "host" && item.host.sessionId === currentSessionId}
 			joining={props.joining}
 			disabled={props.disabled}
-			draggable={section === "pinned" && FINE_POINTER}
-			dropping={over === item.key && dragging !== item.key}
-			onDragStart={() => setDragging(item.key)}
-			onDragOver={() => setOver(item.key)}
-			onDragEnd={() => {
-				setDragging(null);
-				setOver(null);
+			selected={picked.has(item.key)}
+			lifted={view?.kind === "move" && view.key === item.key}
+			swept={view?.kind === "range" && view.keys.includes(item.key)}
+			autoSettleOff={!autoSettles(doc, item.key)}
+			quick={quickOf(section)}
+			onQuick={() => {
+				const { action, past } = RANGE[quickOf(section)];
+				commit(bulkMessage(past, [itemTitle(item)]), (current, at) => applyOrg(current, item.key, action, at));
 			}}
-			onDrop={() => drop(item.key)}
+			onDrag={drag.begin}
+			onPick={range => pick(item.key, range)}
 			onMenu={() => setMenu(item.key)}
 			onJoinHost={props.onJoinHost}
 			onOpenHostBeside={props.onOpenHostBeside}
@@ -158,37 +273,75 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 		/>
 	);
 
-	const block = (title: string, section: Exclude<keyof OrgSections<OrgItem>, "settled">): ReactNode =>
-		sections[section].length === 0 ? null : (
-			<section className="sh-org-section" aria-label={title}>
-				<h3 className="sh-recents-title sh-org-title">{title}</h3>
-				<ul className="sh-recents-list">{sections[section].map(item => row(item, section))}</ul>
+	const over = (section: OrgSection): true | undefined =>
+		view?.kind === "move" && view.over === section && view.intent !== null ? true : undefined;
+	/** Empty Pinned and Active still take drops: they show where, while a row is dragged or the arrange mode is on. */
+	const offerEmpty = view?.kind === "move" || mode === "arrange";
+	const EMPTY_HINT: Partial<Record<OrgSection, string>> = { pinned: "Drop here to pin", active: "Drop here" };
+
+	const block = (title: string, section: Exclude<OrgSection, "settled">): ReactNode => {
+		const empty = sections[section].length === 0;
+		if (empty && !(offerEmpty && (section === "pinned" || section === "active"))) return null;
+		return (
+			<section
+				className="sh-org-section"
+				aria-label={title}
+				data-org-zone=""
+				data-org-section={section}
+				data-over={over(section)}
+			>
+				<h3 className="sh-recents-title sh-org-title" data-org-slide="">
+					{title}
+				</h3>
+				{empty ? (
+					<div className="sh-org-empty">{EMPTY_HINT[section]}</div>
+				) : (
+					<ul className="sh-recents-list">{sections[section].map(item => row(item, section))}</ul>
+				)}
 			</section>
 		);
+	};
+
+	const settledCount = sections.settled.length;
+	const allPickedPinned = pickedKeys.length > 0 && pickedKeys.every(key => statusOf(doc, key, now) === "pinned");
+	const allPickedSettled = pickedKeys.length > 0 && pickedKeys.every(key => statusOf(doc, key, now) === "settled");
+	const anyPickedSnoozed = pickedKeys.some(key => statusOf(doc, key, now) === "snoozed");
+
+	const menuStatus = menuItem === undefined ? "active" : statusOf(doc, menuItem.key, now);
+	const menuPlace =
+		menuItem === undefined
+			? null
+			: sections.pinned.includes(menuItem)
+				? { index: pinned.indexOf(menuItem.key), count: pinned.length }
+				: org.extras && sections.active.includes(menuItem)
+					? { index: activeKeys.indexOf(menuItem.key), count: activeKeys.length }
+					: null;
 
 	return (
-		<>
+		<div ref={rootRef} className="sh-org" data-mode={mode}>
 			{block("Pinned", "pinned")}
 			{block("Working", "working")}
 			{block("Active", "active")}
 			{block("Snoozed", "snoozed")}
 			{items.length > 0 && (
-				<section className="sh-org-section" aria-label="Settled">
-					<h3 className="sh-recents-title sh-org-title">
+				<section
+					className="sh-org-section"
+					aria-label="Settled"
+					data-org-zone=""
+					data-org-section="settled"
+					data-over={over("settled")}
+				>
+					<h3 className="sh-recents-title sh-org-title" data-org-slide="">
 						<button
 							type="button"
 							className="sh-org-fold"
 							onClick={() => setSettledOpen(open => !open)}
 							aria-expanded={settledOpen}
-							disabled={sections.settled.length === 0}
+							disabled={settledCount === 0}
 						>
-							{settledOpen && sections.settled.length > 0 ? (
-								<ChevronDown size={13} />
-							) : (
-								<ChevronRight size={13} />
-							)}
+							{settledOpen && settledCount > 0 ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
 							Settled
-							{sections.settled.length > 0 && <span className="sh-org-count">{sections.settled.length}</span>}
+							{settledCount > 0 && <span className="sh-org-count">{settledCount}</span>}
 						</button>
 						<button
 							type="button"
@@ -199,434 +352,162 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 							<SlidersHorizontal size={14} />
 						</button>
 					</h3>
-					{settledOpen && sections.settled.length > 0 && (
+					{settledOpen && settledCount > 0 && (
 						<ul className="sh-recents-list">{sections.settled.map(item => row(item, "settled"))}</ul>
 					)}
 				</section>
 			)}
-			{undo && (
-				<div className="sh-org-undo" role="status">
-					<span className="sh-org-undo-msg">{undo.message}</span>
-					<button
-						type="button"
-						className="sh-btn"
-						onClick={() => {
-							org.act(undo.key, { type: "restore", entry: undo.prev });
-							setUndo(null);
-						}}
-					>
-						<Undo2 size={14} /> Undo
-					</button>
+			{(undo !== null || mode !== "idle") && (
+				<div className="sh-org-dock">
+					{undo && (
+						<div className="sh-org-undo" role="status">
+							<span className="sh-org-undo-msg">{undo.message}</span>
+							<button
+								type="button"
+								className="sh-btn"
+								onClick={() => {
+									org.restore(undo.prev);
+									setUndo(null);
+								}}
+							>
+								<Undo2 size={14} /> Undo
+							</button>
+						</div>
+					)}
+					{mode === "arrange" && (
+						<div className="sh-org-bar" role="group" aria-label="Arrange sessions">
+							<span className="sh-org-bar-msg">
+								<strong>Arrange sessions</strong>
+								<span>Drag a handle. Each drop saves.</span>
+							</span>
+							<button type="button" className="sh-btn sh-btn-primary" onClick={leaveMode}>
+								Done
+							</button>
+						</div>
+					)}
+					{mode === "select" && (
+						<div className="sh-org-bar" role="group" aria-label="Selected sessions">
+							<span className="sh-org-bar-msg">
+								<strong>{pickedKeys.length} selected</strong>
+							</span>
+							<span className="sh-org-bar-actions">
+								<button
+									type="button"
+									className="sh-btn"
+									disabled={pickedKeys.length === 0}
+									onClick={() =>
+										actPicked(
+											{ type: allPickedPinned ? "unpin" : "pin" },
+											allPickedPinned ? "Unpinned" : "Pinned",
+										)
+									}
+								>
+									{allPickedPinned ? <PinOff size={14} /> : <Pin size={14} />}{" "}
+									{allPickedPinned ? "Unpin" : "Pin"}
+								</button>
+								<button
+									type="button"
+									className="sh-btn"
+									disabled={pickedKeys.length === 0}
+									onClick={() => setSnoozingPicked(true)}
+								>
+									<Moon size={14} /> Snooze
+								</button>
+								<button
+									type="button"
+									className="sh-btn"
+									disabled={pickedKeys.length === 0}
+									onClick={() =>
+										actPicked(
+											{ type: allPickedSettled ? "unsettle" : "settle" },
+											allPickedSettled ? "Moved" : "Settled",
+										)
+									}
+								>
+									{allPickedSettled ? <ArchiveRestore size={14} /> : <Archive size={14} />}{" "}
+									{allPickedSettled ? "Un-settle" : "Settle"}
+								</button>
+								{anyPickedSnoozed && (
+									<button type="button" className="sh-btn" onClick={() => actPicked({ type: "wake" }, "Woke")}>
+										<Sun size={14} /> Wake
+									</button>
+								)}
+							</span>
+							<button type="button" className="sh-btn sh-btn-primary" onClick={leaveMode}>
+								Done
+							</button>
+						</div>
+					)}
 				</div>
 			)}
 			{menuItem && (
 				<OrgMenu
 					title={itemTitle(menuItem)}
-					status={statusOf(doc, menuItem.key, now)}
-					pinIndex={pinned.indexOf(menuItem.key)}
-					pinCount={pinned.length}
+					status={menuStatus}
+					place={menuPlace}
+					autoSettle={
+						menuStatus === "settled" || !(org.extras || menuItem.kind === "room")
+							? null
+							: autoSettles(doc, menuItem.key)
+					}
 					limitResetAt={
 						menuItem.kind === "host" && menuItem.host.sessionId === currentSessionId ? props.limitResetAt : null
 					}
 					now={now}
-					onAct={(action, message) => apply(menuItem, action, message)}
-					onMove={to => {
-						org.act(menuItem.key, moveTarget(pinned, pinned.indexOf(menuItem.key), to));
+					onAct={(action, message) => act(menuItem, action, message)}
+					onMove={to => move(menuItem, to)}
+					onArrange={() => {
+						leaveMode();
+						setMode("arrange");
+						setMenu(null);
+					}}
+					onSelect={() => {
+						leaveMode();
+						pick(menuItem.key, false);
 						setMenu(null);
 					}}
 					onClose={() => setMenu(null)}
 				/>
 			)}
+			{snoozingPicked && (
+				<OrgSnoozeSheet
+					title={`Snooze ${pickedKeys.length} sessions`}
+					now={now}
+					onPick={(choice: SnoozeChoice) => actPicked({ type: "snooze", until: choice.until }, "Snoozed")}
+					onClose={() => setSnoozingPicked(false)}
+				/>
+			)}
 			{organising && <OrgSettingsSheet org={org} onClose={() => setOrganising(false)} />}
-		</>
-	);
-}
-
-interface OrgRowProps {
-	item: OrgItem;
-	status: keyof OrgSections<OrgItem>;
-	/** Snoozed: when it wakes. */
-	wake: string | null;
-	/** Settled: who settled it. */
-	settledBy: "user" | "idle" | "pr" | undefined;
-	current: boolean;
-	joining: string | null;
-	disabled: boolean;
-	draggable: boolean;
-	dropping: boolean;
-	onDragStart(): void;
-	onDragOver(): void;
-	onDragEnd(): void;
-	onDrop(): void;
-	onMenu(): void;
-	onJoinHost(host: CompanionHost): void;
-	onOpenHostBeside?: (host: CompanionHost) => void;
-	onShare(session: CompanionIdleSession): void;
-	onOpenRoom(room: RecentRoom): void;
-	onOpenRoomBeside?: (room: RecentRoom) => void;
-}
-
-const SETTLED_BY: Record<"user" | "idle" | "pr", string> = { user: "settled", idle: "idle", pr: "pull request done" };
-
-function OrgRow(props: OrgRowProps): ReactNode {
-	const { item, current, joining, disabled } = props;
-	const title = itemTitle(item);
-	const timer = useRef<Timer | undefined>(undefined);
-	/** Where a touch is down; null while none is. */
-	const origin = useRef<{ x: number; y: number } | null>(null);
-	/** The press became a long press: the menu opens on release, and the click that follows is not a tap. */
-	const held = useRef(false);
-
-	const cancelHold = (): void => {
-		clearTimeout(timer.current);
-		timer.current = undefined;
-		origin.current = null;
-	};
-	useEffect(() => cancelHold, []);
-
-	const onPointerDown = (e: PointerEvent<HTMLLIElement>): void => {
-		if (e.pointerType === "mouse") return;
-		held.current = false;
-		origin.current = { x: e.clientX, y: e.clientY };
-		timer.current = setTimeout(() => {
-			held.current = true;
-			navigator.vibrate?.(8);
-		}, LONG_PRESS_MS);
-	};
-	const onPointerMove = (e: PointerEvent<HTMLLIElement>): void => {
-		const start = origin.current;
-		if (start && !held.current && Math.hypot(e.clientX - start.x, e.clientY - start.y) > LONG_PRESS_SLOP_PX)
-			cancelHold();
-	};
-	/** Opening while the finger is still down would put the sheet's backdrop under it, and the release would tap the backdrop shut. */
-	const onRelease = (): void => {
-		const long = held.current;
-		cancelHold();
-		if (!long) return;
-		setTimeout(props.onMenu, 0);
-		setTimeout(() => {
-			held.current = false;
-		}, LONG_PRESS_MS);
-	};
-	const onDragStart = (e: DragEvent<HTMLLIElement>): void => {
-		e.dataTransfer.effectAllowed = "move";
-		e.dataTransfer.setData("text/plain", item.key);
-		props.onDragStart();
-	};
-	const onDragOver = (e: DragEvent<HTMLLIElement>): void => {
-		e.preventDefault();
-		e.dataTransfer.dropEffect = "move";
-		props.onDragOver();
-	};
-
-	return (
-		<li
-			className="sh-recent sh-org-row"
-			data-status={props.status}
-			data-dropping={props.dropping || undefined}
-			draggable={props.draggable}
-			onPointerDown={onPointerDown}
-			onPointerMove={onPointerMove}
-			onPointerUp={onRelease}
-			onPointerCancel={onRelease}
-			onClickCapture={e => {
-				if (!held.current) return;
-				held.current = false;
-				e.preventDefault();
-				e.stopPropagation();
-			}}
-			onContextMenu={e => {
-				e.preventDefault();
-				// A finger still down: open on release (see onRelease). A mouse right-click opens now.
-				if (origin.current === null) props.onMenu();
-				else held.current = true;
-			}}
-			onDragStart={props.draggable ? onDragStart : undefined}
-			onDragOver={props.draggable ? onDragOver : undefined}
-			onDragEnd={props.draggable ? props.onDragEnd : undefined}
-			onDrop={
-				props.draggable
-					? e => {
-							e.preventDefault();
-							props.onDrop();
-						}
-					: undefined
-			}
-		>
-			{item.kind === "host" && (
-				<button
-					type="button"
-					className="sh-recent-join"
-					onClick={() => props.onJoinHost(item.host)}
-					disabled={joining !== null || disabled || current}
-					aria-current={current || undefined}
-					title={item.host.cwd}
-				>
-					<span className="sh-recent-title">
-						<span className="sh-recent-name">{title}</span>
-						{current && <span className="sh-chip">here</span>}
-						{item.host.sandboxed && <SandboxedChip />}
-						{item.host.fanout && <FanoutChip fanout={item.host.fanout} />}
-						{joining === item.host.instanceId && <LoaderCircle size={13} className="sh-spin" />}
-					</span>
-					<span className="sh-recent-meta">
-						{props.wake ? (
-							<span className="sh-host-state">snoozed {props.wake}</span>
+			{view !== null &&
+				createPortal(
+					<div ref={drag.ghost} className="sh-org-ghost" data-kind={view.kind}>
+						{view.kind === "move" ? (
+							<>
+								<span className="sh-org-ghost-title">{titleOf(view.key)}</span>
+								{view.intent !== null && view.intent !== "reorder" && (
+									<GhostBadge badge={INTENT_BADGE[view.intent]} />
+								)}
+							</>
 						) : (
-							<HostState host={item.host} />
+							view.action !== null && (
+								<GhostBadge
+									badge={RANGE_BADGE[view.action]}
+									count={view.keys.length > 1 ? view.keys.length : undefined}
+								/>
+							)
 						)}
-						{props.settledBy && <span className="sh-host-state">{SETTLED_BY[props.settledBy]}</span>}
-						<span className="sh-recent-cwd">{shortenPath(item.host.cwd)}</span>
-						{item.host.participants > 1 && (
-							<span className="sh-companion-people">
-								<Users size={11} /> {item.host.participants - 1}
-							</span>
-						)}
-						<span>{relTime(item.host.startedAt)}</span>
-					</span>
-				</button>
-			)}
-			{item.kind === "idle" && (
-				<div className="sh-recent-join sh-idle-info" title={item.session.cwd}>
-					<span className="sh-recent-title">
-						<span className="sh-recent-name">{title}</span>
-						{item.session.sandboxed && <SandboxedChip />}
-					</span>
-					<span className="sh-recent-meta">
-						{props.wake && <span className="sh-host-state">snoozed {props.wake}</span>}
-						{props.settledBy && <span className="sh-host-state">{SETTLED_BY[props.settledBy]}</span>}
-						<span className={`sh-host-state${item.session.busy ? " sh-host-state-busy" : ""}`}>
-							{item.session.busy ? "working" : "not sharing"}
-						</span>
-						<span className="sh-recent-cwd">{shortenPath(item.session.cwd)}</span>
-						<span>{relTime(item.session.startedAt)}</span>
-					</span>
-				</div>
-			)}
-			{item.kind === "room" && (
-				<button
-					type="button"
-					className="sh-recent-join"
-					onClick={() => props.onOpenRoom(item.room)}
-					disabled={joining !== null}
-				>
-					<span className="sh-recent-title">
-						<span className="sh-recent-name">{title}</span>
-						{item.room.readOnly && <span className="sh-chip">read-only</span>}
-					</span>
-					<span className="sh-recent-meta">
-						{props.wake && <span className="sh-host-state">snoozed {props.wake}</span>}
-						{props.settledBy && <span className="sh-host-state">{SETTLED_BY[props.settledBy]}</span>}
-						{item.room.cwd && <span className="sh-recent-cwd">{shortenPath(item.room.cwd)}</span>}
-						<span>{relTime(item.room.lastSeen)}</span>
-					</span>
-				</button>
-			)}
-			{item.kind === "idle" && (
-				<button
-					type="button"
-					className="sh-btn sh-btn-icon"
-					onClick={() => props.onShare(item.session)}
-					disabled={joining !== null || disabled}
-					aria-label={`Share ${title}`}
-				>
-					{joining === item.session.instanceId ? (
-						<LoaderCircle size={15} className="sh-spin" />
-					) : (
-						<Share2 size={15} />
-					)}
-				</button>
-			)}
-			{item.kind === "host" && props.onOpenHostBeside !== undefined && (
-				<button
-					type="button"
-					className="sh-btn sh-btn-icon"
-					onClick={() => props.onOpenHostBeside?.(item.host)}
-					disabled={joining !== null || disabled || current}
-					aria-label={`Open ${title} beside`}
-				>
-					<PanelRight size={15} />
-				</button>
-			)}
-			{item.kind === "room" && props.onOpenRoomBeside !== undefined && (
-				<button
-					type="button"
-					className="sh-btn sh-btn-icon"
-					onClick={() => props.onOpenRoomBeside?.(item.room)}
-					disabled={joining !== null}
-					aria-label={`Open ${title} beside`}
-				>
-					<PanelRight size={15} />
-				</button>
-			)}
-			<button
-				type="button"
-				className="sh-btn sh-btn-icon sh-org-more"
-				onClick={props.onMenu}
-				aria-label={`Pin, snooze or settle ${title}`}
-				aria-haspopup="dialog"
-			>
-				<Ellipsis size={15} />
-			</button>
-		</li>
-	);
-}
-
-interface OrgMenuProps {
-	title: string;
-	status: "active" | "pinned" | "snoozed" | "settled";
-	/** Position among the pinned, -1 when not pinned. */
-	pinIndex: number;
-	pinCount: number;
-	limitResetAt: number | null;
-	now: number;
-	onAct(action: Parameters<SessionOrgControl["act"]>[1], message: string): void;
-	onMove(to: number): void;
-	onClose(): void;
-}
-
-function OrgMenu(props: OrgMenuProps): ReactNode {
-	const { status, pinIndex, pinCount, now } = props;
-	const [snoozing, setSnoozing] = useState(false);
-	return (
-		<Sheet label={`organise ${props.title}`} onClose={props.onClose}>
-			<div className="sh-sheet-head">
-				<div className="sh-sheet-title">{props.title}</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={props.onClose} aria-label="Close">
-					<X size={16} />
-				</button>
-			</div>
-			<div className="sh-org-menu">
-				{snoozing ? (
-					snoozeChoices(now, props.limitResetAt).map(choice => (
-						<button
-							key={choice.id}
-							type="button"
-							className="sh-btn sh-org-menu-item"
-							onClick={() => props.onAct({ type: "snooze", until: choice.until }, `Snoozed ${props.title}`)}
-						>
-							<Moon size={15} /> {choice.label}
-						</button>
-					))
-				) : (
-					<>
-						{status === "pinned" ? (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onAct({ type: "unpin" }, `Unpinned ${props.title}`)}
-							>
-								<PinOff size={15} /> Unpin
-							</button>
-						) : (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onAct({ type: "pin" }, `Pinned ${props.title}`)}
-							>
-								<Pin size={15} /> Pin to top
-							</button>
-						)}
-						{status === "pinned" && pinIndex > 0 && (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onMove(pinIndex - 1)}
-							>
-								<ArrowUp size={15} /> Move up
-							</button>
-						)}
-						{status === "pinned" && pinIndex < pinCount - 1 && (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onMove(pinIndex + 1)}
-							>
-								<ArrowDown size={15} /> Move down
-							</button>
-						)}
-						{status === "snoozed" ? (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onAct({ type: "wake" }, `Woke ${props.title}`)}
-							>
-								<Moon size={15} /> Wake now
-							</button>
-						) : (
-							<button type="button" className="sh-btn sh-org-menu-item" onClick={() => setSnoozing(true)}>
-								<Moon size={15} /> Snooze…
-							</button>
-						)}
-						{status === "settled" ? (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onAct({ type: "unsettle" }, `Moved ${props.title} back`)}
-							>
-								<ArchiveRestore size={15} /> Move back to active
-							</button>
-						) : (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onAct({ type: "settle" }, `Settled ${props.title}`)}
-							>
-								<Archive size={15} /> Settle
-							</button>
-						)}
-					</>
+					</div>,
+					document.body,
 				)}
-			</div>
-		</Sheet>
+		</div>
 	);
 }
 
-function OrgSettingsSheet({ org, onClose }: { org: SessionOrgControl; onClose(): void }): ReactNode {
-	const { settings } = org.doc;
+function GhostBadge({ badge, count }: { badge: { label: string; Icon: typeof Pin }; count?: number }): ReactNode {
 	return (
-		<Sheet label="Auto-settle" onClose={onClose}>
-			<div className="sh-sheet-head">
-				<div className="sh-sheet-title">Auto-settle</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
-					<X size={16} />
-				</button>
-			</div>
-			<div className="sh-org-settings-body">
-				<label className="sh-field">
-					<span className="sh-field-label">Settle sessions that sit idle</span>
-					<select
-						className="sh-input"
-						value={settings.idleDays ?? ""}
-						onChange={e =>
-							org.setSettings({ idleDays: e.currentTarget.value === "" ? null : Number(e.currentTarget.value) })
-						}
-					>
-						<option value="">Never</option>
-						{IDLE_DAY_CHOICES.map(days => (
-							<option key={days} value={days}>
-								for {days} days
-							</option>
-						))}
-					</select>
-					<span className="sh-field-hint">Pinned and snoozed sessions are left alone.</span>
-				</label>
-				{org.synced && (
-					<label className="sh-org-check">
-						<input
-							type="checkbox"
-							checked={settings.settleOnPr}
-							onChange={e => org.setSettings({ settleOnPr: e.currentTarget.checked })}
-						/>
-						<span>Settle when the session's pull request merges or closes</span>
-					</label>
-				)}
-				<span className="sh-field-hint">
-					{org.synced
-						? "Pins, snoozes and settled sessions follow you across devices through your computer."
-						: "Kept on this device. Pair your computer to share it across devices."}
-				</span>
-			</div>
-		</Sheet>
+		<span className="sh-org-badge">
+			<badge.Icon size={13} /> {badge.label}
+			{count !== undefined && ` ${count}`}
+		</span>
 	);
 }

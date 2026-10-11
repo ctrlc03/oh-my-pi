@@ -85,6 +85,7 @@ export function SplitPane({
 
 	const composerRef = useRef<ComposerHandle>(null);
 	const editPrompt = useEditPrompt(client, snap, composerRef);
+	const sendToAgent = useCallback((text: string) => composerRef.current?.insert(text), []);
 	const { newSince, seen: newSeen, markSeen, markTail } = useNewSince(client, roomId, snap.entries, live);
 	const sendSessionCommand = useCallback(
 		(cmd: SessionCommand, arg?: string) => client.sendSessionCommand(cmd, arg),
@@ -179,6 +180,7 @@ export function SplitPane({
 					queued={snap.queued}
 					onCancelQueued={cancelQueued}
 					onEditPrompt={editPrompt.onEditPrompt}
+					onSendToAgent={snap.readOnly ? undefined : sendToAgent}
 					sessionModel={snap.state?.model?.id}
 				/>
 			</div>

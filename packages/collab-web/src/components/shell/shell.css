@@ -2,6 +2,17 @@
  * Layout: glass topbar, then one inset panel (transcript + docked composer)
  * with the agents rail framed beside it on the page background. */
 
+/* Sideways drags stay with the page's swipe gestures (drawers, blocks); scrolling and pinch-zoom stay the browser's.
+ * A scroll container ends its ancestors' touch-action, so the ones a swipe can start in carry it themselves. */
+.sh-app,
+.tr-root,
+.sh-rail,
+.sh-rail *,
+.sh-sidebar-dock,
+.sh-sidebar-dock * {
+	touch-action: pan-y pinch-zoom;
+}
+
 /* ---- app frame ---- */
 .sh-app {
 	position: relative;

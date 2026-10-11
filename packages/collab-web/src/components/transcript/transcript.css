@@ -5,7 +5,8 @@
 	height: 100%;
 	overflow-y: auto;
 	overflow-x: hidden;
-	padding: 32px 24px 20px;
+	--tr-pad-top: 32px;
+	padding: var(--tr-pad-top) 24px 20px;
 	font-family: var(--font-ui);
 	font-size: 15px;
 	line-height: 1.65;
@@ -27,7 +28,7 @@
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
-	padding: 10px 0;
+	padding: 5px 0;
 	animation: rise 320ms var(--ease-out) backwards;
 }
 
@@ -49,18 +50,27 @@
 	display: none;
 }
 
-/* People's turns: a tinted bubble on the right, so prompts stand apart from agent prose. */
+/* People's turns sit on the right: the prompt block is the tinted bubble. */
 .tr-row--user {
 	align-items: flex-end;
 }
 
 .tr-row--user .tr-body {
+	width: 100%;
+	align-items: flex-end;
+}
+
+.tr-block--prompt,
+.tr-row--user .tr-body:has(> .tr-queued) {
 	max-width: min(85%, 640px);
-	padding: 10px 16px;
 	background: color-mix(in srgb, var(--accent) 9%, var(--bg-raised));
 	border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border));
 	border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
 	box-shadow: var(--shadow-card);
+}
+
+.tr-row--user .tr-body:has(> .tr-queued) {
+	padding: 10px 16px;
 }
 
 .tr-body {
@@ -72,7 +82,7 @@
 }
 
 .tr-row--assistant .tr-body {
-	gap: 8px;
+	gap: 6px;
 }
 
 .tr-body > .tr-md {
@@ -482,13 +492,16 @@
 }
 
 /* ---- tool cards ----
- * Cards themselves are rendered by src/tool-render (tv-* namespace);
- * only host-level layout lives here. */
+ * Cards themselves are rendered by src/tool-render (tv-* namespace); inside a
+ * block the block draws the edge and the header, so the card goes borderless
+ * and lets its header stick to the top of the scroll area. */
 
-.tr-body > .tv-card {
-	align-self: stretch;
-	background: var(--bg-raised);
-	border-radius: var(--radius-lg);
+.tr-block--tool .tv-card {
+	flex: 1;
+	min-width: 0;
+	border: 0;
+	border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+	overflow: visible;
 }
 
 /* ---- markdown ---- */
@@ -683,43 +696,461 @@
 	color: var(--ok);
 }
 
-/* Beside the bubble, out of its flow, so a hidden button never shifts the layout. */
-.tr-row--user .tr-body {
-	position: relative;
+/* No hover on touch screens: keep the turn actions visible, but subtle. */
+@media (hover: none) {
+	.tr-turn-actions {
+		opacity: 0.6;
+	}
 }
 
-.tr-edit {
+/* ---- blocks ----
+ * Every prompt, reply and tool run is one block: a clear edge, a gutter to click for
+ * selecting it, quiet actions while hovered, focused or selected, and (tool blocks) a header
+ * that sticks to the top of the scroll area while the block is in view. */
+
+.tr-block {
+	position: relative;
+	display: flex;
+	align-self: stretch;
+	min-width: 0;
+	background: color-mix(in srgb, var(--bg-raised) 35%, transparent);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	/* Horizontal drags are the swipe gestures'; vertical ones scroll. */
+	touch-action: pan-y pinch-zoom;
+	transition: border-color 120ms ease-out;
+}
+
+.tr-block:hover {
+	border-color: var(--border-strong);
+}
+
+.tr-block[data-selected] {
+	background: color-mix(in srgb, var(--accent) 8%, var(--bg-raised));
+	border-color: var(--accent);
+	outline: 2px solid var(--accent);
+	outline-offset: -1px;
+}
+
+.tr-block[data-copied] {
+	border-color: var(--ok);
+	outline: 2px solid var(--ok);
+	outline-offset: -1px;
+}
+
+.tr-block--tool {
+	background: var(--bg-raised);
+}
+
+.tr-block--tool:has(.tr-mark--err) {
+	border-color: color-mix(in oklch, var(--err) 40%, var(--border));
+}
+
+/* Follows the finger during a swipe, then snaps back. */
+.tr-block[data-swipe] {
+	transform: translateX(var(--swipe-x, 0px));
+	transition: none;
+}
+
+.tr-block[data-swipe="snap"] {
+	transition: transform 180ms var(--ease-out);
+}
+
+.tr-block-reveal {
 	position: absolute;
-	top: 6px;
-	right: calc(100% + 4px);
+	top: 50%;
+	display: none;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	margin-top: -16px;
+	color: var(--accent);
+	background: var(--accent-muted);
+	border-radius: 999px;
+	opacity: var(--swipe-progress, 0);
+	pointer-events: none;
+}
+
+.tr-block-reveal--send {
+	right: calc(100% + 8px);
+}
+
+.tr-block-reveal--copy {
+	left: calc(100% + 8px);
+}
+
+.tr-block[data-swipe="send"] .tr-block-reveal--send,
+.tr-block[data-swipe="copy"] .tr-block-reveal--copy {
+	display: grid;
+}
+
+.tr-block[data-swipe-armed] .tr-block-reveal {
+	color: var(--accent-fg);
+	background: var(--accent);
+}
+
+.tr-block-gutter {
+	flex: none;
+	display: flex;
+	align-items: flex-start;
+	justify-content: center;
+	width: 14px;
+	padding-top: 9px;
+	border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+	cursor: pointer;
+	user-select: none;
+	-webkit-user-select: none;
+	-webkit-tap-highlight-color: transparent;
+	transition: background 120ms ease-out;
+}
+
+.tr-block-gutter:hover {
+	background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.tr-block:not([data-block]) .tr-block-gutter {
+	cursor: default;
+	pointer-events: none;
+}
+
+.tr-block-check {
+	display: none;
+	place-items: center;
+	width: 16px;
+	height: 16px;
+	border: 1.5px solid var(--border-strong);
+	border-radius: 5px;
+}
+
+.tr-block[data-select-mode] .tr-block-gutter {
+	width: 34px;
+}
+
+.tr-block[data-select-mode] .tr-block-check {
+	display: grid;
+}
+
+.tr-block[data-selected] .tr-block-check {
+	color: var(--accent-fg);
+	background: var(--accent);
+	border-color: var(--accent);
+}
+
+.tr-block-main {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 4px;
+	padding: 8px 12px 8px 6px;
+}
+
+.tr-block--tool .tr-block-main,
+.tr-block--run .tr-block-main {
+	padding: 0;
+}
+
+.tr-block--run .tr-block-main {
+	padding: 6px 8px 6px 6px;
+}
+
+.tr-block--prompt .tr-block-main {
+	padding: 8px 14px 10px 6px;
+}
+
+/* ---- block headers ---- */
+
+.tr-block-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 28px;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.tr-block-head--label {
+	min-height: 22px;
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--fg-faint);
+	cursor: pointer;
+}
+
+.tr-block-head--tool {
+	position: sticky;
+	/* A sticky box is held inside the scroller's padding, so the header reaches for the top edge itself. */
+	top: calc(0px - var(--tr-pad-top, 0px));
+	z-index: 1;
+	padding: 3px 8px 3px 4px;
+	font-family: var(--font-mono);
+	font-size: 12px;
+	background: var(--bg-raised);
+	border-radius: 0 var(--radius-lg) 0 0;
+	cursor: pointer;
+}
+
+.tr-block-toggle {
+	flex: none;
 	display: grid;
 	place-items: center;
-	width: 28px;
-	height: 28px;
+	width: 24px;
+	height: 24px;
 	color: var(--fg-faint);
 	background: none;
 	border: 0;
 	border-radius: var(--radius-sm);
-	opacity: 0;
-	transition: opacity 120ms ease-out;
+	cursor: pointer;
 }
 
-.tr-row:hover .tr-edit,
-.tr-edit:focus-visible {
-	opacity: 1;
-}
-
-.tr-edit:hover,
-.tr-edit:focus-visible {
+.tr-block-toggle:hover,
+.tr-block-toggle:focus-visible {
 	color: var(--fg);
 	background: color-mix(in srgb, var(--fg) 7%, transparent);
 }
 
-/* No hover on touch screens: keep both visible, but subtle. */
+.tr-mark {
+	flex: none;
+}
+
+.tr-mark--ok {
+	color: var(--ok);
+}
+
+.tr-mark--err {
+	color: var(--err);
+}
+
+.tr-mark--pending {
+	width: 7px;
+	height: 7px;
+	margin: 0 3px;
+	background: var(--fg-faint);
+	border-radius: 50%;
+}
+
+.tr-block-label {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.tr-block-prompt {
+	flex: none;
+	color: var(--accent);
+}
+
+.tr-block-cmd {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--fg);
+}
+
+.tr-block-name {
+	flex: none;
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--fg-muted);
+}
+
+.tr-block-sum {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: 11.5px;
+	color: var(--fg-muted);
+}
+
+.tr-block-exit {
+	flex: none;
+	font-size: 11px;
+	color: var(--err);
+}
+
+.tr-block-time {
+	flex: none;
+	font-size: 11px;
+	color: var(--fg-faint);
+}
+
+/* ---- block actions: quiet until the block is hovered, focused or selected ---- */
+
+.tr-block-actions {
+	flex: none;
+	display: inline-flex;
+	gap: 1px;
+	margin-left: auto;
+	opacity: 0;
+	transition: opacity 120ms ease-out;
+}
+
+.tr-block:hover .tr-block-actions,
+.tr-block:focus-within .tr-block-actions,
+.tr-block[data-selected] .tr-block-actions,
+.tr-block-actions[data-flash] {
+	opacity: 1;
+}
+
+/* Replies and folded runs have no header: their actions float over the corner. */
+.tr-block-actions--float {
+	position: absolute;
+	top: 6px;
+	right: 8px;
+	margin: 0;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	box-shadow: var(--shadow-card);
+}
+
+.tr-act {
+	display: grid;
+	place-items: center;
+	width: 26px;
+	height: 26px;
+	color: var(--fg-faint);
+	background: none;
+	border: 0;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+}
+
+.tr-act:hover:not(:disabled),
+.tr-act:focus-visible {
+	color: var(--fg);
+	background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+
+.tr-act:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.tr-act[data-copied] {
+	color: var(--ok);
+}
+
+/* No hover on touch screens: the long-press sheet (and swipes) carry the actions. */
 @media (hover: none) {
-	.tr-turn-actions,
-	.tr-edit {
-		opacity: 0.6;
+	.tr-block-actions {
+		display: none;
+	}
+	.tr-block-gutter {
+		width: 18px;
+	}
+	.tr-block-reveal {
+		width: 36px;
+		height: 36px;
+		margin-top: -18px;
+	}
+}
+
+/* ---- touch action sheet and the selection bar ---- */
+
+.tr-sheet-title {
+	overflow: hidden;
+	font-family: var(--font-mono);
+	font-size: 13px;
+	font-weight: 500;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tr-sheet-list {
+	display: flex;
+	flex-direction: column;
+}
+
+.tr-sheet-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 46px;
+	padding: 0 8px;
+	font-size: 15px;
+	color: var(--fg);
+	text-align: left;
+	background: none;
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.tr-sheet-row:hover:not(:disabled),
+.tr-sheet-row:active:not(:disabled) {
+	background: var(--hover);
+}
+
+.tr-sheet-row:disabled {
+	opacity: 0.4;
+}
+
+.tr-selbar {
+	position: fixed;
+	bottom: 12px;
+	left: 50%;
+	z-index: 60;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: min(560px, calc(100vw - 24px));
+	padding: 8px 10px;
+	transform: translateX(-50%);
+	background: var(--glass);
+	backdrop-filter: blur(20px) saturate(170%);
+	-webkit-backdrop-filter: blur(20px) saturate(170%);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-overlay);
+	animation: rise 200ms var(--ease-out) backwards;
+}
+
+.tr-selbar-count {
+	margin-right: auto;
+	padding-left: 6px;
+	font-size: 13px;
+	white-space: nowrap;
+	color: var(--fg-muted);
+}
+
+.tr-selbar-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex: none;
+	white-space: nowrap;
+	height: 38px;
+	padding: 0 12px;
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--fg);
+	background: color-mix(in srgb, var(--fg) 7%, transparent);
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.tr-selbar-btn:disabled {
+	opacity: 0.4;
+}
+
+@media (max-width: 640px) {
+	.tr-selbar {
+		bottom: max(12px, env(safe-area-inset-bottom, 0px));
+		gap: 4px;
+		padding: 8px;
+	}
+	.tr-selbar-count {
+		padding-left: 4px;
+		font-size: 12px;
+	}
+	.tr-selbar-btn {
+		gap: 4px;
+		padding: 0 8px;
 	}
 }
 
@@ -792,7 +1223,8 @@
 /* ---- compact variant (agent drawer) ---- */
 
 .tr-root--compact {
-	padding: 12px 14px 16px;
+	--tr-pad-top: 12px;
+	padding: var(--tr-pad-top) 14px 16px;
 	font-size: 13px;
 	line-height: 1.55;
 }
@@ -806,9 +1238,12 @@
 	font-size: 11px;
 }
 
-.tr-root--compact .tr-row--user .tr-body {
+.tr-root--compact .tr-block--prompt {
 	max-width: 92%;
-	padding: 7px 12px;
+}
+
+.tr-root--compact .tr-block-main {
+	padding: 6px 10px 6px 4px;
 }
 
 .tr-root--compact .tv-pre {
@@ -831,14 +1266,14 @@
 /* ---- responsive mobile styles ---- */
 @media (max-width: 640px) {
 	.tr-row {
-		padding: 8px 0;
+		padding: 5px 0;
 	}
-	.tr-row--user .tr-body {
+	.tr-block--prompt {
 		max-width: 88%;
-		padding: 9px 14px;
 	}
 	.tr-root {
-		padding: 16px 14px 12px;
+		--tr-pad-top: 16px;
+		padding: var(--tr-pad-top) 14px 12px;
 		padding-left: max(14px, env(safe-area-inset-left, 0px));
 		padding-right: max(14px, env(safe-area-inset-right, 0px));
 		/* Momentum scrolling stays inside the transcript; the page never rubber-bands. */

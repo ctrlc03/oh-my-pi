@@ -72,6 +72,8 @@ export interface SessionSheetProps {
 	/** Files the agent changed this session. */
 	changeCount: number;
 	onOpenChanges(): void;
+	/** The keyboard shortcuts and touch gestures sheet. */
+	onOpenShortcuts(): void;
 	/** Usage and all-sessions screens; null when no computer is paired. */
 	onOpenUsage: (() => void) | null;
 	onOpenSessions: (() => void) | null;
@@ -123,6 +125,7 @@ export function SessionSheet({
 	onKeepTurnsChange,
 	changeCount,
 	onOpenChanges,
+	onOpenShortcuts,
 	onOpenUsage,
 	onOpenSessions,
 	onOpenCodemap,
@@ -454,6 +457,15 @@ export function SessionSheet({
 									? "Working tree"
 									: "No files yet"}
 							{(changeCount > 0 || workingTree) && <ChevronRight size={14} />}
+						</button>
+					</dd>
+				</div>
+				<div className="sh-sheet-row">
+					<dt>Shortcuts</dt>
+					<dd>
+						<button type="button" className="sh-sheet-link" onClick={onOpenShortcuts}>
+							Keys and gestures
+							<ChevronRight size={14} />
 						</button>
 					</dd>
 				</div>

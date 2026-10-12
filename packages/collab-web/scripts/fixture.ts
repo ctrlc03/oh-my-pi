@@ -1163,6 +1163,72 @@ export function makeScriptedTurn(seq: number, parentId: string | null): Scripted
 	];
 }
 
+/**
+ * A short turn whose one tool call fails (a prompt of `fail` plays it), so the app's failure states can be
+ * seen: the bash call exits non-zero, its result is an error, and the agent says so.
+ */
+export function makeFailingTurn(seq: number, parentId: string | null): ScriptedStep[] {
+	const ts = Date.now();
+	const a1Id = `fail${seq}-a1`;
+	const callId = `fail${seq}-call1`;
+	const r1Id = `fail${seq}-r1`;
+	const a2Id = `fail${seq}-a2`;
+	const command = "bun test packages/coding-agent/test/collab --filter rejoin";
+	const failureText = "1 test failed (rejoin.test.ts)\nexit code 1";
+	const toolCall: ToolCallContent = { type: "toolCall", id: callId, name: "bash", arguments: { command } };
+	const a1Final: AssistantMessage = {
+		role: "assistant",
+		content: [{ type: "text", text: "Running the rejoin test." }, toolCall],
+		model: fixtureModel.id,
+		usage: mkUsage(1_200, 40, 20_000, 0.004),
+		stopReason: "toolUse",
+		timestamp: ts,
+	};
+	const r1Message: ToolResultMessage = {
+		role: "toolResult",
+		toolCallId: callId,
+		toolName: "bash",
+		content: [{ type: "text", text: failureText }],
+		isError: true,
+		timestamp: ts,
+	};
+	const a2Final: AssistantMessage = {
+		role: "assistant",
+		content: [{ type: "text", text: "The rejoin test fails; I need to look at it." }],
+		model: fixtureModel.id,
+		usage: mkUsage(1_300, 30, 20_400, 0.004),
+		stopReason: "stop",
+		timestamp: ts,
+	};
+	return [
+		{ kind: "event", event: { type: "agent_start" } },
+		{ kind: "state", streaming: true },
+		{ kind: "event", event: { type: "turn_start" } },
+		{ kind: "event", event: { type: "message_end", message: a1Final } },
+		{ kind: "entry", entry: { id: a1Id, parentId, timestamp: iso(ts), type: "message", message: a1Final } },
+		{
+			kind: "event",
+			event: { type: "tool_execution_start", toolCallId: callId, toolName: "bash", args: { command } },
+		},
+		{
+			kind: "event",
+			event: {
+				type: "tool_execution_end",
+				toolCallId: callId,
+				toolName: "bash",
+				result: failureText,
+				isError: true,
+			},
+		},
+		{ kind: "entry", entry: { id: r1Id, parentId: a1Id, timestamp: iso(ts), type: "message", message: r1Message } },
+		{ kind: "event", event: { type: "message_end", message: a2Final } },
+		{ kind: "entry", entry: { id: a2Id, parentId: r1Id, timestamp: iso(ts), type: "message", message: a2Final } },
+		{ kind: "event", event: { type: "turn_end" } },
+		{ kind: "event", event: { type: "agent_end" } },
+		{ kind: "state", streaming: false },
+	];
+}
+
 /** [kind, label, tokens, excerpt] of what entered the context before each fixture request (index 0 = request #1). */
 type InjectedSpec = [InspectInjected["kind"], string, number, string?];
 const INSPECT_INJECTED: InjectedSpec[][] = [

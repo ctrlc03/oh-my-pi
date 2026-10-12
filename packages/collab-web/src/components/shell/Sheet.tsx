@@ -5,8 +5,8 @@ import { createPortal } from "react-dom";
 export interface SheetProps {
 	/** Accessible dialog name. */
 	label: string;
-	/** `wide`: wider dropdown on desktop, for content such as diffs. `full`: near-full-screen canvas with a definite height. `palette`: centered near the top on desktop, for the command palette. */
-	size?: "wide" | "full" | "palette";
+	/** `wide`: wider dropdown on desktop, for content such as diffs. `full`: near-full-screen canvas with a definite height. `palette`: centered near the top on desktop, for the command palette. `settings`: a centered two-column panel on desktop, full screen on phones. */
+	size?: "wide" | "full" | "palette" | "settings";
 	/** The control that opened it: on desktop the sheet opens upward from it instead of under the header. */
 	anchor?: DOMRect;
 	onClose(): void;

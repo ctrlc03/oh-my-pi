@@ -1,4 +1,4 @@
-import { Activity, ChartColumn, LayoutList, Laptop, Plus, Smartphone, X } from "lucide-react";
+import { ChartColumn, LayoutList, Laptop, Plus, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import type { CompanionHost, CompanionIdleSession, SessionOverview } from "../../lib/companion";
@@ -9,8 +9,6 @@ import { useEndedSettled } from "../../lib/use-ended-settled";
 import type { SessionOrgControl } from "../../lib/use-session-org";
 import type { BesideControl } from "../../lib/use-split";
 import { PowerNote } from "./CompanionCard";
-import { DevicesSheet } from "./DevicesSheet";
-import { DiagnosticsSheet } from "./DiagnosticsSheet";
 import { FanoutGroups } from "./FanoutSheet";
 import { InboxEntry } from "./InboxSheet";
 import { useOpenElsewhere } from "./OpenElsewhere";
@@ -59,8 +57,6 @@ export function SessionsSidebar({
 }: SessionsSidebarProps): ReactNode {
 	const [joining, setJoining] = useState<string | null>(null);
 	const [starting, setStarting] = useState(false);
-	const [diagnosing, setDiagnosing] = useState(false);
-	const [devicesOpen, setDevicesOpen] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const recents = rooms.filter(room => room.roomId !== currentRoomId);
 	const snap = companion?.snap;
@@ -248,30 +244,7 @@ export function SessionsSidebar({
 							variant="icon"
 						/>
 					)}
-					<button
-						type="button"
-						className="sh-btn sh-btn-icon"
-						onClick={() => setDiagnosing(true)}
-						aria-label="Open diagnostics"
-					>
-						<Activity size={15} />
-					</button>
-					<button
-						type="button"
-						className="sh-btn sh-btn-icon"
-						onClick={() => setDevicesOpen(true)}
-						aria-label="Devices"
-						title="Devices"
-					>
-						<Smartphone size={15} />
-					</button>
 				</div>
-			)}
-			{diagnosing && companion?.client && (
-				<DiagnosticsSheet client={companion.client} onClose={() => setDiagnosing(false)} />
-			)}
-			{devicesOpen && companion?.client && live && (
-				<DevicesSheet client={companion.client} onClose={() => setDevicesOpen(false)} />
 			)}
 			{starting && companion?.client && (
 				<StartSessionSheet

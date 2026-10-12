@@ -17,7 +17,6 @@ import {
 	setOverride,
 	useOverrides,
 } from "../../lib/shortcuts";
-import { Sheet } from "./Sheet";
 import "./shortcuts.css";
 
 const GROUPS: readonly ShortcutGroup[] = ["Blocks", "Session", "View", "General"];
@@ -45,7 +44,7 @@ function useRecording(id: ShortcutId | null, finish: (combo: Combo | null) => vo
  * Click a shortcut's keys, then press the new ones: the choice is stored on this device and used from the
  * next key press on (and after a reload). Two shortcuts on the same keys are flagged, not refused.
  */
-export function ShortcutsSheet({ onClose }: { onClose(): void }): ReactNode {
+export function ShortcutsPanel(): ReactNode {
 	const overrides = useOverrides();
 	const bindings = effectiveBindings(overrides);
 	const conflicts = findConflicts(bindings);
@@ -65,9 +64,14 @@ export function ShortcutsSheet({ onClose }: { onClose(): void }): ReactNode {
 	const conflicting = Object.keys(conflicts).length;
 
 	return (
-		<Sheet label="Keyboard shortcuts and gestures" onClose={onClose}>
-			<div className="sh-sheet-head">
-				<div className="sh-sheet-title">Shortcuts</div>
+		<div className="sh-keys-panel">
+			<div className="sh-keys-bar">
+				<div className="sh-field-hint sh-keys-hint">
+					Click a shortcut's keys, then press the ones you want. Esc cancels.
+					{conflicting > 0 && (
+						<span className="sh-keys-warn"> {conflicting} share keys with another shortcut.</span>
+					)}
+				</div>
 				{customised > 0 && (
 					<button
 						type="button"
@@ -80,10 +84,6 @@ export function ShortcutsSheet({ onClose }: { onClose(): void }): ReactNode {
 						<RotateCcw size={13} /> Reset all
 					</button>
 				)}
-			</div>
-			<div className="sh-field-hint sh-keys-hint">
-				Click a shortcut's keys, then press the ones you want. Esc cancels.
-				{conflicting > 0 && <span className="sh-keys-warn"> {conflicting} share keys with another shortcut.</span>}
 			</div>
 			<div className="sh-keys">
 				{GROUPS.map(group => (
@@ -160,6 +160,6 @@ export function ShortcutsSheet({ onClose }: { onClose(): void }): ReactNode {
 					))}
 				</dl>
 			</div>
-		</Sheet>
+		</div>
 	);
 }

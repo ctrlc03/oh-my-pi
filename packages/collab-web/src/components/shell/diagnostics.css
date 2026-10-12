@@ -1,4 +1,17 @@
-/* Diagnostics sheet. Builds on the stats.css body/section layout; token colours only. */
+/* Diagnostics panel. Builds on the stats.css body/section layout; token colours only. */
+
+.sh-diag {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.sh-diag-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
 
 .sh-diag-list {
 	display: flex;

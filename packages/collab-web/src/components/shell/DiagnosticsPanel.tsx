@@ -1,12 +1,10 @@
-import { LoaderCircle, RefreshCw, X } from "lucide-react";
+import { LoaderCircle, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import type { CompanionClient, CompanionDiag, CompanionPower, MaintainAction } from "../../lib/companion";
 import { type DiagEvent, getEvents, mergeEvents, subscribeEvents } from "../../lib/diag-log";
 import { fmtDuration } from "../../lib/format";
-import { APP_BUILD } from "../../lib/pwa";
 import { useRequest } from "../../lib/use-request";
-import { Sheet } from "./Sheet";
 import "./stats.css";
 import "./diagnostics.css";
 
@@ -26,9 +24,8 @@ const SOURCE_LABEL: Record<DiagEvent["source"], string> = {
 	computer: "computer → relay",
 };
 
-export interface DiagnosticsSheetProps {
+export interface DiagnosticsPanelProps {
 	client: CompanionClient;
-	onClose(): void;
 }
 
 interface Reading {
@@ -54,7 +51,7 @@ function Row({ label, children }: { label: string; children: ReactNode }): React
 }
 
 /** Connection health between this app, the companion on the computer, and the sessions it joins, plus computer maintenance. */
-export function DiagnosticsSheet({ client, onClose }: DiagnosticsSheetProps): ReactNode {
+export function DiagnosticsPanel({ client }: DiagnosticsPanelProps): ReactNode {
 	const load = useCallback(async (): Promise<Reading> => {
 		const rttMs = await client.measureRtt();
 		const diag = await client.requestDiag();
@@ -91,23 +88,18 @@ export function DiagnosticsSheet({ client, onClose }: DiagnosticsSheetProps): Re
 	const events = mergeEvents(appEvents, diag?.events ?? [], reading?.skewMs ?? 0).slice(0, EVENTS_SHOWN);
 
 	return (
-		<Sheet label="Diagnostics" size="wide" onClose={onClose}>
-			<div className="sh-sheet-head">
-				<div className="sh-sheet-title">Diagnostics</div>
-				<span className="sh-stats-head-actions">
-					<button
-						type="button"
-						className="sh-btn sh-btn-icon"
-						onClick={reload}
-						disabled={loading}
-						aria-label="Refresh"
-					>
-						{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
-					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
-						<X size={16} />
-					</button>
-				</span>
+		<div className="sh-diag">
+			<div className="sh-diag-bar">
+				<span className="sh-field-hint">How this app reaches your computer, and what the computer is doing.</span>
+				<button
+					type="button"
+					className="sh-btn sh-btn-icon"
+					onClick={reload}
+					disabled={loading}
+					aria-label="Refresh diagnostics"
+				>
+					{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
+				</button>
 			</div>
 			{state.status === "error" && (
 				<div className="sh-tree-error">
@@ -132,7 +124,7 @@ export function DiagnosticsSheet({ client, onClose }: DiagnosticsSheetProps): Re
 					<section className="sh-stats-section" aria-label="Computer">
 						<h2 className="sh-recents-title">Computer</h2>
 						<dl className="sh-diag-list">
-							<Row label="Companion">
+							<Row label="Companion build">
 								{reading.diag.version ?? "unknown"}
 								{reading.diag.dirty && <span className="sh-chip">modified</span>}
 							</Row>
@@ -151,7 +143,6 @@ export function DiagnosticsSheet({ client, onClose }: DiagnosticsSheetProps): Re
 					<section className="sh-stats-section" aria-label="Connection">
 						<h2 className="sh-recents-title">Connection</h2>
 						<dl className="sh-diag-list">
-							<Row label="App build">{APP_BUILD}</Row>
 							<Row label="Round trip">{fmtDuration(reading.rttMs)}</Row>
 						</dl>
 					</section>
@@ -229,6 +220,6 @@ export function DiagnosticsSheet({ client, onClose }: DiagnosticsSheetProps): Re
 					</section>
 				</div>
 			)}
-		</Sheet>
+		</div>
 	);
 }

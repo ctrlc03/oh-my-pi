@@ -1,44 +1,37 @@
-import { ArrowRight, ClipboardPaste, Eye, Lock, PawPrint, ScanLine, X } from "lucide-react";
+import { ArrowRight, ClipboardPaste, Eye, Lock, ScanLine, Settings, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import { extractPairing, type PairingLink } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
-import type { PushControl } from "../../lib/push";
-import { openPetSheet } from "../../lib/pet-ui";
+import { openSettings } from "../../lib/settings-ui";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
 import type { CompanionHandle } from "../../lib/use-companion";
 import { CompanionCard } from "./CompanionCard";
 import { OmpMark } from "./OmpMark";
 import { QrScanner } from "./QrScanner";
-import { ThemeToggle } from "./ThemeToggle";
 
 export interface ConnectScreenProps {
-	defaultName: string;
 	error: string | null;
 	/** Recently joined rooms, newest first. */
 	rooms: readonly RecentRoom[];
 	/** The paired computer's companion, if any. */
 	companion: CompanionHandle | null;
-	push: PushControl;
-	onConnect(link: string, name: string): void;
+	onConnect(link: string): void;
 	onForget(roomId: string): void;
 	onPair(pairing: PairingLink): void;
 	onUnpair(): void;
 }
 
 export function ConnectScreen({
-	defaultName,
 	error,
 	rooms,
 	companion,
-	push,
 	onConnect,
 	onForget,
 	onPair,
 	onUnpair,
 }: ConnectScreenProps): ReactNode {
 	const [link, setLink] = useState("");
-	const [name, setName] = useState(defaultName);
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [scanning, setScanning] = useState(false);
 
@@ -56,7 +49,7 @@ export function ConnectScreen({
 			onPair(companion);
 			return;
 		}
-		onConnect(extractLink(trimmed) ?? trimmed, name.trim() || "guest");
+		onConnect(extractLink(trimmed) ?? trimmed);
 	};
 
 	const submit = (e: FormEvent<HTMLFormElement>): void => {
@@ -95,21 +88,24 @@ export function ConnectScreen({
 					<span className="sh-brand-app">collab</span>
 				</div>
 				<div className="sh-connect-tools">
-					<button type="button" className="sh-theme-toggle" onClick={openPetSheet} aria-label="Pet settings">
-						<PawPrint size={16} />
+					<button
+						type="button"
+						className="sh-settings-toggle"
+						onClick={() => openSettings()}
+						aria-label="Open settings"
+					>
+						<Settings size={16} />
 					</button>
-					<ThemeToggle />
 				</div>
 			</div>
 			<div className="sh-connect-stack">
 				{companion && (
 					<CompanionCard
 						companion={companion}
-						push={push}
 						onPair={onPair}
 						onJoin={next => {
 							setLocalError(null);
-							onConnect(next, name.trim() || "guest");
+							onConnect(next);
 						}}
 						onUnpair={onUnpair}
 					/>
@@ -188,19 +184,6 @@ export function ConnectScreen({
 						<span className="sh-field-hint">
 							Run <code>/collab</code> in any omp session to get one.
 						</span>
-					</label>
-					<label className="sh-field">
-						<span className="sh-field-label">Display name</span>
-						<input
-							className="sh-input"
-							type="text"
-							value={name}
-							onChange={e => setName(e.target.value)}
-							placeholder="guest"
-							spellCheck={false}
-							autoComplete="off"
-							maxLength={32}
-						/>
 					</label>
 					{shown && <div className="sh-connect-error">{shown}</div>}
 					<button

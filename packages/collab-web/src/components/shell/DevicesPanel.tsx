@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CompanionClient, CompanionDevice } from "../../lib/companion";
 import { relTime } from "../../lib/format";
 import { useRequest } from "../../lib/use-request";
-import { Sheet } from "./Sheet";
 import "./devices.css";
 
 /** While an invite is on screen the list refreshes this often, so a device that just paired shows up. */
@@ -13,9 +12,8 @@ const INVITE_POLL_MS = 4_000;
 /** Quiet zone around the QR code, in modules (the spec asks for four). */
 const QR_QUIET_MODULES = 4;
 
-export interface DevicesSheetProps {
+export interface DevicesPanelProps {
 	client: CompanionClient;
-	onClose(): void;
 }
 
 interface Invite {
@@ -27,7 +25,7 @@ interface Invite {
 }
 
 /** Devices paired with the computer: rename or remove them, and add another with a one-time QR code. */
-export function DevicesSheet({ client, onClose }: DevicesSheetProps): ReactNode {
+export function DevicesPanel({ client }: DevicesPanelProps): ReactNode {
 	const load = useCallback(() => client.requestDevices(), [client]);
 	const { state, reload } = useRequest(load);
 	// Keep the last list on screen while it reloads.
@@ -94,23 +92,18 @@ export function DevicesSheet({ client, onClose }: DevicesSheetProps): ReactNode 
 
 	const loading = state.status === "loading";
 	return (
-		<Sheet label="Devices" onClose={onClose}>
-			<div className="sh-sheet-head">
-				<div className="sh-sheet-title">Devices</div>
-				<span className="sh-devices-head-actions">
-					<button
-						type="button"
-						className="sh-btn sh-btn-icon"
-						onClick={reload}
-						disabled={loading}
-						aria-label="Refresh"
-					>
-						{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
-					</button>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
-						<X size={16} />
-					</button>
-				</span>
+		<div className="sh-devices">
+			<div className="sh-devices-bar">
+				<span className="sh-field-hint">Phones, tablets and computers that can control this computer.</span>
+				<button
+					type="button"
+					className="sh-btn sh-btn-icon"
+					onClick={reload}
+					disabled={loading}
+					aria-label="Refresh devices"
+				>
+					{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
+				</button>
 			</div>
 			{list === null ? (
 				state.status === "loading" ? (
@@ -203,7 +196,7 @@ export function DevicesSheet({ client, onClose }: DevicesSheetProps): ReactNode 
 			{(error ?? (state.status === "error" ? state.message : null)) && (
 				<div className="sh-connect-error">{error ?? (state.status === "error" ? state.message : null)}</div>
 			)}
-		</Sheet>
+		</div>
 	);
 }
 

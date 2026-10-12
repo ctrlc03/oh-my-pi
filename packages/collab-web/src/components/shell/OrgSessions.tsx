@@ -1,15 +1,4 @@
-import {
-	Archive,
-	ArchiveRestore,
-	ChevronDown,
-	ChevronRight,
-	Moon,
-	Pin,
-	PinOff,
-	SlidersHorizontal,
-	Sun,
-	Undo2,
-} from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, ChevronRight, Moon, Pin, PinOff, Sun, Undo2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -39,7 +28,7 @@ import {
 	wakeLabel,
 } from "../../lib/session-org";
 import type { SessionOrgControl } from "../../lib/use-session-org";
-import { OrgMenu, OrgSettingsSheet, OrgSnoozeSheet } from "./OrgMenu";
+import { OrgMenu, OrgSnoozeSheet } from "./OrgMenu";
 import { isWorking, itemTitle, OrgRow, type OrgItem, type OrgMode } from "./OrgRow";
 import { type RangeAction, useOrgDrag } from "./use-org-drag";
 import "./session-org.css";
@@ -139,7 +128,6 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 	const [settledOpen, setSettledOpen] = useState(false);
 	const [menu, setMenu] = useState<string | null>(null);
 	const [undo, setUndo] = useState<Undo | null>(null);
-	const [organising, setOrganising] = useState(false);
 	const [mode, setMode] = useState<OrgMode>("idle");
 	const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
 	const [snoozingPicked, setSnoozingPicked] = useState(false);
@@ -394,14 +382,6 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 							Settled
 							{settledCount > 0 && <span className="sh-org-count">{settledCount}</span>}
 						</button>
-						<button
-							type="button"
-							className="sh-btn sh-btn-icon sh-org-settings"
-							onClick={() => setOrganising(true)}
-							aria-label="Auto-settle settings"
-						>
-							<SlidersHorizontal size={14} />
-						</button>
 					</h3>
 					{settledOpen && settledCount > 0 && (
 						<ul className="sh-recents-list">{sections.settled.map(item => row(item, "settled"))}</ul>
@@ -529,7 +509,6 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 					onClose={() => setSnoozingPicked(false)}
 				/>
 			)}
-			{organising && <OrgSettingsSheet org={org} onClose={() => setOrganising(false)} />}
 			{view !== null &&
 				createPortal(
 					<div ref={drag.ghost} className="sh-org-ghost" data-kind={view.kind}>

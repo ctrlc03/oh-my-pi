@@ -102,13 +102,20 @@ export const SHORTCUTS = {
 		typing: "suppress",
 	},
 	find: { keys: { key: "/" }, label: "Find in the session", group: "View", typing: "suppress" },
-	help: { keys: { key: "?", shift: "any" }, label: "Show this list", group: "General", typing: "suppress" },
+	help: {
+		keys: { key: "?", shift: "any" },
+		label: "Show the keyboard shortcuts",
+		group: "General",
+		typing: "suppress",
+	},
 	palette: {
 		keys: { key: "k", mod: true },
 		label: "Open the command palette: actions, commands, sessions, messages",
 		group: "General",
 		typing: "allow",
 	},
+	// ⌘, is the Preferences key of macOS apps (Ctrl+, elsewhere).
+	settings: { keys: { key: ",", mod: true }, label: "Open settings", group: "General", typing: "allow" },
 } as const satisfies Record<string, Shortcut>;
 
 export type ShortcutId = keyof typeof SHORTCUTS;

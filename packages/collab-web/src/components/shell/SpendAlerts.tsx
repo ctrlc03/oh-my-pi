@@ -19,8 +19,7 @@ export function SpendAlerts({ client }: { client: CompanionClient }): ReactNode 
 	const load = useCallback(() => client.spendLimits(), [client]);
 	const { state, reload } = useRequest(load);
 	return (
-		<section className="sh-stats-section" aria-label="Spend alerts">
-			<h2 className="sh-recents-title">Spend alerts</h2>
+		<>
 			{state.status === "loading" && (
 				<div className="sh-companion-empty sh-file-status">
 					<LoaderCircle size={14} className="sh-spin" /> Loading…
@@ -35,7 +34,7 @@ export function SpendAlerts({ client }: { client: CompanionClient }): ReactNode 
 				</div>
 			)}
 			{state.status === "ready" && <SpendForm client={client} saved={state.value} />}
-		</section>
+		</>
 	);
 }
 

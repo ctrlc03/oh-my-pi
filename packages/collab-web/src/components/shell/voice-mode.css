@@ -20,13 +20,6 @@
 	margin-left: auto;
 }
 
-.sh-handsfree-rate {
-	height: 28px;
-	padding: 0 8px;
-	font-size: 12px;
-	font-variant-numeric: tabular-nums;
-}
-
 /* Fills over the send countdown, so the pause before sending is visible without a ticking number. */
 .sh-handsfree-bar {
 	position: absolute;

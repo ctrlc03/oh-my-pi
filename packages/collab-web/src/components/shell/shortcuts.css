@@ -1,4 +1,17 @@
-/* Shortcuts sheet: group headings over label / keycap rows. sh-keys-* namespace. */
+/* Shortcuts panel: group headings over label / keycap rows. sh-keys-* namespace. */
+
+.sh-keys-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.sh-keys-bar {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+}
 
 .sh-keys {
 	display: flex;

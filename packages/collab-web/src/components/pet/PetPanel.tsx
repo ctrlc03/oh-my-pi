@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, ExternalLink, LoaderCircle, RotateCcw, Search, X } from "lucide-react";
+import { ArrowLeft, Check, ExternalLink, LoaderCircle, RotateCcw, Search } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { closePetPip, openPetPip, petPipSupported, usePetPipWindow } from "../../lib/pet-pip";
@@ -22,7 +22,6 @@ import {
 	searchPets,
 } from "../../lib/petdex";
 import { useRequest } from "../../lib/use-request";
-import { Sheet } from "../shell/Sheet";
 import { Mascot } from "./Mascot";
 import { PetFigure } from "./PetFigure";
 import "./pet.css";
@@ -33,45 +32,30 @@ const LIST_PX = 336;
 /** Rows drawn beyond the visible ones, so a quick scroll shows no blanks. */
 const OVERSCAN = 4;
 
-function SheetHead({ title, onBack, onClose }: { title: string; onBack?: () => void; onClose: () => void }): ReactNode {
-	return (
-		<div className="sh-sheet-head">
-			<div className="tl-pet-sheet-title">
-				{onBack && (
-					<button type="button" className="sh-btn sh-btn-icon" onClick={onBack} aria-label="Back to pet settings">
-						<ArrowLeft size={16} />
-					</button>
-				)}
-				<div className="sh-sheet-title">{title}</div>
-			</div>
-			<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
-				<X size={16} />
-			</button>
-		</div>
-	);
-}
-
-/** The pet's settings: on or off, which pet, its size, roaming and the pop-out. */
-export function PetSheet({ onClose }: { onClose: () => void }): ReactNode {
+/** The pet's settings: on or off, which pet (the petdex gallery drills in), its size, roaming and the pop-out. */
+export function PetPanel(): ReactNode {
 	const [gallery, setGallery] = useState(false);
-	return (
-		<Sheet label="Pet" size={gallery ? "wide" : undefined} onClose={onClose}>
-			{gallery ? (
-				<>
-					<SheetHead title="Choose a pet" onBack={() => setGallery(false)} onClose={onClose} />
-					<Gallery onDone={() => setGallery(false)} />
-				</>
-			) : (
-				<>
-					<SheetHead title="Pet" onClose={onClose} />
-					<Settings onChoose={() => setGallery(true)} />
-				</>
-			)}
-		</Sheet>
+	return gallery ? (
+		<>
+			<div className="tl-pet-sheet-title">
+				<button
+					type="button"
+					className="sh-btn sh-btn-icon"
+					onClick={() => setGallery(false)}
+					aria-label="Back to pet settings"
+				>
+					<ArrowLeft size={16} />
+				</button>
+				<div className="sh-sheet-title">Choose a pet</div>
+			</div>
+			<Gallery onDone={() => setGallery(false)} />
+		</>
+	) : (
+		<Options onChoose={() => setGallery(true)} />
 	);
 }
 
-function Settings({ onChoose }: { onChoose: () => void }): ReactNode {
+function Options({ onChoose }: { onChoose: () => void }): ReactNode {
 	const settings = usePetSettings();
 	const spot = usePetSpot();
 	const pipWindow = usePetPipWindow();

@@ -1,4 +1,4 @@
-import { GitBranch, LoaderCircle, Play, RefreshCw, Search, Share2, Trash2, X } from "lucide-react";
+import { LoaderCircle, Play, RefreshCw, Search, Share2, Trash2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { agentFilterOptions, filterByAgent } from "../../lib/agents";
@@ -13,7 +13,6 @@ import { AgentsEntry } from "./AgentsSheet";
 import { MessageSearch } from "./MessageSearch";
 import { useOpenElsewhere } from "./OpenElsewhere";
 import { Sheet } from "./Sheet";
-import { WorktreeSettings } from "./WorktreeSettings";
 import "./review.css";
 import "./stats.css";
 
@@ -26,8 +25,6 @@ export interface SessionsSheetProps {
 	canStart: boolean;
 	/** The companion answers message searches (`canSearch`); without it only the title and folder search is offered. */
 	canSearch?: boolean;
-	/** The companion keeps git worktree settings (`canGitFlow`): a toggle shows them above the list. */
-	canGitFlow?: boolean;
 	/** The companion can drive other vendors' agents (`canForeign`): the head offers the Agents settings. */
 	canForeign?: boolean;
 	/** A search to open on (from the command palette): sessions by title or folder, or messages. */
@@ -45,7 +42,6 @@ export function SessionsSheet({
 	client,
 	canStart,
 	canSearch,
-	canGitFlow,
 	canForeign,
 	initial,
 	currentSessionId,
@@ -61,7 +57,6 @@ export function SessionsSheet({
 	}, [query]);
 	const [mode, setMode] = useState<"sessions" | "messages">(initial?.mode ?? "sessions");
 	const messages = canSearch === true && mode === "messages";
-	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [msgQuery, setMsgQuery] = useState(initial?.mode === "messages" ? initial.query : "");
 	const [mq, setMq] = useState(msgQuery.trim());
 	useEffect(() => {
@@ -189,17 +184,6 @@ export function SessionsSheet({
 				<div className="sh-sheet-title">All sessions</div>
 				<span className="sh-stats-head-actions">
 					{canForeign === true && <AgentsEntry client={client} variant="icon" />}
-					{canGitFlow === true && (
-						<button
-							type="button"
-							className="sh-btn sh-btn-icon"
-							onClick={() => setSettingsOpen(open => !open)}
-							aria-pressed={settingsOpen}
-							aria-label="Worktree settings"
-						>
-							<GitBranch size={15} />
-						</button>
-					)}
 					<button
 						type="button"
 						className="sh-btn sh-btn-icon"
@@ -215,7 +199,6 @@ export function SessionsSheet({
 				</span>
 			</div>
 			{openElsewhere.notice}
-			{canGitFlow === true && settingsOpen && <WorktreeSettings client={client} />}
 			{error && <div className="sh-connect-error">{error}</div>}
 			{canSearch === true && (
 				<div className="sh-segmented sh-segmented-fill" role="radiogroup" aria-label="Search in">

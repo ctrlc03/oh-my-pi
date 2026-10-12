@@ -6,9 +6,8 @@ import type { CompanionHost } from "../../lib/companion";
 import { type PaletteEntry, usePaletteEntries } from "../../lib/palette";
 import { closePetPip } from "../../lib/pet-pip";
 import { setPetSettings, usePetSettings } from "../../lib/pet-settings";
-import { closePetSheet, openPetSheet, usePetSheetOpen } from "../../lib/pet-ui";
+import { openSettings } from "../../lib/settings-ui";
 import { PetLayer } from "./PetLayer";
-import { PetSheet } from "./PetSheet";
 
 export interface PetHostProps {
 	/** The open session's client; null on the home screen. */
@@ -17,10 +16,9 @@ export interface PetHostProps {
 	hostsLive: boolean;
 }
 
-/** The pet, mounted once at the app's top: the floating layer while it is on, its settings sheet, and its palette entries. */
+/** The pet, mounted once at the app's top: the floating layer while it is on, and its palette entries. Its settings are in Settings → Appearance. */
 export function PetHost({ client, hosts, hostsLive }: PetHostProps): ReactNode {
 	const { enabled } = usePetSettings();
-	const sheetOpen = usePetSheetOpen();
 
 	// Turning the pet off takes the pop-out window with it.
 	useEffect(() => {
@@ -35,7 +33,7 @@ export function PetHost({ client, hosts, hostsLive }: PetHostProps): ReactNode {
 				section: "Appearance",
 				keywords: ["companion", "mascot", "petdex", "size", "roam", "pop out"],
 				icon: PawPrint,
-				run: openPetSheet,
+				run: () => openSettings("appearance"),
 			},
 			enabled
 				? {
@@ -59,10 +57,5 @@ export function PetHost({ client, hosts, hostsLive }: PetHostProps): ReactNode {
 	);
 	usePaletteEntries(entries);
 
-	return (
-		<>
-			{enabled && <PetLayer client={client} hosts={hosts} hostsLive={hostsLive} />}
-			{sheetOpen && <PetSheet onClose={closePetSheet} />}
-		</>
-	);
+	return enabled ? <PetLayer client={client} hosts={hosts} hostsLive={hostsLive} /> : null;
 }

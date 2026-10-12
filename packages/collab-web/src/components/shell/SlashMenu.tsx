@@ -3,7 +3,7 @@ import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { WireModel } from "@oh-my-pi/pi-wire";
 import type { GuestClient } from "../../lib/client";
-import { loadQuickReplies } from "../../lib/quick-replies";
+import { useQuickReplies } from "../../lib/quick-replies";
 import {
 	applySlash,
 	matchArgument,
@@ -74,8 +74,7 @@ export function useSlashMenu({
 	// The highlighted row, for the query it was chosen under: a new query starts at the best match.
 	const [cursor, setCursor] = useState({ query: "", at: 0 });
 	const open = query !== null && dismissed !== text;
-	// Saved prompts are re-read each time the popup opens: they are edited from the chip row.
-	const saved = useMemo(() => (open ? loadQuickReplies() : []), [open]);
+	const saved = useQuickReplies();
 	const items = useMemo(() => {
 		if (!open) return [];
 		return name === null ? matchArgument(text, commands, sources) : matchSlash(name, commands, saved);

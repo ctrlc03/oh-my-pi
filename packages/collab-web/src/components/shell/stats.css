@@ -221,13 +221,6 @@
 	min-width: 92px;
 }
 
-/* The settings that follow the numbers (spend and GitHub alerts) read as their own sections. */
-.sh-sheet > .sh-stats-body + .sh-stats-section,
-.sh-sheet > .sh-stats-section + .sh-stats-section {
-	padding-top: 16px;
-	border-top: 1px solid var(--border);
-}
-
 /* A wide sheet (iPad landscape, desktop) lists the folders in two columns: one row per line would
  * leave the eye a full sheet width between a session's name and its Open button. */
 @media (min-width: 1000px) {

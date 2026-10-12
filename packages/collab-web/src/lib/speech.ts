@@ -5,6 +5,7 @@
  */
 
 import type { CollabUiRequest, SessionEntry } from "@oh-my-pi/pi-wire";
+import { useSyncExternalStore } from "react";
 import { replyText, turnRanges } from "./export";
 import { readJson, writeJson } from "./storage";
 
@@ -256,14 +257,34 @@ export const SPEECH_RATES = [1, 1.25, 1.5] as const;
 export type SpeechRate = (typeof SPEECH_RATES)[number];
 const RATE_KEY = "omp-collab-speech-rate";
 
-/** The speed remembered on this device. */
-export function storedRate(): SpeechRate {
-	const raw = readJson(RATE_KEY);
-	return SPEECH_RATES.find(rate => rate === raw) ?? 1;
+let rate: SpeechRate | undefined;
+const rateListeners = new Set<() => void>();
+
+/** The speed remembered on this device (Settings → Messages). */
+export function speechRate(): SpeechRate {
+	if (rate === undefined) {
+		const raw = readJson(RATE_KEY);
+		rate = SPEECH_RATES.find(r => r === raw) ?? 1;
+	}
+	return rate;
 }
 
-export function storeRate(rate: SpeechRate): void {
-	writeJson(RATE_KEY, rate);
+export function setSpeechRate(next: SpeechRate): void {
+	rate = next;
+	writeJson(RATE_KEY, next);
+	for (const listener of rateListeners) listener();
+}
+
+/** The speed; re-renders when it changes. */
+export function useSpeechRate(): SpeechRate {
+	return useSyncExternalStore(
+		listener => {
+			rateListeners.add(listener);
+			return () => rateListeners.delete(listener);
+		},
+		speechRate,
+		() => 1,
+	);
 }
 
 // ---- silence detection (pure; the engine below feeds it microphone levels) ----

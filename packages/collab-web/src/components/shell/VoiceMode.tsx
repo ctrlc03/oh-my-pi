@@ -9,13 +9,10 @@ import {
 	latestReply,
 	primeSpeech,
 	rmsOf,
-	SPEECH_RATES,
-	type SpeechRate,
 	speak,
 	speakableText,
 	speechAvailable,
-	storedRate,
-	storeRate,
+	useSpeechRate,
 } from "../../lib/speech";
 import { NO_SPEECH, type VoiceInput } from "./VoiceInput";
 import "./voice-mode.css";
@@ -66,7 +63,7 @@ export function useHandsFree({
 	const active = on && available;
 	const [speaking, setSpeaking] = useState(false);
 	const [countdown, setCountdown] = useState<string | null>(null);
-	const [rate, setRate] = useState<SpeechRate>(storedRate);
+	const rate = useSpeechRate();
 
 	const live = useRef({ input, uiRequest, working, onSend, onDraft, rate, available });
 	live.current = { input, uiRequest, working, onSend, onDraft, rate, available };
@@ -335,11 +332,6 @@ export function useHandsFree({
 		setOn(!on);
 	};
 
-	const pickRate = (next: SpeechRate): void => {
-		setRate(next);
-		storeRate(next);
-	};
-
 	const button = available ? (
 		<button
 			type="button"
@@ -395,25 +387,7 @@ export function useHandsFree({
 		<div className="sh-voice sh-handsfree" role="status">
 			<Headphones size={14} className="sh-handsfree-icon" aria-hidden="true" />
 			<span className="sh-voice-text">{label}</span>
-			<span className="sh-voice-actions">
-				{actions}
-				<span className="sh-segmented" role="radiogroup" aria-label="Speaking speed">
-					{SPEECH_RATES.map(r => (
-						<button
-							key={r}
-							type="button"
-							role="radio"
-							aria-checked={rate === r}
-							className={
-								rate === r ? "sh-segment sh-segment-on sh-handsfree-rate" : "sh-segment sh-handsfree-rate"
-							}
-							onClick={() => pickRate(r)}
-						>
-							{r}×
-						</button>
-					))}
-				</span>
-			</span>
+			<span className="sh-voice-actions">{actions}</span>
 			{countdown !== null && <span className="sh-handsfree-bar" aria-hidden="true" />}
 		</div>
 	);

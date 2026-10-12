@@ -1,9 +1,17 @@
 /* Devices sheet: paired devices and the one-time pairing QR code.
  * Builds on the shell.css sheet, recents and button primitives; token colours only. */
 
-.sh-devices-head-actions {
-	display: inline-flex;
-	gap: 4px;
+.sh-devices {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.sh-devices-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
 }
 
 .sh-devices-list {

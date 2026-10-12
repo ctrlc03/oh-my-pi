@@ -48,8 +48,7 @@ import type { CompanionHandle } from "../../lib/use-companion";
 import { usableCommands } from "../../lib/slash-menu";
 import { CommandPalette } from "./CommandPalette";
 import { AgentsSheet } from "./AgentsSheet";
-import { DevicesSheet } from "./DevicesSheet";
-import { DiagnosticsSheet } from "./DiagnosticsSheet";
+import { openSettings } from "../../lib/settings-ui";
 import { InboxSheet } from "./InboxSheet";
 import { SchedulesSheet } from "./SchedulesSheet";
 import { StartSessionSheet } from "./StartSessionSheet";
@@ -117,7 +116,7 @@ export interface PaletteHostProps {
 	onOpenAllSessions(initial: { mode: "sessions" | "messages"; query: string }): void;
 }
 
-type CompanionTool = "start" | "inbox" | "schedules" | "diagnostics" | "devices" | "agents";
+type CompanionTool = "start" | "inbox" | "schedules" | "agents";
 
 const THEMES: readonly { value: ThemePreference; label: string; Icon: LucideIcon }[] = [
 	{ value: "system", label: "Follow the system theme", Icon: Monitor },
@@ -380,7 +379,7 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 					section: "Computer",
 					keywords: ["health", "status", "logs"],
 					icon: Activity,
-					run: () => setTool("diagnostics"),
+					run: () => openSettings("about"),
 				},
 				{
 					id: "app:devices",
@@ -388,7 +387,7 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 					section: "Computer",
 					keywords: ["phone", "unpair", "pairing"],
 					icon: Smartphone,
-					run: () => setTool("devices"),
+					run: () => openSettings("devices"),
 				},
 			);
 			if (snap.canSchedule)
@@ -480,8 +479,6 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 					onClose={closeTool}
 				/>
 			)}
-			{tool === "diagnostics" && toolClient !== null && <DiagnosticsSheet client={toolClient} onClose={closeTool} />}
-			{tool === "devices" && toolClient !== null && <DevicesSheet client={toolClient} onClose={closeTool} />}
 			{tool === "agents" && toolClient !== null && <AgentsSheet client={toolClient} onClose={closeTool} />}
 		</>
 	);

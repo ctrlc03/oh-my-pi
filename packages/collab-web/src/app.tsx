@@ -8,6 +8,10 @@ import { LazyCodemapSheet } from "./components/codemap/LazyCodemapSheet";
 import { DiagramHost } from "./components/diagram/DiagramHost";
 import { LazyIdeSheet } from "./components/ide/LazyIdeSheet";
 import { PetHost } from "./components/pet/PetHost";
+import { SettingsHost } from "./components/settings/SettingsHost";
+import type { SettingsEnv } from "./components/settings/env";
+import { defaultChat } from "./lib/chat-view";
+import { displayName } from "./lib/display-name";
 import { Banners } from "./components/shell/Banners";
 import { ChangesSheet } from "./components/shell/ChangesSheet";
 import { Composer, type ComposerHandle } from "./components/shell/Composer";
@@ -40,7 +44,6 @@ import { TaskProgress } from "./components/shell/TaskProgress";
 import { Toasts } from "./components/shell/Toasts";
 import { UpdateBar } from "./components/shell/UpdateBar";
 import { Tooltip } from "./components/shell/Tooltip";
-import { ShortcutsSheet } from "./components/shell/ShortcutsSheet";
 import { UsageSheet } from "./components/shell/UsageSheet";
 import { TimelineSheet } from "./components/shell/TimelineSheet";
 import { Transcript } from "./components/transcript/Transcript";
@@ -62,7 +65,7 @@ import { takePendingReview } from "./lib/fanout";
 import { onJumpIntent, takeJumpIntent } from "./lib/jump-intent";
 import { useNewSince } from "./lib/new-since";
 import { emitRoute, parseRoute } from "./lib/notify-route";
-import { type PushControl, usePush } from "./lib/push";
+import { usePush } from "./lib/push";
 import { registerServiceWorker, takeSharedLink } from "./lib/pwa";
 import {
 	activeLink,
@@ -86,6 +89,7 @@ import {
 	useClientWake,
 } from "./lib/use-split";
 import { readJson, writeJson } from "./lib/storage";
+import { openSettings } from "./lib/settings-ui";
 import { currentSubagents } from "./lib/subagents";
 import { currentTodos } from "./lib/todos";
 import { loadTrim, saveTrim, trimEntries } from "./lib/trim";
@@ -94,20 +98,16 @@ import { limitedUntil } from "./lib/usage-limits";
 import { type CompanionHandle, useCompanion } from "./lib/use-companion";
 import { useHostRecovery } from "./lib/use-host-recovery";
 import { useGuestSnapshot } from "./lib/use-guest";
-import { useSessionOrg } from "./lib/use-session-org";
+import { type SessionOrgControl, useSessionOrg } from "./lib/use-session-org";
 import type { ToolRenderHost } from "./tool-render";
 import "./components/shell/shell.css";
 import "./components/shell/companion.css";
 import "./components/codemap/codemap.css";
 
-const NAME_KEY = "omp.collab.name";
-/** Chat view preference (boolean); absent: phones get chat, larger screens the full transcript. */
-const CHAT_KEY = "omp.collab.chat";
 /** Docked sessions sidebar preference (boolean, docked widths only); absent: open. */
 const SIDEBAR_KEY = "omp.collab.sidebar";
 /** Matches the shell.css breakpoint where the sessions sidebar stops docking beside the panel. */
 const SIDEBAR_DOCK_QUERY = "(min-width: 1101px)";
-const PHONE_QUERY = "(max-width: 640px)";
 /** Matches the shell.css breakpoint where the rail stops docking beside the transcript. */
 const WIDE_QUERY = "(min-width: 901px)";
 /** Visual viewport this much shorter than the layout viewport means an on-screen keyboard is up. */
@@ -115,19 +115,6 @@ const KEYBOARD_MIN_PX = 120;
 
 /** The pet's view of the paired computer's sessions while none is paired. */
 const NO_HOSTS: readonly CompanionHost[] = [];
-
-interface Creds {
-	link: string;
-	name: string;
-}
-
-function storedName(): string {
-	try {
-		return localStorage.getItem(NAME_KEY) ?? "guest";
-	} catch {
-		return "guest";
-	}
-}
 
 /** Deep link = everything after the FIRST `#` (legacy links carry a second `#` inside the fragment). */
 function hashLink(): string | null {
@@ -152,27 +139,37 @@ export function App(): ReactNode {
 	const [pendingOpen, setPendingOpen] = useState<string | null>(null);
 	/** The companion process the current link was fetched from, until the session's welcome identifies it. */
 	const [opened, setOpened] = useState<{ link: string; instanceId: string } | null>(null);
-	const credsRef = useRef<Creds | null>(null);
+	/** The link of the session on screen, to rejoin it. */
+	const lastLinkRef = useRef<string | null>(null);
 	/** The current session was reopened from storage, not chosen by the user this launch. */
 	const resumedRef = useRef(false);
 	const companion = useCompanion(pairing);
 	const push = usePush(companion.client, companion.snap.vapidKey);
+	const org = useSessionOrg(
+		{
+			client: companion.client,
+			live: companion.snap.phase === "live",
+			orgRev: companion.snap.sessionOrgRev,
+			orderSessions: companion.snap.canOrderSessions,
+			endOnSettle: companion.snap.canEndOnSettle,
+		},
+		rooms,
+	);
+	const settingsEnv = useMemo<SettingsEnv>(
+		() => ({ companion: pairing ? companion : null, push, org }),
+		[pairing, companion, push, org],
+	);
 
-	const connect = useCallback((link: string, name: string): void => {
+	const connect = useCallback((link: string): void => {
 		let next: GuestClient;
 		try {
-			next = new GuestClient(link, name);
+			next = new GuestClient(link, displayName());
 		} catch (err) {
 			setConnectError(err instanceof Error ? err.message : String(err));
 			return;
 		}
 		next.connect();
-		try {
-			localStorage.setItem(NAME_KEY, name);
-		} catch {
-			// storage unavailable (private mode) — non-fatal
-		}
-		credsRef.current = { link, name };
+		lastLinkRef.current = link;
 		setActiveLink(link);
 		window.location.hash = link;
 		setLink(link);
@@ -194,9 +191,9 @@ export function App(): ReactNode {
 	const forget = useCallback((roomId: string): void => setRooms(forgetRoom(roomId)), []);
 
 	const rejoin = useCallback((): void => {
-		const creds = credsRef.current;
+		const last = lastLinkRef.current;
 		resumedRef.current = false;
-		if (creds) connect(creds.link, creds.name);
+		if (last) connect(last);
 	}, [connect]);
 
 	const remember = useCallback((room: Omit<RecentRoom, "lastSeen">): void => setRooms(rememberRoom(room)), []);
@@ -207,7 +204,7 @@ export function App(): ReactNode {
 			const to = roomIdOf(next);
 			if (to !== null) setRooms(moveRoom(from, to));
 			resumedRef.current = false;
-			connect(next, credsRef.current?.name ?? storedName());
+			connect(next);
 			setOpened({ link: next, instanceId });
 		},
 		[connect],
@@ -227,7 +224,7 @@ export function App(): ReactNode {
 			if (!next) throw new Error("the computer returned an unreadable link");
 			applyOpenIntent(instanceId, next);
 			resumedRef.current = false;
-			connect(next, credsRef.current?.name ?? storedName());
+			connect(next);
 			setOpened({ link: next, instanceId });
 		},
 		[companionClient, connect],
@@ -236,7 +233,7 @@ export function App(): ReactNode {
 	const openLink = useCallback(
 		(next: string): void => {
 			resumedRef.current = false;
-			connect(next, credsRef.current?.name ?? storedName());
+			connect(next);
 		},
 		[connect],
 	);
@@ -347,14 +344,13 @@ export function App(): ReactNode {
 		const explicit = hash ?? takeSharedLink();
 		const initial = explicit ?? activeLink();
 		if (!initial) return;
-		connect(initial, storedName());
+		connect(initial);
 		resumedRef.current = explicit === null;
 	}, [connect, pair, followRoute]);
 
 	// Back from the background, network back, going to the background: see `useClientWake`.
 	useClientWake(client);
-	const besideName = useCallback((): string => credsRef.current?.name ?? storedName(), []);
-	const beside = useBesideSession(client ? link : null, companion.client, besideName, setRooms);
+	const beside = useBesideSession(client ? link : null, companion.client, displayName, setRooms);
 
 	useEffect(() => {
 		if (!client) document.title = "omp collab";
@@ -374,14 +370,12 @@ export function App(): ReactNode {
 			/>
 			{!client || !link ? (
 				<ConnectScreen
-					defaultName={storedName()}
 					error={connectError}
 					rooms={rooms}
 					companion={pairing ? companion : null}
-					push={push}
-					onConnect={(next, name) => {
+					onConnect={next => {
 						resumedRef.current = false;
-						connect(next, name);
+						connect(next);
 					}}
 					onForget={forget}
 					onPair={pair}
@@ -396,7 +390,7 @@ export function App(): ReactNode {
 					link={link}
 					openedInstance={opened?.link === link ? opened.instanceId : null}
 					companion={pairing ? companion : null}
-					push={push}
+					org={org}
 					rooms={rooms}
 					onLeave={leave}
 					onRejoin={rejoin}
@@ -413,6 +407,7 @@ export function App(): ReactNode {
 				hosts={pairing ? hosts : NO_HOSTS}
 				hostsLive={pairing !== null && companionPhase === "live"}
 			/>
+			<SettingsHost env={settingsEnv} />
 		</>
 	);
 }
@@ -422,7 +417,7 @@ interface SessionProps {
 	link: string;
 	openedInstance: string | null;
 	companion: CompanionHandle | null;
-	push: PushControl;
+	org: SessionOrgControl;
 	rooms: readonly RecentRoom[];
 	onLeave(): void;
 	onRejoin(): void;
@@ -435,9 +430,9 @@ interface SessionProps {
 	beside: BesideControl;
 }
 
-function initialChat(): boolean {
-	const stored = readJson(CHAT_KEY);
-	return typeof stored === "boolean" ? stored : matchMedia(PHONE_QUERY).matches;
+/** `?`, and the palette's Keyboard shortcuts: the Settings section that lists and remaps them. */
+function openKeyboardSettings(): void {
+	openSettings("keyboard");
 }
 
 /** Wide screens restore the docked sidebar; elsewhere it is a drawer and starts closed. */
@@ -455,7 +450,7 @@ function Session({
 	link,
 	openedInstance,
 	companion,
-	push,
+	org,
 	rooms,
 	onLeave,
 	onRejoin,
@@ -484,16 +479,6 @@ function Session({
 		[hosts, sessionId],
 	);
 	const hostRow = hosts?.find(host => host.instanceId === hostId);
-	const org = useSessionOrg(
-		{
-			client: companionClient,
-			live: companion?.snap.phase === "live",
-			orgRev: companion?.snap.sessionOrgRev ?? null,
-			orderSessions: companion?.snap.canOrderSessions === true,
-			endOnSettle: companion?.snap.canEndOnSettle === true,
-		},
-		rooms,
-	);
 	const [file, setFile] = useState<{ path: string; line?: number } | null>(null);
 	const [codemap, setCodemap] = useState<{ file?: string } | null>(null);
 	const canCodemap = companionClient !== null && hostId !== null && companion?.snap.canCodemap === true;
@@ -731,11 +716,7 @@ function Session({
 	const toggleRail = useCallback(() => setRailOpen(open => !open), []);
 	const closeDrawer = useCallback(() => setSelectedId(null), []);
 
-	const [chat, setChat] = useState(initialChat);
-	const changeChat = useCallback((next: boolean): void => {
-		writeJson(CHAT_KEY, next);
-		setChat(next);
-	}, []);
+	const [chat, changeChat] = useState(defaultChat);
 
 	// Keep the latest turns (per device and session); *Show all* reveals the rest until the session changes.
 	const [trim, setTrim] = useState(() => ({
@@ -924,9 +905,6 @@ function Session({
 	const working = snap.working;
 	const searchOpen = search !== null;
 	const [sessionSheetOpen, setSessionSheetOpen] = useState(false);
-	const [helpOpen, setHelpOpen] = useState(false);
-	const closeHelp = useCallback(() => setHelpOpen(false), []);
-	const openHelp = useCallback(() => setHelpOpen(true), []);
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent): void => {
 			if (e.isComposing || e.defaultPrevented) return;
@@ -951,7 +929,7 @@ function Session({
 				toggleSidebar();
 			} else if (fires("help")) {
 				e.preventDefault();
-				setHelpOpen(true);
+				openKeyboardSettings();
 			} else if (focusedPane() !== "main") {
 				return;
 			} else if (fires("stashDraft")) {
@@ -1065,7 +1043,7 @@ function Session({
 						},
 			openChanges: hasChanges ? openChanges : null,
 			openScreens,
-			openShortcuts: openHelp,
+			openShortcuts: openKeyboardSettings,
 			openUsage: companion ? openUsage : null,
 			openSessions: companion ? openSessions : null,
 			openCodemap: canCodemap ? openCodemap : null,
@@ -1097,7 +1075,6 @@ function Session({
 			openCodemap,
 			openEditor,
 			openGithub,
-			openHelp,
 			openPane,
 			openPreview,
 			openRun,
@@ -1162,7 +1139,6 @@ function Session({
 				canWatchPr={Object.hasOwn(snap.features, "pr-watch")}
 				exportMarkdown={exportMarkdown}
 				onOpenChanges={openChanges}
-				onOpenShortcuts={openHelp}
 				onOpenUsage={companion ? openUsage : null}
 				onOpenSessions={companion ? openSessions : null}
 				onOpenCodemap={canCodemap ? openCodemap : null}
@@ -1174,7 +1150,6 @@ function Session({
 				onOpenTimeline={canTimeline ? openTimeline : null}
 				screenCount={screens.length}
 				onOpenScreens={openScreens}
-				push={push}
 			/>
 			<main className="sh-main" data-split={(besideOpen ? 1 : 0) + (ideDocked ? 1 : 0) || undefined}>
 				{showSidebar && (
@@ -1338,7 +1313,6 @@ function Session({
 			{statsSheet === "usage" && companionClient !== null && (
 				<UsageSheet
 					client={companionClient}
-					canGithub={companion?.snap.canGithub === true}
 					limits={
 						limitsOn
 							? {
@@ -1357,7 +1331,6 @@ function Session({
 					canStart={companion.snap.canStart}
 					canSearch={companion.snap.canSearch}
 					initial={sessionsSearch ?? undefined}
-					canGitFlow={companion.snap.canGitFlow}
 					canForeign={companion.snap.canForeign}
 					currentSessionId={sessionId}
 					onOpenHost={onOpenHost}
@@ -1443,7 +1416,6 @@ function Session({
 					onClose={() => setGithubOpen(false)}
 				/>
 			)}
-			{helpOpen && <ShortcutsSheet onClose={closeHelp} />}
 			<PaletteHost
 				actions={paletteActions}
 				control={paletteControl}

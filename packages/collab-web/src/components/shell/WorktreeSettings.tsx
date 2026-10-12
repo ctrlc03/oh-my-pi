@@ -23,8 +23,7 @@ export function WorktreeSettings({ client }: { client: CompanionClient }): React
 	const load = useCallback(() => client.gitSettings(), [client]);
 	const { state, reload } = useRequest(load);
 	return (
-		<section className="sh-stats-section" aria-label="Worktree settings">
-			<h2 className="sh-recents-title">Git worktrees</h2>
+		<>
 			{state.status === "loading" && (
 				<div className="sh-companion-empty sh-file-status">
 					<LoaderCircle size={14} className="sh-spin" /> Loading…
@@ -39,7 +38,7 @@ export function WorktreeSettings({ client }: { client: CompanionClient }): React
 				</div>
 			)}
 			{state.status === "ready" && <WorktreeForm client={client} saved={state.value} />}
-		</section>
+		</>
 	);
 }
 

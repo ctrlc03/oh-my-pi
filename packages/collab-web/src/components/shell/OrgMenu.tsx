@@ -209,64 +209,61 @@ export function OrgSnoozeSheet(props: {
 	);
 }
 
-export function OrgSettingsSheet({ org, onClose }: { org: SessionOrgControl; onClose(): void }): ReactNode {
+/** Auto-settle rules: idle days, the pull request rule, and ending a session when it settles (the last only where the computer can). */
+export function AutoSettlePanel({ org }: { org: SessionOrgControl }): ReactNode {
 	const { settings } = org.doc;
 	return (
-		<Sheet label="Auto-settle" onClose={onClose}>
-			<SheetHead title="Auto-settle" onClose={onClose} />
-			<div className="sh-org-settings-body">
-				<label className="sh-field">
-					<span className="sh-field-label">Settle sessions that sit idle</span>
-					<select
-						className="sh-input"
-						value={settings.idleDays ?? ""}
-						onChange={e =>
-							org.setSettings({ idleDays: e.currentTarget.value === "" ? null : Number(e.currentTarget.value) })
-						}
-					>
-						<option value="">Never</option>
-						{IDLE_DAY_CHOICES.map(days => (
-							<option key={days} value={days}>
-								for {days} days
-							</option>
-						))}
-					</select>
-					<span className="sh-field-hint">
-						Pinned and snoozed sessions are left alone, and so are those with auto-settle turned off in their
-						menu.
+		<div className="sh-org-settings-body">
+			<label className="sh-field">
+				<span className="sh-field-label">Settle sessions that sit idle</span>
+				<select
+					className="sh-input"
+					value={settings.idleDays ?? ""}
+					onChange={e =>
+						org.setSettings({ idleDays: e.currentTarget.value === "" ? null : Number(e.currentTarget.value) })
+					}
+				>
+					<option value="">Never</option>
+					{IDLE_DAY_CHOICES.map(days => (
+						<option key={days} value={days}>
+							for {days} days
+						</option>
+					))}
+				</select>
+				<span className="sh-field-hint">
+					Pinned and snoozed sessions are left alone, and so are those with auto-settle turned off in their menu.
+				</span>
+			</label>
+			{org.synced && (
+				<label className="sh-org-check">
+					<input
+						type="checkbox"
+						checked={settings.settleOnPr}
+						onChange={e => org.setSettings({ settleOnPr: e.currentTarget.checked })}
+					/>
+					<span>Settle when the session's pull request merges or closes</span>
+				</label>
+			)}
+			{org.canEndOnSettle && (
+				<label className="sh-org-check sh-org-check-hinted">
+					<input
+						type="checkbox"
+						checked={settings.endOnSettle === true}
+						onChange={e => org.setSettings({ endOnSettle: e.currentTarget.checked })}
+					/>
+					<span className="sh-org-check-text">
+						End sessions when they settle
+						<span className="sh-field-hint">
+							Ends the session on this computer when it settles; open it to resume.
+						</span>
 					</span>
 				</label>
-				{org.synced && (
-					<label className="sh-org-check">
-						<input
-							type="checkbox"
-							checked={settings.settleOnPr}
-							onChange={e => org.setSettings({ settleOnPr: e.currentTarget.checked })}
-						/>
-						<span>Settle when the session's pull request merges or closes</span>
-					</label>
-				)}
-				{org.canEndOnSettle && (
-					<label className="sh-org-check sh-org-check-hinted">
-						<input
-							type="checkbox"
-							checked={settings.endOnSettle === true}
-							onChange={e => org.setSettings({ endOnSettle: e.currentTarget.checked })}
-						/>
-						<span className="sh-org-check-text">
-							End sessions when they settle
-							<span className="sh-field-hint">
-								Ends the session on this computer when it settles; open it to resume.
-							</span>
-						</span>
-					</label>
-				)}
-				<span className="sh-field-hint">
-					{org.synced
-						? "Pins, snoozes and settled sessions follow you across devices through your computer."
-						: "Kept on this device. Pair your computer to share it across devices."}
-				</span>
-			</div>
-		</Sheet>
+			)}
+			<span className="sh-field-hint">
+				{org.synced
+					? "Pins, snoozes and settled sessions follow you across devices through your computer."
+					: "Kept on this device. Pair your computer to share it across devices."}
+			</span>
+		</div>
 	);
 }

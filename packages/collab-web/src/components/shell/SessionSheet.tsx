@@ -8,13 +8,10 @@ import {
 	type LucideIcon,
 	LogOut,
 	MessageSquare,
-	Moon,
 	Pencil,
 	Redo2,
 	Rows3,
 	Share2,
-	Sun,
-	SunMoon,
 	Undo2,
 	X,
 } from "lucide-react";
@@ -24,45 +21,23 @@ import type { ConnectionPhase, ContextItemsInfo } from "../../lib/client";
 import { exportFilename } from "../../lib/export";
 import { TRIM_CHOICES } from "../../lib/trim";
 import { fmtPercent, fmtTokens } from "../../lib/format";
-import type { PushControl } from "../../lib/push";
-import { type EnterWhileRunning, setEnterWhileRunning, useEnterWhileRunning } from "../../lib/composer-prefs";
 import { openPalette } from "../../lib/palette";
+import { openSettings } from "../../lib/settings-ui";
 import { effectiveKeys, formatCombo, IS_MAC, useOverrides } from "../../lib/shortcuts";
-import { type ThemePreference, useThemePreference } from "../../lib/theme";
 import { formatUsage, type SessionUsage } from "../../lib/usage";
 import { ContextItems } from "./ContextItems";
 import { AgentChip } from "./AgentChip";
 import { PermissionControl } from "./PermissionControl";
 import { PrWatch } from "./PrWatch";
-import { PushButton, SandboxedChip } from "./CompanionCard";
+import { SandboxedChip } from "./CompanionCard";
 import { ModelList } from "./ModelControls";
 import { Sheet } from "./Sheet";
 import type { TurnUndoControl } from "./TurnUndo";
-
-const THEMES: readonly { value: ThemePreference; label: string; Icon: LucideIcon }[] = [
-	{ value: "system", label: "System", Icon: SunMoon },
-	{ value: "light", label: "Light", Icon: Sun },
-	{ value: "dark", label: "Dark", Icon: Moon },
-];
 
 const VIEWS: readonly { chat: boolean; label: string; Icon: LucideIcon }[] = [
 	{ chat: true, label: "Chat", Icon: MessageSquare },
 	{ chat: false, label: "Full", Icon: Rows3 },
 ];
-
-/** What Enter does while the agent works: steers the running turn, or holds the message until the turn ends (Alt+Enter does the other). */
-const ENTER_CHOICES: readonly { value: EnterWhileRunning; label: string; title: string }[] = [
-	{ value: "steer", label: "Steers", title: "Enter sends into the running turn; Alt+Enter waits for it to end" },
-	{ value: "queue", label: "Queues", title: "Enter waits for the running turn to end; Alt+Enter sends into it" },
-];
-
-const PUSH_LABEL: Record<PushControl["status"], string> = {
-	unsupported: "",
-	off: "Off",
-	on: "On",
-	busy: "…",
-	denied: "Blocked in settings",
-};
 
 /** Desktop shortcuts, wired in app.tsx with the keys the reader chose; shown only where a pointer can use them. */
 function shortcutHints(): readonly { keys: string; action: string }[] {
@@ -94,8 +69,6 @@ export interface SessionSheetProps {
 	/** Files the agent changed this session. */
 	changeCount: number;
 	onOpenChanges(): void;
-	/** The keyboard shortcuts and touch gestures sheet. */
-	onOpenShortcuts(): void;
 	/** Usage and all-sessions screens; null when no computer is paired. */
 	onOpenUsage: (() => void) | null;
 	onOpenSessions: (() => void) | null;
@@ -116,7 +89,6 @@ export interface SessionSheetProps {
 	/** Images the agent's tools produced this session. */
 	screenCount: number;
 	onOpenScreens(): void;
-	push: PushControl;
 	onLeave(): void;
 	onClose(): void;
 	/** The paired computer can show this session's git working tree. */
@@ -157,7 +129,6 @@ export function SessionSheet({
 	onKeepTurnsChange,
 	changeCount,
 	onOpenChanges,
-	onOpenShortcuts,
 	onOpenUsage,
 	onOpenSessions,
 	onOpenCodemap,
@@ -177,12 +148,9 @@ export function SessionSheet({
 	contextItems,
 	canWatchPr,
 	exportMarkdown,
-	push,
 	onLeave,
 	onClose,
 }: SessionSheetProps): ReactNode {
-	const { preference, setPreference } = useThemePreference();
-	const enterWhileRunning = useEnterWhileRunning();
 	useOverrides();
 	const hints = shortcutHints();
 	const [pickerOpen, setPickerOpen] = useState(false);
@@ -577,26 +545,6 @@ export function SessionSheet({
 					</div>
 				)}
 				<div className="sh-sheet-row">
-					<dt>Enter key</dt>
-					<dd>
-						<div className="sh-segmented" role="radiogroup" aria-label="Enter while the agent is working">
-							{ENTER_CHOICES.map(choice => (
-								<button
-									key={choice.value}
-									type="button"
-									role="radio"
-									aria-checked={enterWhileRunning === choice.value}
-									className={enterWhileRunning === choice.value ? "sh-segment sh-segment-on" : "sh-segment"}
-									onClick={() => setEnterWhileRunning(choice.value)}
-									title={choice.title}
-								>
-									{choice.label}
-								</button>
-							))}
-						</div>
-					</dd>
-				</div>
-				<div className="sh-sheet-row">
 					<dt>Changes</dt>
 					<dd>
 						<button
@@ -611,15 +559,6 @@ export function SessionSheet({
 									? "Working tree"
 									: "No files yet"}
 							{(changeCount > 0 || workingTree) && <ChevronRight size={14} />}
-						</button>
-					</dd>
-				</div>
-				<div className="sh-sheet-row">
-					<dt>Shortcuts</dt>
-					<dd>
-						<button type="button" className="sh-sheet-link" onClick={onOpenShortcuts}>
-							Keys and gestures
-							<ChevronRight size={14} />
 						</button>
 					</dd>
 				</div>
@@ -736,32 +675,20 @@ export function SessionSheet({
 						</dd>
 					</div>
 				)}
-				{push.status !== "unsupported" && (
-					<div className="sh-sheet-row">
-						<dt>Notify</dt>
-						<dd>
-							<PushButton push={push} />
-							<span className="sh-sheet-faint">{PUSH_LABEL[push.status]}</span>
-						</dd>
-					</div>
-				)}
-				<div className="sh-sheet-row">
-					<dt>Theme</dt>
+				<div className="sh-sheet-row sh-sheet-row-phone">
+					<dt>Settings</dt>
 					<dd>
-						<div className="sh-segmented" role="radiogroup" aria-label="Theme">
-							{THEMES.map(({ value, label, Icon }) => (
-								<button
-									key={value}
-									type="button"
-									role="radio"
-									aria-checked={preference === value}
-									className={preference === value ? "sh-segment sh-segment-on" : "sh-segment"}
-									onClick={() => setPreference(value)}
-								>
-									<Icon size={14} /> {label}
-								</button>
-							))}
-						</div>
+						<button
+							type="button"
+							className="sh-sheet-link"
+							onClick={() => {
+								onClose();
+								openSettings();
+							}}
+						>
+							Theme, alerts, devices
+							<ChevronRight size={14} />
+						</button>
 					</dd>
 				</div>
 			</dl>
@@ -774,7 +701,6 @@ export function SessionSheet({
 					</div>
 				))}
 			</div>
-			{push.error && <div className="sh-connect-error">{push.error}</div>}
 
 			<button type="button" className="sh-btn sh-sheet-leave" onClick={onLeave}>
 				<LogOut size={15} /> Leave session

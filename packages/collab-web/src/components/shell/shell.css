@@ -251,8 +251,8 @@
 	background: var(--selected);
 }
 
-/* ---- theme toggle (system / light / dark) ---- */
-.sh-theme-toggle {
+/* ---- settings button (header, connect screen) ---- */
+.sh-settings-toggle {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -269,7 +269,7 @@
 		background 120ms ease;
 }
 
-.sh-theme-toggle:hover {
+.sh-settings-toggle:hover {
 	color: var(--fg);
 	background: var(--hover);
 }
@@ -832,7 +832,7 @@
 	padding-bottom: 8px;
 }
 
-/* The chips scroll; the edit button stays put at the end, so a long row never hides it. */
+/* The chips scroll sideways in one row. */
 .sh-quick-bar {
 	display: flex;
 	align-items: center;
@@ -890,19 +890,9 @@
 	opacity: 0.45;
 }
 
-.sh-quick-chip-icon {
-	width: 34px;
-	padding: 0;
-	justify-content: center;
-}
-
 @media (any-pointer: coarse) {
 	.sh-quick-chip {
 		height: 44px;
-	}
-
-	.sh-quick-chip-icon {
-		width: 44px;
 	}
 
 	.sh-quick-remove {
@@ -2728,7 +2718,7 @@
 	.sh-header .sh-chip,
 	.sh-header .sh-gauge,
 	.sh-header .sh-avatars,
-	.sh-header .sh-theme-toggle,
+	.sh-header .sh-settings-toggle,
 	.sh-github-toggle,
 	.sh-leave,
 	.sh-btn-label {
@@ -2870,7 +2860,7 @@
 		font-size: 16px;
 	}
 	.sh-btn,
-	.sh-theme-toggle,
+	.sh-settings-toggle,
 	.sh-segment,
 	.sh-sheet-link {
 		min-height: 44px;
@@ -2879,7 +2869,7 @@
 		padding-top: 12px;
 	}
 	.sh-btn-icon,
-	.sh-theme-toggle {
+	.sh-settings-toggle {
 		min-width: 44px;
 	}
 	.sh-btn-icon > .sh-badge {

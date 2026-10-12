@@ -6,6 +6,7 @@ import {
 	PanelLeft,
 	PanelRight,
 	Search,
+	Settings,
 	ShieldAlert,
 	ShieldCheck,
 	SquareCode,
@@ -15,14 +16,13 @@ import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import type { ConnectionPhase, ContextItemsInfo } from "../../lib/client";
 import { fmtPercent, shortenPath } from "../../lib/format";
-import type { PushControl } from "../../lib/push";
+import { openSettings } from "../../lib/settings-ui";
 import { shortcutKeys, useOverrides } from "../../lib/shortcuts";
 import type { SessionUsage } from "../../lib/usage";
 import { AgentChip } from "./AgentChip";
 import { OmpMark } from "./OmpMark";
 import { SessionSheet } from "./SessionSheet";
 import type { TurnUndoControl } from "./TurnUndo";
-import { ThemeToggle } from "./ThemeToggle";
 
 const PHASE_LABEL: Record<ConnectionPhase, string> = {
 	connecting: "Connecting",
@@ -64,7 +64,6 @@ export interface HeaderBarProps {
 	onKeepTurnsChange(keep: number | null): void;
 	changeCount: number;
 	onOpenChanges(): void;
-	onOpenShortcuts(): void;
 	/** Usage and all-sessions screens; null when no computer is paired. */
 	onOpenUsage: (() => void) | null;
 	onOpenSessions: (() => void) | null;
@@ -100,7 +99,6 @@ export interface HeaderBarProps {
 	canWatchPr: boolean;
 	/** The session as Markdown, built on demand from every entry (not the trimmed view). Stable across renders. */
 	exportMarkdown(title: string): string;
-	push: PushControl;
 }
 
 /** Memoized on its snapshot fields, so streaming frames that leave them untouched skip it. */
@@ -129,7 +127,6 @@ export const HeaderBar = memo(function HeaderBar({
 	onKeepTurnsChange,
 	changeCount,
 	onOpenChanges,
-	onOpenShortcuts,
 	onOpenUsage,
 	onOpenSessions,
 	onOpenCodemap,
@@ -149,7 +146,6 @@ export const HeaderBar = memo(function HeaderBar({
 	contextItems,
 	canWatchPr,
 	exportMarkdown,
-	push,
 }: HeaderBarProps): ReactNode {
 	useOverrides();
 	// The live name first: `header.title` is the session file's title as of joining.
@@ -274,7 +270,15 @@ export const HeaderBar = memo(function HeaderBar({
 						))}
 					</span>
 				)}
-				<ThemeToggle />
+				<button
+					type="button"
+					className="sh-settings-toggle"
+					onClick={() => openSettings()}
+					data-shortcut={shortcutKeys("settings")}
+					aria-label="Open settings"
+				>
+					<Settings size={16} />
+				</button>
 				<button
 					type="button"
 					className={searchOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
@@ -366,10 +370,6 @@ export const HeaderBar = memo(function HeaderBar({
 						setSheetOpen(false);
 						onOpenChanges();
 					}}
-					onOpenShortcuts={() => {
-						setSheetOpen(false);
-						onOpenShortcuts();
-					}}
 					onOpenUsage={
 						onOpenUsage &&
 						(() => {
@@ -446,7 +446,6 @@ export const HeaderBar = memo(function HeaderBar({
 					contextItems={contextItems}
 					canWatchPr={canWatchPr}
 					exportMarkdown={exportMarkdown}
-					push={push}
 					onLeave={onLeave}
 					onClose={closeSheet}
 				/>

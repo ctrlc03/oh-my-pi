@@ -292,3 +292,30 @@ describe("collab guest follows host branch changes", () => {
 		);
 	});
 });
+
+describe("collab guest follows host /clear", () => {
+	it("empties its model context at the boundary, builds on it, and gets the earlier turns back when the host rewinds before it", async () => {
+		const hostManager = SessionManager.inMemory();
+		hostManager.appendMessage({ role: "user", content: "first", timestamp: Date.now() });
+		const keptId = hostManager.appendMessage(createAssistantMessage("reply"));
+		const host = new CollabHost(makeHostContext(hostManager));
+		await host.start("ws://localhost:8788");
+		cleanups.push(() => host.stop("test done"));
+		const harness = makeGuestHarness(model, modelRegistry);
+		cleanups.push(harness.dispose);
+		await harness.guest.join(host.link);
+		await settleFrames(() => harness.session.messages.length === 2);
+
+		hostManager.appendResetBoundary();
+		await settleFrames(() => harness.session.messages.length === 0);
+
+		hostManager.appendMessage({ role: "user", content: "fresh start", timestamp: Date.now() });
+		await settleFrames(() => harness.session.messages.length === 1);
+		expect(harness.session.messages[0]).toMatchObject({ role: "user", content: "fresh start" });
+
+		// Rewinding to before the boundary drops it with the rest of that branch.
+		hostManager.branch(keptId);
+		await settleFrames(() => harness.session.messages.length === 2);
+		expect(harness.session.sessionManager.getBranch().map(entry => entry.type)).toEqual(["message", "message"]);
+	});
+});

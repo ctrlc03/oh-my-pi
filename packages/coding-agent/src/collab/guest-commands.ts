@@ -50,20 +50,24 @@ export interface CollabRunnableBuiltin {
  *   reversible, no credentials or settings. Leaving it can open a confirm dialog
  *   on the host terminal, so the host refuses `/plan` while plan mode is on.
  * - `retry`: re-runs the last failed turn; no UI, no arguments.
+ * - `clear`: drops the conversation context in place and keeps the session (the host's own
+ *   `/clear`). It appends a `reset_boundary` entry, which guests replicate and show as a divider.
+ *   The host refuses it while a response streams or a compaction runs, rather than abort either.
  * - `compact`, `model` / `switch`, `effort`, `rename`, `undo`, `redo`: the guest session controls
  *   (`session-cmd`) with a slash spelling. `/model` is the session-only switch
  *   (what `/switch` does): the host's `/model` opens a selector that can also
  *   change saved defaults, which a guest never reaches.
  * - `new`, `resume`, `fork`: replace the session; see ./guest-session-commands.
  *
- * Not here, on purpose: `/clear` and `/shake` rewrite what the model sees without
- * the transcript guests replicate showing it; `/handoff`, `/fresh`, `/branch`,
+ * Not here, on purpose: `/shake` rewrites what the model sees without the transcript guests
+ * replicate showing it; `/handoff`, `/fresh`, `/branch`,
  * `/tree` and `/delete` have a host selector or confirm in their way or destroy
  * the host's work; the rest edit settings, accounts, files or the host process.
  */
 export const COLLAB_RUNNABLE_BUILTINS: Record<string, CollabRunnableBuiltin> = {
 	plan: { description: "Enter plan mode: the agent plans before executing" },
 	retry: {},
+	clear: { description: "Clear the conversation context; the session continues", takes: "none" },
 	compact: {
 		description: "Compact the conversation to free context",
 		args: "[instructions]",

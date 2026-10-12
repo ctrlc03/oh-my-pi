@@ -34,11 +34,15 @@ interface Harness {
 	notices: string[];
 	planCalls: (string | undefined)[];
 	retries: number;
+	/** Times the host's own `/clear` handler ran. */
+	clears: number;
 	/** Text the host's own input path (`session.prompt`) received: it runs extension commands, so a guest's text must never reach it. */
 	hostInputs: string[];
 	state: {
 		planModeEnabled: boolean;
 		retryResult: boolean;
+		/** The host's `/clear` handler warns and leaves the session alone, as it does while a bash command runs. */
+		clearRefused: boolean;
 		goalModeEnabled: boolean;
 		busy: boolean;
 		streaming: boolean;
@@ -78,6 +82,7 @@ function makeHost(options: HostOptions = {}): Harness {
 	const state = {
 		planModeEnabled: false,
 		retryResult: true,
+		clearRefused: false,
 		goalModeEnabled: false,
 		busy: false,
 		streaming: false,
@@ -89,6 +94,7 @@ function makeHost(options: HostOptions = {}): Harness {
 		notices,
 		planCalls: [] as (string | undefined)[],
 		retries: 0,
+		clears: 0,
 		hostInputs,
 		state,
 		modelSwitches: [] as string[],
@@ -250,6 +256,13 @@ function makeHost(options: HostOptions = {}): Harness {
 			return Promise.resolve("ok");
 		},
 		updateEditorBorderColor: () => {},
+		// The real one drops the context and appends a boundary, or only warns on the host terminal.
+		handleResetContextCommand: () => {
+			harness.clears++;
+			if (!state.clearRefused) manager.appendResetBoundary();
+			wake();
+			return Promise.resolve();
+		},
 		// The real ones refuse on the host terminal; these switch the session like they do when they run.
 		handleClearCommand: async () => {
 			harness.switches.push("new");
@@ -280,7 +293,11 @@ interface TestGuest {
 	nextFrame(): Promise<void>;
 }
 
-async function joinAsGuest(link: string, readOnly = false): Promise<TestGuest> {
+async function joinAsGuest(
+	link: string,
+	readOnly = false,
+	hello: { resume?: { sessionId: string; entryId: string } } = {},
+): Promise<TestGuest> {
 	const parsed = parseCollabLink(link);
 	if ("error" in parsed) throw new Error(parsed.error);
 	const writeToken = parsed.writeToken && !readOnly ? Buffer.from(parsed.writeToken).toString("base64url") : undefined;
@@ -291,7 +308,7 @@ async function joinAsGuest(link: string, readOnly = false): Promise<TestGuest> {
 		frames.push(frame);
 		for (const wake of waiters.splice(0)) wake();
 	};
-	socket.onOpen = () => socket.send({ t: "hello", proto: COLLAB_PROTO, name: "guest", writeToken });
+	socket.onOpen = () => socket.send({ t: "hello", proto: COLLAB_PROTO, name: "guest", writeToken, ...hello });
 	socket.connect();
 	const next: TestGuest["next"] = async type => {
 		for (;;) {
@@ -363,6 +380,7 @@ describe("collab slash command list", () => {
 			"effort",
 			"undo",
 			"redo",
+			"clear",
 			"compact",
 			"retry",
 			"rename",
@@ -794,5 +812,101 @@ describe("collab session-replacing slash commands", () => {
 		expect(harness.switches).toEqual([]);
 		expect(manager.getSessionId()).toBe(before);
 		expect(ran()).toEqual([]);
+	});
+});
+
+describe("collab /clear", () => {
+	/** Ids of the `type` entries the guest has received, live or in a snapshot. */
+	function received(guest: TestGuest, type: string): string[] {
+		const ids: string[] = [];
+		for (const frame of guest.frames) {
+			if (frame.t === "entry" && frame.entry.type === type) ids.push(frame.entry.id);
+			if (frame.t === "snapshot-chunk") {
+				for (const entry of frame.entries) if (entry.type === type) ids.push(entry.id);
+			}
+		}
+		return ids;
+	}
+
+	function seedConversation(): string {
+		const manager = harness.ctx.sessionManager;
+		manager.appendMessage({ role: "user", content: "before", timestamp: 0 });
+		return manager.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "answer" }],
+			timestamp: 0,
+		} as never);
+	}
+
+	it("runs the host's own reset for a writer, mirrors the boundary live and announces it once", async () => {
+		const guest = await startAndJoin();
+		const commands = (await guest.next("welcome")).commands ?? [];
+		expect(commands.find(command => command.name === "clear")).toEqual({
+			name: "clear",
+			description: "Clear the conversation context; the session continues",
+		});
+		seedConversation();
+
+		guest.socket.send({ t: "prompt", text: "/clear" });
+		await harness.until(() => harness.notices.includes("guest ran /clear"));
+		expect(harness.clears).toBe(1);
+		const leaf = harness.ctx.sessionManager.getLeafId();
+		expect(harness.ctx.sessionManager.getEntry(leaf ?? "")?.type).toBe("reset_boundary");
+		while (received(guest, "reset_boundary").length === 0) await guest.nextFrame();
+		expect(received(guest, "reset_boundary")).toEqual([leaf as string]);
+		expect(ran()).toEqual(["guest ran /clear"]);
+		expect(harness.prompts).toEqual([]);
+	});
+
+	it("refuses arguments, a busy host and a read-only link, and clears nothing", async () => {
+		const guest = await startAndJoin();
+		seedConversation();
+		guest.socket.send({ t: "prompt", text: "/clear everything" });
+		expect(await errorAt(guest, 0)).toBe("/clear takes no arguments");
+
+		harness.state.streaming = true;
+		harness.state.busy = true;
+		guest.socket.send({ t: "prompt", text: "/clear" });
+		expect(await errorAt(guest, 1)).toBe("/clear: wait for the current response, compaction, or command to finish");
+		expect(harness.clears).toBe(0);
+		expect(received(guest, "reset_boundary")).toEqual([]);
+		await host.stop("next");
+
+		const viewer = await startAndJoin(true);
+		viewer.socket.send({ t: "prompt", text: "/clear" });
+		await errorAt(viewer, 0);
+		expect(harness.clears).toBe(0);
+		expect(ran()).toEqual([]);
+	});
+
+	it("tells the guest alone when the host's handler leaves no boundary behind", async () => {
+		const guest = await startAndJoin();
+		harness.state.clearRefused = true;
+		guest.socket.send({ t: "prompt", text: "/clear" });
+		expect(await errorAt(guest, 0)).toBe("/clear: the context could not be cleared");
+		expect(ran()).toEqual([]);
+	});
+
+	it("sends the boundary to a guest that joins later and to one resuming from before it", async () => {
+		const writer = await startAndJoin();
+		const lastBefore = seedConversation();
+		writer.socket.send({ t: "prompt", text: "/clear" });
+		await harness.until(() => harness.notices.includes("guest ran /clear"));
+		const boundary = harness.ctx.sessionManager.getLeafId() as string;
+
+		const late = await joinAsGuest(host.link);
+		const welcome = await late.next("welcome");
+		while (received(late, "reset_boundary").length === 0) await late.nextFrame();
+		expect(welcome.resumed).toBeUndefined();
+		expect(received(late, "reset_boundary")).toEqual([boundary]);
+
+		const resuming = await joinAsGuest(host.link, false, {
+			resume: { sessionId: harness.ctx.sessionManager.getSessionId(), entryId: lastBefore },
+		});
+		const resumed = await resuming.next("welcome");
+		while (received(resuming, "reset_boundary").length === 0) await resuming.nextFrame();
+		expect(resumed.resumed).toBe(true);
+		expect(resumed.entryCount).toBe(1);
+		expect(received(resuming, "reset_boundary")).toEqual([boundary]);
 	});
 });

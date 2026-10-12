@@ -155,6 +155,7 @@ const WIRE_SESSION_ENTRY_TYPES: Record<WireSessionEntry["type"], true> = {
 	branch_summary: true,
 	model_change: true,
 	thinking_level_change: true,
+	reset_boundary: true,
 };
 const COLLAB_BUS_CHANNELS = [
 	TASK_SUBAGENT_LIFECYCLE_CHANNEL,
@@ -1468,6 +1469,10 @@ export class CollabHost {
 			ctx.session.emitNotice("info", `${peerName} ran /${name}`, "collab");
 			return;
 		}
+		if (name === "clear") {
+			await this.#runClear(refuse, peerName);
+			return;
+		}
 		if (name === "retry") {
 			if (!(await ctx.session.retry())) {
 				refuse("nothing to retry");
@@ -1496,6 +1501,28 @@ export class CollabHost {
 		if (this.#guestTrafficAllowed()) ctx.session.emitNotice("info", `${peerName} ran /${name}`, "collab");
 		if (name === "plan" && args)
 			await this.#dispatchSlashAware(args, images, deliver, fromPeer, modelOverride, context);
+	}
+
+	/**
+	 * `/clear` for a guest: the host's own handler, so its terminal drops the transcript as it does for
+	 * `/clear` typed there. That handler aborts an in-flight compaction and only warns when a response
+	 * is streaming; for a guest both are refused instead. The handler returns nothing, so success is
+	 * the session's new `reset_boundary` leaf, which `replicateAppended` has already sent to the room.
+	 */
+	async #runClear(refuse: (reason: string) => void, peerName: string): Promise<void> {
+		const { session, sessionManager } = this.#ctx;
+		if (session.isBusyForSnapshot || session.isSessionTransitioning) {
+			refuse("wait for the current response, compaction, or command to finish");
+			return;
+		}
+		const before = sessionManager.getLeafId();
+		await this.#ctx.handleResetContextCommand();
+		const leaf = sessionManager.getLeafId();
+		if (leaf === null || leaf === before || sessionManager.getEntry(leaf)?.type !== "reset_boundary") {
+			refuse("the context could not be cleared");
+			return;
+		}
+		if (this.#guestTrafficAllowed()) session.emitNotice("info", `${peerName} ran /clear`, "collab");
 	}
 
 	/** The context block for a prompt's `mentions` (see {@link buildMentionContext}); undefined when there are none. */

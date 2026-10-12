@@ -266,7 +266,9 @@ function sendFrame(frame: HostFrame, targetPeer = 0): void {
 function buildState(): SessionState {
 	const participants: SessionState["participants"] = [{ name: HOST_DISPLAY_NAME, role: "host" }];
 	for (const peer of room.peers.values()) participants.push({ name: peer.name, role: "guest" });
-	const tokens = 51_000 + entries.length * 120;
+	// A `/clear` restarts the context: what counts is what came after the latest boundary.
+	const clearedAt = entries.findLastIndex(entry => entry.type === "reset_boundary");
+	const tokens = clearedAt < 0 ? 51_000 + entries.length * 120 : 3_200 + (entries.length - clearedAt - 1) * 120;
 	return {
 		isStreaming: streaming,
 		queuedMessageCount: queuedPrompts + followUps.length,
@@ -444,7 +446,7 @@ function handleHello(peer: RoomPeer, hello: HelloFrame): void {
 						"turn-diff",
 						"receipts",
 					],
-			commands: fixtureCommands,
+			commands: mockAgent ? fixtureCommands.filter(command => command.name !== "clear") : fixtureCommands,
 		},
 		entries,
 	);
@@ -864,6 +866,7 @@ const MOCK_SLASH_COMMANDS: Record<
 	rename: { cmd: "rename", takes: "required", hint: "<title>" },
 	undo: { cmd: "undo", takes: "none" },
 	redo: { cmd: "redo", takes: "none" },
+	clear: { takes: "none" },
 	new: { takes: "none" },
 	fork: { takes: "none" },
 	resume: { takes: "required", hint: "<session>" },
@@ -877,6 +880,8 @@ const MOCK_SLASH_COMMANDS: Record<
  */
 function runMockSlashCommand(name: string, args: string, fromPeer: number): boolean {
 	if (!Object.hasOwn(MOCK_SLASH_COMMANDS, name)) return false;
+	// A vendor agent has its own commands: the text reaches it as a prompt.
+	if (name === "clear" && mockAgent) return false;
 	const spec = MOCK_SLASH_COMMANDS[name];
 	const refuse = (message: string): boolean => {
 		sendFrame({ t: "error", message }, fromPeer);
@@ -890,6 +895,18 @@ function runMockSlashCommand(name: string, args: string, fromPeer: number): bool
 	}
 	if (streaming || isReplaying()) {
 		return refuse(`/${name}: wait for the current response or command to finish (stop it first if needed)`);
+	}
+	if (name === "clear") {
+		liveEntrySeq++;
+		appendEntry({
+			id: `live-${liveEntrySeq}`,
+			parentId: lastEntryId,
+			timestamp: new Date().toISOString(),
+			type: "reset_boundary",
+		});
+		notice("info", `${peerName(fromPeer)} ran /clear`);
+		broadcastState();
+		return true;
 	}
 	if (name === "resume" && !fixtureResumeChoices.some(choice => choice.value === args)) {
 		return refuse(`/resume: no session matching "${args}" in this folder`);

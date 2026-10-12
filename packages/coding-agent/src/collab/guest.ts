@@ -610,6 +610,18 @@ export class CollabGuestLink {
 					// exactly as the host does after appendCompaction/branchWithSummary
 					// (session-maintenance.ts, agent-session.ts).
 					this.#ctx.session.agent.replaceMessages(this.#ctx.session.buildDisplaySessionContext().messages);
+				} else if (frame.entry.type === "reset_boundary") {
+					// `/clear` on the host: the model context restarts after this entry, so the replica
+					// drops its messages and the transcript the guest sees is rebuilt from the boundary,
+					// as the host's terminal did. Nothing else announces it (rendering is events-only).
+					this.#ctx.session.agent.replaceMessages(this.#ctx.session.buildDisplaySessionContext().messages);
+					this.#applyChain = this.#applyChain
+						.then(async () => {
+							if (this.#left) return;
+							await this.#ctx.renderInitialMessages({ clearTerminalHistory: true });
+							await this.#ctx.reloadTodos();
+						})
+						.catch(err => logger.warn("collab guest context-clear render failed", { error: String(err) }));
 				}
 				break;
 			}

@@ -96,6 +96,9 @@ function blocksOf(entries: readonly SessionEntry[]): Block[] {
 			case "branch_summary":
 				add(quote(`Branch summary\n\n${entry.summary.trim()}`));
 				break;
+			case "reset_boundary":
+				add(quote("Context cleared"));
+				break;
 			default:
 				break;
 		}

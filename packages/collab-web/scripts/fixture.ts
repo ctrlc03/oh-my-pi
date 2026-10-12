@@ -165,6 +165,7 @@ export const fixtureCommands: CollabCommand[] = [
 	{ name: "effort", description: "Set the thinking level for this session", args: "<level>" },
 	{ name: "compact", description: "Compact the conversation to free context", args: "[instructions]" },
 	{ name: "retry", description: "Retry the last turn" },
+	{ name: "clear", description: "Clear the conversation context; the session continues" },
 	{ name: "rename", description: "Rename this session", args: "<title>" },
 	{
 		name: "undo",

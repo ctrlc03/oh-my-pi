@@ -824,6 +824,38 @@ describe("GuestClient saved transcript", () => {
 		});
 	});
 
+	it("keeps a /clear boundary live, saves it, and resumes after it; a rewind before it drops it", async () => {
+		await withSocket(async sent => {
+			const store = memoryStore();
+			const boundary: SessionEntry = {
+				type: "reset_boundary",
+				id: "clear1",
+				parentId: "e2",
+				timestamp: "2026-06-12T00:00:02Z",
+			};
+			const client = new GuestClient(LINK, "tester", store);
+			client.connect();
+			await settle();
+			client.applyFrameForTest(welcome(2));
+			client.applyFrameForTest(snapshotChunk([e1, e2]));
+			client.persist();
+			await settle();
+			client.applyFrameForTest({ t: "entry", entry: boundary });
+			expect(client.getSnapshot().entries).toEqual([e1, e2, boundary]);
+			client.close();
+			await settle();
+
+			const reopened = await reopen(store);
+			expect(reopened.getSnapshot().entries).toEqual([e1, e2, boundary]);
+			expect(lastHello(sent).resume).toEqual({ sessionId: HEADER.id, entryId: "clear1" });
+			reopened.applyFrameForTest(welcome(0, { resumed: true }));
+			reopened.applyFrameForTest(snapshotChunk([], true));
+			reopened.applyFrameForTest({ t: "branch", keep: "e1", entries: [e4] });
+			expect(reopened.getSnapshot().entries).toEqual([e1, e4]);
+			reopened.close();
+		});
+	});
+
 	it("does not connect a client closed while the saved transcript was being read", async () => {
 		await withSocket(async sent => {
 			const client = new GuestClient(LINK, "tester", memoryStore());

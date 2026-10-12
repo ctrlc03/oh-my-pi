@@ -160,13 +160,23 @@ export interface ThinkingLevelChangeEntry extends EntryBase {
 	thinkingLevel?: string | null;
 }
 
+/**
+ * `/clear`: the host dropped the conversation context in place and kept the session. Nothing
+ * before this entry on the active path reaches the model; the transcript still shows it.
+ * Carries no payload. Guests older than this entry type skip it like any unknown `type`.
+ */
+export interface ResetBoundaryEntry extends EntryBase {
+	type: "reset_boundary";
+}
+
 export type SessionEntry =
 	| MessageEntry
 	| CustomMessageEntry
 	| CompactionEntry
 	| BranchSummaryEntry
 	| ModelChangeEntry
-	| ThinkingLevelChangeEntry;
+	| ThinkingLevelChangeEntry
+	| ResetBoundaryEntry;
 
 /** customType of collab guest prompts injected on the host. */
 export const COLLAB_PROMPT_MESSAGE_TYPE = "collab-prompt";

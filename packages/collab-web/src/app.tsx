@@ -48,6 +48,7 @@ import { collectChanges } from "./lib/changes";
 import { GuestClient } from "./lib/client";
 import { togglePalette, usePaletteEntries } from "./lib/palette";
 import { type CompanionHost, extractPairing, loadPairing, type Pairing, savePairing } from "./lib/companion";
+import { latestClear } from "./lib/context-clear";
 import { subscribeDraft } from "./lib/draft-bus";
 import { openDiagramFile, openSketch } from "./lib/diagram-store";
 import { diagramFileKind } from "./lib/diagrams";
@@ -759,10 +760,23 @@ function Session({
 		const cut = trimEntries(snap.entries, trim.keep);
 		return cut.hiddenTurns === 0 ? undefined : { ...cut, onShowAll: showAllTurns };
 	}, [trim, snap.entries, showAllTurns]);
-	const shownEntries = useMemo(
-		() => (trimmed === undefined ? snap.entries : snap.entries.slice(trimmed.from)),
-		[snap.entries, trimmed],
+	// Entries before the latest `/clear` fold behind a one-line expander; expanding is per boundary,
+	// so a newer `/clear` folds the page again.
+	const [openedClear, setOpenedClear] = useState<string | null>(null);
+	const clear = useMemo(() => latestClear(snap.entries), [snap.entries]);
+	const clearBoundary = clear?.boundaryId;
+	const showCleared = useCallback(() => setOpenedClear(clearBoundary ?? null), [clearBoundary]);
+	const cleared = useMemo(
+		() =>
+			clear === null || clear.boundaryId === openedClear
+				? undefined
+				: { from: clear.from, hiddenMessages: clear.hiddenMessages, onShow: showCleared },
+		[clear, openedClear, showCleared],
 	);
+	const shownEntries = useMemo(() => {
+		const from = Math.max(trimmed?.from ?? 0, cleared?.from ?? 0);
+		return from === 0 ? snap.entries : snap.entries.slice(from);
+	}, [snap.entries, trimmed, cleared]);
 
 	const [search, setSearch] = useState<SearchState | null>(null);
 	const toggleSearch = useCallback(() => setSearch(open => (open ? null : { query: "", target: null })), []);
@@ -1204,6 +1218,7 @@ function Session({
 							queued={snap.queued}
 							onCancelQueued={cancelQueued}
 							trimmed={trimmed}
+							cleared={cleared}
 							onEditPrompt={editPrompt.onEditPrompt}
 							onTurnChanges={turnChanges.onTurnChanges}
 							onSendToAgent={snap.readOnly ? undefined : sendToAgent}

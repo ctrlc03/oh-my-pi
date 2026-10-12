@@ -109,6 +109,7 @@ export function buildChatItems(
 				break;
 			case "compaction":
 			case "branch_summary":
+			case "reset_boundary":
 				human(entry);
 				break;
 			default:

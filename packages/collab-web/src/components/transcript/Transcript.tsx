@@ -55,6 +55,11 @@ export interface TranscriptProps {
 	 * transcript offers *Show all* instead of earlier rows.
 	 */
 	trimmed?: { from: number; hiddenTurns: number; onShowAll(): void };
+	/**
+	 * Entries before the latest `/clear` (`from` is the boundary's index) stay unmounted behind a
+	 * one-line expander; `onShow` unfolds them. Folds with `trimmed`: the later cut wins.
+	 */
+	cleared?: { from: number; hiddenMessages: number; onShow(): void };
 	/** Id of the session's model: replies from any other model since its last change carry a note. */
 	sessionModel?: string;
 	/** Blocks offer *Send to agent*: this puts the quoted excerpt into the message box. */
@@ -546,6 +551,14 @@ const EntryRow = memo(function EntryRow({
 					</span>
 				</div>
 			);
+		case "reset_boundary":
+			return (
+				<div className="tr-divider tr-divider--marker" title={entry.timestamp}>
+					<span>
+						Context cleared <span className="tr-marker">· the agent starts fresh from here</span>
+					</span>
+				</div>
+			);
 		case "thinking_level_change":
 			return (
 				<div className="tr-divider tr-divider--marker" title={entry.timestamp}>
@@ -755,6 +768,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		onEditPrompt,
 		onTurnChanges,
 		trimmed,
+		cleared,
 		sessionModel,
 		onSendToAgent,
 	} = props;
@@ -763,8 +777,8 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	// reader is scrolled away from the bottom, so appended entries never
 	// unmount rows above the reader and shift the page under them.
 	const [pinnedStart, setPinnedStart] = useState<number | null>(null);
-	/** First entry that may mount: past the hidden turns when the transcript is trimmed. */
-	const floor = trimmed?.from ?? 0;
+	/** First entry that may mount: past the hidden turns when the transcript is trimmed, and past a folded `/clear`. */
+	const floor = Math.max(trimmed?.from ?? 0, cleared?.from ?? 0);
 	const tailStart = Math.max(floor, entries.length - WINDOW);
 	const start = pinnedStart === null ? tailStart : Math.max(floor, Math.min(pinnedStart, tailStart));
 	const visible = useMemo(() => entries.slice(start), [entries, start]);
@@ -882,6 +896,23 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		lockRef.current = false;
 		setPinnedStart(start);
 		trimmed?.onShowAll();
+	};
+
+	// Unfolding what `/clear` cut: the window before the boundary mounts above the reader's place.
+	const showCleared = (): void => {
+		const el = rootRef.current;
+		if (el === null || cleared === undefined) return;
+		prependRef.current = scrollAnchor(el);
+		lockRef.current = false;
+		const newFloor = trimmed?.from ?? 0;
+		setPinnedStart(Math.max(newFloor, start - WINDOW));
+		cleared.onShow();
+	};
+
+	/** Unfold whatever hides entry `index` so it can mount. */
+	const reveal = (index: number): void => {
+		if (trimmed !== undefined && index < trimmed.from) trimmed.onShowAll();
+		if (cleared !== undefined && index < cleared.from) cleared.onShow();
 	};
 
 	// Tool calls committed anywhere in the session: rescanned when entries change,
@@ -1013,7 +1044,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 			const index = entries.findIndex(entry => entry.id === searchTarget);
 			if (index >= 0 && index < start) {
 				lockRef.current = false;
-				if (index < floor) trimmed?.onShowAll();
+				reveal(index);
 				setPinnedStart(index);
 			}
 		} else if (row !== null && scrolledToRef.current !== `${searchTarget}:${chat}`) {
@@ -1122,7 +1153,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		if (index < 0) return;
 		lockRef.current = false;
 		scrollToNewRef.current = true;
-		if (index < floor) trimmed?.onShowAll();
+		reveal(index);
 		setPinnedStart(index);
 	};
 
@@ -1185,17 +1216,31 @@ export function Transcript(props: TranscriptProps): ReactNode {
 						Show {(start - floor).toLocaleString("en-US")} earlier {start - floor === 1 ? "entry" : "entries"}
 					</button>
 				)}
-				{start === floor && trimmed !== undefined && trimmed.hiddenTurns > 0 && (
+				{start === floor && cleared !== undefined && cleared.from > (trimmed?.from ?? 0) && (
 					<div className="tr-trimmed">
 						<span>
-							{trimmed.hiddenTurns.toLocaleString("en-US")} earlier turn{trimmed.hiddenTurns === 1 ? "" : "s"}{" "}
-							hidden on this device
+							{cleared.hiddenMessages.toLocaleString("en-US")} earlier message
+							{cleared.hiddenMessages === 1 ? "" : "s"}, before /clear
 						</span>
-						<button type="button" className="tr-trimmed-show" onClick={showAll}>
-							Show all
+						<button type="button" className="tr-trimmed-show" onClick={showCleared}>
+							Show
 						</button>
 					</div>
 				)}
+				{start === floor &&
+					trimmed !== undefined &&
+					trimmed.hiddenTurns > 0 &&
+					trimmed.from >= (cleared?.from ?? 0) && (
+						<div className="tr-trimmed">
+							<span>
+								{trimmed.hiddenTurns.toLocaleString("en-US")} earlier turn{trimmed.hiddenTurns === 1 ? "" : "s"}{" "}
+								hidden on this device
+							</span>
+							<button type="button" className="tr-trimmed-show" onClick={showAll}>
+								Show all
+							</button>
+						</div>
+					)}
 				{pillActive && (
 					<div className="tr-new-dock">
 						<button type="button" className="tr-new-pill" onClick={jumpToNew}>

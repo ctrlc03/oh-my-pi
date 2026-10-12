@@ -188,3 +188,48 @@ describe("Transcript windowing", () => {
 		expect(html).toContain("Show 150 earlier entries");
 	});
 });
+
+describe("Transcript /clear fold", () => {
+	const at = "2026-10-12T00:00:00Z";
+	const prompt = (id: string, text: string): SessionEntry => ({
+		type: "message",
+		id,
+		parentId: null,
+		timestamp: at,
+		message: { role: "user", content: text, timestamp: 0 },
+	});
+	const entries: SessionEntry[] = [
+		prompt("a", "before-one"),
+		prompt("b", "before-two"),
+		{ type: "reset_boundary", id: "clear", parentId: "b", timestamp: at },
+		prompt("c", "after-one"),
+	];
+	const render = (cleared: { from: number; hiddenMessages: number } | undefined): string =>
+		renderToStaticMarkup(
+			<Transcript
+				entries={entries}
+				stream={null}
+				streamDone={true}
+				activeTools={new Map()}
+				working={false}
+				cleared={cleared === undefined ? undefined : { ...cleared, onShow: () => {} }}
+			/>,
+		);
+
+	it("keeps what came before the boundary behind a one-line expander, the divider and later turns visible", () => {
+		const html = render({ from: 2, hiddenMessages: 2 });
+		expect(html).toContain("2 earlier messages, before /clear");
+		expect(html).toContain("Context cleared");
+		expect(html).toContain("after-one");
+		expect(html).not.toContain("before-one");
+		expect(html).not.toContain("before-two");
+	});
+
+	it("shows every row, the divider among them, once it is expanded", () => {
+		const html = render(undefined);
+		expect(html).not.toContain("before /clear");
+		expect(html).toContain("before-one");
+		expect(html).toContain("Context cleared");
+		expect(html).toContain("after-one");
+	});
+});

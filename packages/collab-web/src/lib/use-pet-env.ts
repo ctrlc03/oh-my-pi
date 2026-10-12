@@ -3,6 +3,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { measureDockTop, observeDock } from "./pet-dock";
 import type { Viewport } from "./pet-layout";
+import { toLayout, useUiZoom } from "./zoom";
 
 function subscribeVisibility(listener: () => void): () => void {
 	document.addEventListener("visibilitychange", listener);
@@ -19,21 +20,23 @@ export function usePageVisible(): boolean {
 }
 
 function readViewport(): Viewport {
-	return { width: document.documentElement.clientWidth, height: window.innerHeight };
+	return { width: toLayout(document.documentElement.clientWidth), height: toLayout(window.innerHeight) };
 }
 
-/** The layout viewport, following resizes and rotation. */
+/** The window in layout px (the pet is placed in them), following resizes, rotation and the UI zoom. */
 export function useViewport(): Viewport {
 	const [view, setView] = useState(readViewport);
+	const zoom = useUiZoom();
 	useEffect(() => {
 		const update = (): void =>
 			setView(prev => {
 				const next = readViewport();
 				return prev.width === next.width && prev.height === next.height ? prev : next;
 			});
+		update();
 		window.addEventListener("resize", update);
 		return () => window.removeEventListener("resize", update);
-	}, []);
+	}, [zoom]);
 	return view;
 }
 

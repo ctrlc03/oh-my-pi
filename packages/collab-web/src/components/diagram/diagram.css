@@ -110,8 +110,8 @@
 }
 
 .tr-diagram-svg {
-	--dg-max-h: min(60vh, 560px);
-	max-height: min(72vh, 640px);
+	--dg-max-h: min(calc(var(--view-h) * 0.6), 560px);
+	max-height: min(calc(var(--view-h) * 0.72), 640px);
 	padding: 12px;
 	overflow: auto;
 	cursor: zoom-in;
@@ -341,8 +341,12 @@
 	overscroll-behavior: none;
 }
 
+/* Excalidraw maps the pointer to the canvas from client coordinates and `getBoundingClientRect` (viewport px) but sizes
+ * the canvas from `offsetWidth` (layout px), so under the UI zoom its strokes land at the wrong place and size. The
+ * counter-zoom makes this subtree 1:1 with the screen, which is the world it was written for. */
 .sh-canvas .excalidraw {
 	height: 100%;
+	zoom: calc(1 / var(--ui-zoom, 1));
 }
 
 /* On a phone the canvas gets the whole width: the sheet's side padding would waste a thumb's reach. */
@@ -354,7 +358,7 @@
 	}
 	.sh-sheet:has(.sh-canvas) {
 		padding-top: 4px;
-		padding-bottom: env(safe-area-inset-bottom, 0px);
+		padding-bottom: var(--safe-bottom);
 	}
 	.sh-sheet:has(.sh-canvas) > .sh-sheet-head {
 		padding-bottom: 4px;

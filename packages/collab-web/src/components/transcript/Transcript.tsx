@@ -13,6 +13,7 @@ import { answeredByOtherModel } from "../../lib/prompt-model";
 import type { QueuedPrompt } from "../../lib/rooms";
 import { copyText, shareText } from "../../lib/share";
 import { focusedPane } from "../../lib/use-split";
+import { toLayout } from "../../lib/zoom";
 import type { ToolRenderHost } from "../../tool-render";
 import { useBlocks } from "./use-blocks";
 import { buildChatItems, type ChatItem, type ChatToolCall } from "./chat-items";
@@ -100,7 +101,8 @@ function scrollAnchor(el: HTMLElement): { anchor: Element; entry: string | null;
 	for (const row of rows.length > 1 ? rows.slice(1) : rows) {
 		const rect = row.getBoundingClientRect();
 		if (rect.bottom <= top) continue;
-		return { anchor: row, entry: row.getAttribute("data-entry"), offset: rect.top - top };
+		// `scrollTop` is in layout px, rects in viewport px.
+		return { anchor: row, entry: row.getAttribute("data-entry"), offset: toLayout(rect.top - top) };
 	}
 	return null;
 }
@@ -872,7 +874,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 					? null
 					: el.querySelector(`[data-entry="${CSS.escape(before.entry)}"]`);
 			if (anchor === null) return;
-			el.scrollTop += anchor.getBoundingClientRect().top - el.getBoundingClientRect().top - before.offset;
+			el.scrollTop += toLayout(anchor.getBoundingClientRect().top - el.getBoundingClientRect().top) - before.offset;
 		} else if (lockRef.current) {
 			el.scrollTop = el.scrollHeight;
 		} else {

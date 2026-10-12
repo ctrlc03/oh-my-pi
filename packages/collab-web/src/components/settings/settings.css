@@ -10,19 +10,19 @@
 
 @media (min-width: 641px) {
 	.sh-sheet.sh-sheet-settings {
-		top: max(var(--topbar-h), 6vh);
+		top: max(var(--topbar-h), calc(var(--view-h) * 0.06));
 		right: auto;
-		left: calc(50% - min(430px, calc(50vw - 12px)));
-		width: min(860px, calc(100vw - 24px));
-		height: min(680px, calc(var(--viewport-height, 100dvh) - max(var(--topbar-h), 6vh) - 24px));
+		left: calc(50% - min(430px, calc(calc(var(--view-w) * 0.5) - 12px)));
+		width: min(860px, calc(var(--view-w) - 24px));
+		height: min(680px, calc(var(--viewport-height, var(--view-h)) - max(var(--topbar-h), calc(var(--view-h) * 0.06)) - 24px));
 	}
 }
 
 /* A tall, narrow screen (iPad upright) gives Settings all the height there is. */
 @media (min-width: 641px) and (orientation: portrait) {
 	.sh-sheet.sh-sheet-settings {
-		top: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
-		height: calc(var(--viewport-height, 100dvh) - var(--topbar-h) - env(safe-area-inset-top, 0px) - 24px);
+		top: calc(var(--topbar-h) + var(--safe-top));
+		height: calc(var(--viewport-height, var(--view-h)) - var(--topbar-h) - var(--safe-top) - 24px);
 	}
 }
 
@@ -33,7 +33,7 @@
 
 	.sh-sheet.sh-sheet-settings {
 		top: 0;
-		height: var(--viewport-height, 100dvh);
+		height: var(--viewport-height, var(--view-h));
 		max-height: none;
 		border-width: 0;
 		border-radius: 0;
@@ -237,7 +237,7 @@
 	}
 
 	.sh-set-nav {
-		padding: calc(10px + env(safe-area-inset-top, 0px)) 12px calc(12px + env(safe-area-inset-bottom, 0px));
+		padding: calc(10px + var(--safe-top)) 12px calc(12px + var(--safe-bottom));
 		border-right: 0;
 	}
 
@@ -268,11 +268,11 @@
 	}
 
 	.sh-set-head {
-		padding: calc(8px + env(safe-area-inset-top, 0px)) 8px 8px 8px;
+		padding: calc(8px + var(--safe-top)) 8px 8px 8px;
 	}
 
 	.sh-set-body {
-		padding: 4px 16px calc(24px + env(safe-area-inset-bottom, 0px));
+		padding: 4px 16px calc(24px + var(--safe-bottom));
 	}
 
 	.sh-set-input {

@@ -1,0 +1,83 @@
+/* The divider between a docked pane and the transcript. It is a zero-width flex item, so it moves
+ * nothing; its line and hit area are drawn into the 8px gap the pane leaves on one side (--sh-splitter-shift
+ * is the distance from the item to the middle of that gap). */
+.sh-splitter {
+	--sh-splitter-hit: 8px;
+	--sh-splitter-shift: 0px;
+	position: relative;
+	z-index: 6;
+	flex: none;
+	align-self: stretch;
+	width: 0;
+	cursor: col-resize;
+	outline: none;
+	/* The browser must not take a sideways touch drag for a swipe or a scroll. */
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.sh-splitter[data-edge="end"] {
+	--sh-splitter-shift: -4px;
+}
+
+.sh-splitter[data-edge="start"] {
+	--sh-splitter-shift: 4px;
+}
+
+/* Hit area. */
+.sh-splitter::before {
+	content: "";
+	position: absolute;
+	inset-block: 0;
+	left: calc(var(--sh-splitter-shift) - var(--sh-splitter-hit) / 2);
+	width: var(--sh-splitter-hit);
+}
+
+/* The visible line. */
+.sh-splitter::after {
+	content: "";
+	position: absolute;
+	inset-block: 14px;
+	left: calc(var(--sh-splitter-shift) - 0.5px);
+	width: 1px;
+	border-radius: 2px;
+	background: color-mix(in srgb, var(--fg-faint) 40%, transparent);
+	transition:
+		background-color 120ms ease-out,
+		width 120ms ease-out,
+		left 120ms ease-out;
+}
+
+.sh-splitter:hover::after,
+.sh-splitter[data-dragging]::after,
+.sh-splitter:focus-visible::after {
+	left: calc(var(--sh-splitter-shift) - 1.5px);
+	width: 3px;
+	background: var(--accent);
+}
+
+.sh-splitter:focus-visible::after {
+	background: var(--ring);
+}
+
+@media (any-pointer: coarse) {
+	.sh-splitter {
+		--sh-splitter-hit: 44px;
+	}
+}
+
+/* While a divider is dragged: no text selection, and nothing under the pointer (a preview iframe, the
+ * editor) takes the events, so the drag does not stall over them. */
+.sh-main[data-resizing] {
+	cursor: col-resize;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.sh-main[data-resizing] iframe,
+.sh-main[data-resizing] .cm-editor,
+.sh-main[data-resizing] .sh-panel,
+.sh-main[data-resizing] .sh-rail {
+	pointer-events: none;
+}

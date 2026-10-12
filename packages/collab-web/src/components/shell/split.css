@@ -2,13 +2,21 @@
  * Panes reuse the `.sh-panel` surface; the selectors below carry `.sh-main >`
  * so they win over shell.css whichever stylesheet loads first. */
 
-/* Width: a share of the window within a readable range. Panes give way before the
- * conversation does: it keeps 360px, and both panes shrink toward their minimum. */
+/* Width: the user's size (a share of the row, set by dragging the divider; see lib/pane-size.ts), 36% until
+ * they pick one. Panes give way before the conversation does: it keeps 360px. */
 .sh-main > .sh-split-pane {
-	flex: 0 1 clamp(360px, 36%, 640px);
+	flex: 0 1 36%;
 	min-width: 320px;
 	margin-left: 8px;
 	align-items: stretch;
+}
+
+.sh-main > .sh-split-pane[data-pane="beside"] {
+	flex-basis: var(--sh-beside-w, 36%);
+}
+
+.sh-main > .sh-split-pane[data-pane="editor"] {
+	flex-basis: var(--sh-editor-w, 36%);
 }
 
 .sh-main[data-split] > .sh-panel:not(.sh-split-pane) {

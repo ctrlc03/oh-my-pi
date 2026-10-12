@@ -3,6 +3,7 @@ import type { KeyboardEvent, PointerEvent, ReactNode } from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Point, Size, View } from "../../lib/pan-zoom";
 import { fitView, openingView, panBy, pinchView, wheelFactor, zoomAt } from "../../lib/pan-zoom";
+import { toLayout } from "../../lib/zoom";
 
 const BUTTON_STEP = 1.4;
 
@@ -27,9 +28,10 @@ export function PanZoom({ size, readableScale, children }: PanZoomProps): ReactN
 	const following = useRef<"opening" | "fit" | null>("opening");
 	const pointers = useRef(new Map<number, Point>());
 
+	// The view is a CSS transform, so it is in layout px; the surface's rect and the pointer are in viewport px.
 	const viewport = (): Size => {
 		const box = surface.current?.getBoundingClientRect();
-		return { width: box?.width ?? 0, height: box?.height ?? 0 };
+		return { width: toLayout(box?.width ?? 0), height: toLayout(box?.height ?? 0) };
 	};
 	const fit = useCallback((): void => {
 		following.current = "fit";
@@ -56,7 +58,7 @@ export function PanZoom({ size, readableScale, children }: PanZoomProps): ReactN
 	};
 	const local = (clientX: number, clientY: number): Point => {
 		const box = surface.current!.getBoundingClientRect();
-		return { x: clientX - box.left, y: clientY - box.top };
+		return { x: toLayout(clientX - box.left), y: toLayout(clientY - box.top) };
 	};
 	const zoomFromCenter = (factor: number): void => {
 		const { width, height } = viewport();
@@ -74,7 +76,7 @@ export function PanZoom({ size, readableScale, children }: PanZoomProps): ReactN
 			const mouseWheel =
 				e.deltaMode !== 0 || (e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 50);
 			if (e.ctrlKey || mouseWheel) change(prev => zoomAt(prev, wheelFactor(e.deltaY, e.deltaMode), at));
-			else change(prev => panBy(prev, -e.deltaX, -e.deltaY));
+			else change(prev => panBy(prev, toLayout(-e.deltaX), toLayout(-e.deltaY)));
 		};
 		node.addEventListener("wheel", onWheel, { passive: false });
 		return () => node.removeEventListener("wheel", onWheel);

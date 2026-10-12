@@ -13,9 +13,10 @@ import {
 	X,
 } from "lucide-react";
 import type { ReactNode, RefObject } from "react";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GuestClient, GuestSnapshot, TurnDiffInfo } from "../../lib/client";
 import { fmtDuration, splitPath } from "../../lib/format";
+import { useMedia } from "../codemap/shared";
 import { type PaletteEntry, usePaletteEntries } from "../../lib/palette";
 import {
 	buildReviewPrompt,
@@ -57,20 +58,6 @@ const LAYOUT_KEY = "omp.collab.diff-layout";
 const SILENT_MS = 8000;
 /** Up to this many files open expanded; more start collapsed. */
 const EXPAND_ALL_UP_TO = 3;
-
-function subscribeWide(notify: () => void): () => void {
-	const list = matchMedia(WIDE_QUERY);
-	list.addEventListener("change", notify);
-	return () => list.removeEventListener("change", notify);
-}
-
-function useWide(): boolean {
-	return useSyncExternalStore(
-		subscribeWide,
-		() => matchMedia(WIDE_QUERY).matches,
-		() => false,
-	);
-}
 
 function turnTitle(turn: PromptTurn | undefined): string {
 	return turn === undefined ? "No turns yet" : `Turn ${turn.turn}${turn.label === "" ? "" : ` · ${turn.label}`}`;
@@ -153,7 +140,7 @@ interface ChangesPanelProps {
 /** One view's files: viewed marks and review comments are kept per session and view. */
 function ChangesPanel({ view, sessionId, info, files, onSendToAgent, heading }: ChangesPanelProps): ReactNode {
 	const key = sessionId === null ? null : viewKey(sessionId, view);
-	const wide = useWide();
+	const wide = useMedia(WIDE_QUERY);
 	const [layout, setLayout] = useState<"unified" | "split">(() =>
 		readJson(LAYOUT_KEY) === "split" ? "split" : "unified",
 	);

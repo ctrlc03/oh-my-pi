@@ -319,7 +319,7 @@
 .tl-excerpt {
 	align-self: stretch;
 	overflow: auto;
-	max-height: 40vh;
+	max-height: calc(var(--view-h) * 0.4);
 }
 
 .tl-excerpt-clipped {
@@ -374,7 +374,7 @@
 }
 
 .tl-json {
-	max-height: 55vh;
+	max-height: calc(var(--view-h) * 0.55);
 	overflow: auto;
 	white-space: pre;
 	overflow-wrap: normal;

@@ -41,7 +41,7 @@
 	display: flex;
 	gap: 0;
 	min-height: 0;
-	padding: 0 max(8px, env(safe-area-inset-right, 0px)) 8px max(8px, env(safe-area-inset-left, 0px));
+	padding: 0 max(8px, var(--safe-right)) 8px max(8px, var(--safe-left));
 	overflow: hidden;
 }
 
@@ -81,7 +81,7 @@
 
 /* Naked rail framed on the page background, like a sidebar. */
 .sh-rail {
-	width: 296px;
+	width: var(--sh-rail-w, 296px);
 	flex: none;
 	min-height: 0;
 	overflow-y: auto;
@@ -98,7 +98,7 @@
 /* Sessions sidebar: docked left of the panel on wide screens, mirroring the
  * agents rail; a slide-over drawer below the dock breakpoint. */
 .sh-sidebar-dock {
-	width: 272px;
+	width: var(--sh-sidebar-w, 272px);
 	flex: none;
 	min-height: 0;
 	margin-right: 8px;
@@ -346,8 +346,8 @@
 	justify-content: space-between;
 	gap: 12px;
 	min-height: var(--topbar-h);
-	padding: calc(8px + env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px)) 8px
-		max(16px, env(safe-area-inset-left, 0px));
+	padding: calc(8px + var(--safe-top)) max(12px, var(--safe-right)) 8px
+		max(16px, var(--safe-left));
 	background: color-mix(in srgb, var(--bg) 72%, transparent);
 	backdrop-filter: blur(14px) saturate(160%);
 	-webkit-backdrop-filter: blur(14px) saturate(160%);
@@ -550,7 +550,7 @@
 	width: 100%;
 	max-width: var(--chat-width);
 	padding: 0 16px 16px;
-	padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+	padding-bottom: calc(16px + var(--safe-bottom));
 }
 
 @media (any-pointer: coarse) {
@@ -591,8 +591,8 @@
 	min-width: 0;
 	min-height: 44px;
 	padding: 2px 6px;
-	font-size: 15px;
-	line-height: 22px;
+	font-size: calc(15px * var(--reading-scale));
+	line-height: calc(22px * var(--reading-scale));
 	color: var(--fg);
 	background: transparent;
 	border: 0;
@@ -864,7 +864,7 @@
 	flex: none;
 	align-items: center;
 	gap: 4px;
-	max-width: 70vw;
+	max-width: calc(var(--view-w) * 0.7);
 	height: 34px;
 	padding: 0 14px;
 	font-size: 13px;
@@ -1100,7 +1100,7 @@
 	gap: 6px;
 	padding-bottom: 8px;
 	/* A long queue scrolls instead of pushing the field off screen. */
-	max-height: min(32vh, 260px);
+	max-height: min(calc(var(--view-h) * 0.32), 260px);
 	overflow-y: auto;
 	overscroll-behavior: contain;
 }
@@ -1258,11 +1258,11 @@
 /* ---- banners ---- */
 .sh-banner {
 	position: fixed;
-	top: calc(var(--topbar-h) + env(safe-area-inset-top, 0px) + 10px);
+	top: calc(var(--topbar-h) + var(--safe-top) + 10px);
 	right: 0;
 	left: 0;
 	width: max-content;
-	max-width: calc(100vw - 32px);
+	max-width: calc(var(--view-w) - 32px);
 	margin-inline: auto;
 	z-index: 50;
 	display: flex;
@@ -1421,14 +1421,14 @@
 /* ---- app update ---- */
 .sh-update {
 	position: fixed;
-	top: calc(12px + env(safe-area-inset-top, 0px));
+	top: calc(12px + var(--safe-top));
 	left: 50%;
 	z-index: 70;
 	display: flex;
 	align-items: center;
 	gap: 10px;
 	width: max-content;
-	max-width: calc(100vw - 32px);
+	max-width: calc(var(--view-w) - 32px);
 	padding: 8px 8px 8px 14px;
 	font-size: 12.5px;
 	color: var(--fg);
@@ -1459,8 +1459,8 @@
 	grid-template-columns: minmax(0, 1fr);
 	background: var(--bg);
 	padding: 12px 16px 16px;
-	padding-top: calc(12px + env(safe-area-inset-top, 0px));
-	padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+	padding-top: calc(12px + var(--safe-top));
+	padding-bottom: calc(16px + var(--safe-bottom));
 	overflow-y: auto;
 }
 
@@ -1488,7 +1488,7 @@
 	gap: 12px;
 	width: 100%;
 	max-width: 420px;
-	margin: 16px 0 8vh;
+	margin: 16px 0 calc(var(--view-h) * 0.08);
 }
 
 /* Wide screens (iPad landscape, desktop): the computer card and the join cards side by side
@@ -1864,10 +1864,10 @@
 .sh-sheet {
 	position: fixed;
 	z-index: 71;
-	top: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
+	top: calc(var(--topbar-h) + var(--safe-top));
 	right: 12px;
-	width: min(380px, calc(100vw - 24px));
-	max-height: calc(var(--viewport-height, 100dvh) - var(--topbar-h) - 24px);
+	width: min(380px, calc(var(--view-w) - 24px));
+	max-height: calc(var(--viewport-height, var(--view-h)) - var(--topbar-h) - 24px);
 	overflow-y: auto;
 	overscroll-behavior: contain;
 	display: flex;
@@ -1924,14 +1924,14 @@
 
 .sh-restore-bar {
 	position: fixed;
-	top: calc(var(--topbar-h) + env(safe-area-inset-top, 0px) + 10px);
+	top: calc(var(--topbar-h) + var(--safe-top) + 10px);
 	left: 50%;
 	transform: translateX(-50%);
 	z-index: 49;
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	max-width: calc(100vw - 24px);
+	max-width: calc(var(--view-w) - 24px);
 	padding: 6px 8px 6px 14px;
 	font-size: 12.5px;
 	color: var(--fg);
@@ -2101,14 +2101,14 @@
 }
 
 .sh-sheet-wide {
-	width: min(720px, calc(100vw - 24px));
+	width: min(720px, calc(var(--view-w) - 24px));
 }
 
 /* Near-full-screen canvas (code map): a definite height, so children can fill
  * it with flex and scroll internally instead of the sheet scrolling. */
 .sh-sheet-full {
-	width: min(1200px, calc(100vw - 24px));
-	height: calc(var(--viewport-height, 100dvh) - var(--topbar-h) - 24px);
+	width: min(1200px, calc(var(--view-w) - 24px));
+	height: calc(var(--viewport-height, var(--view-h)) - var(--topbar-h) - 24px);
 	overflow: hidden;
 }
 
@@ -2305,7 +2305,7 @@
 	left: var(--anchor-left);
 	bottom: var(--anchor-bottom);
 	width: 320px;
-	max-height: min(440px, calc(var(--viewport-height, 100dvh) - var(--anchor-bottom) - 16px));
+	max-height: min(440px, calc(var(--viewport-height, var(--view-h)) - var(--anchor-bottom) - 16px));
 	gap: 0;
 	padding: 8px;
 }
@@ -2325,7 +2325,7 @@
 
 .sh-sheet-anchored .sh-model-picker-list {
 	flex: 1 1 auto;
-	max-height: min(480px, 62dvh);
+	max-height: min(480px, calc(var(--view-h) * 0.62));
 }
 
 /* Keyboard shortcuts only help where a precise pointer (so, a keyboard) is the primary input. */
@@ -2444,13 +2444,13 @@
 .sh-alert {
 	position: fixed;
 	z-index: 55;
-	top: calc(var(--topbar-h) + env(safe-area-inset-top, 0px) + 8px);
+	top: calc(var(--topbar-h) + var(--safe-top) + 8px);
 	left: 50%;
 	transform: translateX(-50%);
 	display: flex;
 	align-items: center;
 	gap: 2px;
-	max-width: min(440px, calc(100vw - 24px));
+	max-width: min(440px, calc(var(--view-w) - 24px));
 	padding: 2px 2px 2px 4px;
 	background: var(--glass);
 	backdrop-filter: blur(16px) saturate(160%);
@@ -2535,7 +2535,7 @@
 	position: absolute;
 	top: 50%;
 	left: 50%;
-	width: min(70vw, 70vh, 320px);
+	width: min(calc(var(--view-w) * 0.7), calc(var(--view-h) * 0.7), 320px);
 	aspect-ratio: 1;
 	transform: translate(-50%, -50%);
 	border: 2px solid rgba(255, 255, 255, 0.85);
@@ -2553,7 +2553,7 @@
 	justify-content: space-between;
 	gap: 12px;
 	padding: 12px 12px 12px 18px;
-	padding-top: calc(12px + env(safe-area-inset-top, 0px));
+	padding-top: calc(12px + var(--safe-top));
 	font-size: 15px;
 	font-weight: 500;
 	color: #fff;
@@ -2568,7 +2568,7 @@
 .sh-scan-msg {
 	position: absolute;
 	right: 16px;
-	bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+	bottom: calc(24px + var(--safe-bottom));
 	left: 16px;
 	padding: 12px 14px;
 	font-size: 14px;
@@ -2595,7 +2595,7 @@
 		bottom: 8px;
 		z-index: 30;
 		width: 300px;
-		max-width: 86vw;
+		max-width: calc(var(--view-w) * 0.86);
 		margin: 0;
 		padding: 6px;
 		background: var(--glass);
@@ -2627,7 +2627,7 @@
 		bottom: 8px;
 		z-index: 30;
 		width: 300px;
-		max-width: 86vw;
+		max-width: calc(var(--view-w) * 0.86);
 		margin: 0;
 		padding: 6px;
 		background: var(--glass);
@@ -2684,15 +2684,15 @@
 		box-shadow: none;
 	}
 	.sh-rail {
-		right: max(8px, env(safe-area-inset-right, 0px));
-		bottom: max(8px, env(safe-area-inset-bottom, 0px));
+		right: max(8px, var(--safe-right));
+		bottom: max(8px, var(--safe-bottom));
 	}
 	/* Full height from the left edge, clear of the notch and home indicator. */
 	.sh-sidebar-dock {
 		left: 0;
 		bottom: 0;
-		padding-left: max(6px, env(safe-area-inset-left, 0px));
-		padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
+		padding-left: max(6px, var(--safe-left));
+		padding-bottom: max(6px, var(--safe-bottom));
 		border-width: 1px 1px 0 0;
 		border-radius: 0 var(--radius-xl) 0 0;
 	}
@@ -2702,9 +2702,9 @@
 	.sh-header {
 		gap: 4px;
 		padding: 6px 4px 6px 12px;
-		padding-top: calc(6px + env(safe-area-inset-top, 0px));
-		padding-left: max(12px, env(safe-area-inset-left, 0px));
-		padding-right: max(4px, env(safe-area-inset-right, 0px));
+		padding-top: calc(6px + var(--safe-top));
+		padding-left: max(12px, var(--safe-left));
+		padding-right: max(4px, var(--safe-right));
 	}
 	.sh-header-left {
 		gap: 6px;
@@ -2755,9 +2755,9 @@
 	.sh-composer {
 		max-width: none;
 		padding: 8px 8px 8px;
-		padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
-		padding-left: max(8px, env(safe-area-inset-left, 0px));
-		padding-right: max(8px, env(safe-area-inset-right, 0px));
+		padding-bottom: calc(8px + var(--safe-bottom));
+		padding-left: max(8px, var(--safe-left));
+		padding-right: max(8px, var(--safe-right));
 	}
 	/* Phone: the pills sit in a slim row above the field (scrolling sideways if they outgrow it), and attach,
 	 * sketch and stash share one row with send under it, so no control ever drops onto a row of its own. */
@@ -2807,14 +2807,14 @@
 		bottom: 0;
 		left: 0;
 		width: auto;
-		max-height: calc(var(--viewport-height, 100dvh) - env(safe-area-inset-top, 0px) - 24px);
-		padding: 8px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+		max-height: calc(var(--viewport-height, var(--view-h)) - var(--safe-top) - 24px);
+		padding: 8px 16px calc(16px + var(--safe-bottom));
 		border-width: 1px 0 0;
 		border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 		animation: sh-sheet-up 280ms var(--ease-out) backwards;
 	}
 	.sh-sheet-full {
-		height: calc(var(--viewport-height, 100dvh) - env(safe-area-inset-top, 0px) - 12px);
+		height: calc(var(--viewport-height, var(--view-h)) - var(--safe-top) - 12px);
 	}
 	.sh-sheet-grip {
 		display: block;
@@ -2833,7 +2833,7 @@
 	}
 	/* Above the composer and its quick-reply row. */
 	.sh-toasts {
-		bottom: calc(124px + env(safe-area-inset-bottom, 0px));
+		bottom: calc(124px + var(--safe-bottom));
 	}
 }
 
@@ -2854,7 +2854,10 @@
 }
 
 @media (any-pointer: coarse) {
-	.sh-composer-input,
+	/* Under 16px iOS zooms the page when the field takes focus, whatever the text size. */
+	.sh-composer-input {
+		font-size: max(16px, calc(15px * var(--reading-scale)));
+	}
 	.sh-input,
 	.sh-input-mono {
 		font-size: 16px;
@@ -2882,6 +2885,6 @@
  * the status bar area belongs to the glass bar. */
 @media (display-mode: standalone) {
 	.sh-header {
-		min-height: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
+		min-height: calc(var(--topbar-h) + var(--safe-top));
 	}
 }

@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flowToSkeleton } from "../../lib/codemap-scene";
 import type { CodemapFlowDirection, CodemapFlowStep, CodemapNode } from "../../lib/companion";
+import { type LayoutRect, layoutRect } from "../../lib/zoom";
 import { NodeIcon, nodeSub, OpenInCanvas, PHONE_QUERY, useMedia } from "./shared";
 
 const DIRECTIONS: { value: CodemapFlowDirection; label: string }[] = [
@@ -62,10 +63,11 @@ export function FlowGraph({ steps, direction, onDirection, onFocus }: FlowGraphP
 		const root = canvas.current;
 		if (stacked || !root) return;
 		const measure = (): void => {
-			const base = root.getBoundingClientRect();
-			const boxes = new Map<number, DOMRect>();
+			// The curves are drawn in layout px; the rects are viewport px.
+			const base = layoutRect(root.getBoundingClientRect());
+			const boxes = new Map<number, LayoutRect>();
 			for (const el of root.querySelectorAll<HTMLElement>("[data-step]")) {
-				boxes.set(Number(el.dataset.step), el.getBoundingClientRect());
+				boxes.set(Number(el.dataset.step), layoutRect(el.getBoundingClientRect()));
 			}
 			const next: Curve[] = [];
 			steps.forEach((step, index) => {

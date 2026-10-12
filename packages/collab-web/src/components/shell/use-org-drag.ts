@@ -12,6 +12,7 @@ import {
 	zoneAt,
 } from "../../lib/org-drag";
 import { type DropIntent, type DropZone, dropIntent, type OrgSection } from "../../lib/session-org";
+import { layoutRect, toLayout } from "../../lib/zoom";
 
 /** What a press-and-drag on a row's Settle / Un-settle / Wake button applies to the rows it sweeps over. */
 export type RangeAction = "settle" | "unsettle" | "wake";
@@ -92,17 +93,17 @@ function scrollerOf(el: HTMLElement): HTMLElement | null {
 
 /** Added to a viewport y to get its position in the list's content, whatever the scroll. */
 function contentBase(scroller: HTMLElement | null): number {
-	return scroller === null ? window.scrollY : scroller.scrollTop - scroller.getBoundingClientRect().top;
+	return scroller === null ? window.scrollY : scroller.scrollTop - layoutRect(scroller.getBoundingClientRect()).top;
 }
 
 function boxOf(el: HTMLElement, base: number): { top: number; height: number } {
-	const rect = el.getBoundingClientRect();
+	const rect = layoutRect(el.getBoundingClientRect());
 	return { top: rect.top + base, height: rect.height };
 }
 
 /** The section under the pointer at `y` (content coordinates); none once the pointer left the list's box, so a row let go outside lands nowhere. */
 function sectionUnder(current: Run, point: { x: number; y: number }, y: number): OrgSection | null {
-	const rect = current.scroller?.getBoundingClientRect();
+	const rect = current.scroller === null ? undefined : layoutRect(current.scroller.getBoundingClientRect());
 	if (rect && (point.x < rect.left || point.x > rect.right || point.y < rect.top || point.y > rect.bottom))
 		return null;
 	return zoneAt(current.zones, y)?.section ?? null;
@@ -202,7 +203,7 @@ export function useOrgDrag(options: OrgDragOptions): OrgDrag {
 			const step = (): void => {
 				current.raf = 0;
 				if (run.current !== current) return;
-				const rect = scroller.getBoundingClientRect();
+				const rect = layoutRect(scroller.getBoundingClientRect());
 				const top = pointer.current.y - rect.top;
 				const bottom = rect.bottom - pointer.current.y;
 				const speed = top < EDGE_PX ? -EDGE_SPEED_PX : bottom < EDGE_PX ? EDGE_SPEED_PX : 0;
@@ -222,9 +223,10 @@ export function useOrgDrag(options: OrgDragOptions): OrgDrag {
 			const root = latest.current.rootRef.current;
 			if (root === null) return;
 			const { pointerId, pointerType } = e;
+			// The pointer is tracked in layout px, like every measurement here; only the press-slop test is in viewport px (a finger's travel).
 			const start = { x: e.clientX, y: e.clientY };
 			const slop = pointerType === "mouse" ? SLOP_MOUSE_PX : SLOP_TOUCH_PX;
-			pointer.current = start;
+			pointer.current = { x: toLayout(start.x), y: toLayout(start.y) };
 
 			const stopClick = (ev: Event): void => {
 				ev.stopPropagation();
@@ -262,7 +264,7 @@ export function useOrgDrag(options: OrgDragOptions): OrgDrag {
 					.filter(el => el !== sourceEl)
 					.map(el => ({ el, top: boxOf(el, base).top, delta: 0 }));
 				const source = boxOf(sourceEl, base);
-				const rect = sourceEl.getBoundingClientRect();
+				const rect = layoutRect(sourceEl.getBoundingClientRect());
 				const list = sourceEl.parentElement;
 				const gapPx = list === null ? 0 : Number.parseFloat(getComputedStyle(list).rowGap) || 0;
 				root.dataset.orgDragging = spec.kind;
@@ -275,7 +277,7 @@ export function useOrgDrag(options: OrgDragOptions): OrgDrag {
 					slides,
 					source,
 					size: source.height + gapPx,
-					grab: { y: start.y - rect.top, left: rect.left, width: rect.width },
+					grab: { y: toLayout(start.y) - rect.top, left: rect.left, width: rect.width },
 					signature: "",
 					raf: 0,
 				};
@@ -335,7 +337,7 @@ export function useOrgDrag(options: OrgDragOptions): OrgDrag {
 
 			const onMove = (ev: PointerEvent): void => {
 				if (ev.pointerId !== pointerId) return;
-				pointer.current = { x: ev.clientX, y: ev.clientY };
+				pointer.current = { x: toLayout(ev.clientX), y: toLayout(ev.clientY) };
 				if (run.current === null) {
 					if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < slop) return;
 					// A sweep is vertical; sideways is a press that wandered off.
@@ -351,7 +353,7 @@ export function useOrgDrag(options: OrgDragOptions): OrgDrag {
 			};
 			const onUp = (ev: PointerEvent): void => {
 				if (ev.pointerId !== pointerId) return;
-				pointer.current = { x: ev.clientX, y: ev.clientY };
+				pointer.current = { x: toLayout(ev.clientX), y: toLayout(ev.clientY) };
 				finish(true);
 			};
 			const onCancel = (ev: PointerEvent): void => {

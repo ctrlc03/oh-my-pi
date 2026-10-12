@@ -12,7 +12,7 @@
 	align-items: center;
 	gap: 8px;
 	width: max-content;
-	max-width: min(260px, calc(100vw - 16px));
+	max-width: min(260px, calc(var(--view-w) - 16px));
 	padding: 6px 10px;
 	border: 1px solid var(--tip-line);
 	border-radius: var(--radius-sm);
@@ -95,8 +95,8 @@
 .sh-tip-probe {
 	position: fixed;
 	inset: 0;
-	padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)
-		env(safe-area-inset-left, 0px);
+	padding: var(--safe-top) var(--safe-right) var(--safe-bottom)
+		var(--safe-left);
 	pointer-events: none;
 	visibility: hidden;
 }

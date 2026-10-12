@@ -4,6 +4,7 @@ import { Maximize, Minus, Plus } from "lucide-react";
 import type { CSSProperties, PointerEvent, ReactNode } from "react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CodemapMap, CodemapNode } from "../../lib/companion";
+import { toLayout } from "../../lib/zoom";
 import { langColor, nodeCounts, nodeSub, strokeWidth } from "./shared";
 
 /** Settling steps run synchronously, so the layout is deterministic and nothing animates. */
@@ -150,7 +151,7 @@ export function ForceMap({ map, onFocus }: ForceMapProps): ReactNode {
 		const onWheel = (e: WheelEvent): void => {
 			e.preventDefault();
 			const box = el.getBoundingClientRect();
-			zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX - box.left, e.clientY - box.top);
+			zoomAt(Math.exp(-e.deltaY * 0.0015), toLayout(e.clientX - box.left), toLayout(e.clientY - box.top));
 		};
 		el.addEventListener("wheel", onWheel, { passive: false });
 		return () => el.removeEventListener("wheel", onWheel);
@@ -175,7 +176,9 @@ export function ForceMap({ map, onFocus }: ForceMapProps): ReactNode {
 		}
 		p.x = e.clientX;
 		p.y = e.clientY;
-		setCamera(c => ({ ...c, x: c.x - (dx * fitRef.current) / c.zoom, y: c.y - (dy * fitRef.current) / c.zoom }));
+		// The camera is in map units per layout px; the pointer travelled in viewport px.
+		const by = { x: toLayout(dx), y: toLayout(dy) };
+		setCamera(c => ({ ...c, x: c.x - (by.x * fitRef.current) / c.zoom, y: c.y - (by.y * fitRef.current) / c.zoom }));
 	};
 	const endPress = (): void => {
 		press.current = null;

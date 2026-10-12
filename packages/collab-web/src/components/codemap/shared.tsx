@@ -5,23 +5,25 @@ import type { GraphPalette, SkeletonElement } from "../../lib/codemap-scene";
 import type { CodemapFocus, CodemapNode } from "../../lib/companion";
 import { openCanvas } from "../../lib/diagram-store";
 import { graphPalette } from "../../lib/theme-tokens";
+import { scaleQuery, useUiZoom } from "../../lib/zoom";
 
 /** Phones: bottom sheet, stacked lists instead of curves. */
 export const PHONE_QUERY = "(max-width: 640px)";
 /** Wide screens: the folder Map tab is offered (and is the default). */
 export const WIDE_QUERY = "(min-width: 901px)";
 
-/** Live `matchMedia` match, re-rendering when it flips. */
+/** Live `matchMedia` match, re-rendering when it flips; the width breakpoints are in layout px, so they follow the UI zoom. */
 export function useMedia(query: string): boolean {
+	const scaled = scaleQuery(query, useUiZoom());
 	const subscribe = useCallback(
 		(onChange: () => void) => {
-			const list = matchMedia(query);
+			const list = matchMedia(scaled);
 			list.addEventListener("change", onChange);
 			return () => list.removeEventListener("change", onChange);
 		},
-		[query],
+		[scaled],
 	);
-	return useSyncExternalStore(subscribe, () => matchMedia(query).matches);
+	return useSyncExternalStore(subscribe, () => matchMedia(scaled).matches);
 }
 
 const KNOWN_LANGS: Record<string, true> = { rust: true, sol: true, noir: true, ts: true, js: true, py: true, go: true };

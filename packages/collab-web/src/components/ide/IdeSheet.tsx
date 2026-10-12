@@ -25,6 +25,7 @@ import { FileChangedError } from "../../lib/companion";
 import { openDiagramFile } from "../../lib/diagram-store";
 import { diagramFileKind } from "../../lib/diagrams";
 import { useRequest } from "../../lib/use-request";
+import { matchesMedia } from "../../lib/zoom";
 import { useMedia, WIDE_QUERY } from "../codemap/shared";
 import { DownloadButton } from "../shell/DownloadButton";
 import { Sheet } from "../shell/Sheet";
@@ -235,7 +236,7 @@ export function IdeSheet({
 			view.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: "center" }) });
 		}
 		syncCursor(view);
-		if (!matchMedia(WIDE_QUERY).matches) setTreeOpen(false);
+		if (!matchesMedia(WIDE_QUERY)) setTreeOpen(false);
 	};
 
 	const openFile = async (request: string, line?: number): Promise<void> => {

@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { focusToSkeleton } from "../../lib/codemap-scene";
 import type { CodemapLink, CodemapNode, CodemapView } from "../../lib/companion";
+import { layoutRect } from "../../lib/zoom";
 import { nodeCounts, NodeIcon, NodeRow, nodeSub, OpenInCanvas, PHONE_QUERY, strokeWidth, useMedia } from "./shared";
 
 export interface FocusGraphProps {
@@ -39,8 +40,9 @@ export function FocusGraph({ view, onFocus, onOpenFile }: FocusGraphProps): Reac
 		const target = card.current;
 		if (stacked || !root || !target) return;
 		const measure = (): void => {
-			const base = root.getBoundingClientRect();
-			const hub = target.getBoundingClientRect();
+			// The curves are drawn in layout px; the rects are viewport px.
+			const base = layoutRect(root.getBoundingClientRect());
+			const hub = layoutRect(target.getBoundingClientRect());
 			const rows = [...root.querySelectorAll<HTMLElement>("[data-link]")];
 			const perSide = { up: view.upstream.length, down: view.downstream.length };
 			const next: Curve[] = [];
@@ -49,7 +51,7 @@ export function FocusGraph({ view, onFocus, onOpenFile }: FocusGraphProps): Reac
 				const index = Number(row.dataset.index);
 				const link = (side === "up" ? view.upstream : view.downstream)[index];
 				if (!link) continue;
-				const box = row.getBoundingClientRect();
+				const box = layoutRect(row.getBoundingClientRect());
 				// Spread the landing points along the card edge so curves do not pile into one spot.
 				const slot = (index + 0.5) / perSide[side];
 				const hubY = hub.top - base.top + hub.height * (0.12 + 0.76 * slot);

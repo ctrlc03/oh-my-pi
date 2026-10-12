@@ -235,7 +235,7 @@
 
 .sh-file-view {
 	display: flex;
-	max-height: calc(var(--viewport-height, 100dvh) - 230px);
+	max-height: calc(var(--viewport-height, var(--view-h)) - 230px);
 	overflow: auto;
 	font: 400 12px / 1.5 var(--font-mono);
 	background: var(--bg-inset);
@@ -622,7 +622,7 @@
 /* ---- review bar: the comments waiting to go to the agent ---- */
 .sh-review-bar {
 	position: sticky;
-	bottom: env(safe-area-inset-bottom, 0px);
+	bottom: var(--safe-bottom);
 	display: flex;
 	align-items: center;
 	gap: 8px;

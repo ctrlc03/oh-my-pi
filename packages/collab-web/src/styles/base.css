@@ -9,6 +9,18 @@
 	margin: 0;
 }
 
+/* The window in layout px. A viewport unit is zoomed along with everything else (so `100vw` overflows a page zoomed
+ * to 150% by half), and the stylesheets use these instead of vw/vh/dvh. At zoom 1 they are the units themselves.
+ * The same goes for the device's safe-area insets, which are physical px: use `--safe-*`, never `env()`. */
+:root {
+	--view-w: calc(100vw / var(--ui-zoom, 1));
+	--view-h: calc(100dvh / var(--ui-zoom, 1));
+	--safe-top: calc(env(safe-area-inset-top, 0px) / var(--ui-zoom, 1));
+	--safe-bottom: calc(env(safe-area-inset-bottom, 0px) / var(--ui-zoom, 1));
+	--safe-left: calc(env(safe-area-inset-left, 0px) / var(--ui-zoom, 1));
+	--safe-right: calc(env(safe-area-inset-right, 0px) / var(--ui-zoom, 1));
+}
+
 html {
 	height: 100%;
 	-webkit-text-size-adjust: 100%;

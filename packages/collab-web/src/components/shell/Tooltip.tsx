@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { IS_MAC } from "../../lib/shortcuts";
 import { formatKeyshortcuts, placeTip, resolveTipText, TIP_TARGET } from "../../lib/tooltip";
+import { layoutRect, layoutViewport } from "../../lib/zoom";
 import "./tooltip.css";
 
 /** Mouse and pen: how long a hover rests before the tip shows, and how long after one closes the next shows at once. */
@@ -128,11 +129,11 @@ export function Tooltip() {
 			text.textContent = content.text;
 			key.textContent = content.shortcut ?? "";
 			key.hidden = content.shortcut === null;
-			const rect = el.getBoundingClientRect();
+			// The tip is `position: fixed`, so its left/top and its size are layout px; the control's rect and the window are measured in viewport px.
 			const place = placeTip(
-				rect,
+				layoutRect(el.getBoundingClientRect()),
 				{ width: tip.offsetWidth, height: tip.offsetHeight },
-				{ width: window.innerWidth, height: window.innerHeight },
+				layoutViewport(),
 				readInsets(probe),
 			);
 			tip.style.left = `${place.left}px`;

@@ -23,6 +23,7 @@ import type { PetdexPet } from "../../lib/petdex";
 import { useSystemTheme } from "../../lib/theme";
 import { useDockTop, usePageVisible, useViewport } from "../../lib/use-pet-env";
 import { usePetActivity } from "../../lib/use-pet-activity";
+import { toLayout } from "../../lib/zoom";
 import { useMedia } from "../codemap/shared";
 import { PetFigure } from "./PetFigure";
 import "./pet.css";
@@ -269,7 +270,8 @@ function PetFloat({ client, state, still, roam, popOutAgain, onPopOut }: PetFloa
 			delete wrap.current?.dataset.glide;
 			setDragging(true);
 		}
-		place(clampPoint({ x: d.originX + dx, y: d.originY + dy }, view, size));
+		// The pet is placed in layout px; the pointer travelled in viewport px.
+		place(clampPoint({ x: d.originX + toLayout(dx), y: d.originY + toLayout(dy) }, view, size));
 	};
 	const endDrag = (e: PointerEvent<HTMLButtonElement>, commit: boolean): void => {
 		const d = drag.current;

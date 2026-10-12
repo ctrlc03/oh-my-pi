@@ -1,3 +1,5 @@
+import { layoutRect } from "./zoom";
+
 /**
  * Where the message box starts. The session panel (`.sh-panel`) stacks the transcript above its bars
  * (limits, tasks, cache) and the composer; the pet keeps above the highest of them.
@@ -30,21 +32,23 @@ function dockElements(panel: Element): Element[] {
 const JUMP_CLEARANCE = 48;
 
 /**
- * The highest edge, in viewport px, of what is stacked at the bottom of the session; null when no session is
- * open. A pet whose left edge is at `petLeft` stands above the jump-to-latest button when the transcript
- * reaches that far right (a phone), so it never sits on the button.
+ * The highest edge, in layout px (the pet is placed in them), of what is stacked at the bottom of the session; null
+ * when no session is open. A pet whose left edge is at `petLeft` stands above the jump-to-latest button when the
+ * transcript reaches that far right (a phone), so it never sits on the button.
  */
 export function measureDockTop(petLeft: number): number | null {
 	const panel = rightmostPanel();
 	if (panel === null) return null;
 	let top = Infinity;
 	for (const el of dockElements(panel)) {
-		const rect = el.getBoundingClientRect();
+		const rect = layoutRect(el.getBoundingClientRect());
 		if (rect.height > 0) top = Math.min(top, rect.top);
 	}
 	if (!Number.isFinite(top)) return null;
 	const transcript = panel.querySelector(":scope > .sh-transcript");
-	return transcript !== null && transcript.getBoundingClientRect().right > petLeft ? top - JUMP_CLEARANCE : top;
+	return transcript !== null && layoutRect(transcript.getBoundingClientRect()).right > petLeft
+		? top - JUMP_CLEARANCE
+		: top;
 }
 
 /** Calls `onChange` when the dock may have moved: its elements resize, or bars appear and disappear. Returns the stop function. */

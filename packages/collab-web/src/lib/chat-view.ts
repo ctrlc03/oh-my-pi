@@ -6,6 +6,7 @@
 
 import { useSyncExternalStore } from "react";
 import { readJson, writeJson } from "./storage";
+import { matchesMedia } from "./zoom";
 
 const CHAT_KEY = "omp.collab.chat";
 const PHONE_QUERY = "(max-width: 640px)";
@@ -19,7 +20,7 @@ export function defaultChat(): boolean {
 		const raw = readJson(CHAT_KEY);
 		stored = typeof raw === "boolean" ? raw : null;
 	}
-	return stored ?? matchMedia(PHONE_QUERY).matches;
+	return stored ?? matchesMedia(PHONE_QUERY);
 }
 
 export function setDefaultChat(chat: boolean): void {

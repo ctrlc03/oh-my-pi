@@ -47,7 +47,7 @@
 	border: 1px solid var(--border);
 	border-radius: 8px;
 	font-size: 13px;
-	max-height: 40vh;
+	max-height: calc(var(--view-h) * 0.4);
 	overflow-y: auto;
 }
 

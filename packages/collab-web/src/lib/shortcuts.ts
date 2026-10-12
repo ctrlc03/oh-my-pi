@@ -116,6 +116,10 @@ export const SHORTCUTS = {
 	},
 	// ⌘, is the Preferences key of macOS apps (Ctrl+, elsewhere).
 	settings: { keys: { key: ",", mod: true }, label: "Open settings", group: "General", typing: "allow" },
+	// Bare keys, not ⌘+ / ⌘− / ⌘0: the browser keeps those to zoom the whole page and never lets the page see them.
+	zoomIn: { keys: { key: "+", shift: "any" }, label: "Zoom the interface in", group: "View", typing: "suppress" },
+	zoomOut: { keys: { key: "-" }, label: "Zoom the interface out", group: "View", typing: "suppress" },
+	zoomReset: { keys: { key: "0" }, label: "Reset the zoom to 100%", group: "View", typing: "suppress" },
 } as const satisfies Record<string, Shortcut>;
 
 export type ShortcutId = keyof typeof SHORTCUTS;
@@ -129,6 +133,14 @@ export interface KeyLike {
 	shiftKey: boolean;
 }
 
+/**
+ * `=` and `+` are one key on a keyboard (`+` is its shifted character on most layouts): a combo on either is
+ * pressed with either. Everything else compares as typed, letters without their case.
+ */
+function canonicalKey(key: string): string {
+	return key === "=" ? "+" : key.toLowerCase();
+}
+
 /** Whether `event` is the combo: ⌘ on Mac and Ctrl elsewhere count as the same modifier, the other one never does. */
 export function matchCombo(event: KeyLike, combo: Combo, mac: boolean): boolean {
 	if (event.altKey) return false;
@@ -136,7 +148,7 @@ export function matchCombo(event: KeyLike, combo: Combo, mac: boolean): boolean 
 	const stray = event.metaKey || event.ctrlKey;
 	if (combo.mod === true ? !mod : stray) return false;
 	if (combo.shift !== "any" && event.shiftKey !== (combo.shift === true)) return false;
-	return event.key.toLowerCase() === combo.key.toLowerCase();
+	return canonicalKey(event.key) === canonicalKey(combo.key);
 }
 
 /** Whether keys typed at `target` (an event's target; any object with the DOM's `tagName` / `isContentEditable`) go into a field: shortcuts that are not meant for fields stand down. */
@@ -316,7 +328,7 @@ export function comboFromEvent(event: KeyLike, mac: boolean): Combo | null {
 
 /** Whether a press of one combo could be a press of the other (`shift: "any"` accepts either state). */
 export function overlaps(a: Combo, b: Combo): boolean {
-	if (a.key.toLowerCase() !== b.key.toLowerCase() || (a.mod === true) !== (b.mod === true)) return false;
+	if (canonicalKey(a.key) !== canonicalKey(b.key) || (a.mod === true) !== (b.mod === true)) return false;
 	return a.shift === "any" || b.shift === "any" || (a.shift === true) === (b.shift === true);
 }
 

@@ -45,7 +45,7 @@
 	top: calc(100% + 4px);
 	right: 0;
 	left: 0;
-	max-height: min(420px, 50vh);
+	max-height: min(420px, calc(var(--view-h) * 0.5));
 	margin: 0;
 	padding: 4px;
 	overflow-y: auto;
@@ -318,7 +318,7 @@
 .sh-ide-editor {
 	flex: 1;
 	min-height: 0;
-	font-size: 12.5px;
+	font-size: calc(12.5px * var(--reading-scale));
 }
 
 .sh-ide-editor[hidden] {
@@ -491,9 +491,11 @@
 
 /* Phones zoom into anything under 16px that takes focus. */
 @media (any-pointer: coarse) {
-	.sh-ide-quick .sh-input,
-	.sh-ide-editor {
+	.sh-ide-quick .sh-input {
 		font-size: 16px;
+	}
+	.sh-ide-editor {
+		font-size: max(16px, calc(12.5px * var(--reading-scale)));
 	}
 	.sh-ide-tree-row {
 		min-height: 36px;

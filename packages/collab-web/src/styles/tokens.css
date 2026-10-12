@@ -119,9 +119,24 @@
 	--pet-cover: #7a52d6;
 	--pet-lens: rgba(210, 245, 255, 0.28);
 
-	/* type — system stacks only */
-	--font-ui: "Inter var", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-	--font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+	/* type — local stacks only, no web fonts. Settings → Appearance swaps --font-ui / --font-mono (see the end of this file). */
+	--font-ui-system: "Inter var", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+	--font-mono-system: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+	--font-ui: var(--font-ui-system);
+	--font-mono: var(--font-mono-system);
+	/* the other choices, by name: the overrides at the end of this file and the settings pickers' samples use them */
+	--font-ui-serif: "New York", ui-serif, Georgia, "Times New Roman", serif;
+	--font-ui-rounded: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+	--font-mono-jetbrains: "JetBrains Mono", var(--font-mono-system);
+	--font-mono-fira: "Fira Code", "Fira Mono", var(--font-mono-system);
+	--font-mono-cascadia: "Cascadia Code", "Cascadia Mono", var(--font-mono-system);
+	--font-mono-sfmono: "SF Mono", SFMono-Regular, var(--font-mono-system);
+	--font-mono-menlo: Menlo, var(--font-mono-system);
+
+	/* reading text: transcript prose, code, tool output and the composer scale and breathe with these (Appearance → Text) */
+	--reading-scale: 1;
+	--reading-leading: 1.65;
+	--reading-gap: 1;
 
 	/* radii by role: chip · control · card · panel/composer */
 	--radius-sm: 7px;
@@ -380,4 +395,339 @@
 		--rail-mobile-shadow: -12px 0 32px rgba(90, 20, 70, 0.12);
 		--backdrop: rgba(40, 10, 30, 0.25);
 	}
+}
+
+/* Accent presets (Settings → Appearance → Accent colour). Pink is the default above. Each preset overrides every accent
+ * token, once per palette: dark, explicit light, and the system-light fallback. Every preset keeps white on
+ * --accent-strong at >= 6:1 (its hover >= 4.5:1), --accent and --accent-b >= 4.6:1 as text on every surface of
+ * its palette, --accent-soft-fg >= 6.5:1 on --accent-soft, and --ring >= 3:1 against the surfaces. The settings swatches
+ * carry the same values (a swatch shows its own colour whatever accent is active), and pink's three swatch tokens. */
+:root[data-accent="blue"],
+.sh-appr-swatch[data-accent="blue"] {
+	--accent-a: #82bbfe;
+	--accent-b: #8a7bfe;
+	--accent: #67aaff;
+	--accent-muted: rgba(103, 170, 255, 0.14);
+	--accent-soft: rgba(0, 122, 237, 0.2);
+	--accent-soft-hover: rgba(0, 122, 237, 0.3);
+	--accent-soft-fg: #c9e0fe;
+	--accent-strong: #025eb8;
+	--accent-strong-hover: #006bd0;
+	--ambient-a: rgba(0, 122, 237, 0.1);
+	--ambient-b: rgba(115, 95, 233, 0.06);
+	--ring: #67aaff;
+	--ring-soft: rgba(103, 170, 255, 0.2);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(0, 122, 237, 0.3);
+}
+:root[data-accent="violet"],
+.sh-appr-swatch[data-accent="violet"] {
+	--accent-a: #c1a5fe;
+	--accent-b: #d858c2;
+	--accent: #b88dfe;
+	--accent-muted: rgba(184, 141, 254, 0.14);
+	--accent-soft: rgba(148, 80, 233, 0.2);
+	--accent-soft-hover: rgba(148, 80, 233, 0.3);
+	--accent-soft-fg: #e3d6fe;
+	--accent-strong: #7941c0;
+	--accent-strong-hover: #8650cf;
+	--ambient-a: rgba(148, 80, 233, 0.1);
+	--ambient-b: rgba(189, 61, 168, 0.06);
+	--ring: #b88dfe;
+	--ring-soft: rgba(184, 141, 254, 0.2);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(148, 80, 233, 0.3);
+}
+:root[data-accent="green"],
+.sh-appr-swatch[data-accent="green"] {
+	--accent-a: #6cd08d;
+	--accent-b: #05a7a7;
+	--accent: #47c37d;
+	--accent-muted: rgba(71, 195, 125, 0.14);
+	--accent-soft: rgba(2, 150, 85, 0.2);
+	--accent-soft-hover: rgba(2, 150, 85, 0.3);
+	--accent-soft-fg: #c4e9cf;
+	--accent-strong: #006f3d;
+	--accent-strong-hover: #047e47;
+	--ambient-a: rgba(2, 150, 85, 0.1);
+	--ambient-b: rgba(6, 140, 140, 0.06);
+	--ring: #47c37d;
+	--ring-soft: rgba(71, 195, 125, 0.2);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(2, 150, 85, 0.3);
+}
+:root[data-accent="orange"],
+.sh-appr-swatch[data-accent="orange"] {
+	--accent-a: #fe9b59;
+	--accent-b: #f0555b;
+	--accent: #f28832;
+	--accent-muted: rgba(242, 136, 50, 0.14);
+	--accent-soft: rgba(189, 97, 0, 0.2);
+	--accent-soft-hover: rgba(189, 97, 0, 0.3);
+	--accent-soft-fg: #fcd5bb;
+	--accent-strong: #974c00;
+	--accent-strong-hover: #a95703;
+	--ambient-a: rgba(189, 97, 0, 0.1);
+	--ambient-b: rgba(211, 57, 68, 0.06);
+	--ring: #f28832;
+	--ring-soft: rgba(242, 136, 50, 0.2);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(189, 97, 0, 0.3);
+}
+:root[data-accent="slate"],
+.sh-appr-swatch[data-accent="slate"] {
+	--accent-a: #aab9cc;
+	--accent-b: #8a8fb7;
+	--accent: #99a9be;
+	--accent-muted: rgba(153, 169, 190, 0.14);
+	--accent-soft: rgba(108, 127, 151, 0.2);
+	--accent-soft-hover: rgba(108, 127, 151, 0.3);
+	--accent-soft-fg: #d9dfe6;
+	--accent-strong: #536275;
+	--accent-strong-hover: #5f6f83;
+	--ambient-a: rgba(108, 127, 151, 0.1);
+	--ambient-b: rgba(115, 119, 158, 0.06);
+	--ring: #99a9be;
+	--ring-soft: rgba(153, 169, 190, 0.2);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(108, 127, 151, 0.3);
+}
+.sh-appr-swatch[data-accent="pink"] {
+	--accent-a: #ff8acb;
+	--accent-b: #c058e0;
+	--accent: #f472c0;
+}
+
+:root[data-theme="light"][data-accent="blue"],
+:root[data-theme="light"] .sh-appr-swatch[data-accent="blue"] {
+	--accent-a: #248ffe;
+	--accent-b: #6952db;
+	--accent: #0062c1;
+	--accent-muted: rgba(0, 98, 193, 0.1);
+	--accent-soft: rgba(0, 122, 237, 0.1);
+	--accent-soft-hover: rgba(0, 122, 237, 0.16);
+	--accent-soft-fg: #014d98;
+	--accent-strong: #0061be;
+	--accent-strong-hover: #0055a7;
+	--ambient-a: rgba(0, 122, 237, 0.08);
+	--ambient-b: rgba(115, 95, 233, 0.05);
+	--ring: #0072dd;
+	--ring-soft: rgba(0, 114, 221, 0.16);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(0, 97, 190, 0.25);
+}
+:root[data-theme="light"][data-accent="violet"],
+:root[data-theme="light"] .sh-appr-swatch[data-accent="violet"] {
+	--accent-a: #a369f9;
+	--accent-b: #b2339f;
+	--accent: #7e43c9;
+	--accent-muted: rgba(126, 67, 201, 0.1);
+	--accent-soft: rgba(148, 80, 233, 0.1);
+	--accent-soft-hover: rgba(148, 80, 233, 0.16);
+	--accent-soft-fg: #6331a0;
+	--accent-strong: #7c44c3;
+	--accent-strong-hover: #6f36b4;
+	--ambient-a: rgba(148, 80, 233, 0.08);
+	--ambient-b: rgba(189, 61, 168, 0.05);
+	--ring: #894ed5;
+	--ring-soft: rgba(137, 78, 213, 0.16);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(124, 68, 195, 0.25);
+}
+:root[data-theme="light"][data-accent="green"],
+:root[data-theme="light"] .sh-appr-swatch[data-accent="green"] {
+	--accent-a: #07ab5f;
+	--accent-b: #057575;
+	--accent: #007440;
+	--accent-muted: rgba(0, 116, 64, 0.1);
+	--accent-soft: rgba(2, 150, 85, 0.1);
+	--accent-soft-hover: rgba(2, 150, 85, 0.16);
+	--accent-soft-fg: #005b32;
+	--accent-strong: #01723f;
+	--accent-strong-hover: #036337;
+	--ambient-a: rgba(2, 150, 85, 0.08);
+	--ambient-b: rgba(6, 140, 140, 0.05);
+	--ring: #02844b;
+	--ring-soft: rgba(2, 132, 75, 0.16);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(1, 114, 63, 0.25);
+}
+:root[data-theme="light"][data-accent="orange"],
+:root[data-theme="light"] .sh-appr-swatch[data-accent="orange"] {
+	--accent-a: #d86e03;
+	--accent-b: #c72c3a;
+	--accent: #9d4f00;
+	--accent-muted: rgba(157, 79, 0, 0.1);
+	--accent-soft: rgba(189, 97, 0, 0.1);
+	--accent-soft-hover: rgba(189, 97, 0, 0.16);
+	--accent-soft-fg: #7b3d01;
+	--accent-strong: #9b4e01;
+	--accent-strong-hover: #884402;
+	--ambient-a: rgba(189, 97, 0, 0.08);
+	--ambient-b: rgba(211, 57, 68, 0.05);
+	--ring: #b05a02;
+	--ring-soft: rgba(176, 90, 2, 0.16);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(155, 78, 1, 0.25);
+}
+:root[data-theme="light"][data-accent="slate"],
+:root[data-theme="light"] .sh-appr-swatch[data-accent="slate"] {
+	--accent-a: #7f91a8;
+	--accent-b: #63678d;
+	--accent: #556579;
+	--accent-muted: rgba(85, 101, 121, 0.1);
+	--accent-soft: rgba(108, 127, 151, 0.1);
+	--accent-soft-hover: rgba(108, 127, 151, 0.16);
+	--accent-soft-fg: #425061;
+	--accent-strong: #546377;
+	--accent-strong-hover: #48576a;
+	--ambient-a: rgba(108, 127, 151, 0.08);
+	--ambient-b: rgba(115, 119, 158, 0.05);
+	--ring: #64748a;
+	--ring-soft: rgba(100, 116, 138, 0.16);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(84, 99, 119, 0.25);
+}
+:root[data-theme="light"] .sh-appr-swatch[data-accent="pink"] {
+	--accent-a: #e2479d;
+	--accent-b: #9a3fd0;
+	--accent: #b8247a;
+}
+
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme])[data-accent="blue"],
+	:root:not([data-theme]) .sh-appr-swatch[data-accent="blue"] {
+		--accent-a: #248ffe;
+		--accent-b: #6952db;
+		--accent: #0062c1;
+		--accent-muted: rgba(0, 98, 193, 0.1);
+		--accent-soft: rgba(0, 122, 237, 0.1);
+		--accent-soft-hover: rgba(0, 122, 237, 0.16);
+		--accent-soft-fg: #014d98;
+		--accent-strong: #0061be;
+		--accent-strong-hover: #0055a7;
+		--ambient-a: rgba(0, 122, 237, 0.08);
+		--ambient-b: rgba(115, 95, 233, 0.05);
+		--ring: #0072dd;
+		--ring-soft: rgba(0, 114, 221, 0.16);
+		--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(0, 97, 190, 0.25);
+	}
+	:root:not([data-theme])[data-accent="violet"],
+	:root:not([data-theme]) .sh-appr-swatch[data-accent="violet"] {
+		--accent-a: #a369f9;
+		--accent-b: #b2339f;
+		--accent: #7e43c9;
+		--accent-muted: rgba(126, 67, 201, 0.1);
+		--accent-soft: rgba(148, 80, 233, 0.1);
+		--accent-soft-hover: rgba(148, 80, 233, 0.16);
+		--accent-soft-fg: #6331a0;
+		--accent-strong: #7c44c3;
+		--accent-strong-hover: #6f36b4;
+		--ambient-a: rgba(148, 80, 233, 0.08);
+		--ambient-b: rgba(189, 61, 168, 0.05);
+		--ring: #894ed5;
+		--ring-soft: rgba(137, 78, 213, 0.16);
+		--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(124, 68, 195, 0.25);
+	}
+	:root:not([data-theme])[data-accent="green"],
+	:root:not([data-theme]) .sh-appr-swatch[data-accent="green"] {
+		--accent-a: #07ab5f;
+		--accent-b: #057575;
+		--accent: #007440;
+		--accent-muted: rgba(0, 116, 64, 0.1);
+		--accent-soft: rgba(2, 150, 85, 0.1);
+		--accent-soft-hover: rgba(2, 150, 85, 0.16);
+		--accent-soft-fg: #005b32;
+		--accent-strong: #01723f;
+		--accent-strong-hover: #036337;
+		--ambient-a: rgba(2, 150, 85, 0.08);
+		--ambient-b: rgba(6, 140, 140, 0.05);
+		--ring: #02844b;
+		--ring-soft: rgba(2, 132, 75, 0.16);
+		--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(1, 114, 63, 0.25);
+	}
+	:root:not([data-theme])[data-accent="orange"],
+	:root:not([data-theme]) .sh-appr-swatch[data-accent="orange"] {
+		--accent-a: #d86e03;
+		--accent-b: #c72c3a;
+		--accent: #9d4f00;
+		--accent-muted: rgba(157, 79, 0, 0.1);
+		--accent-soft: rgba(189, 97, 0, 0.1);
+		--accent-soft-hover: rgba(189, 97, 0, 0.16);
+		--accent-soft-fg: #7b3d01;
+		--accent-strong: #9b4e01;
+		--accent-strong-hover: #884402;
+		--ambient-a: rgba(189, 97, 0, 0.08);
+		--ambient-b: rgba(211, 57, 68, 0.05);
+		--ring: #b05a02;
+		--ring-soft: rgba(176, 90, 2, 0.16);
+		--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(155, 78, 1, 0.25);
+	}
+	:root:not([data-theme])[data-accent="slate"],
+	:root:not([data-theme]) .sh-appr-swatch[data-accent="slate"] {
+		--accent-a: #7f91a8;
+		--accent-b: #63678d;
+		--accent: #556579;
+		--accent-muted: rgba(85, 101, 121, 0.1);
+		--accent-soft: rgba(108, 127, 151, 0.1);
+		--accent-soft-hover: rgba(108, 127, 151, 0.16);
+		--accent-soft-fg: #425061;
+		--accent-strong: #546377;
+		--accent-strong-hover: #48576a;
+		--ambient-a: rgba(108, 127, 151, 0.08);
+		--ambient-b: rgba(115, 119, 158, 0.05);
+		--ring: #64748a;
+		--ring-soft: rgba(100, 116, 138, 0.16);
+		--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(84, 99, 119, 0.25);
+	}
+	:root:not([data-theme]) .sh-appr-swatch[data-accent="pink"] {
+		--accent-a: #e2479d;
+		--accent-b: #9a3fd0;
+		--accent: #b8247a;
+	}
+}
+
+/* Text settings (Settings → Appearance → Text and Layout). The attributes sit on <html>; the defaults need no rule. */
+:root[data-font="serif"] {
+	--font-ui: var(--font-ui-serif);
+}
+
+:root[data-font="rounded"] {
+	--font-ui: var(--font-ui-rounded);
+}
+
+:root[data-font="mono"] {
+	--font-ui: var(--font-mono);
+}
+
+:root[data-code-font="jetbrains"] {
+	--font-mono: var(--font-mono-jetbrains);
+}
+
+:root[data-code-font="fira"] {
+	--font-mono: var(--font-mono-fira);
+}
+
+:root[data-code-font="cascadia"] {
+	--font-mono: var(--font-mono-cascadia);
+}
+
+:root[data-code-font="sfmono"] {
+	--font-mono: var(--font-mono-sfmono);
+}
+
+:root[data-code-font="menlo"] {
+	--font-mono: var(--font-mono-menlo);
+}
+
+:root[data-text-size="small"] {
+	--reading-scale: 0.9;
+}
+
+:root[data-text-size="large"] {
+	--reading-scale: 1.12;
+}
+
+:root[data-text-size="xlarge"] {
+	--reading-scale: 1.25;
+}
+
+:root[data-spacing="compact"] {
+	--reading-leading: 1.45;
+	--reading-gap: 0.7;
+}
+
+:root[data-spacing="relaxed"] {
+	--reading-leading: 1.85;
+	--reading-gap: 1.4;
 }

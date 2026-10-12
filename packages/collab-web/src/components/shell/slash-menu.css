@@ -15,7 +15,7 @@
 	/* Rows never outgrow the popup: long descriptions ellipsize instead. */
 	grid-template-columns: minmax(0, 1fr);
 	gap: 1px;
-	max-height: min(320px, 45vh);
+	max-height: min(320px, calc(var(--view-h) * 0.45));
 	padding: 4px;
 	overflow-y: auto;
 	overscroll-behavior: contain;

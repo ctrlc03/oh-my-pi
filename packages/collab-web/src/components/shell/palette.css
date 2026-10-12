@@ -2,10 +2,10 @@
 
 @media (min-width: 641px) {
 	.sh-sheet-palette {
-		top: max(var(--topbar-h), 12vh);
+		top: max(var(--topbar-h), calc(var(--view-h) * 0.12));
 		right: auto;
-		left: calc(50% - min(330px, calc(50vw - 12px)));
-		width: min(660px, calc(100vw - 24px));
+		left: calc(50% - min(330px, calc(calc(var(--view-w) * 0.5) - 12px)));
+		width: min(660px, calc(var(--view-w) - 24px));
 		padding: 12px;
 	}
 }
@@ -86,7 +86,7 @@
 	list-style: none;
 	overflow-y: auto;
 	overscroll-behavior: contain;
-	max-height: min(430px, calc(var(--viewport-height, 100dvh) * 0.5));
+	max-height: min(430px, calc(var(--viewport-height, var(--view-h)) * 0.5));
 }
 
 .sh-palette-section {

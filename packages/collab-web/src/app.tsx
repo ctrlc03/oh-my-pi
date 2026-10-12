@@ -28,6 +28,7 @@ import { useTurnUndo } from "./components/shell/TurnUndo";
 import { useMedia } from "./components/codemap/shared";
 import { PaneSheet } from "./components/shell/PaneSheet";
 import { PaletteHost, type PaletteActions, type PaletteSessionControl } from "./components/shell/PaletteHost";
+import { ZoomHost } from "./components/shell/ZoomHost";
 import { GithubSheet } from "./components/shell/GithubSheet";
 import { PreviewSheet } from "./components/shell/PreviewSheet";
 import { RunSheet } from "./components/shell/RunSheet";
@@ -56,6 +57,7 @@ import { subscribeDraft } from "./lib/draft-bus";
 import { openDiagramFile, openSketch } from "./lib/diagram-store";
 import { diagramFileKind } from "./lib/diagrams";
 import { adjacentRoom, IS_MAC, type ShortcutId, shortcutFires } from "./lib/shortcuts";
+import { matchesMedia, useUiZoom } from "./lib/zoom";
 import { useEdgeGestures } from "./lib/use-edge-gestures";
 import { sessionMarkdown } from "./lib/export";
 import { blobToBase64 } from "./lib/images";
@@ -88,6 +90,9 @@ import {
 	useBesideSession,
 	useClientWake,
 } from "./lib/use-split";
+import { PANE_IDS } from "./lib/pane-size";
+import { usePaneLayout } from "./lib/use-pane-layout";
+import { Splitter } from "./components/shell/Splitter";
 import { readJson, writeJson } from "./lib/storage";
 import { openSettings } from "./lib/settings-ui";
 import { currentSubagents } from "./lib/subagents";
@@ -304,14 +309,18 @@ export function App(): ReactNode {
 		[leave],
 	);
 
-	// Visual Viewport: adjust app height to fit screen space when mobile keyboard opens.
+	// Visual Viewport: adjust app height to fit screen space when mobile keyboard opens. The visual viewport shrinks
+	// by its own scale when the page is pinch-zoomed, which is not a keyboard: `height * scale` is what the keyboard
+	// leaves of the window whatever the pinch. The height is a CSS length, so it is in layout px (the UI zoom divides).
+	const zoom = useUiZoom();
 	useEffect(() => {
 		const vv = window.visualViewport;
 		if (!vv) return;
 
 		const updateHeight = () => {
-			document.documentElement.style.setProperty("--viewport-height", `${vv.height}px`);
-			document.documentElement.toggleAttribute("data-keyboard", window.innerHeight - vv.height > KEYBOARD_MIN_PX);
+			const visible = vv.height * vv.scale;
+			document.documentElement.style.setProperty("--viewport-height", `${visible / zoom}px`);
+			document.documentElement.toggleAttribute("data-keyboard", window.innerHeight - visible > KEYBOARD_MIN_PX);
 			window.scrollTo(0, 0);
 		};
 
@@ -323,7 +332,7 @@ export function App(): ReactNode {
 			vv.removeEventListener("resize", updateHeight);
 			vv.removeEventListener("scroll", updateHeight);
 		};
-	}, []);
+	}, [zoom]);
 
 	// Launch: a pairing link opens the session list; otherwise a deep link in the hash
 	// wins, then a share-sheet payload, then the session this client was showing when
@@ -408,6 +417,7 @@ export function App(): ReactNode {
 				hostsLive={pairing !== null && companionPhase === "live"}
 			/>
 			<SettingsHost env={settingsEnv} />
+			<ZoomHost />
 		</>
 	);
 }
@@ -437,7 +447,7 @@ function openKeyboardSettings(): void {
 
 /** Wide screens restore the docked sidebar; elsewhere it is a drawer and starts closed. */
 function initialSidebar(): boolean {
-	return matchMedia(SIDEBAR_DOCK_QUERY).matches && readJson(SIDEBAR_KEY) !== false;
+	return matchesMedia(SIDEBAR_DOCK_QUERY) && readJson(SIDEBAR_KEY) !== false;
 }
 
 interface SearchState {
@@ -657,7 +667,7 @@ function Session({
 	useEffect(() => {
 		if (subCount > 0 && !autoOpenedRef.current) {
 			autoOpenedRef.current = true;
-			if (matchMedia(WIDE_QUERY).matches) setRailOpen(true);
+			if (matchesMedia(WIDE_QUERY)) setRailOpen(true);
 		}
 	}, [subCount]);
 
@@ -846,7 +856,7 @@ function Session({
 	// Only the docked sidebar's state is remembered: a drawer reopening on the next
 	// launch would cover the transcript.
 	const changeSidebar = useCallback((next: boolean): void => {
-		if (matchMedia(SIDEBAR_DOCK_QUERY).matches) writeJson(SIDEBAR_KEY, next);
+		if (matchesMedia(SIDEBAR_DOCK_QUERY)) writeJson(SIDEBAR_KEY, next);
 		setSidebarOpen(next);
 	}, []);
 	const toggleSidebar = useCallback(() => changeSidebar(!sidebarOpen), [changeSidebar, sidebarOpen]);
@@ -915,7 +925,7 @@ function Session({
 				// A sheet owns Esc, and so does the pane the user last touched when it is not this one.
 				if (dialogOpen || focusedPane() !== "main") return;
 				if (searchOpen) closeSearch();
-				else if (showSidebar && !matchMedia(SIDEBAR_DOCK_QUERY).matches) setSidebarOpen(false);
+				else if (showSidebar && !matchesMedia(SIDEBAR_DOCK_QUERY)) setSidebarOpen(false);
 				else if (live && !readOnly && working) client.sendAbort();
 				return;
 			}
@@ -979,7 +989,7 @@ function Session({
 	// Touch: edge swipes open and close the sessions sidebar and the agents rail; a swipe down on the composer hides the keyboard.
 	useEdgeGestures({
 		canOpenSidebar: canShowSidebar,
-		sidebarDrawerOpen: showSidebar && !matchMedia(SIDEBAR_DOCK_QUERY).matches,
+		sidebarDrawerOpen: showSidebar && !matchesMedia(SIDEBAR_DOCK_QUERY),
 		railOpen,
 		setSidebar: changeSidebar,
 		setRail: setRailOpen,
@@ -1019,6 +1029,19 @@ function Session({
 		) : null;
 	const ideDocked = ideSheet !== null && ideDock?.docked === true;
 	const besideOpen = beside.available && beside.pane !== null;
+
+	// Resizable panes: only the ones docked in the row (the sidebar and rail are overlays on narrow screens) get a divider.
+	const mainRef = useRef<HTMLElement>(null);
+	const sidebarDocked = useMedia(SIDEBAR_DOCK_QUERY) && showSidebar;
+	const railDocked = useMedia(WIDE_QUERY) && railOpen;
+	const dockedPanes = useMemo(
+		() =>
+			PANE_IDS.filter(
+				id => ({ sidebar: sidebarDocked, rail: railDocked, beside: besideOpen, editor: ideDocked })[id],
+			),
+		[sidebarDocked, railDocked, besideOpen, ideDocked],
+	);
+	const paneLayout = usePaneLayout(mainRef, dockedPanes);
 
 	// ⌘K: the app's own actions for the palette (others register theirs where they are available), its model and
 	// thinking switches, and the draft hook slash commands use.
@@ -1151,7 +1174,7 @@ function Session({
 				screenCount={screens.length}
 				onOpenScreens={openScreens}
 			/>
-			<main className="sh-main" data-split={(besideOpen ? 1 : 0) + (ideDocked ? 1 : 0) || undefined}>
+			<main ref={mainRef} className="sh-main" data-split={(besideOpen ? 1 : 0) + (ideDocked ? 1 : 0) || undefined}>
 				{showSidebar && (
 					<>
 						<div className="sh-sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
@@ -1173,6 +1196,7 @@ function Session({
 						</aside>
 					</>
 				)}
+				{sidebarDocked && <Splitter pane="sidebar" layout={paneLayout} />}
 				<section className="sh-panel" data-rail={railOpen ? "true" : "false"}>
 					{search && <SearchBar entries={shownEntries} onSearch={onSearch} onClose={closeSearch} />}
 					<div className="sh-transcript">
@@ -1245,6 +1269,7 @@ function Session({
 						onSessionCommand={sendSessionCommand}
 					/>
 				</section>
+				{railDocked && <Splitter pane="rail" layout={paneLayout} />}
 				{railOpen && (
 					<>
 						<div className="sh-rail-backdrop" onClick={() => setRailOpen(false)} />
@@ -1261,6 +1286,7 @@ function Session({
 						</aside>
 					</>
 				)}
+				{besideOpen && <Splitter pane="beside" layout={paneLayout} />}
 				{beside.pane !== null && besideOpen && (
 					<SplitPane
 						key={beside.pane.link}
@@ -1277,6 +1303,7 @@ function Session({
 						onRoomGone={beside.gone}
 					/>
 				)}
+				{ideDocked && <Splitter pane="editor" layout={paneLayout} />}
 				{ideDocked && ideSheet}
 			</main>
 			{drawerAgent && (

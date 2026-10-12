@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { layoutRect, layoutViewport } from "../../lib/zoom";
 
 export interface SheetProps {
 	/** Accessible dialog name. */
@@ -17,10 +18,12 @@ export interface SheetProps {
 const ANCHORED_WIDTH = 320;
 
 function anchorStyle(rect: DOMRect): CSSProperties {
-	const left = Math.max(12, Math.min(rect.left, window.innerWidth - ANCHORED_WIDTH - 12));
+	const at = layoutRect(rect);
+	const room = layoutViewport();
+	const left = Math.max(12, Math.min(at.left, room.width - ANCHORED_WIDTH - 12));
 	return {
 		"--anchor-left": `${left}px`,
-		"--anchor-bottom": `${window.innerHeight - rect.top + 8}px`,
+		"--anchor-bottom": `${room.height - at.top + 8}px`,
 	} as CSSProperties;
 }
 

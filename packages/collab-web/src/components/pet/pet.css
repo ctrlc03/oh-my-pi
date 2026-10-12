@@ -1,0 +1,416 @@
+/* The pet's floating layer, its pop-out window, the petdex sprite renderer and the pet sheet.
+ * Token colours only. The mascot's own art is mascot.css. */
+
+/* ---- floating layer ---- */
+/* Below the sheets (z-index 70+) and their backdrop, above the header and the transcript. The layer never
+ * takes pointer events itself: only the pet's button does, so the text and buttons around it stay usable. */
+.tl-pet-layer {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 44;
+	width: max-content;
+	pointer-events: none;
+	will-change: transform;
+}
+
+.tl-pet-layer[data-glide] {
+	transition: transform 450ms cubic-bezier(0.22, 0.8, 0.3, 1);
+}
+
+/* A phone's on-screen keyboard leaves the message box alone. */
+html[data-keyboard] .tl-pet-layer {
+	visibility: hidden;
+}
+
+.tl-pet-btn {
+	display: block;
+	padding: 0;
+	color: inherit;
+	background: none;
+	border: 0;
+	border-radius: var(--radius-lg);
+	cursor: grab;
+	pointer-events: auto;
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+	-webkit-touch-callout: none;
+}
+
+.tl-pet-layer[data-dragging] .tl-pet-btn {
+	cursor: grabbing;
+}
+
+.tl-pet-btn:focus-visible,
+.tl-pet-pip-pet:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
+}
+
+.tl-pet-say {
+	position: absolute;
+	z-index: 1;
+	padding: 4px 10px;
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 1.4;
+	white-space: nowrap;
+	color: var(--fg);
+	background: var(--bg-overlay);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow-float);
+	pointer-events: none;
+	animation: tl-pet-say-in 160ms ease-out backwards;
+}
+
+.tl-pet-say[data-side="above"] {
+	bottom: calc(100% + 6px);
+}
+
+.tl-pet-say[data-side="below"] {
+	top: calc(100% + 6px);
+}
+
+.tl-pet-say[data-align="center"] {
+	left: 50%;
+	translate: -50% 0;
+}
+
+.tl-pet-say[data-align="start"] {
+	left: 0;
+}
+
+.tl-pet-say[data-align="end"] {
+	right: 0;
+}
+
+@keyframes tl-pet-say-in {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+}
+
+/* Back into a pop-out the user closed earlier: a small chip at the pet's corner. */
+.tl-pet-again {
+	position: absolute;
+	top: -6px;
+	right: -6px;
+	display: grid;
+	place-items: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	color: var(--fg-muted);
+	background: var(--bg-overlay);
+	border: 1px solid var(--border-strong);
+	border-radius: 50%;
+	pointer-events: auto;
+}
+
+.tl-pet-again:hover {
+	color: var(--fg);
+	border-color: var(--edge-top);
+}
+
+@media (any-pointer: coarse) {
+	.tl-pet-btn {
+		min-width: 44px;
+		min-height: 44px;
+	}
+
+	.tl-pet-again {
+		width: 32px;
+		height: 32px;
+		top: -12px;
+		right: -12px;
+	}
+}
+
+/* ---- pop-out window ---- */
+.tl-pet-pip {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	height: 100vh;
+	padding: 12px;
+	color: var(--fg);
+	background: var(--bg);
+}
+
+.tl-pet-pip-say {
+	position: static;
+	animation: none;
+}
+
+.tl-pet-pip-pet {
+	padding: 0;
+	background: none;
+	border: 0;
+	border-radius: var(--radius-lg);
+}
+
+/* ---- petdex sprite sheet ---- */
+/* One row of the sheet, stepped frame by frame. The geometry and timing arrive as custom properties. */
+.tl-pet-sprite {
+	display: block;
+	flex: none;
+	background-repeat: no-repeat;
+	user-select: none;
+	animation: tl-pet-sprite-play var(--tl-pet-sprite-ms) steps(var(--tl-pet-sprite-frames)) infinite;
+}
+
+.tl-pet-sprite[data-still="true"] {
+	animation: none;
+}
+
+@keyframes tl-pet-sprite-play {
+	to {
+		background-position-x: var(--tl-pet-sprite-end);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tl-pet-sprite {
+		animation: none;
+	}
+}
+
+/* ---- pet sheet ---- */
+.tl-pet-sheet-title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.tl-pet-sheet-body {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+
+.tl-pet-sheet-check {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13.5px;
+}
+
+.tl-pet-sheet-check input {
+	flex: none;
+	margin: 0;
+}
+
+.tl-pet-sheet-hinted {
+	align-items: flex-start;
+}
+
+.tl-pet-sheet-hinted input {
+	margin-top: 3px;
+}
+
+.tl-pet-sheet-text {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.tl-pet-sheet-current {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 12px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.tl-pet-sheet-art {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 56px;
+	height: 60px;
+}
+
+.tl-pet-sheet-who {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.tl-pet-sheet-name {
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.tl-pet-sheet-slider {
+	width: 100%;
+	accent-color: var(--accent);
+}
+
+.tl-pet-sheet-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+/* Alt+wheel is a mouse gesture. */
+@media (any-pointer: coarse) {
+	.tl-pet-sheet-fine {
+		display: none;
+	}
+
+	.tl-pet-sheet-check,
+	.tl-pet-sheet-actions .sh-btn,
+	.tl-pet-sheet-current .sh-btn {
+		min-height: 44px;
+	}
+}
+
+/* ---- petdex picker ---- */
+.tl-pet-gal-search {
+	position: relative;
+	display: flex;
+	align-items: center;
+}
+
+.tl-pet-gal-search svg {
+	position: absolute;
+	left: 11px;
+	color: var(--fg-faint);
+	pointer-events: none;
+}
+
+.tl-pet-gal-search .sh-input {
+	width: 100%;
+	padding-left: 32px;
+}
+
+.tl-pet-gal-status {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+
+.tl-pet-gal-list {
+	position: relative;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.tl-pet-gal-spacer {
+	position: relative;
+}
+
+.tl-pet-gal-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	padding: 6px 12px;
+	text-align: left;
+	color: var(--fg);
+	background: none;
+	border: 0;
+	border-radius: 0;
+}
+
+.tl-pet-gal-list .tl-pet-gal-row {
+	position: absolute;
+	left: 0;
+	right: 0;
+}
+
+.tl-pet-gal-row:hover:not(:disabled) {
+	background: var(--hover);
+}
+
+.tl-pet-gal-row[aria-pressed="true"] {
+	background: var(--selected);
+}
+
+.tl-pet-gal-row:disabled {
+	cursor: default;
+	opacity: 0.6;
+}
+
+.tl-pet-gal-mascot {
+	height: 56px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.tl-pet-gal-thumb {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 40px;
+	aspect-ratio: 192 / 208;
+	overflow: hidden;
+	border-radius: var(--radius-sm);
+}
+
+.tl-pet-gal-initial {
+	font-weight: 600;
+	color: var(--fg-muted);
+}
+
+/* The preview is one strip of six frames; slide it a strip's width in six steps. */
+.tl-pet-thumb-strip {
+	display: block;
+	height: auto;
+	max-width: none;
+	justify-self: start;
+	animation: tl-pet-strip-play 1100ms steps(6) infinite;
+}
+
+@keyframes tl-pet-strip-play {
+	to {
+		transform: translateX(-100%);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tl-pet-thumb-strip {
+		animation: none;
+	}
+}
+
+.tl-pet-gal-text {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.tl-pet-gal-name {
+	overflow: hidden;
+	font-weight: 500;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tl-pet-gal-kind {
+	margin-left: 4px;
+	font-size: 11.5px;
+	font-weight: 400;
+	color: var(--fg-faint);
+}
+
+.tl-pet-gal-text .sh-field-hint {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}

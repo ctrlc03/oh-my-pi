@@ -1,0 +1,1191 @@
+/* Pi, the omp mascot. All art is inline SVG; motion is transform/opacity keyframes only.
+ * Every part has a "pose" group (state-driven, transitions smoothly) and an "fx" group
+ * (looping keyframes that start and end at identity), so switching states never snaps.
+ * Joints sit at the local origin of their group, so rotations pivot where the limb attaches. */
+
+.tl-pet {
+	--tl-pet-step: 0.66s;
+	display: block;
+	flex: none;
+	overflow: visible;
+	user-select: none;
+}
+
+/* ── paint ─────────────────────────────────────────────────────────────── */
+
+.tl-pet-ol {
+	stroke: var(--pet-outline);
+	stroke-width: 4;
+	stroke-linejoin: round;
+	stroke-linecap: round;
+}
+.tl-pet-ol-body {
+	stroke-width: 4.5;
+}
+.tl-pet-ol-thin {
+	stroke: var(--pet-outline);
+	stroke-width: 2.2;
+	stroke-linejoin: round;
+}
+.tl-pet-c-shadow {
+	fill: var(--pet-shadow);
+}
+.tl-pet-c-dust {
+	fill: var(--pet-body-shade);
+}
+.tl-pet-c-body {
+	fill: var(--pet-body);
+}
+.tl-pet-c-shade {
+	fill: var(--pet-body-shade);
+}
+.tl-pet-c-gloss {
+	fill: var(--pet-gloss);
+}
+.tl-pet-c-belly {
+	fill: var(--pet-belly);
+}
+.tl-pet-c-glyph {
+	fill: var(--pet-glyph);
+}
+.tl-pet-c-limb {
+	fill: var(--pet-limb);
+}
+.tl-pet-c-ear {
+	fill: var(--pet-ear-inner);
+}
+.tl-pet-c-bobble {
+	fill: var(--pet-bobble);
+}
+.tl-pet-c-cheek {
+	fill: var(--pet-cheek);
+}
+.tl-pet-c-ink {
+	fill: var(--pet-ink);
+}
+.tl-pet-c-shine {
+	fill: var(--pet-shine);
+}
+.tl-pet-c-spark {
+	fill: var(--pet-spark);
+}
+.tl-pet-c-sweat {
+	fill: var(--pet-sweat);
+}
+.tl-pet-c-steel {
+	fill: var(--pet-steel);
+}
+.tl-pet-c-wood {
+	fill: var(--pet-wood);
+}
+.tl-pet-c-block {
+	fill: var(--pet-block);
+}
+.tl-pet-c-paper {
+	fill: var(--pet-paper);
+}
+.tl-pet-c-cover {
+	fill: var(--pet-cover);
+}
+.tl-pet-c-lens {
+	fill: var(--pet-lens);
+}
+.tl-pet-stem-o {
+	fill: none;
+	stroke: var(--pet-outline);
+	stroke-width: 7;
+	stroke-linecap: round;
+}
+.tl-pet-stem {
+	fill: none;
+	stroke: var(--pet-limb);
+	stroke-width: 3;
+	stroke-linecap: round;
+}
+.tl-pet-ink-line {
+	fill: none;
+	stroke: var(--pet-ink);
+	stroke-width: 3.4;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+.tl-pet-ink-line-bold {
+	stroke-width: 4.2;
+}
+.tl-pet-ink-line-thin {
+	stroke-width: 1.8;
+}
+.tl-pet-grit-box {
+	stroke: var(--pet-ink);
+	stroke-width: 2.6;
+}
+.tl-pet-rim {
+	stroke: var(--pet-ink);
+	stroke-width: 3.4;
+}
+.tl-pet-rim-line {
+	fill: none;
+	stroke-linecap: round;
+}
+.tl-pet-gleam {
+	fill: none;
+	stroke: var(--pet-shine);
+	stroke-width: 2.4;
+	stroke-linecap: round;
+	opacity: 0.85;
+}
+.tl-pet-page {
+	stroke: var(--pet-outline);
+	stroke-width: 1.8;
+	stroke-linejoin: round;
+}
+.tl-pet-text-line {
+	fill: none;
+	stroke: var(--pet-glyph);
+	stroke-width: 2.6;
+	stroke-linecap: round;
+	opacity: 0.55;
+	transform-box: fill-box;
+	transform-origin: 0 50%;
+}
+.tl-pet-q {
+	fill: none;
+	stroke: var(--pet-glyph);
+	stroke-width: 4.4;
+	stroke-linecap: round;
+}
+.tl-pet-wave-line {
+	fill: none;
+	stroke: var(--pet-spark);
+	stroke-width: 3.4;
+	stroke-linecap: round;
+}
+.tl-pet-star {
+	transform: scale(0.62);
+}
+
+/* ── transition scaffolding ────────────────────────────────────────────── */
+
+.tl-pet-flip,
+.tl-pet-lean,
+.tl-pet-face,
+.tl-pet-belly,
+.tl-pet-eyes,
+.tl-pet-arm,
+.tl-pet-ear,
+.tl-pet-antenna,
+.tl-pet-leg {
+	transition: transform 0.34s var(--ease-out);
+}
+.tl-pet-eyeset,
+.tl-pet-mouth,
+.tl-pet-brow,
+.tl-pet-dust,
+.tl-pet-prop {
+	opacity: 0;
+	transition: opacity 0.18s ease-out;
+}
+.tl-pet-flip {
+	transform-origin: 96px 0;
+}
+.tl-pet-lean,
+.tl-pet-squash {
+	transform-origin: 96px 188px;
+}
+.tl-pet-eyes {
+	transform-origin: 96px 104px;
+}
+.tl-pet-blink {
+	transform-origin: 0 104px;
+}
+.tl-pet-shadow,
+.tl-pet-puff,
+.tl-pet-sparkle,
+.tl-pet-spark,
+.tl-pet-sweat,
+.tl-pet-bubble-fx,
+.tl-pet-star {
+	transform-box: fill-box;
+	transform-origin: center;
+}
+.tl-pet-bubble-fx {
+	transform-origin: 20% 100%;
+}
+
+/* ── resting pose (idle) ───────────────────────────────────────────────── */
+
+.tl-pet-arm-l {
+	transform: rotate(7deg);
+}
+.tl-pet-arm-r {
+	transform: rotate(-7deg);
+}
+.tl-pet-arm-fx-r,
+.tl-pet-ear-fx-r {
+	--tl-pet-s: -1;
+}
+.tl-pet-arm-fx-l,
+.tl-pet-ear-fx-l {
+	--tl-pet-s: 1;
+}
+
+/* visibility by state */
+.tl-pet:is(
+		[data-state="idle"],
+		[data-state="running-right"],
+		[data-state="running-left"],
+		[data-state="waiting"],
+		[data-state="review"]
+	)
+	.tl-pet-e-open,
+.tl-pet:is([data-state="waving"], [data-state="jumping"]) .tl-pet-e-happy,
+.tl-pet[data-state="failed"] .tl-pet-e-dizzy,
+.tl-pet[data-state="running"] .tl-pet-e-focus,
+.tl-pet:is([data-state="idle"], [data-state="running-right"], [data-state="running-left"]) .tl-pet-m-smile,
+.tl-pet:is([data-state="waving"], [data-state="jumping"]) .tl-pet-m-cheer,
+.tl-pet[data-state="failed"] .tl-pet-m-frown,
+.tl-pet[data-state="waiting"] .tl-pet-m-o,
+.tl-pet[data-state="running"] .tl-pet-m-grit,
+.tl-pet[data-state="review"] .tl-pet-m-flat,
+.tl-pet[data-state="waiting"] .tl-pet-brow-ask,
+.tl-pet[data-state="failed"] .tl-pet-brow-sad,
+.tl-pet[data-state="running"] .tl-pet-brow-grim,
+.tl-pet[data-state="review"] .tl-pet-glasses,
+.tl-pet[data-state="review"] .tl-pet-book,
+.tl-pet[data-state="running"] .tl-pet-hammer,
+.tl-pet[data-state="running"] .tl-pet-anvil,
+.tl-pet[data-state="running"] .tl-pet-sparks,
+.tl-pet[data-state="waiting"] .tl-pet-bubble,
+.tl-pet[data-state="waving"] .tl-pet-wave-lines,
+.tl-pet[data-state="jumping"] .tl-pet-sparkles,
+.tl-pet[data-state="failed"] .tl-pet-dizzy,
+.tl-pet[data-state="failed"] .tl-pet-sweat-wrap {
+	opacity: 1;
+}
+
+/* idle: breathe, blink, glance, an occasional ear flick */
+.tl-pet[data-state="idle"] .tl-pet-squash {
+	animation: tl-pet-breathe 3.8s ease-in-out infinite;
+}
+.tl-pet[data-state="idle"] .tl-pet-antenna-fx {
+	animation: tl-pet-sway 4.4s ease-in-out infinite;
+}
+.tl-pet[data-state="idle"] .tl-pet-arm-fx {
+	animation: tl-pet-arm-breathe 3.8s ease-in-out infinite;
+}
+.tl-pet[data-state="idle"] .tl-pet-ear-fx-r {
+	animation: tl-pet-ear-flick 7s ease-in-out infinite;
+}
+.tl-pet[data-state="idle"] .tl-pet-look {
+	animation: tl-pet-glance 9s ease-in-out infinite;
+}
+.tl-pet:is(
+		[data-state="idle"],
+		[data-state="waiting"],
+		[data-state="review"],
+		[data-state="running"],
+		[data-state="running-right"],
+		[data-state="running-left"]
+	)
+	.tl-pet-blink {
+	animation: tl-pet-blink 5.2s infinite;
+}
+
+/* ── walking: running-right / running-left ─────────────────────────────── */
+
+.tl-pet[data-state="running-left"] .tl-pet-flip {
+	transform: scaleX(-1);
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-lean {
+	transform: rotate(6deg);
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-face {
+	transform: translate(14px, 1px);
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-belly {
+	transform: translate(9px, 0);
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-eyes {
+	transform: translate(3px, 1px);
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-antenna {
+	transform: rotate(-12deg);
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-ear {
+	transform: rotate(-9deg);
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-hop {
+	animation: tl-pet-bob calc(var(--tl-pet-step) / 2) ease-in-out infinite;
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-shadow {
+	animation: tl-pet-shadow-walk calc(var(--tl-pet-step) / 2) ease-in-out infinite;
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-leg-fx {
+	animation: tl-pet-stride var(--tl-pet-step) linear infinite;
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-leg-fx-r,
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-arm-fx-r {
+	animation-delay: calc(var(--tl-pet-step) / -2);
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-arm-fx {
+	animation: tl-pet-arm-swing var(--tl-pet-step) linear infinite;
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-arm-fx-r {
+	animation-delay: calc(var(--tl-pet-step) / -2);
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-antenna-fx,
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-ear-fx {
+	animation: tl-pet-trail calc(var(--tl-pet-step) / 2) ease-in-out infinite;
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-puff {
+	animation: tl-pet-puff var(--tl-pet-step) ease-out infinite;
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-puff-b {
+	animation-delay: calc(var(--tl-pet-step) / -2);
+}
+.tl-pet:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-dust {
+	opacity: 1;
+}
+
+/* ── waving ────────────────────────────────────────────────────────────── */
+
+.tl-pet[data-state="waving"] .tl-pet-arm-r {
+	transform: rotate(-146deg);
+}
+.tl-pet[data-state="waving"] .tl-pet-arm-l {
+	transform: rotate(10deg);
+}
+.tl-pet[data-state="waving"] .tl-pet-lean {
+	transform: rotate(-2deg);
+}
+.tl-pet[data-state="waving"] .tl-pet-arm-fx-r {
+	animation: tl-pet-wave 0.62s ease-in-out infinite;
+}
+.tl-pet[data-state="waving"] .tl-pet-hop {
+	animation: tl-pet-bounce 0.62s ease-in-out infinite;
+}
+.tl-pet[data-state="waving"] .tl-pet-antenna-fx {
+	animation: tl-pet-wiggle 0.62s ease-in-out infinite;
+}
+.tl-pet[data-state="waving"] .tl-pet-wave-line {
+	animation: tl-pet-wave-line 0.62s ease-in-out infinite;
+}
+.tl-pet[data-state="waving"] .tl-pet-wave-line-b {
+	animation-delay: 0.14s;
+}
+
+/* ── jumping ───────────────────────────────────────────────────────────── */
+
+.tl-pet[data-state="jumping"] .tl-pet-arm-l {
+	transform: rotate(142deg);
+}
+.tl-pet[data-state="jumping"] .tl-pet-arm-r {
+	transform: rotate(-142deg);
+}
+.tl-pet[data-state="jumping"] .tl-pet-ear {
+	transform: scale(1, 1.08);
+}
+.tl-pet[data-state="jumping"] .tl-pet-hop {
+	animation: tl-pet-jump-hop 1.2s infinite;
+}
+.tl-pet[data-state="jumping"] .tl-pet-squash {
+	animation: tl-pet-jump-squash 1.2s infinite;
+}
+.tl-pet[data-state="jumping"] .tl-pet-arm-fx {
+	animation: tl-pet-jump-arm 1.2s ease-in-out infinite;
+}
+.tl-pet[data-state="jumping"] .tl-pet-leg-fx {
+	animation: tl-pet-jump-leg 1.2s ease-in-out infinite;
+}
+.tl-pet[data-state="jumping"] .tl-pet-antenna-fx {
+	animation: tl-pet-jump-antenna 1.2s ease-in-out infinite;
+}
+.tl-pet[data-state="jumping"] .tl-pet-shadow {
+	animation: tl-pet-jump-shadow 1.2s infinite;
+}
+.tl-pet[data-state="jumping"] .tl-pet-sparkle {
+	animation: tl-pet-sparkle 1.2s ease-out infinite;
+}
+.tl-pet[data-state="jumping"] .tl-pet-sparkle-b {
+	animation-delay: 0.08s;
+}
+.tl-pet[data-state="jumping"] .tl-pet-sparkle-c {
+	animation-delay: 0.04s;
+}
+.tl-pet[data-state="jumping"] .tl-pet-sparkle-d {
+	animation-delay: 0.12s;
+}
+
+/* ── failed ────────────────────────────────────────────────────────────── */
+
+.tl-pet[data-state="failed"] .tl-pet-lean {
+	transform: translateY(2px) scale(1.05, 0.9);
+}
+.tl-pet[data-state="failed"] .tl-pet-ear {
+	transform: rotate(-62deg);
+}
+.tl-pet[data-state="failed"] .tl-pet-antenna {
+	transform: rotate(48deg);
+}
+.tl-pet[data-state="failed"] .tl-pet-arm-l {
+	transform: rotate(4deg);
+}
+.tl-pet[data-state="failed"] .tl-pet-arm-r {
+	transform: rotate(-4deg);
+}
+.tl-pet[data-state="failed"] .tl-pet-face {
+	transform: translate(0, 4px);
+}
+.tl-pet[data-state="failed"] .tl-pet-squash {
+	animation: tl-pet-woozy 2.6s ease-in-out infinite;
+}
+.tl-pet[data-state="failed"] .tl-pet-arm-fx {
+	animation: tl-pet-limp 2.6s ease-in-out infinite;
+}
+.tl-pet[data-state="failed"] .tl-pet-antenna-fx {
+	animation: tl-pet-droop 2.6s ease-in-out infinite;
+}
+.tl-pet[data-state="failed"] .tl-pet-orbit {
+	animation: tl-pet-orbit-x 1.3s ease-in-out infinite alternate;
+}
+.tl-pet[data-state="failed"] .tl-pet-orbit-y {
+	animation: tl-pet-orbit-y 0.65s ease-in-out infinite alternate;
+}
+.tl-pet[data-state="failed"] .tl-pet-orbit-b {
+	animation-delay: -0.43s;
+}
+.tl-pet[data-state="failed"] .tl-pet-orbit-y-b {
+	animation-delay: -0.22s;
+}
+.tl-pet[data-state="failed"] .tl-pet-orbit-c {
+	animation-delay: -0.87s;
+}
+.tl-pet[data-state="failed"] .tl-pet-orbit-y-c {
+	animation-delay: -0.43s;
+}
+.tl-pet[data-state="failed"] .tl-pet-sweat {
+	animation: tl-pet-sweat 1.9s ease-in infinite;
+}
+
+/* ── waiting ───────────────────────────────────────────────────────────── */
+
+.tl-pet[data-state="waiting"] .tl-pet-eyes {
+	transform: scale(1.12);
+}
+.tl-pet[data-state="waiting"] .tl-pet-ear {
+	transform: scale(1, 1.14);
+}
+.tl-pet[data-state="waiting"] .tl-pet-antenna {
+	transform: rotate(16deg);
+}
+.tl-pet[data-state="waiting"] .tl-pet-squash {
+	animation: tl-pet-tilt 3.6s ease-in-out infinite;
+}
+.tl-pet[data-state="waiting"] .tl-pet-leg-fx-r {
+	animation: tl-pet-tap 1.5s ease-in-out infinite;
+}
+.tl-pet[data-state="waiting"] .tl-pet-bubble-fx {
+	animation: tl-pet-ask 1.5s ease-in-out infinite;
+}
+.tl-pet[data-state="waiting"] .tl-pet-antenna-fx {
+	animation: tl-pet-wiggle 1.5s ease-in-out infinite;
+}
+
+/* ── running: hammering ────────────────────────────────────────────────── */
+
+.tl-pet[data-state="running"] .tl-pet-lean {
+	transform: translateX(-9px) rotate(3deg);
+}
+.tl-pet[data-state="running"] .tl-pet-arm-r {
+	transform: rotate(-98deg);
+}
+.tl-pet[data-state="running"] .tl-pet-arm-l {
+	transform: rotate(-18deg);
+}
+.tl-pet[data-state="running"] .tl-pet-eyes {
+	transform: translate(4px, 3px);
+}
+.tl-pet[data-state="running"] .tl-pet-arm-fx-r {
+	animation: tl-pet-hammer 0.84s infinite;
+}
+.tl-pet[data-state="running"] .tl-pet-arm-fx-l {
+	animation: tl-pet-brace 0.84s ease-in-out infinite;
+}
+.tl-pet[data-state="running"] .tl-pet-squash {
+	animation: tl-pet-strike 0.84s infinite;
+}
+.tl-pet[data-state="running"] .tl-pet-antenna-fx {
+	animation: tl-pet-jolt 0.84s ease-out infinite;
+}
+.tl-pet[data-state="running"] .tl-pet-spark {
+	animation: tl-pet-spark 0.84s ease-out infinite;
+}
+.tl-pet-spark-1 {
+	--dx: -14px;
+	--dy: -16px;
+}
+.tl-pet-spark-2 {
+	--dx: 4px;
+	--dy: -22px;
+}
+.tl-pet-spark-3 {
+	--dx: 20px;
+	--dy: -14px;
+}
+.tl-pet-spark-4 {
+	--dx: 26px;
+	--dy: -2px;
+}
+
+/* ── review: reading with glasses ──────────────────────────────────────── */
+
+.tl-pet[data-state="review"] .tl-pet-arm-l {
+	transform: rotate(-50deg);
+}
+.tl-pet[data-state="review"] .tl-pet-arm-r {
+	transform: rotate(50deg);
+}
+.tl-pet[data-state="review"] .tl-pet-lean {
+	transform: rotate(-1.5deg);
+}
+.tl-pet[data-state="review"] .tl-pet-look {
+	animation: tl-pet-scan 3.6s linear infinite;
+}
+.tl-pet[data-state="review"] .tl-pet-squash {
+	animation: tl-pet-read-nod 3.6s ease-in-out infinite;
+}
+.tl-pet[data-state="review"] .tl-pet-text-line {
+	animation: tl-pet-read-line 3.6s ease-out infinite;
+}
+.tl-pet[data-state="review"] .tl-pet-text-line-b {
+	animation-delay: 0.45s;
+}
+.tl-pet[data-state="review"] .tl-pet-text-line-c {
+	animation-delay: 0.9s;
+}
+.tl-pet[data-state="review"] .tl-pet-antenna-fx {
+	animation: tl-pet-sway 3.6s ease-in-out infinite;
+}
+
+/* ── still: one static pose per state ──────────────────────────────────── */
+
+.tl-pet[data-still="true"] *,
+.tl-pet[data-still="true"] *::before,
+.tl-pet[data-still="true"] *::after {
+	animation: none !important;
+}
+.tl-pet[data-still="true"]:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-leg-fx-l {
+	transform: translateY(-4px) rotate(24deg);
+}
+.tl-pet[data-still="true"]:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-leg-fx-r {
+	transform: rotate(-24deg);
+}
+.tl-pet[data-still="true"]:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-arm-fx-l {
+	transform: rotate(-22deg);
+}
+.tl-pet[data-still="true"]:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-arm-fx-r {
+	transform: rotate(22deg);
+}
+.tl-pet[data-still="true"]:is([data-state="running-right"], [data-state="running-left"]) .tl-pet-puff {
+	opacity: 0.7;
+	transform: translate(-6px, -2px);
+}
+.tl-pet[data-still="true"][data-state="waving"] .tl-pet-arm-fx-r {
+	transform: rotate(-10deg);
+}
+.tl-pet[data-still="true"][data-state="jumping"] .tl-pet-hop {
+	transform: translateY(-14px);
+}
+.tl-pet[data-still="true"][data-state="jumping"] .tl-pet-squash {
+	transform: scale(0.96, 1.07);
+}
+.tl-pet[data-still="true"][data-state="jumping"] .tl-pet-leg-fx-l {
+	transform: translateY(-6px) rotate(14deg);
+}
+.tl-pet[data-still="true"][data-state="jumping"] .tl-pet-leg-fx-r {
+	transform: translateY(-6px) rotate(-14deg);
+}
+.tl-pet[data-still="true"][data-state="jumping"] .tl-pet-shadow {
+	transform: scale(0.72);
+	opacity: 0.6;
+}
+.tl-pet[data-still="true"][data-state="jumping"] .tl-pet-sparkle {
+	transform: scale(1);
+}
+.tl-pet[data-still="true"][data-state="failed"] .tl-pet-orbit-a {
+	transform: translateX(-24px);
+}
+.tl-pet[data-still="true"][data-state="failed"] .tl-pet-orbit-b {
+	transform: translateX(8px);
+}
+.tl-pet[data-still="true"][data-state="failed"] .tl-pet-orbit-c {
+	transform: translateX(26px);
+}
+.tl-pet[data-still="true"][data-state="failed"] .tl-pet-sweat {
+	transform: translateY(6px);
+}
+.tl-pet[data-still="true"][data-state="running"] .tl-pet-arm-fx-r {
+	transform: rotate(-72deg);
+}
+.tl-pet[data-still="true"][data-state="running"] .tl-pet-spark {
+	opacity: 0;
+}
+.tl-pet[data-still="true"][data-state="review"] .tl-pet-look {
+	transform: translate(-3px, 2px);
+}
+
+/* Safety net: never loop motion for people who asked for none, even if `still` is not passed. */
+@media (prefers-reduced-motion: reduce) {
+	.tl-pet,
+	.tl-pet * {
+		animation: none !important;
+	}
+}
+
+/* ── keyframes ─────────────────────────────────────────────────────────── */
+
+@keyframes tl-pet-breathe {
+	0%,
+	100% {
+		transform: scale(1, 1);
+	}
+	50% {
+		transform: scale(0.985, 1.03);
+	}
+}
+@keyframes tl-pet-sway {
+	0%,
+	100% {
+		transform: rotate(0);
+	}
+	30% {
+		transform: rotate(5deg);
+	}
+	70% {
+		transform: rotate(-4deg);
+	}
+}
+@keyframes tl-pet-arm-breathe {
+	0%,
+	100% {
+		transform: rotate(0);
+	}
+	50% {
+		transform: rotate(calc(var(--tl-pet-s) * 3deg));
+	}
+}
+@keyframes tl-pet-ear-flick {
+	0%,
+	84%,
+	100% {
+		transform: rotate(0);
+	}
+	89% {
+		transform: rotate(calc(var(--tl-pet-s) * 14deg));
+	}
+	94% {
+		transform: rotate(calc(var(--tl-pet-s) * -3deg));
+	}
+}
+@keyframes tl-pet-blink {
+	0%,
+	90%,
+	100% {
+		transform: scaleY(1);
+	}
+	93% {
+		transform: scaleY(0.08);
+	}
+	96% {
+		transform: scaleY(1);
+	}
+}
+@keyframes tl-pet-glance {
+	0%,
+	28%,
+	100% {
+		transform: translate(0, 0);
+	}
+	34%,
+	50% {
+		transform: translate(-4px, 0);
+	}
+	56%,
+	68% {
+		transform: translate(0, 0);
+	}
+	74%,
+	88% {
+		transform: translate(4px, -1px);
+	}
+}
+
+/* walk */
+@keyframes tl-pet-stride {
+	0% {
+		transform: translateY(-7px) rotate(0);
+	}
+	25% {
+		transform: translateY(0) rotate(-34deg);
+	}
+	50% {
+		transform: translateY(0) rotate(0);
+	}
+	75% {
+		transform: translateY(0) rotate(34deg);
+	}
+	100% {
+		transform: translateY(-7px) rotate(0);
+	}
+}
+@keyframes tl-pet-arm-swing {
+	0%,
+	50%,
+	100% {
+		transform: rotate(0);
+	}
+	25% {
+		transform: rotate(24deg);
+	}
+	75% {
+		transform: rotate(-24deg);
+	}
+}
+@keyframes tl-pet-bob {
+	0%,
+	50%,
+	100% {
+		transform: translateY(0);
+	}
+	25%,
+	75% {
+		transform: translateY(-4px);
+	}
+}
+@keyframes tl-pet-shadow-walk {
+	0%,
+	50%,
+	100% {
+		transform: scale(1);
+	}
+	25%,
+	75% {
+		transform: scale(0.92);
+	}
+}
+@keyframes tl-pet-trail {
+	0%,
+	100% {
+		transform: rotate(0);
+	}
+	50% {
+		transform: rotate(-8deg);
+	}
+}
+@keyframes tl-pet-puff {
+	0% {
+		opacity: 0;
+		transform: translate(0, 0) scale(0.4);
+	}
+	15% {
+		opacity: 0.75;
+	}
+	100% {
+		opacity: 0;
+		transform: translate(-18px, -6px) scale(1.3);
+	}
+}
+
+/* wave */
+@keyframes tl-pet-wave {
+	0%,
+	100% {
+		transform: rotate(-20deg);
+	}
+	50% {
+		transform: rotate(16deg);
+	}
+}
+@keyframes tl-pet-bounce {
+	0%,
+	50%,
+	100% {
+		transform: translateY(0);
+	}
+	25%,
+	75% {
+		transform: translateY(-2px);
+	}
+}
+@keyframes tl-pet-wiggle {
+	0%,
+	100% {
+		transform: rotate(-6deg);
+	}
+	50% {
+		transform: rotate(8deg);
+	}
+}
+@keyframes tl-pet-wave-line {
+	0%,
+	100% {
+		opacity: 0.2;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+
+/* jump */
+@keyframes tl-pet-jump-hop {
+	0%,
+	14% {
+		transform: translateY(0);
+		animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1);
+	}
+	40% {
+		transform: translateY(-20px);
+		animation-timing-function: cubic-bezier(0.6, 0, 0.8, 0.4);
+	}
+	62%,
+	100% {
+		transform: translateY(0);
+	}
+}
+@keyframes tl-pet-jump-squash {
+	0%,
+	100% {
+		transform: scale(1, 1);
+	}
+	12% {
+		transform: scale(1.13, 0.84);
+	}
+	24% {
+		transform: scale(0.9, 1.15);
+	}
+	42% {
+		transform: scale(0.97, 1.05);
+	}
+	58% {
+		transform: scale(0.93, 1.1);
+	}
+	64% {
+		transform: scale(1.14, 0.82);
+	}
+	76% {
+		transform: scale(0.98, 1.04);
+	}
+	88% {
+		transform: scale(1, 1);
+	}
+}
+@keyframes tl-pet-jump-arm {
+	0%,
+	100% {
+		transform: rotate(0);
+	}
+	12% {
+		transform: rotate(calc(var(--tl-pet-s) * -30deg));
+	}
+	30%,
+	50% {
+		transform: rotate(calc(var(--tl-pet-s) * 14deg));
+	}
+	68% {
+		transform: rotate(calc(var(--tl-pet-s) * -26deg));
+	}
+}
+@keyframes tl-pet-jump-leg {
+	0%,
+	16%,
+	64%,
+	100% {
+		transform: translateY(0) rotate(0);
+	}
+	34%,
+	50% {
+		transform: translateY(-7px) rotate(calc(var(--tl-pet-s) * 14deg));
+	}
+}
+@keyframes tl-pet-jump-antenna {
+	0%,
+	14%,
+	100% {
+		transform: rotate(0);
+	}
+	24% {
+		transform: rotate(-16deg);
+	}
+	44% {
+		transform: rotate(10deg);
+	}
+	66% {
+		transform: rotate(-12deg);
+	}
+	80% {
+		transform: rotate(5deg);
+	}
+}
+@keyframes tl-pet-jump-shadow {
+	0%,
+	14%,
+	62%,
+	100% {
+		transform: scale(1);
+		opacity: 1;
+	}
+	40% {
+		transform: scale(0.7);
+		opacity: 0.55;
+	}
+}
+@keyframes tl-pet-sparkle {
+	0%,
+	20% {
+		opacity: 0;
+		transform: scale(0) rotate(0);
+	}
+	42% {
+		opacity: 1;
+		transform: scale(1.1) rotate(45deg);
+	}
+	72%,
+	100% {
+		opacity: 0;
+		transform: scale(0.4) rotate(90deg);
+	}
+}
+
+/* failed */
+@keyframes tl-pet-woozy {
+	0%,
+	100% {
+		transform: rotate(0);
+	}
+	25% {
+		transform: rotate(-2.5deg);
+	}
+	75% {
+		transform: rotate(2.5deg);
+	}
+}
+@keyframes tl-pet-limp {
+	0%,
+	100% {
+		transform: rotate(0);
+	}
+	25% {
+		transform: rotate(calc(var(--tl-pet-s) * 5deg));
+	}
+	75% {
+		transform: rotate(calc(var(--tl-pet-s) * -5deg));
+	}
+}
+@keyframes tl-pet-droop {
+	0%,
+	100% {
+		transform: rotate(0);
+	}
+	50% {
+		transform: rotate(-9deg);
+	}
+}
+@keyframes tl-pet-orbit-x {
+	from {
+		transform: translateX(-26px);
+	}
+	to {
+		transform: translateX(26px);
+	}
+}
+@keyframes tl-pet-orbit-y {
+	from {
+		transform: translateY(-5px);
+	}
+	to {
+		transform: translateY(5px);
+	}
+}
+@keyframes tl-pet-sweat {
+	0% {
+		opacity: 0;
+		transform: translateY(-4px) scale(0.6);
+	}
+	20% {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+	85% {
+		opacity: 1;
+	}
+	100% {
+		opacity: 0;
+		transform: translateY(20px) scale(1);
+	}
+}
+
+/* waiting */
+@keyframes tl-pet-tilt {
+	0%,
+	100% {
+		transform: rotate(0);
+	}
+	15%,
+	50% {
+		transform: rotate(-5deg);
+	}
+	68%,
+	88% {
+		transform: rotate(4deg);
+	}
+}
+@keyframes tl-pet-tap {
+	0%,
+	30%,
+	100% {
+		transform: translateY(0) rotate(0);
+	}
+	8%,
+	22% {
+		transform: translateY(-4px) rotate(-14deg);
+	}
+	15% {
+		transform: translateY(0) rotate(0);
+	}
+}
+@keyframes tl-pet-ask {
+	0%,
+	100% {
+		transform: translateY(0) scale(1);
+	}
+	50% {
+		transform: translateY(-5px) scale(1.1);
+	}
+}
+
+/* running: hammer */
+@keyframes tl-pet-hammer {
+	0% {
+		transform: rotate(0);
+		animation-timing-function: ease-out;
+	}
+	32%,
+	40% {
+		transform: rotate(-74deg);
+		animation-timing-function: cubic-bezier(0.7, 0, 0.9, 0.5);
+	}
+	54% {
+		transform: rotate(72deg);
+		animation-timing-function: ease-out;
+	}
+	62% {
+		transform: rotate(62deg);
+		animation-timing-function: ease-in-out;
+	}
+	100% {
+		transform: rotate(0);
+	}
+}
+@keyframes tl-pet-brace {
+	0%,
+	100% {
+		transform: rotate(0);
+	}
+	54% {
+		transform: rotate(8deg);
+	}
+}
+@keyframes tl-pet-strike {
+	0%,
+	100% {
+		transform: scale(1, 1);
+	}
+	36% {
+		transform: scale(0.98, 1.03);
+	}
+	54% {
+		transform: scale(1.05, 0.94) rotate(2deg);
+	}
+	66% {
+		transform: scale(1, 1);
+	}
+}
+@keyframes tl-pet-jolt {
+	0%,
+	100% {
+		transform: rotate(0);
+	}
+	54% {
+		transform: rotate(12deg);
+	}
+	70% {
+		transform: rotate(-6deg);
+	}
+}
+@keyframes tl-pet-spark {
+	0%,
+	53% {
+		opacity: 0;
+		transform: translate(0, 0) scale(1);
+	}
+	56% {
+		opacity: 1;
+	}
+	80%,
+	100% {
+		opacity: 0;
+		transform: translate(var(--dx), var(--dy)) scale(0.3);
+	}
+}
+
+/* review */
+@keyframes tl-pet-scan {
+	0% {
+		transform: translate(-5px, 0);
+	}
+	24% {
+		transform: translate(5px, 0);
+	}
+	28% {
+		transform: translate(-5px, 2px);
+	}
+	52% {
+		transform: translate(5px, 2px);
+	}
+	56% {
+		transform: translate(-5px, 4px);
+	}
+	80% {
+		transform: translate(5px, 4px);
+	}
+	86%,
+	100% {
+		transform: translate(-5px, 0);
+	}
+}
+@keyframes tl-pet-read-nod {
+	0%,
+	100% {
+		transform: scale(1, 1);
+	}
+	26%,
+	54%,
+	82% {
+		transform: scale(1, 0.985);
+	}
+}
+@keyframes tl-pet-read-line {
+	0% {
+		transform: scaleX(0.15);
+		opacity: 0.2;
+	}
+	30%,
+	86% {
+		transform: scaleX(1);
+		opacity: 0.55;
+	}
+	100% {
+		transform: scaleX(0.15);
+		opacity: 0.2;
+	}
+}

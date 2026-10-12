@@ -7,6 +7,7 @@ import { AgentsPanel, isInactive } from "./components/agents/AgentsPanel";
 import { LazyCodemapSheet } from "./components/codemap/LazyCodemapSheet";
 import { DiagramHost } from "./components/diagram/DiagramHost";
 import { LazyIdeSheet } from "./components/ide/LazyIdeSheet";
+import { PetHost } from "./components/pet/PetHost";
 import { Banners } from "./components/shell/Banners";
 import { ChangesSheet } from "./components/shell/ChangesSheet";
 import { Composer, type ComposerHandle } from "./components/shell/Composer";
@@ -46,7 +47,7 @@ import { Transcript } from "./components/transcript/Transcript";
 import { collectChanges } from "./lib/changes";
 import { GuestClient } from "./lib/client";
 import { togglePalette, usePaletteEntries } from "./lib/palette";
-import { extractPairing, loadPairing, type Pairing, savePairing } from "./lib/companion";
+import { type CompanionHost, extractPairing, loadPairing, type Pairing, savePairing } from "./lib/companion";
 import { subscribeDraft } from "./lib/draft-bus";
 import { openDiagramFile, openSketch } from "./lib/diagram-store";
 import { diagramFileKind } from "./lib/diagrams";
@@ -110,6 +111,9 @@ const PHONE_QUERY = "(max-width: 640px)";
 const WIDE_QUERY = "(min-width: 901px)";
 /** Visual viewport this much shorter than the layout viewport means an on-screen keyboard is up. */
 const KEYBOARD_MIN_PX = 120;
+
+/** The pet's view of the paired computer's sessions while none is paired. */
+const NO_HOSTS: readonly CompanionHost[] = [];
 
 interface Creds {
 	link: string;
@@ -403,6 +407,11 @@ export function App(): ReactNode {
 					onOpenLink={openLink}
 				/>
 			)}
+			<PetHost
+				client={client}
+				hosts={pairing ? hosts : NO_HOSTS}
+				hostsLive={pairing !== null && companionPhase === "live"}
+			/>
 		</>
 	);
 }

@@ -1,6 +1,7 @@
 import type { AgentRef, SessionCommand, SessionHeader, SessionState, WireModel } from "@oh-my-pi/pi-wire";
 import {
 	Ellipsis,
+	GitPullRequest,
 	LogOut,
 	PanelLeft,
 	PanelRight,
@@ -305,6 +306,16 @@ export const HeaderBar = memo(function HeaderBar({
 						aria-label="Code map"
 					>
 						<Waypoints size={16} />
+					</button>
+				)}
+				{onOpenGithub && (
+					<button
+						type="button"
+						className="sh-btn sh-btn-icon sh-github-toggle"
+						onClick={onOpenGithub}
+						aria-label="Open issues and pull requests"
+					>
+						<GitPullRequest size={16} />
 					</button>
 				)}
 				<button

@@ -1482,6 +1482,12 @@
 	height: 36px;
 }
 
+.sh-connect-tools {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
 /* Recents card (when any) above the join card, centred as one column. */
 .sh-connect-stack {
 	position: relative;
@@ -2723,6 +2729,7 @@
 	.sh-header .sh-gauge,
 	.sh-header .sh-avatars,
 	.sh-header .sh-theme-toggle,
+	.sh-github-toggle,
 	.sh-leave,
 	.sh-btn-label {
 		display: none;

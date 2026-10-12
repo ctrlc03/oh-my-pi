@@ -11,6 +11,8 @@
  * `session-cmd` (model / thinking switches, compact, rename) — exactly the frames a
  * real `omp /collab` host emits.
  *
+ * A writer's prompt `fail` plays a short turn whose one tool call fails, to see how the app shows a failure.
+ *
  * A writer's prompt `approve [command]` raises a tool-approval ask with the always-allow choices (feature
  * `approval-grants`, see mock-approvals.ts); `MOCK_GUESTS_SAVE_APPROVALS=1` lets guests save project rules.
  *
@@ -57,6 +59,7 @@ import {
 	fixtureProfiles,
 	fixtureThinkingLevels,
 	HOST_DISPLAY_NAME,
+	makeFailingTurn,
 	makeProbeProgress,
 	makeScriptedTurn,
 	type ScriptedStep,
@@ -316,10 +319,10 @@ function notice(level: "info" | "warning" | "error", message: string): void {
 
 // ── scripted turn replay ─────────────────────────────────────────────────────
 
-function startReplay(model?: string): void {
+function startReplay(model?: string, script: typeof makeScriptedTurn = makeScriptedTurn): void {
 	turnSeq++;
 	replayModel = model;
-	replayQueue = makeScriptedTurn(turnSeq, lastEntryId);
+	replayQueue = script(turnSeq, lastEntryId);
 	scheduleStep();
 }
 
@@ -996,7 +999,7 @@ function handlePrompt(
 		broadcastState();
 		return;
 	}
-	startReplay(chosenModel);
+	startReplay(chosenModel, text.trim() === "fail" ? makeFailingTurn : makeScriptedTurn);
 }
 
 function handleAbort(fromPeer: number): void {

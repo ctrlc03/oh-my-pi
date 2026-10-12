@@ -1,9 +1,10 @@
-import { ArrowRight, ClipboardPaste, Eye, Lock, ScanLine, X } from "lucide-react";
+import { ArrowRight, ClipboardPaste, Eye, Lock, PawPrint, ScanLine, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import { extractPairing, type PairingLink } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import type { PushControl } from "../../lib/push";
+import { openPetSheet } from "../../lib/pet-ui";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
 import type { CompanionHandle } from "../../lib/use-companion";
 import { CompanionCard } from "./CompanionCard";
@@ -93,7 +94,12 @@ export function ConnectScreen({
 					<span className="sh-brand-slash">/</span>
 					<span className="sh-brand-app">collab</span>
 				</div>
-				<ThemeToggle />
+				<div className="sh-connect-tools">
+					<button type="button" className="sh-theme-toggle" onClick={openPetSheet} aria-label="Pet settings">
+						<PawPrint size={16} />
+					</button>
+					<ThemeToggle />
+				</div>
 			</div>
 			<div className="sh-connect-stack">
 				{companion && (

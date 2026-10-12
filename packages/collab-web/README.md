@@ -192,6 +192,31 @@ bun scripts/companion.ts --no-local-relay      # serve without the loopback rela
 
 To make `/collab` links and QR codes open your own deployment, set `collab.webUrl` to its URL. The repository's `collab-web pages` workflow deploys this package to a fork's GitHub Pages site (`https://<owner>.github.io/<repo>/`). It runs on pushes to the `collab-pwa` branch or on demand.
 
+## Pet
+
+A small animated companion floats over the app and shows what the agent is doing. It is on by default with a mouse, off on phones and tablets (turn it on in *Pet…*), and its settings stay on the device.
+
+| The pet | When |
+| --- | --- |
+| failed (about 2.5 s) | a tool or the turn just failed |
+| jumping (about 2 s) | the plan finished: every task is done |
+| waving (about 2 s) | a turn ended cleanly |
+| waiting | a question or approval waits for you |
+| running | a tool is executing, or the turn is in flight |
+| review | the model is thinking, or only reading tools (read, grep, find, search…) run |
+| idle | nothing is happening |
+
+The first three play only when seen live, never when a session is opened or reconnected. On the connect screen the pet follows the paired computer's sessions: waiting if any needs you, else running if any works.
+
+- **Moving it**: drag the pet (the spot is kept as a fraction of the window, so it survives resizes), or focus it and press the arrow keys. By default it sits at the bottom right above the message box and the bars over it (and above the jump-to-latest button on a phone). It stays below sheets and hides while a phone's keyboard is up. A click shows its status for 2 s; Alt + scroll over it resizes it.
+- **Roam** (off by default): while idle, the pet walks along its band above the message box, pauses and sometimes hops. Any other state stops it and sends it back to its spot. It uses one `requestAnimationFrame` loop only while a step moves it.
+- **Reduced motion and hidden pages**: with `prefers-reduced-motion` the pet shows still poses and does not roam; a hidden page freezes it and stops its timers.
+- **Pop out** (desktop Chrome and Edge, Document Picture-in-Picture): Shift-click the pet, or *Pet…* → *Pop out*. A small always-on-top window shows the pet with a status bubble ("working…", "thinking…", "your turn", "done", "failed") in the app's theme; clicking it focuses the app tab where the browser allows it, and *Back to the app* closes the window. The in-page pet is hidden meanwhile. The choice is remembered, but the window never reopens on its own (the browser needs a click): the pet then shows a small *Pop the pet out again* chip.
+- **The petdex gallery**: *Pet…* → *Change* lists [petdex](https://petdex.dev) pets (search by name, kind or creator). Nothing is fetched until you open that list. Opening it contacts `petdex.dev` (the list, about 1.8 MB, kept on the device for a day) and `assets.petdex.dev` (each pet's animated preview, about 55 KB, and the chosen pet's sprite sheet, about 2 MB, kept on the device so the pet works offline). Pets are user-submitted fan art; the list shows who made each one. If a download fails, the current pet stays and the picker says why.
+- **Settings** (*Pet…* in the command palette, or the paw button on the connect screen): show the pet, which pet, size (about 64 px with a mouse, 44 px on touch), Roam, Pop out, and *Reset position*. The palette also offers *Show pet* and *Hide pet*.
+
+The pure rules live in `src/lib/pet-activity.ts` (state precedence and transients), `pet-roam.ts`, `pet-layout.ts` and `petdex.ts` (manifest validation and sprite-sheet geometry); the mascot art is `src/components/pet/Mascot.tsx`. The mock host plays a failing tool when a writer sends `fail`, and an approval when one sends `approve`.
+
 ## Architecture
 
 - `src/lib/` — vendored wire codec (`codec.ts` AES-256-GCM, `link.ts` envelope + link grammar), `socket.ts` reconnecting relay socket, `client.ts` guest session store (`GuestClient` + immutable snapshots for `useSyncExternalStore`). Shared protocol shapes come from `@oh-my-pi/pi-wire`.

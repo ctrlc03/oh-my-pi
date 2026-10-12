@@ -96,6 +96,29 @@
 	--term-14: #8ae6f0;
 	--term-15: #ededef;
 
+	/* pet mascot: pink body, orchid shade, iris limbs, cyan bobble — the omp mark palette */
+	--pet-body: #f26fbd;
+	--pet-body-shade: #c64a9f;
+	--pet-gloss: rgba(255, 255, 255, 0.4);
+	--pet-belly: #ffd6ec;
+	--pet-glyph: #8a4ee0;
+	--pet-outline: #3b1241;
+	--pet-ink: #2a0f30;
+	--pet-shine: #fff;
+	--pet-cheek: rgba(255, 120, 150, 0.55);
+	--pet-limb: #8f66f0;
+	--pet-ear-inner: #ffb0dc;
+	--pet-bobble: #5ad8e6;
+	--pet-shadow: rgba(0, 0, 0, 0.32);
+	--pet-spark: #ffd45a;
+	--pet-sweat: #7cd3ff;
+	--pet-steel: #b9b7c9;
+	--pet-wood: #c98a52;
+	--pet-block: #6f6682;
+	--pet-paper: #fff7fb;
+	--pet-cover: #7a52d6;
+	--pet-lens: rgba(210, 245, 255, 0.28);
+
 	/* type — system stacks only */
 	--font-ui: "Inter var", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 	--font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
@@ -215,6 +238,29 @@
 	--term-14: #1fa9bb;
 	--term-15: #151518;
 
+	/* pet mascot */
+	--pet-body: #ea62ae;
+	--pet-body-shade: #bf3b8c;
+	--pet-gloss: rgba(255, 255, 255, 0.45);
+	--pet-belly: #ffe0f1;
+	--pet-glyph: #7e3fd0;
+	--pet-outline: #3b1241;
+	--pet-ink: #2a0f30;
+	--pet-shine: #fff;
+	--pet-cheek: rgba(255, 110, 140, 0.5);
+	--pet-limb: #7d52e0;
+	--pet-ear-inner: #ffb0dc;
+	--pet-bobble: #25b4c8;
+	--pet-shadow: rgba(90, 20, 70, 0.22);
+	--pet-spark: #f2a900;
+	--pet-sweat: #38aee6;
+	--pet-steel: #9d9bb0;
+	--pet-wood: #b87238;
+	--pet-block: #5f5673;
+	--pet-paper: #fff;
+	--pet-cover: #6a40c8;
+	--pet-lens: rgba(255, 255, 255, 0.5);
+
 	--shadow-card: 0 1px 2px rgba(90, 20, 70, 0.06);
 	--shadow-float: 0 10px 30px rgba(90, 20, 70, 0.1), 0 2px 6px rgba(90, 20, 70, 0.06);
 	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(176, 38, 106, 0.25);
@@ -303,6 +349,29 @@
 		--term-13: #c42596;
 		--term-14: #1fa9bb;
 		--term-15: #151518;
+
+		/* pet mascot */
+		--pet-body: #ea62ae;
+		--pet-body-shade: #bf3b8c;
+		--pet-gloss: rgba(255, 255, 255, 0.45);
+		--pet-belly: #ffe0f1;
+		--pet-glyph: #7e3fd0;
+		--pet-outline: #3b1241;
+		--pet-ink: #2a0f30;
+		--pet-shine: #fff;
+		--pet-cheek: rgba(255, 110, 140, 0.5);
+		--pet-limb: #7d52e0;
+		--pet-ear-inner: #ffb0dc;
+		--pet-bobble: #25b4c8;
+		--pet-shadow: rgba(90, 20, 70, 0.22);
+		--pet-spark: #f2a900;
+		--pet-sweat: #38aee6;
+		--pet-steel: #9d9bb0;
+		--pet-wood: #b87238;
+		--pet-block: #5f5673;
+		--pet-paper: #fff;
+		--pet-cover: #6a40c8;
+		--pet-lens: rgba(255, 255, 255, 0.5);
 
 		--shadow-card: 0 1px 2px rgba(90, 20, 70, 0.06);
 		--shadow-float: 0 10px 30px rgba(90, 20, 70, 0.1), 0 2px 6px rgba(90, 20, 70, 0.06);

@@ -302,6 +302,7 @@ async function joinAsGuest(
 	if ("error" in parsed) throw new Error(parsed.error);
 	const writeToken = parsed.writeToken && !readOnly ? Buffer.from(parsed.writeToken).toString("base64url") : undefined;
 	const socket = new CollabSocket({ wsUrl: parsed.wsUrl, role: "guest", key: await importRoomKey(parsed.key) });
+	guestCleanups.push(() => socket.close());
 	const frames: CollabFrame[] = [];
 	const waiters: (() => void)[] = [];
 	socket.onFrame = frame => {
@@ -348,7 +349,6 @@ async function startAndJoin(readOnly = false, options: HostOptions = {}): Promis
 	host = new CollabHost(harness.ctx);
 	await host.start("ws://localhost:8788");
 	const guest = await joinAsGuest(host.link, readOnly);
-	guestCleanups.push(() => guest.socket.close());
 	await guest.next("welcome");
 	return guest;
 }

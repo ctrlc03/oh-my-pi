@@ -2,17 +2,6 @@
 
 ## [Unreleased]
 
-## [18.10.2] - 2026-10-12
-
-### Added
-
-- Added `TspPickerMark.icon`: an icon a picker mark draws instead of its initials when the terminal has it (`provider:<id>` names a model provider's logo)
-
-## [18.8.8] - 2026-10-10
-
-### Added
-
-- Added `TspToolProps.command` (the command line Copy command copies), `TspToolProps.preview: "children"` (the collapsed body stays whole while its children clamp) and `TspCodeProps.preview`
 ### Added
 
 - The `permission-mode` feature (`session-cmd` `permission` with `supervised` or `full`, reported as `SessionState.permission`) and `welcome.agent` (`AgentRef`, `{ id, name }`), set by hosts that run another vendor's coding agent (protocol version unchanged).
@@ -35,6 +24,12 @@
 - `LOCAL_RELAY_LINK_PARAM`, `normalizeLocalRelayUrl`, and `ParsedCollabLink.localWsUrl`: a collab link may append `?local=<host>:<port>` naming a loopback relay that serves the same room on the host's computer; only `localhost`, `127.0.0.1`, and `[::1]` with an explicit port are accepted (protocol version unchanged).
 - The `rewind-files` feature: `session-cmd` `rewind` takes `restoreFiles` to also restore the files the dropped turns changed, `rewind-preview` asks what that would change, `redo-files` undoes the last restore; the host answers with the targeted `rewind-preview` and `files-restored` frames (`RewindFilesPlan`: files reverted, removed, recreated) (protocol version unchanged).
 - `@oh-my-pi/pi-wire/schedule`: the schedule types shared by the companion, the web app and omp (`Schedule`, `ScheduleWhen` with `cron` and `interval` kinds, `CatchUpPolicy`, `createdBy`), the cron parser and next-run maths with daylight-saving rules (`parseCron`, `nextRunAfter`, `nextRuns`, `parseScheduleWhen`), their wording (`describeCron`, `describeWhen`, `formatRunTime`), and the companion's local schedule channel contract (`SCHEDULE_IPC_FILE`, `ScheduleIpcRequest`, `ScheduleIpcReply`).
+## [18.10.2] - 2026-10-12
+
+### Added
+
+- Added `TspPickerMark.icon`: an icon a picker mark draws instead of its initials when the terminal has it (`provider:<id>` names a model provider's logo)
+
 ## [18.8.8] - 2026-10-10
 - The `prompt-model` feature: `prompt.model` (`provider/id`) and `prompt.thinking` run one prompt on another model and thinking level, and `WireModel.thinkingLevels` lists the levels each offered model accepts (protocol version unchanged).
 

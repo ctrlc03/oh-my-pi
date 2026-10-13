@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- omp no longer crashes at startup when it may not look at `~/.aws` (for example in the collab companion's sandbox, which hides it): an AWS credentials or config file whose details cannot be read now counts as absent.
+
 ### Removed
 
 - Removed the `toolNamespacesInfo` stream option; Codex requests no longer send `tool_namespaces_info` turn metadata, and `code_mode_tool_names`/`tool_namespaces_info` are no longer reserved client metadata keys.
@@ -95,9 +99,6 @@
 - Fixed invalid `auth.accountPolicies` entries referring to unavailable accounts from preventing startup, account selection, or login; such entries are now skipped with a warning.
 - Fixed Factory Droid Claude turns with thinking disabled from replaying unsupported earlier thinking blocks, and aligned high-effort Sonnet 5.5 thinking behavior with the native client.
 - Fixed side requests for GPT-6 Responses and Codex models from losing prompt-cache context or applying unsupported reasoning-effort configuration changes.
-### Fixed
-
-- omp no longer crashes at startup when it may not look at `~/.aws` (for example in the collab companion's sandbox, which hides it): an AWS credentials or config file whose details cannot be read now counts as absent.
 
 ## [18.8.9] - 2026-10-10
 

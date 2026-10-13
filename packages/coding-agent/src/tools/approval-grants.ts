@@ -19,7 +19,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir, logger } from "@oh-my-pi/pi-utils";
 import type { CollabApprovalChoiceKind, CollabUiApproval } from "@oh-my-pi/pi-wire";
-import type { ExtensionUIContext } from "../extensibility/extensions/types";
+import type { ExtensionApprovalPrompt, ExtensionUIContext } from "../extensibility/extensions/types";
 import {
 	commandMatchesBashApprovalPattern,
 	commandSegmentMatchesBashApprovalPattern,
@@ -539,8 +539,8 @@ export interface ToolApprovalOutcome {
 }
 
 export interface AskToolApprovalOptions {
-	ui: Pick<ExtensionUIContext, "select" | "editor" | "notify">;
-	prompt: string;
+	ui: Pick<ExtensionUIContext, "select" | "approve" | "editor" | "notify">;
+	prompt: ExtensionApprovalPrompt;
 	tool: string;
 	/** What the always/deny-always choices would save; empty or no store: plain Approve / Deny. */
 	rules: readonly ApprovalGrantRule[];
@@ -558,8 +558,9 @@ function choiceFromLabel(label: string | undefined): CollabApprovalChoiceKind {
 /**
  * Ask whether to run a tool call. With grantable `rules` the prompt offers once / session / project /
  * deny / deny-always choices and saves the chosen rule (a local user may edit a single rule's pattern
- * first); otherwise it is the plain Approve / Deny prompt. A guest's project-scoped choice is downgraded to
- * its once form unless `guestsCanSaveProject`. Abort and dismissal throw / deny exactly as the bare select does.
+ * first); otherwise it is the plain Approve / Deny prompt, in the host's approval dialog when it has one. A
+ * guest's project-scoped choice is downgraded to its once form unless `guestsCanSaveProject`. Abort and
+ * dismissal throw / deny exactly as the bare select does.
  */
 export async function askToolApproval(options: AskToolApprovalOptions): Promise<ToolApprovalOutcome> {
 	const { ui, prompt, tool, rules, store, guestsCanSaveProject, session } = options;
@@ -570,8 +571,10 @@ export async function askToolApproval(options: AskToolApprovalOptions): Promise<
 	const by = (): ToolApprovalBy => (answer.source === "remote" ? "guest" : "tui");
 
 	if (rules.length === 0 || !store) {
-		const label = await ui.select(prompt, [LEGACY_APPROVE, "Deny"], { onAnswer });
-		const approved = label === LEGACY_APPROVE;
+		// The host's approval dialog when it has one (Ctrl+Enter approves); a plain select elsewhere.
+		const approved = ui.approve
+			? (await ui.approve(prompt, { onAnswer })) === true
+			: (await ui.select(prompt.full, [LEGACY_APPROVE, "Deny"], { onAnswer })) === LEGACY_APPROVE;
 		return { approved, by: by(), choice: approved ? "once" : "deny", saved: [] };
 	}
 
@@ -584,7 +587,7 @@ export async function askToolApproval(options: AskToolApprovalOptions): Promise<
 		choices: CHOICE_ORDER.map(kind => ({ label: APPROVAL_LABELS[kind], kind })),
 	};
 	const chosen = choiceFromLabel(
-		await ui.select(`${prompt}\nRule saved by "always" choices: ${saves}`, labels, { approval, onAnswer }),
+		await ui.select(`${prompt.full}\nRule saved by "always" choices: ${saves}`, labels, { approval, onAnswer }),
 	);
 	let choice = chosen;
 	const warnings: string[] = [];

@@ -13,7 +13,7 @@
  */
 
 import type { Tokenizer } from "@oh-my-pi/pi-agent-core";
-import { estimateImageContentTokens } from "@oh-my-pi/pi-agent-core/image-tokens";
+import { base64ImageSize, estimateImageTokens } from "@oh-my-pi/pi-agent-core/image-tokens";
 import { collectToolCallsById } from "@oh-my-pi/pi-agent-core/compaction/tool-protection";
 import type { ImageContent, Tool, ToolResultMessage } from "@oh-my-pi/pi-ai";
 import { estimateToolSchemaTokens } from "@oh-my-pi/pi-tui/status-line/context-usage";
@@ -117,7 +117,7 @@ function toolResultTextTokens(message: ToolResultMessage, tokenizer: Tokenizer):
 
 function imageTokens(images: readonly ImageContent[]): number {
 	let total = 0;
-	for (const image of images) total += estimateImageContentTokens(image);
+	for (const image of images) total += estimateImageTokens(base64ImageSize(image.data), image.detail);
 	return total;
 }
 

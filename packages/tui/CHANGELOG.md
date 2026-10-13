@@ -4,6 +4,10 @@
 
 ### Added
 
+- Added the `cache` status-line segment (hit percentage of the last request that carried a prompt, `SegmentContext.lastCacheHitPct`; off by default), `cacheHitPct`, and an optional `cause` on `CacheInvalidation` that the cache-miss marker appends.
+- Added the `app.profile.cycle` keybinding (default `Alt+O`) and an agent-profile badge in the status line's `mode` segment (`SegmentContext.profile`, `StatusLineComponent.setProfileStatus`).
+- Added a ranked "What fills the context" block to the context usage report (`ContextUsageOptions.items`, `ContextRankedItem`), listing the largest items with their token estimate, share and whether they can be pruned.
+- Added an optional `route` label to `createUsageRowBlock` (shown in the per-turn usage row, e.g. `route smol`).
 - Added `ApprovalDialogComponent` and the `app.approval.approve` keybinding (default `Ctrl+Enter`, `Ctrl+Q`) ([#15548](https://github.com/can1357/oh-my-pi/pull/15548) by [@H4vC](https://github.com/H4vC))
 - Plan review overlay can take a remote answer: it shows the remotely chosen execution tier and locks further input like a terminal approval ([#15552](https://github.com/can1357/oh-my-pi/pull/15552) by [@Shadorain](https://github.com/Shadorain))
 
@@ -142,10 +146,6 @@
 - Fixed dead-key input on older Windows Terminal versions so quotes are entered correctly with Space, Enter, and Tab.
 - Fixed SIXEL graphics detection on terminals, including native Windows Terminal, so SVG figures and inline images work without forcing a graphics protocol.
 - Fixed overflow transcript rendering so user messages no longer appear as blank padding bars or leave stray prompt markers across terminal rows.
-- Added the `cache` status-line segment (hit percentage of the last request that carried a prompt, `SegmentContext.lastCacheHitPct`; off by default), `cacheHitPct`, and an optional `cause` on `CacheInvalidation` that the cache-miss marker appends.
-- Added the `app.profile.cycle` keybinding (default `Alt+O`) and an agent-profile badge in the status line's `mode` segment (`SegmentContext.profile`, `StatusLineComponent.setProfileStatus`).
-- Added a ranked "What fills the context" block to the context usage report (`ContextUsageOptions.items`, `ContextRankedItem`), listing the largest items with their token estimate, share and whether they can be pruned.
-- Added an optional `route` label to `createUsageRowBlock` (shown in the per-turn usage row, e.g. `route smol`).
 
 ## [18.8.9] - 2026-10-10
 

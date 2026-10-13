@@ -514,8 +514,8 @@ import {
 	cfgTierGoogle,
 	cfgTierOpenai,
 	cfgProvidersAnthropicSlowMode,
-	type ResetAutoRedeemMode,
 	cfgRewindSnapshotFiles,
+	type ResetAutoRedeemMode,
 } from "./settings";
 import { type AnthropicSlowModeController, anthropicSlowModeLanes, formatUsageLimitLabel } from "./anthropic-slow-mode";
 import {
@@ -2577,10 +2577,7 @@ export class AgentSession implements SettingsScope {
 				this.#modelMentions.syncFromBranch();
 				this.#profilesInstance?.syncFromBranch();
 			},
-			resetAdvisorRuntimes: (reason, options) => {
-				this.requestLedger.noteRewrite();
-				this.#advisors.resetAllRuntimes(reason, options);
-			},
+			resetAdvisorRuntimes: (reason, options) => this.#advisors.resetAllRuntimes(reason, options),
 			rebaseAdvisorPrefix: reason => {
 				this.requestLedger.noteRewrite();
 				this.#advisors.rebaseDeliveredPrefixes(reason);
@@ -6997,17 +6994,6 @@ export class AgentSession implements SettingsScope {
 		return this.#providerBoundary.prepareSimpleStreamOptions(options, provider);
 	}
 
-	/** Cache identity for the main loop and side requests that reuse its context. */
-	getPromptCacheKeyForModel(model: Model | undefined): string | undefined {
-		const candidate = this.sessionManager.getHeader()?.taskPromptCacheKey;
-		return (
-			this.agent.promptCacheKey ??
-			(candidate !== undefined && model !== undefined && resolveCatalogPolicy(model).taskSiblingPromptCache === true
-				? candidate
-				: undefined)
-		);
-	}
-
 	/**
 	 * One row per model request of the active branch — timing, usage, cache, cost and the context
 	 * that entered since the request before — for `/inspect` and the collab Timeline. `redact` runs
@@ -7070,6 +7056,17 @@ export class AgentSession implements SettingsScope {
 			maxChars: options.maxChars,
 			signal: options.signal,
 		});
+	}
+
+	/** Cache identity for the main loop and side requests that reuse its context. */
+	getPromptCacheKeyForModel(model: Model | undefined): string | undefined {
+		const candidate = this.sessionManager.getHeader()?.taskPromptCacheKey;
+		return (
+			this.agent.promptCacheKey ??
+			(candidate !== undefined && model !== undefined && resolveCatalogPolicy(model).taskSiblingPromptCache === true
+				? candidate
+				: undefined)
+		);
 	}
 
 	/** Current steering mode */

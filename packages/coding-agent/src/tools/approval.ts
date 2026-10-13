@@ -8,7 +8,7 @@
  */
 import type { AgentTool, ApprovalDetailsOptions, ToolApprovalDecision, ToolTier } from "@oh-my-pi/pi-agent-core";
 import type { Settings } from "../config/settings";
-import type { ExtensionUIContext } from "../extensibility/extensions/types";
+import type { ExtensionApprovalPrompt, ExtensionUIContext } from "../extensibility/extensions/types";
 
 import { countNewlines } from "@oh-my-pi/pi-utils";
 import { cfgToolsApproval, cfgToolsApprovalMode } from "./settings";
@@ -416,6 +416,22 @@ function compactApprovalDetail(detail: string): string {
 }
 
 /**
+ * The two renderings of an approval prompt: `full` keeps every detail, `compact` collapses multi-line
+ * details for a host that shows the call itself beside the prompt. `appendix` lines follow both.
+ */
+export function approvalPrompt(
+	tool: ApprovalSubject,
+	args: unknown,
+	reason?: string,
+	appendix: readonly string[] = [],
+): ExtensionApprovalPrompt {
+	return {
+		full: [formatApprovalPrompt(tool, args, reason), ...appendix].join("\n"),
+		compact: [formatApprovalPrompt(tool, args, reason, { compact: true }), ...appendix].join("\n"),
+	};
+}
+
+/**
  * Ask the user to approve a call: the host's approval dialog when it has one (it gets both the
  * full prompt and one with multi-line details compacted, and picks by whether the call shows
  * beside it), else an Approve/Deny select with the full prompt (RPC, ACP, extension hosts).
@@ -428,10 +444,7 @@ export async function requestApproval(
 	reason?: string,
 	appendix: readonly string[] = [],
 ): Promise<boolean> {
-	const full = [formatApprovalPrompt(tool, args, reason), ...appendix].join("\n");
-	if (ui.approve) {
-		const compact = [formatApprovalPrompt(tool, args, reason, { compact: true }), ...appendix].join("\n");
-		return (await ui.approve({ full, compact })) === true;
-	}
-	return (await ui.select(full, ["Approve", "Deny"])) === "Approve";
+	const prompt = approvalPrompt(tool, args, reason, appendix);
+	if (ui.approve) return (await ui.approve(prompt)) === true;
+	return (await ui.select(prompt.full, ["Approve", "Deny"])) === "Approve";
 }

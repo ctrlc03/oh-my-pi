@@ -288,7 +288,7 @@ describe("project persistence", () => {
 type AnyMock = Mock<(...args: never[]) => unknown>;
 
 interface FakeUi {
-	ui: Pick<ExtensionUIContext, "select" | "editor" | "notify">;
+	ui: Pick<ExtensionUIContext, "select" | "approve" | "editor" | "notify">;
 	select: AnyMock;
 	editor: AnyMock;
 	notify: AnyMock;
@@ -314,7 +314,7 @@ describe("askToolApproval", () => {
 	) =>
 		askToolApproval({
 			ui: fake.ui,
-			prompt: "Allow tool: bash",
+			prompt: { full: "Allow tool: bash", compact: "Allow tool: bash" },
 			tool: "bash",
 			rules,
 			store,
@@ -328,6 +328,29 @@ describe("askToolApproval", () => {
 		expect(outcome).toMatchObject({ approved: true, by: "tui", choice: "once", saved: [] });
 		expect(fake.select).toHaveBeenCalledWith(expect.any(String), ["Approve", "Deny"], expect.anything());
 		expect((await ask(fakeUi(undefined, "local"), undefined)).approved).toBe(false);
+	});
+
+	it("uses the host's approval dialog for the plain prompt and reports who answered", async () => {
+		const fake = fakeUi(undefined, "local");
+		const approve = vi.fn(async (_prompt: unknown, dialog?: ExtensionUIDialogOptions) => {
+			dialog?.onAnswer?.("remote");
+			return true;
+		});
+		const outcome = await askToolApproval({
+			ui: { ...fake.ui, approve } as FakeUi["ui"],
+			prompt: { full: "Allow tool: bash\nCommand: a\nb", compact: "Allow tool: bash\nCommand: a … +1 line" },
+			tool: "bash",
+			rules: [],
+			store: undefined,
+			guestsCanSaveProject: false,
+			session: { cwd },
+		});
+		expect(outcome).toMatchObject({ approved: true, by: "guest", choice: "once", saved: [] });
+		expect(approve.mock.calls[0]?.[0]).toEqual({
+			full: "Allow tool: bash\nCommand: a\nb",
+			compact: "Allow tool: bash\nCommand: a … +1 line",
+		});
+		expect(fake.select).not.toHaveBeenCalled();
 	});
 
 	it("saves a session rule with the pattern the user edited", async () => {

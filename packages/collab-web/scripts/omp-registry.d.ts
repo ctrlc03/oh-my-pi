@@ -95,7 +95,6 @@ export interface CollabPublishOptions {
 	dir?: string;
 	/** Identity recorded in the metadata; defaults to a fresh random one (`[a-z0-9-]{8,64}`). */
 	instanceId?: string;
-	socketFallbackBase?: string;
 }
 
 /** Publish a hosting process so `listCollabSessions` reports it and `resolveCollabHostLink` hands out its links. */

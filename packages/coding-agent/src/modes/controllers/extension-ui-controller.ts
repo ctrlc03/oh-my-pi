@@ -669,33 +669,37 @@ export class ExtensionUiController {
 			title: prompt.full,
 			options: [APPROVE_OPTION, DENY_OPTION],
 		};
-		const choice = await this.#raceCollabDialog(request, dialogOptions?.signal, signal =>
-			this.#presentDialog(signal, settle => {
-				const callHidden = this.ctx.hideToolActivity;
-				const dialog = new ApprovalDialogComponent(
-					callHidden ? prompt.full : prompt.compact,
-					{ onApprove: () => settle(APPROVE_OPTION), onDeny: () => settle(DENY_OPTION) },
-					{
-						tui: this.ctx.ui,
-						wrapDetails: callHidden,
-						timeout: dialogOptions?.timeout,
-						onTimeout: dialogOptions?.onTimeout,
-						onTimeoutStart: dialogOptions?.onTimeoutStart,
-						onTimeoutReset: dialogOptions?.onTimeoutReset,
-					},
-				);
-				this.ctx.editorContainer.clear();
-				this.ctx.editorContainer.addChild(dialog);
-				this.ctx.ui.setFocus(dialog);
-				this.ctx.ui.requestRender();
-				return () => {
-					dialog.dispose();
+		const choice = await this.#raceCollabDialog(
+			request,
+			dialogOptions?.signal,
+			signal =>
+				this.#presentDialog(signal, settle => {
+					const callHidden = this.ctx.hideToolActivity;
+					const dialog = new ApprovalDialogComponent(
+						callHidden ? prompt.full : prompt.compact,
+						{ onApprove: () => settle(APPROVE_OPTION), onDeny: () => settle(DENY_OPTION) },
+						{
+							tui: this.ctx.ui,
+							wrapDetails: callHidden,
+							timeout: dialogOptions?.timeout,
+							onTimeout: dialogOptions?.onTimeout,
+							onTimeoutStart: dialogOptions?.onTimeoutStart,
+							onTimeoutReset: dialogOptions?.onTimeoutReset,
+						},
+					);
 					this.ctx.editorContainer.clear();
-					this.ctx.editorContainer.addChild(this.ctx.editor);
-					this.ctx.ui.setFocus(this.ctx.editor);
+					this.ctx.editorContainer.addChild(dialog);
+					this.ctx.ui.setFocus(dialog);
 					this.ctx.ui.requestRender();
-				};
-			}),
+					return () => {
+						dialog.dispose();
+						this.ctx.editorContainer.clear();
+						this.ctx.editorContainer.addChild(this.ctx.editor);
+						this.ctx.ui.setFocus(this.ctx.editor);
+						this.ctx.ui.requestRender();
+					};
+				}),
+			dialogOptions?.onAnswer,
 		);
 		return choice === APPROVE_OPTION;
 	}

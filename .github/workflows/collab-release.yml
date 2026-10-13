@@ -19,6 +19,13 @@
 # Darwin binaries are signed ad hoc, or with a Developer ID plus notarization when the five
 # APPLE_* secrets exist (scripts/ci-macos-sign.sh). No other secrets are needed.
 #
+# Native addon cache: the Rust addons take about 30 minutes to compile and only change with
+# the natives inputs listed in scripts/ci-natives-key.sh. The build job asks the composite action
+# .github/actions/collab-natives for `collab-natives-<target>-<key>`, an artifact (90 days) that an
+# earlier run uploaded; collab-natives.yml builds it on every push that changes those inputs, so a
+# release normally finds it and takes about 5-10 minutes. Without one the action compiles and
+# uploads it (about 40 minutes), as the first release after a natives change does.
+#
 # Guarded off for the upstream repository.
 name: collab release
 
@@ -35,6 +42,11 @@ on:
         description: "Replace the assets of a release that already exists for this tag"
         required: false
         default: false
+        type: boolean
+      publish:
+        description: "Publish the release (a tag push always does). Off: build, sign and smoke only, nothing is attested or published"
+        required: false
+        default: true
         type: boolean
 
 permissions:
@@ -56,6 +68,7 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       latest: ${{ steps.release.outputs.latest }}
+      publish: ${{ steps.publish.outputs.publish }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -77,6 +90,12 @@ jobs:
             exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      # A dispatch with `publish` off is a dry run: it must not fail on, or touch, a release that
+      # exists. Tag pushes have no inputs and always publish.
+      - id: publish
+        env:
+          PUBLISH: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish) && 'false' || 'true' }}
+        run: echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
       # A release that exists keeps its assets unless this is a dispatch with `replace`, and only
       # the highest collab-v* tag becomes "latest" (version, then build number: the order
       # packages/coding-agent/src/cli/fork-release.ts uses), so rebuilding an old tag cannot roll
@@ -86,9 +105,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.tag.outputs.tag }}
           REPLACE: ${{ inputs.replace && 'true' || 'false' }}
+          PUBLISH: ${{ steps.publish.outputs.publish }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [ "$REPLACE" != true ]; then
+          if [ "$PUBLISH" = true ] && [ "$REPLACE" != true ] && gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "::error::a release for $TAG already exists; dispatch with 'replace' to overwrite its assets"
             exit 1
           fi
@@ -112,6 +132,10 @@ jobs:
           - { target: darwin-x64, runner: macos-15-intel, x64_variants: "baseline" }
           - { target: linux-x64, runner: ubuntu-22.04, x64_variants: "baseline modern" }
           - { target: linux-arm64, runner: ubuntu-22.04-arm, x64_variants: "" }
+    permissions:
+      contents: read
+      # The collab-natives action lists and downloads earlier runs' artifacts.
+      actions: read
     env:
       OMP_RELEASE_REPO: ${{ github.repository }}
       OMP_BUILD_TAG: ${{ needs.meta.outputs.tag }}
@@ -120,43 +144,36 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ env.RELEASE_REF }}
+      # The cache action and key script come from the commit the workflow itself runs at, not from
+      # the tag being built: a tag made before they existed (a dispatch can rebuild any tag) has
+      # neither. They only read the tag's tree, which stays the one in the workspace.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.sha }}
+          path: .ci-workflow
+          persist-credentials: false
+          sparse-checkout: |
+            /.github/actions/collab-natives/
+            /scripts/ci-natives-key.sh
+          sparse-checkout-cone-mode: false
       - uses: ./.github/actions/bun-install
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends pkg-config libssl-dev clang libclang-dev cmake make ninja-build
-      - name: Install macOS build dependencies
-        if: runner.os == 'macOS'
-        run: |
-          for tool in cmake ninja; do
-            command -v "$tool" >/dev/null || brew install "$tool"
-          done
-      # RUSTUP_TOOLCHAIN overrides rust-toolchain.toml, so only the pinned nightly itself is
-      # fetched, without the rustfmt/clippy/rust-analyzer components and Windows targets it lists.
-      - name: Install the pinned Rust toolchain
-        run: |
-          set -euo pipefail
-          channel="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)"
-          rustup toolchain install "$channel" --profile minimal
-          echo "RUSTUP_TOOLCHAIN=$channel" >> "$GITHUB_ENV"
-      # `host` builds the addon through cargo/napi for this runner's own OS and CPU, stamps it
-      # with the natives version, and checks that it loads. x64 hosts build one addon per ISA
-      # variant (the binary embeds them all and picks by AVX2 at run time): macOS ships the
-      # baseline only, Linux both.
-      - name: Build native addons
+      - name: Compute the natives cache key
+        id: natives-key
         env:
+          TARGET: ${{ matrix.target }}
+          RUNNER_IMAGE: ${{ matrix.runner }}
           X64_VARIANTS: ${{ matrix.x64_variants }}
-        run: |
-          set -euo pipefail
-          if [ -z "$X64_VARIANTS" ]; then
-            bun scripts/bazel-natives.ts host
-          else
-            for variant in $X64_VARIANTS; do
-              OMP_NATIVE_X64_VARIANT="$variant" bun scripts/bazel-natives.ts host
-            done
-          fi
-          ls -l packages/natives/native/*.node
+        run: echo "key=$(bash .ci-workflow/scripts/ci-natives-key.sh "$TARGET" "$RUNNER_IMAGE" "$X64_VARIANTS" "$OMP_NATIVE_CARGO_PROFILE")" >> "$GITHUB_OUTPUT"
+      # Reuses the addons of an earlier run with the same key, else installs the Linux/macOS
+      # build dependencies and the pinned Rust toolchain, builds them and uploads them.
+      - name: Native addons (cached)
+        id: natives
+        uses: ./.ci-workflow/.github/actions/collab-natives
+        with:
+          target: ${{ matrix.target }}
+          x64_variants: ${{ matrix.x64_variants }}
+          key: ${{ steps.natives-key.outputs.key }}
+          github-token: ${{ github.token }}
       - name: Build the omp binary
         run: bun scripts/build-collab-binary.ts --target "${{ matrix.target }}" --outdir dist-collab
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -258,6 +275,8 @@ jobs:
   attest:
     name: Attest the binaries
     needs: [meta, smoke]
+    # A dispatch with `publish` off stops after the smoke test.
+    if: needs.meta.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -281,6 +300,7 @@ jobs:
   release:
     name: Publish the release
     needs: [meta, smoke, attest]
+    if: needs.meta.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: write

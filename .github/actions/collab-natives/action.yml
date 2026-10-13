@@ -1,0 +1,149 @@
+name: "collab natives (cached addons)"
+description: >
+  Puts the target's pi-natives addons in packages/natives/native: downloads the artifact
+  `collab-natives-<target>-<key>` from any earlier run of this repository when it exists, and
+  otherwise builds the addons with cargo/napi (Rust toolchain and system packages installed
+  first) and uploads them under that name for 90 days. The key comes from
+  scripts/ci-natives-key.sh and covers every input of the build, so a hit is the same addon a
+  build would produce. Needs `actions: read` on the job token and `bun install` already run.
+
+inputs:
+  target:
+    description: "Release target: darwin-arm64, darwin-x64, linux-x64 or linux-arm64"
+    required: true
+  x64_variants:
+    description: "Space-separated x64 ISA variants to build (baseline, modern); empty on arm64"
+    required: false
+    default: ""
+  key:
+    description: "Output of scripts/ci-natives-key.sh for this target"
+    required: true
+  github-token:
+    description: "Token that can list and download this repository's artifacts (actions: read)"
+    required: true
+
+outputs:
+  hit:
+    description: "true when the addons came from an existing artifact, false when they were built"
+    value: ${{ steps.restore.outputs.hit }}
+
+runs:
+  using: composite
+  steps:
+    # Artifacts are not ref-scoped, unlike actions/cache entries (a tag run cannot read another
+    # tag's entries, and the default branch is unused here), so any earlier run's artifact serves.
+    - name: Look for a cached build
+      id: restore
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        NAME: collab-natives-${{ inputs.target }}-${{ inputs.key }}
+        TARGET: ${{ inputs.target }}
+        X64_VARIANTS: ${{ inputs.x64_variants }}
+      run: |
+        set -euo pipefail
+        dest=packages/natives/native
+        id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$NAME&per_page=100" \
+          --jq '[.artifacts[] | select(.expired | not)] | sort_by(.created_at) | last | .id // empty')"
+        if [ -z "$id" ]; then
+          echo "No artifact $NAME: building the addons."
+          echo "hit=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo "Found artifact $NAME (id $id)."
+        zip="$RUNNER_TEMP/$NAME.zip"
+        if ! gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$zip"; then
+          echo "::warning::could not download artifact $NAME; building the addons"
+          echo "hit=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        mkdir -p "$dest"
+        unzip -o -q "$zip" -d "$dest"
+        rm -f "$zip"
+        # The files the build leaves for scripts/build-collab-binary.ts: one addon per ISA variant
+        # on x64, one addon otherwise, and the generated bindings next to them.
+        expected=(index.js index.d.ts)
+        if [ -z "$X64_VARIANTS" ]; then
+          expected+=("pi_natives.$TARGET.node")
+        else
+          for variant in $X64_VARIANTS; do expected+=("pi_natives.$TARGET-$variant.node"); done
+        fi
+        for file in "${expected[@]}"; do
+          if [ ! -s "$dest/$file" ]; then
+            echo "::warning::artifact $NAME lacks $file; building the addons"
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+        done
+        ls -l "$dest"/*.node
+        echo "hit=true" >> "$GITHUB_OUTPUT"
+
+    - name: Install Linux build dependencies
+      if: steps.restore.outputs.hit != 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends pkg-config libssl-dev clang libclang-dev cmake make ninja-build
+
+    - name: Install macOS build dependencies
+      if: steps.restore.outputs.hit != 'true' && runner.os == 'macOS'
+      shell: bash
+      run: |
+        for tool in cmake ninja; do
+          command -v "$tool" >/dev/null || brew install "$tool"
+        done
+
+    # RUSTUP_TOOLCHAIN overrides rust-toolchain.toml, so only the pinned nightly itself is
+    # fetched, without the rustfmt/clippy/rust-analyzer components and Windows targets it lists.
+    - name: Install the pinned Rust toolchain
+      if: steps.restore.outputs.hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        channel="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)"
+        rustup toolchain install "$channel" --profile minimal
+        echo "RUSTUP_TOOLCHAIN=$channel" >> "$GITHUB_ENV"
+
+    # `host` builds the addon through cargo/napi for this runner's own OS and CPU, stamps it
+    # with the natives version, and checks that it loads. x64 hosts build one addon per ISA
+    # variant (the binary embeds them all and picks by AVX2 at run time): macOS ships the
+    # baseline only, Linux both. The job sets OMP_NATIVE_CARGO_PROFILE, which is also part of
+    # the key.
+    - name: Build native addons
+      if: steps.restore.outputs.hit != 'true'
+      shell: bash
+      env:
+        X64_VARIANTS: ${{ inputs.x64_variants }}
+      run: |
+        set -euo pipefail
+        if [ -z "$X64_VARIANTS" ]; then
+          bun scripts/bazel-natives.ts host
+        else
+          for variant in $X64_VARIANTS; do
+            OMP_NATIVE_X64_VARIANT="$variant" bun scripts/bazel-natives.ts host
+          done
+        fi
+        ls -l packages/natives/native/*.node
+
+    # The addons plus the bindings the same build generated (native/index.js and index.d.ts),
+    # staged flat so a restore unzips straight into packages/natives/native.
+    - name: Stage the built addons
+      if: steps.restore.outputs.hit != 'true'
+      id: stage
+      shell: bash
+      run: |
+        set -euo pipefail
+        stage="$RUNNER_TEMP/collab-natives-upload"
+        rm -rf "$stage"
+        mkdir -p "$stage"
+        cp packages/natives/native/*.node packages/natives/native/index.js packages/natives/native/index.d.ts "$stage"
+        echo "path=$stage" >> "$GITHUB_OUTPUT"
+
+    - name: Upload the built addons
+      if: steps.restore.outputs.hit != 'true'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: collab-natives-${{ inputs.target }}-${{ inputs.key }}
+        path: ${{ steps.stage.outputs.path }}
+        if-no-files-found: error
+        retention-days: 90

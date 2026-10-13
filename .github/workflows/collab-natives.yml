@@ -1,0 +1,97 @@
+# Pre-builds the fork's native addons so a collab release does not have to.
+#
+# collab-release.yml needs the Rust addons for four targets (about 30 minutes of compiling on a
+# cold runner). They only change with the inputs scripts/ci-natives-key.sh hashes, so this
+# workflow runs the same composite action (.github/actions/collab-natives) on every push to
+# collab-pwa that touches them: it uploads the artifact `collab-natives-<target>-<key>` (90 days)
+# when it does not exist yet and does nothing when it does. A release of that tree then
+# downloads the addons and takes a few minutes. Run it by hand (Actions -> collab natives ->
+# Run workflow) to rebuild an expired artifact before a release.
+#
+# Keep the `paths:` in step with the pathspecs in scripts/ci-natives-key.sh. bun.lock is left out
+# on purpose (it changes with every web dependency; the key only reads its @napi-rs/cli entry, so
+# a napi bump alone is built by the next release that needs it).
+#
+# Guarded off for the upstream repository, like the release.
+name: collab natives
+
+on:
+  push:
+    branches: [collab-pwa]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - ".gitattributes"
+      - "packages/natives/**"
+      - "!packages/natives/CHANGELOG.md"
+      - "!packages/natives/README.md"
+      - "!packages/natives/LICENSE"
+      - "!packages/natives/THIRD-PARTY-NOTICES.txt"
+      - "!packages/natives/bench/**"
+      - "!packages/natives/test/**"
+      - "scripts/bazel-natives.ts"
+      - "scripts/host-detect.ts"
+      - "scripts/stamp-native-version.ts"
+      - "scripts/ci-natives-key.sh"
+      - ".github/actions/collab-natives/**"
+      - ".github/workflows/collab-natives.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One build at a time: a second push waits (a newer waiting run replaces an older one) instead of
+# compiling the same addons beside it.
+concurrency:
+  group: collab-natives
+  cancel-in-progress: false
+
+jobs:
+  natives:
+    name: Natives ${{ matrix.target }}
+    if: github.repository != 'can1357/oh-my-pi'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      # The collab-natives action lists and downloads earlier runs' artifacts.
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: darwin-arm64, runner: macos-14, x64_variants: "" }
+          - { target: darwin-x64, runner: macos-15-intel, x64_variants: "baseline" }
+          - { target: linux-x64, runner: ubuntu-22.04, x64_variants: "baseline modern" }
+          - { target: linux-arm64, runner: ubuntu-22.04-arm, x64_variants: "" }
+    env:
+      OMP_NATIVE_CARGO_PROFILE: ci
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/bun-install
+      - name: Compute the natives cache key
+        id: natives-key
+        env:
+          TARGET: ${{ matrix.target }}
+          RUNNER_IMAGE: ${{ matrix.runner }}
+          X64_VARIANTS: ${{ matrix.x64_variants }}
+        run: echo "key=$(bash scripts/ci-natives-key.sh "$TARGET" "$RUNNER_IMAGE" "$X64_VARIANTS" "$OMP_NATIVE_CARGO_PROFILE")" >> "$GITHUB_OUTPUT"
+      - name: Native addons (cached)
+        id: natives
+        uses: ./.github/actions/collab-natives
+        with:
+          target: ${{ matrix.target }}
+          x64_variants: ${{ matrix.x64_variants }}
+          key: ${{ steps.natives-key.outputs.key }}
+          github-token: ${{ github.token }}
+      - name: Summary
+        env:
+          TARGET: ${{ matrix.target }}
+          KEY: ${{ steps.natives-key.outputs.key }}
+          HIT: ${{ steps.natives.outputs.hit }}
+        run: |
+          if [ "$HIT" = true ]; then state='already built'; else state='built and uploaded'; fi
+          echo "collab-natives-$TARGET-$KEY: $state" >> "$GITHUB_STEP_SUMMARY"

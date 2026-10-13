@@ -64,6 +64,8 @@ export class Codemap {
 	static open(root: string, options: { cwd: string; scope?: string; signal?: AbortSignal }): Promise<Codemap>;
 	readonly root: string;
 	readonly stats: BuildStats;
+	/** The index database file; delete it (and its `-wal`/`-shm`) after indexing a throw-away tree. */
+	readonly dbPath: string;
 	readonly query: {
 		flowSearch(words: string, limit: number): FlowNode[];
 		flowDefinitions(symbol: string): FlowNode[];

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Build the collab web app into a directory: the bundle, the public files, Excalidraw's assets and the service
- * worker. This is the one pipeline behind `bun run build` (Pages: `dist/`), the build the companion makes of
+ * Build the collab web app into a directory: the bundle, the public files, Excalidraw's assets, the architecture
+ * map export's viewer and the service worker. This is the one pipeline behind `bun run build` (Pages: `dist/`), the build the companion makes of
  * itself in a checkout (`local-app-source.ts`) and the build the release binary embeds (`build-collab-binary.ts`).
  *
  *   bun scripts/build-app.ts [--outdir <dir>] [--local]
@@ -63,6 +63,7 @@ export async function buildApp(outdir: string, options: { local: boolean; quiet?
 	if (html[0] !== "index.html") await fs.rename(path.join(outdir, html[0]!), path.join(outdir, "index.html"));
 	await fs.cp(path.join(root, "public"), outdir, { recursive: true });
 	await run([bun, path.join(import.meta.dir, "build-assets.ts"), outdir], quiet);
+	await run([bun, path.join(import.meta.dir, "build-architecture-standalone.ts"), outdir], quiet);
 	if (options.local) {
 		const indexPath = path.join(outdir, "index.html");
 		const page = await Bun.file(indexPath).text();

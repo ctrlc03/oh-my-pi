@@ -19,6 +19,7 @@ const UNPAIRED: CompanionSnapshot = {
 	canSandbox: false,
 	canPr: false,
 	canCodemap: false,
+	canBlueprint: false,
 	canEdit: false,
 	canPreview: false,
 	canGithub: false,

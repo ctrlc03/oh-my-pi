@@ -34,6 +34,7 @@ import { parseOrg } from "../src/lib/session-org";
 import { CollabSocket } from "../src/lib/socket";
 import { createSessionOrg, loadOrgFile, saveOrgFile } from "./companion-sessionorg";
 import { startLocalRelay } from "./local-relay";
+import { createMockBlueprint } from "./mock-blueprint";
 import { createMockFanout } from "./mock-fanout";
 import { createMockForeign, mockForeignHosts } from "./mock-foreign";
 import { createMockSearch } from "./mock-search";
@@ -205,6 +206,18 @@ const search = createMockSearch(hosts, () => [
 		messages: [],
 	})),
 ]);
+/** Architecture maps: a finished full map and changes map, a stale one and a failed one; new ones tick to ready. */
+const blueprint = createMockBlueprint({
+	instanceId: "inst-7",
+	// `--blueprint-sample a.json,b.json` adds maps the real pipeline wrote; `--blueprint-source <checkout>` serves their code.
+	samples: flag("--blueprint-sample", "")
+		.split(",")
+		.filter(file => file !== "")
+		.map(file => ({ file, sourceDir: flag("--blueprint-source", "") || undefined })),
+	onChanged: id => {
+		for (const peer of peers) socket.send({ t: "blueprint-changed", id }, peer);
+	},
+});
 
 function hostsFrame(): CompanionReply {
 	return {
@@ -214,6 +227,7 @@ function hostsFrame(): CompanionReply {
 		...fanout.capabilities,
 		...starts.capabilities,
 		...search.capabilities,
+		...blueprint.capabilities,
 		...foreign.capabilities,
 		...settle.capabilities,
 		canGithub: true,
@@ -283,7 +297,16 @@ socket.onFrame = (frame, fromPeer) => {
 				),
 		);
 	else if (search.handles(frame)) socket.send(search.answer(frame), fromPeer);
-	else if (settle.handles(frame))
+	else if (blueprint.handles(frame)) {
+		try {
+			socket.send(blueprint.answer(frame), fromPeer);
+		} catch (err) {
+			socket.send(
+				{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+				fromPeer,
+			);
+		}
+	} else if (settle.handles(frame))
 		void settle.answer(frame).then(
 			reply => socket.send(reply, fromPeer),
 			(err: unknown) =>

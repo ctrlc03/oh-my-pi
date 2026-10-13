@@ -595,6 +595,18 @@ export function loadCodemap(): Promise<boolean> {
 	return loading;
 }
 
+/**
+ * Open a fresh index of `root`, a throw-away checkout (an architecture map's worktree), not shared with the
+ * views above. The caller closes it and deletes `dbPath` when done.
+ * @throws Error when the codemap module is unavailable on this computer.
+ */
+export async function openThrowawayIndex(root: string): Promise<Codemap> {
+	if (!(await loadCodemap()) || codemapClass === null) {
+		throw new Error(`The code index is unavailable on this computer: ${unavailable}`);
+	}
+	return await codemapClass.open(root, { cwd: root });
+}
+
 interface RepoContext {
 	query: CodemapSource;
 	graph: GraphIndex;

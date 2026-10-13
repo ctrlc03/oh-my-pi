@@ -120,7 +120,16 @@ import {
 	parseCollabLink,
 } from "../src/lib/link";
 import { parseOrg } from "../src/lib/session-org";
-import { checkFlow, checkFocus, checkSearch, codemapSearch, codemapView, loadCodemap } from "./companion-codemap";
+import { createBlueprints } from "./companion-blueprint";
+import {
+	checkFlow,
+	checkFocus,
+	checkSearch,
+	codemapSearch,
+	codemapView,
+	loadCodemap,
+	openThrowawayIndex,
+} from "./companion-codemap";
 import { collectDiag, recordRelayEvent, recordRequestError } from "./companion-diag";
 import { readFileChunk } from "./companion-download";
 import { findFileSessions, repoRelativeFocus } from "./companion-file-sessions";
@@ -218,6 +227,7 @@ import {
 	launchInTmux,
 	parseStartPrompt,
 	tmuxSessionExists,
+	type RestrictLaunch,
 } from "./companion-start";
 import {
 	compareGroup,
@@ -1037,6 +1047,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canSandbox: extras.canStart && sandboxAvailable,
 		canPr: extras.canPr,
 		canCodemap: codemapReady,
+		canBlueprint: codemapReady,
 		canEdit: true,
 		canPreview: previewChrome !== null,
 		// Reading issues and pull requests needs the same signed-in gh as opening one.
@@ -1140,6 +1151,8 @@ async function startSession(
 	/** Fan-out sessions: `omp --model provider/id`. */
 	model?: string,
 	foreign?: ForeignStart,
+	/** A session that only reads the code and writes one file (architecture maps); see {@link RestrictLaunch}. */
+	restrict?: RestrictLaunch,
 ): Promise<string> {
 	if (
 		typeof cwd !== "string" ||
@@ -1234,6 +1247,7 @@ async function startSession(
 				prompt,
 				maxCostUsd: plan ? plan.maxCostUsd : maxCostUsd,
 				model: plan ? plan.model : model,
+				restrict,
 				foreign: plan
 					? {
 							host: foreignHostLauncher(),
@@ -1361,6 +1375,47 @@ async function stopSession(instanceId: string): Promise<void> {
 	if (target === null) throw new Error("only sessions the companion started can be ended from here");
 	await killTmuxSession(target.tmux, target.name);
 }
+
+/** Architecture maps: stored under the config folder, the agent part run as a read-only session the companion starts. */
+const blueprints = createBlueprints({
+	storeDir: path.join(configDir, "agent", "blueprints"),
+	cacheDir: path.join(configDir, "cache", "blueprints"),
+	now: Date.now,
+	changed: id => {
+		for (const peer of peers) room.send({ t: "blueprint-changed", id }, peer, zipPeers.has(peer));
+	},
+	openIndex: openThrowawayIndex,
+	agent: {
+		start: launch =>
+			startSession(
+				launch.cwd,
+				undefined,
+				sandboxAvailable,
+				undefined,
+				undefined,
+				launch.prompt,
+				launch.maxCostUsd,
+				launch.model,
+				undefined,
+				{ overlayPath: launch.overlayPath, overlayYaml: launch.overlayYaml, tools: launch.tools },
+			),
+		hosts: async () =>
+			(await loadSessions()).hosts.map(host => ({
+				instanceId: host.instanceId,
+				sessionId: host.sessionId,
+				model: host.model,
+				busy: host.busy,
+			})),
+		stop: async instanceId => {
+			// A fresh list: the pid of a session started moments ago may not be known yet.
+			await loadSessions();
+			await stopSession(instanceId);
+		},
+		cost: async sessionId =>
+			(await allOverviews({ limit: 100 })).find(session => session.sessionId === sessionId)?.cost,
+	},
+	log: message => console.log(`companion: ${message}`),
+});
 
 function fanoutGroup(id: unknown): FanoutGroup {
 	const group = typeof id === "string" ? fanoutGroups.find(g => g.id === id) : undefined;
@@ -1963,6 +2018,48 @@ room.onFrame = (frame, fromPeer) => {
 				hits: await codemapSearch(await sessionCwd(frame.instanceId), checkSearch(frame.q)),
 			}));
 			return;
+		case "blueprint-list":
+			respond(frame.reqId, async () => {
+				if (frame.cwd !== undefined && typeof frame.cwd !== "string") throw new Error("invalid folder");
+				return { t: "blueprint-list", reqId: frame.reqId, maps: await blueprints.list(frame.cwd) };
+			});
+			return;
+		case "blueprint-create":
+			respond(frame.reqId, async () => {
+				const { t: _t, reqId: _reqId, ...request } = frame;
+				return { t: "blueprint-create", reqId: frame.reqId, ...(await blueprints.create(request)) };
+			});
+			return;
+		case "blueprint-get":
+			respond(frame.reqId, async () => ({
+				t: "blueprint-get",
+				reqId: frame.reqId,
+				map: await blueprints.get(frame.id),
+			}));
+			return;
+		case "blueprint-excerpt":
+			respond(frame.reqId, async () => {
+				if (!Array.isArray(frame.refs)) throw new Error("invalid references");
+				return {
+					t: "blueprint-excerpt",
+					reqId: frame.reqId,
+					excerpts: await blueprints.excerpt(frame.id, frame.refs),
+				};
+			});
+			return;
+		case "blueprint-delete":
+			respond(frame.reqId, async () => {
+				await blueprints.remove(frame.id);
+				return { t: "blueprint-delete", reqId: frame.reqId };
+			});
+			return;
+		case "blueprint-refs":
+			respond(frame.reqId, async () => {
+				if (typeof frame.cwd !== "string" || (frame.q !== undefined && typeof frame.q !== "string"))
+					throw new Error("invalid request");
+				return { t: "blueprint-refs", reqId: frame.reqId, ...(await blueprints.refs(frame.cwd, frame.q)) };
+			});
+			return;
 		case "preview":
 			respond(frame.reqId, async () => {
 				if (previewChrome === null) throw new Error("No Chrome or other Chromium browser found on this computer");
@@ -2248,6 +2345,8 @@ void findChrome().then(found => {
 	previewChrome = found;
 	if (found !== null) void refresh();
 });
+// Maps a previous run left half done are marked interrupted, their checkouts removed, and their agent sessions ended.
+void blueprints.init().catch(err => console.error(`companion: starting architecture maps failed: ${errorText(err)}`));
 
 function shutdown(): void {
 	// Runs are detached process groups: they would outlive the companion.
@@ -2261,6 +2360,7 @@ function shutdown(): void {
 		closePreviewBrowser(),
 		voice.close(),
 		scheduleIpc.stop(),
+		blueprints.shutdown(),
 		removeLocalEndpoint(localEndpointFile(configDir), process.pid),
 	]).then(() => process.exit(0));
 }

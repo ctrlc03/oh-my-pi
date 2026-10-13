@@ -67,6 +67,11 @@ export class Codemap {
 		}
 	}
 
+	/** The index database file (with `-wal` and `-shm` beside it while open); a caller that indexed a throw-away tree deletes it. */
+	get dbPath(): string {
+		return this.#index.dbPath;
+	}
+
 	/** What the index currently holds, plus the last recorded build. */
 	summary(): IndexSummary {
 		const dbBytes = fs.statSync(this.#index.dbPath).size;

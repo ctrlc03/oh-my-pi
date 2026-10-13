@@ -52,6 +52,31 @@ async function writeOverlay(overlayPath: string, localRelayUrl?: string): Promis
 	await fs.chmod(overlayPath, 0o600);
 }
 
+/** A tool allowlist and config overlay for a session that may only read the code; see {@link TmuxLaunch.restrict}. */
+export interface RestrictLaunch {
+	/** Overlay file written for this launch (and removed by the caller). */
+	overlayPath: string;
+	overlayYaml: string;
+	tools: readonly string[];
+}
+
+async function prepareRestriction(restrict: RestrictLaunch): Promise<{ ompArgs: string[] }> {
+	await fs.mkdir(path.dirname(restrict.overlayPath), { recursive: true, mode: 0o700 });
+	await fs.writeFile(restrict.overlayPath, restrict.overlayYaml, { mode: 0o600 });
+	await fs.chmod(restrict.overlayPath, 0o600);
+	return {
+		ompArgs: [
+			"--config",
+			restrict.overlayPath,
+			"--tools",
+			restrict.tools.join(","),
+			"--no-extensions",
+			"--no-lsp",
+			"--no-title",
+		],
+	};
+}
+
 export interface TmuxLaunch {
 	tmux: string;
 	ompBin: string;
@@ -77,6 +102,12 @@ export interface TmuxLaunch {
 	model?: string;
 	/** Run a vendor agent's host (`scripts/foreign/host-main.ts`) instead of omp; `ompBin`, `overlayPath` and `sandbox` then go unused (a vendor agent never runs sandboxed). */
 	foreign?: ForeignLaunch;
+	/**
+	 * Run omp with this tool allowlist and this config overlay (after the companion's) instead of the sandbox's own,
+	 * for a session that only reads the code and writes one file (an architecture map's agent). The sandbox, when given,
+	 * still confines its writes.
+	 */
+	restrict?: RestrictLaunch;
 }
 
 /** How the detached host of a foreign agent session is started; see `scripts/foreign/host-main.ts`. */
@@ -159,6 +190,7 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 	}
 	if (!foreign) await writeOverlay(launch.overlayPath, launch.localRelayUrl);
 	const sandbox = !foreign && launch.sandbox ? await prepareSandbox({ ...launch.sandbox, folder: cwd }) : null;
+	const restrict = !foreign && launch.restrict ? await prepareRestriction(launch.restrict) : null;
 
 	const name = `omp-${crypto.randomUUID().slice(0, 8)}`;
 	// A tmux server that is already running does not pass our environment on to new sessions.
@@ -185,7 +217,7 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 				launch.ompBin,
 				"--config",
 				launch.overlayPath,
-				...(sandbox?.ompArgs ?? []),
+				...(restrict?.ompArgs ?? sandbox?.ompArgs ?? []),
 				...(launch.resume ? ["-r", launch.resume] : []),
 				...(launch.maxCostUsd !== undefined ? ["--max-cost", String(launch.maxCostUsd)] : []),
 				...(launch.model !== undefined ? ["--model", launch.model] : []),

@@ -15,6 +15,13 @@
  */
 
 import type { AgentRef } from "@oh-my-pi/pi-wire";
+import type {
+	Blueprint,
+	BlueprintExcerpt,
+	BlueprintRefsAnswer,
+	BlueprintRequest,
+	BlueprintSummary,
+} from "@oh-my-pi/pi-wire/blueprint";
 import type { Schedule, ScheduleInput } from "@oh-my-pi/pi-wire/schedule";
 import { CAN_INFLATE, importRoomKey } from "./codec";
 import { recordEvent } from "./diag-log";
@@ -84,7 +91,6 @@ const PING_SAMPLES = 3;
 const AGENTS_REFRESH_TIMEOUT_MS = 60_000;
 /** Installing an ACP adapter runs `npm install` on the computer. */
 const AGENT_INSTALL_TIMEOUT_MS = 330_000;
-
 export type { AgentRef };
 
 /** A model a foreign agent offers, by its vendor id; what `start`'s `model` takes. */
@@ -1078,7 +1084,9 @@ export type CompanionRequest =
 	/** The session's last ten runs, newest first. */
 	| { t: "runs"; reqId: number; instanceId: string }
 	/** One chunk of a file of the session's repository from `offset`, at most 4 MB raw (needs `canDownload`). */
-	| { t: "file-download"; reqId: number; instanceId: string; path: string; offset: number };
+	| { t: "file-download"; reqId: number; instanceId: string; path: string; offset: number }
+	/** Architecture maps (needs `canBlueprint`); see `@oh-my-pi/pi-wire/blueprint`. */
+	| BlueprintRequest;
 
 export type CompanionReply =
 	/**
@@ -1098,6 +1106,8 @@ export type CompanionReply =
 			canPr?: boolean;
 			/** The companion can build code maps (its omp checkout loads the codemap index). */
 			canCodemap?: boolean;
+			/** The companion can build, store and serve architecture maps (`blueprint-*` requests). */
+			canBlueprint?: boolean;
 			/** The companion can list and edit files of a session's repository. */
 			canEdit?: boolean;
 			/** The companion can screenshot local pages (it found Chrome or another Chromium browser). */
@@ -1207,7 +1217,21 @@ export type CompanionReply =
 	| { t: "run-output"; reqId: number; output: RunOutput }
 	| { t: "runs"; reqId: number; runs: RunInfo[] }
 	/** The chunk of a `file-download` that starts at its `offset`. */
-	| ({ t: "file-chunk"; reqId: number } & FileChunk);
+	| ({ t: "file-chunk"; reqId: number } & FileChunk)
+	| { t: "blueprint-list"; reqId: number; maps: BlueprintSummary[] }
+	| { t: "blueprint-create"; reqId: number; id: string }
+	| { t: "blueprint-get"; reqId: number; map: Blueprint }
+	/** In the order of the request's refs; null for a ref the commit does not have. */
+	| { t: "blueprint-excerpt"; reqId: number; excerpts: (BlueprintExcerpt | null)[] }
+	| { t: "blueprint-delete"; reqId: number }
+	| ({ t: "blueprint-refs"; reqId: number } & BlueprintRefsAnswer)
+	/** Pushed to every authenticated device when a map's summary changes (progress, done, failed); carries no `reqId`. */
+	| { t: "blueprint-changed"; id: string };
+
+/** Any `blueprint-*` request without its `reqId`. */
+export type BlueprintCall = BlueprintRequest extends infer R ? (R extends unknown ? Omit<R, "reqId"> : never) : never;
+/** The reply to the `blueprint-*` request of type `T`. */
+export type BlueprintAnswer<T extends BlueprintRequest["t"]> = Extract<CompanionReply, { t: T }>;
 
 /** Credentials the companion issued to a paired device. */
 export interface DeviceCreds {
@@ -1326,6 +1350,8 @@ export interface CompanionSnapshot {
 	canPr: boolean;
 	/** The companion can build code maps. */
 	canCodemap: boolean;
+	/** The companion can build and serve architecture maps. */
+	canBlueprint: boolean;
 	/** The companion can list and edit files of a session's repository. */
 	canEdit: boolean;
 	/** The companion can screenshot local pages. */
@@ -1377,7 +1403,7 @@ export interface CompanionSnapshot {
 }
 
 /** A reply that answers one request (everything but the `hosts` broadcast). */
-type CompanionAnswer = Exclude<CompanionReply, { t: "hosts" | "authed" | "auth-failed" }>;
+type CompanionAnswer = Exclude<CompanionReply, { t: "hosts" | "authed" | "auth-failed" | "blueprint-changed" }>;
 type AnsweredRequest = Extract<CompanionRequest, { reqId: number }>;
 /** A request that expects an answer, before its `reqId` is assigned. */
 type CompanionCall = {
@@ -1395,6 +1421,7 @@ interface Pending {
 export class CompanionClient {
 	readonly #socket: CollabSocket<CompanionRequest, CompanionReply>;
 	readonly #listeners = new Set<() => void>();
+	readonly #blueprintListeners = new Set<(id: string) => void>();
 	readonly #pending = new Map<number, Pending>();
 	#reqSeq = 0;
 	#presence: Extract<CompanionRequest, { t: "presence" }> | null = null;
@@ -1414,6 +1441,7 @@ export class CompanionClient {
 		canStart: false,
 		canSandbox: false,
 		canPr: false,
+		canBlueprint: false,
 		canCodemap: false,
 		canEdit: false,
 		canPreview: false,
@@ -1509,6 +1537,22 @@ export class CompanionClient {
 
 	getSnapshot(): CompanionSnapshot {
 		return this.#snapshot;
+	}
+
+	/** Called with a map's id when the companion pushes that its summary changed (progress, done, failed). */
+	onBlueprintChanged(listener: (id: string) => void): () => void {
+		this.#blueprintListeners.add(listener);
+		return () => {
+			this.#blueprintListeners.delete(listener);
+		};
+	}
+
+	/**
+	 * One architecture-map request and its answer (needs `canBlueprint`). The typed calls over it are in
+	 * components/architecture/blueprint-api.ts, which loads with the maps rather than with the app.
+	 */
+	requestBlueprint<C extends BlueprintCall>(call: C, timeoutMs: number): Promise<BlueprintAnswer<C["t"]>> {
+		return this.#call(call as CompanionCall, call.t, timeoutMs) as Promise<BlueprintAnswer<C["t"]>>;
 	}
 
 	/** A fresh control link for one host, resolved by the companion via `omp collab link`. */
@@ -2020,6 +2064,7 @@ export class CompanionClient {
 				canStart: frame.canStart ?? false,
 				canSandbox: frame.canSandbox ?? false,
 				canPr: frame.canPr ?? false,
+				canBlueprint: frame.canBlueprint ?? false,
 				canCodemap: frame.canCodemap ?? false,
 				canEdit: frame.canEdit ?? false,
 				canPreview: frame.canPreview ?? false,
@@ -2045,6 +2090,10 @@ export class CompanionClient {
 				vapidKey: frame.vapidKey,
 				error: null,
 			});
+			return;
+		}
+		if (frame.t === "blueprint-changed") {
+			for (const listener of this.#blueprintListeners) listener(frame.id);
 			return;
 		}
 		const pending = this.#pending.get(frame.reqId);

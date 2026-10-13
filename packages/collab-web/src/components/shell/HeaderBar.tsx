@@ -69,6 +69,10 @@ export interface HeaderBarProps {
 	onOpenSessions: (() => void) | null;
 	/** Code map of the session's repository; null unless the paired computer can build one. */
 	onOpenCodemap: (() => void) | null;
+	/** Architecture maps of the session's repository; null unless the paired computer can make them. */
+	onOpenArchitecture: (() => void) | null;
+	/** A changes map of this session's edits; null unless maps can be made and files changed. */
+	onMapChanges: (() => void) | null;
 	/** The session's terminal (tmux pane); null unless the paired computer hosts this session. */
 	onOpenPane: (() => void) | null;
 	/** Live screenshot of a dev server the session runs; null unless the paired computer can capture pages. */
@@ -130,6 +134,8 @@ export const HeaderBar = memo(function HeaderBar({
 	onOpenUsage,
 	onOpenSessions,
 	onOpenCodemap,
+	onOpenArchitecture,
+	onMapChanges,
 	onOpenPane,
 	onOpenPreview,
 	onOpenGithub,
@@ -389,6 +395,20 @@ export const HeaderBar = memo(function HeaderBar({
 						(() => {
 							setSheetOpen(false);
 							onOpenCodemap();
+						})
+					}
+					onOpenArchitecture={
+						onOpenArchitecture &&
+						(() => {
+							setSheetOpen(false);
+							onOpenArchitecture();
+						})
+					}
+					onMapChanges={
+						onMapChanges &&
+						(() => {
+							setSheetOpen(false);
+							onMapChanges();
 						})
 					}
 					onOpenPane={

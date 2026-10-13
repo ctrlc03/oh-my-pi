@@ -25,6 +25,7 @@ import {
 	LOW_BATTERY_PCT,
 	type PairingLink,
 } from "../../lib/companion";
+import { ArchitectureEntry } from "../architecture/ArchitectureEntry";
 import { relTime, shortenPath } from "../../lib/format";
 import { applyOpenIntent } from "../../lib/inbox";
 import { extractLink } from "../../lib/rooms";
@@ -190,6 +191,7 @@ export function CompanionCard({ companion, onJoin, onPair, onUnpair }: Companion
 										/>
 									)}
 									{snap.canForeign && <AgentsEntry client={client} variant="card" />}
+									{snap.canBlueprint && <ArchitectureEntry client={client} onOpenHost={open} />}
 								</>
 							)}
 						</div>

@@ -1,5 +1,6 @@
 import {
 	ChevronLeft,
+	Boxes,
 	CircleCheck,
 	CircleDashed,
 	CircleDot,
@@ -48,6 +49,8 @@ export interface GithubSheetProps {
 	sandboxed?: boolean;
 	/** The companion answers `ci-log` (`canFixIt`): a pull request with failing checks gets a Fix it button. */
 	canFixIt?: boolean;
+	/** Start an architecture map of a pull request; null unless the paired computer can make maps. */
+	onMapPr?: ((pr: { number: number; title: string }) => void) | null;
 	onClose(): void;
 }
 
@@ -89,6 +92,7 @@ export function GithubSheet({
 	canReview,
 	sandboxed,
 	canFixIt,
+	onMapPr,
 	onClose,
 }: GithubSheetProps): ReactNode {
 	const [kind, setKind] = useState<GithubKind>("issue");
@@ -126,6 +130,7 @@ export function GithubSheet({
 					canReview={canReview === true}
 					sandboxed={sandboxed === true}
 					canFixIt={canFixIt === true}
+					onMapPr={onMapPr ?? null}
 					onClose={onClose}
 				/>
 			)}
@@ -248,6 +253,7 @@ interface ItemDetailProps {
 	canReview: boolean;
 	sandboxed: boolean;
 	canFixIt: boolean;
+	onMapPr: ((pr: { number: number; title: string }) => void) | null;
 	onClose(): void;
 }
 
@@ -260,6 +266,7 @@ function ItemDetail({
 	canReview,
 	sandboxed,
 	canFixIt,
+	onMapPr,
 	onClose,
 }: ItemDetailProps): ReactNode {
 	const load = useCallback(
@@ -341,6 +348,15 @@ function ItemDetail({
 					{reviewable && canWrite && tab === "overview" && detail !== null && detail.state === "open" && (
 						<button type="button" className="sh-btn" onClick={() => setMerging(true)}>
 							<GitMerge size={14} /> Merge…
+						</button>
+					)}
+					{item.kind === "pr" && onMapPr !== null && (
+						<button
+							type="button"
+							className="sh-btn"
+							onClick={() => onMapPr({ number: head.number, title: head.title })}
+						>
+							<Boxes size={14} /> Map this PR
 						</button>
 					)}
 					{head.url && (

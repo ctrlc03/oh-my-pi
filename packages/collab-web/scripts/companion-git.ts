@@ -44,6 +44,8 @@ export interface GitOptions {
 	/** A command that changes the repository: takes locks, longer default timeout. */
 	write?: boolean;
 	timeoutMs?: number;
+	/** Extra environment variables (`GIT_INDEX_FILE`, the identity `commit-tree` needs). */
+	env?: Record<string, string>;
 }
 
 /** Run git in `cwd`, read-only unless `write`; resolves on any exit code, rejects only when git cannot run. */
@@ -52,6 +54,7 @@ export async function git(cwd: string, args: string[], options: GitOptions = {})
 		maxBytes = GIT_OUTPUT_BYTES,
 		write = false,
 		timeoutMs = write ? GIT_WRITE_TIMEOUT_MS : GIT_TIMEOUT_MS,
+		env,
 	} = options;
 	const lockFlag = write ? [] : ["--no-optional-locks"];
 	const proc = Bun.spawn(["git", ...lockFlag, "--literal-pathspecs", "-c", "core.quotepath=off", ...args], {
@@ -59,7 +62,7 @@ export async function git(cwd: string, args: string[], options: GitOptions = {})
 		stdout: "pipe",
 		stderr: "pipe",
 		stdin: "ignore",
-		env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_PAGER: "cat", LC_ALL: "C" },
+		env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_PAGER: "cat", LC_ALL: "C", ...env },
 		timeout: timeoutMs,
 		killSignal: "SIGKILL",
 	});

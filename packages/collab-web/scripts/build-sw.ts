@@ -142,13 +142,13 @@ const BASE_PATH = new URL("./", self.location).pathname;
 
 /**
  * Build output fetched after install and cached on first use, so diagrams work offline once shown: the hashed
- * scripts, styles and fonts at the site root and Excalidraw's own files. Query-less only: a URL with a query is never
+ * scripts, styles and fonts at the site root, Excalidraw's own files and the architecture map export's viewer. Query-less only: a URL with a query is never
  * stored (nothing else is cached for it), which also keeps the cache to the files this build ships.
  */
 function isRuntimeAsset(url) {
 	if (url.search !== "" || !url.pathname.startsWith(BASE_PATH)) return false;
 	const rel = url.pathname.slice(BASE_PATH.length);
-	if (rel.startsWith("excalidraw-assets/")) return true;
+	if (rel.startsWith("excalidraw-assets/") || rel.startsWith("architecture-assets/")) return true;
 	return !rel.includes("/") && (rel.endsWith(".js") || rel.endsWith(".css") || rel.endsWith(".woff2"));
 }
 

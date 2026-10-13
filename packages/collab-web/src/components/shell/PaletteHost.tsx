@@ -26,6 +26,8 @@ import {
 	SquareCode,
 	SquareTerminal,
 	Smartphone,
+	Boxes,
+	GitCompare,
 	Sun,
 	TextCursorInput,
 	Undo2,
@@ -75,6 +77,8 @@ export interface PaletteActions {
 	openUsage: (() => void) | null;
 	openSessions: (() => void) | null;
 	openCodemap: (() => void) | null;
+	openArchitecture: (() => void) | null;
+	mapChanges: (() => void) | null;
 	openPane: (() => void) | null;
 	openPreview: (() => void) | null;
 	openGithub: (() => void) | null;
@@ -284,6 +288,22 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 				["browse", "symbols"],
 				Waypoints,
 				actions.openCodemap,
+			],
+			[
+				"app:architecture",
+				"Architecture map",
+				"Computer",
+				["diagram", "system", "design", "overview"],
+				Boxes,
+				actions.openArchitecture,
+			],
+			[
+				"app:architecture-changes",
+				"Map this session's changes",
+				"Review",
+				["diagram", "diff", "architecture", "what changed"],
+				GitCompare,
+				actions.mapChanges,
 			],
 			["app:pane", "Watch the terminal", "Computer", ["tmux", "screen", "pane"], SquareTerminal, actions.openPane],
 			["app:preview", "Preview the running app", "Computer", ["screenshot", "dev server"], Eye, actions.openPreview],

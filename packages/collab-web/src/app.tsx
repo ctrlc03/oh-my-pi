@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentDrawer } from "./components/agents/AgentDrawer";
 import { AgentsPanel, isInactive } from "./components/agents/AgentsPanel";
+import { LazyArchitectureSheet } from "./components/architecture/LazyArchitectureSheet";
+import type { ArchitectureStart } from "./components/architecture/ArchitectureSheet";
 import { LazyCodemapSheet } from "./components/codemap/LazyCodemapSheet";
 import { DiagramHost } from "./components/diagram/DiagramHost";
 import { LazyIdeSheet } from "./components/ide/LazyIdeSheet";
@@ -493,6 +495,17 @@ function Session({
 	const [codemap, setCodemap] = useState<{ file?: string } | null>(null);
 	const canCodemap = companionClient !== null && hostId !== null && companion?.snap.canCodemap === true;
 	const openCodemap = useCallback(() => setCodemap({}), []);
+	const [architecture, setArchitecture] = useState<ArchitectureStart | null>(null);
+	const canArchitecture = companionClient !== null && companion?.snap.canBlueprint === true;
+	const openArchitecture = useCallback(() => setArchitecture({ view: "home" }), []);
+	const mapChanges = useCallback(
+		() => setArchitecture({ view: "new", preset: { mode: "worktree", base: "@default" } }),
+		[],
+	);
+	const mapPr = useCallback((pr: { number: number; title: string }) => {
+		setGithubOpen(false);
+		setArchitecture({ view: "new", preset: { mode: "pr", pr } });
+	}, []);
 	// The editor replaces the read-only file viewer once the paired computer can save files.
 	const canEdit = companionClient !== null && hostId !== null && companion?.snap.canEdit === true;
 	const [editor, setEditor] = useState<{ target: { path: string; line?: number } | null } | null>(null);
@@ -1070,6 +1083,8 @@ function Session({
 			openUsage: companion ? openUsage : null,
 			openSessions: companion ? openSessions : null,
 			openCodemap: canCodemap ? openCodemap : null,
+			openArchitecture: canArchitecture ? openArchitecture : null,
+			mapChanges: canArchitecture && hostId !== null && changes.length > 0 ? mapChanges : null,
 			openPane: canPane ? openPane : null,
 			openPreview: canPreview ? openPreview : null,
 			openGithub: canGithub ? openGithub : null,
@@ -1080,6 +1095,7 @@ function Session({
 		}),
 		[
 			canCodemap,
+			canArchitecture,
 			canEdit,
 			canGithub,
 			canPane,
@@ -1087,6 +1103,7 @@ function Session({
 			canRun,
 			canShowSidebar,
 			changeChat,
+			changes.length,
 			chat,
 			companion,
 			companionClient,
@@ -1096,6 +1113,8 @@ function Session({
 			onOpenLink,
 			openChanges,
 			openCodemap,
+			mapChanges,
+			openArchitecture,
 			openEditor,
 			openGithub,
 			openPane,
@@ -1165,6 +1184,8 @@ function Session({
 				onOpenUsage={companion ? openUsage : null}
 				onOpenSessions={companion ? openSessions : null}
 				onOpenCodemap={canCodemap ? openCodemap : null}
+				onOpenArchitecture={canArchitecture ? openArchitecture : null}
+				onMapChanges={canArchitecture && changes.length > 0 ? mapChanges : null}
 				onOpenPane={canPane ? openPane : null}
 				onOpenPreview={canPreview ? openPreview : null}
 				onOpenGithub={canGithub ? openGithub : null}
@@ -1411,6 +1432,17 @@ function Session({
 					onClose={() => setCodemap(null)}
 				/>
 			)}
+			{architecture !== null && canArchitecture && companionClient !== null && (
+				<LazyArchitectureSheet
+					client={companionClient}
+					cwd={hostId !== null ? cwd : null}
+					instanceId={hostId}
+					start={architecture}
+					onOpenHost={onOpenHost}
+					onOpenFile={canEdit ? openFile : undefined}
+					onClose={() => setArchitecture(null)}
+				/>
+			)}
 			{paneOpen && canPane && companionClient !== null && hostId !== null && (
 				<PaneSheet client={companionClient} instanceId={hostId} onClose={() => setPaneOpen(false)} />
 			)}
@@ -1440,6 +1472,7 @@ function Session({
 					canReview={companion?.snap.canPrReview === true}
 					sandboxed={companion?.snap.hosts.some(host => host.instanceId === hostId && host.sandboxed) ?? false}
 					canFixIt={companion?.snap.canFixIt === true}
+					onMapPr={canArchitecture ? mapPr : null}
 					onClose={() => setGithubOpen(false)}
 				/>
 			)}

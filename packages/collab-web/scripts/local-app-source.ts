@@ -27,6 +27,7 @@ const INPUTS: readonly string[] = [
 	"packages/collab-web/package.json",
 	"packages/collab-web/tsconfig.json",
 	"packages/collab-web/scripts/build-app.ts",
+	"packages/collab-web/scripts/build-architecture-standalone.ts",
 	"packages/collab-web/scripts/build-assets.ts",
 	"packages/collab-web/scripts/build-sw.ts",
 	// Workspace packages the app imports from.

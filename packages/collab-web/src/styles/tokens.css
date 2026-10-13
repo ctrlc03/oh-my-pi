@@ -68,6 +68,23 @@
 	--lang-go: #3fc7d3;
 	--lang-other: #7c7c86;
 
+	/* architecture maps: one hue per node kind, and what a diff map marks as added / modified / removed */
+	--ar-kind-system: #f472c0;
+	--ar-kind-service: #6aa5ff;
+	--ar-kind-component: #a99bf5;
+	--ar-kind-package: #e5c64a;
+	--ar-kind-module: #3fc7d3;
+	--ar-kind-file: #8fa0b8;
+	--ar-kind-symbol: #5fcf80;
+	--ar-kind-store: #f0883e;
+	--ar-kind-queue: #7ee0c3;
+	--ar-kind-actor: #ff8a8e;
+	--ar-kind-ui: #c9e46a;
+	--ar-kind-external: #9a98a6;
+	--ar-added: #3ecf8e;
+	--ar-modified: #f5a524;
+	--ar-removed: #ff6b78;
+
 	/* syntax: file viewer tokens, tuned against --bg-inset */
 	--syn-keyword: #e879c6;
 	--syn-string: #7fd6a0;
@@ -225,6 +242,23 @@
 	--lang-go: #0f8e9b;
 	--lang-other: #7a7a84;
 
+	/* architecture maps */
+	--ar-kind-system: #b8247a;
+	--ar-kind-service: #1b6fd1;
+	--ar-kind-component: #6a42b8;
+	--ar-kind-package: #8a6a00;
+	--ar-kind-module: #0e7a8c;
+	--ar-kind-file: #566680;
+	--ar-kind-symbol: #1e8f4a;
+	--ar-kind-store: #c25a0c;
+	--ar-kind-queue: #0f8a6a;
+	--ar-kind-actor: #c4262d;
+	--ar-kind-ui: #5f8a00;
+	--ar-kind-external: #6e6c7a;
+	--ar-added: #0b7a4f;
+	--ar-modified: #9a5b00;
+	--ar-removed: #c4262d;
+
 	/* syntax: file viewer tokens, tuned against --bg-inset */
 	--syn-keyword: #b0237f;
 	--syn-string: #157a4c;
@@ -336,6 +370,23 @@
 		--lang-py: #1e8f4a;
 		--lang-go: #0f8e9b;
 		--lang-other: #7a7a84;
+
+		/* architecture maps */
+		--ar-kind-system: #b8247a;
+		--ar-kind-service: #1b6fd1;
+		--ar-kind-component: #6a42b8;
+		--ar-kind-package: #8a6a00;
+		--ar-kind-module: #0e7a8c;
+		--ar-kind-file: #566680;
+		--ar-kind-symbol: #1e8f4a;
+		--ar-kind-store: #c25a0c;
+		--ar-kind-queue: #0f8a6a;
+		--ar-kind-actor: #c4262d;
+		--ar-kind-ui: #5f8a00;
+		--ar-kind-external: #6e6c7a;
+		--ar-added: #0b7a4f;
+		--ar-modified: #9a5b00;
+		--ar-removed: #c4262d;
 
 		/* syntax: file viewer tokens, tuned against --bg-inset */
 		--syn-keyword: #b0237f;

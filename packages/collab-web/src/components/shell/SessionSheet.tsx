@@ -74,6 +74,10 @@ export interface SessionSheetProps {
 	onOpenSessions: (() => void) | null;
 	/** Code map of the session's repository; null unless the paired computer can build one. */
 	onOpenCodemap: (() => void) | null;
+	/** Architecture maps of the session's repository; null unless the paired computer can make them. */
+	onOpenArchitecture: (() => void) | null;
+	/** A changes map of this session's edits; null unless maps can be made and the session changed files. */
+	onMapChanges: (() => void) | null;
 	/** The session's terminal (tmux pane); null unless the paired computer hosts this session. */
 	onOpenPane: (() => void) | null;
 	/** Live screenshot of a dev server the session runs; null unless the paired computer can capture pages. */
@@ -132,6 +136,8 @@ export function SessionSheet({
 	onOpenUsage,
 	onOpenSessions,
 	onOpenCodemap,
+	onOpenArchitecture,
+	onMapChanges,
 	onOpenPane,
 	onOpenPreview,
 	onOpenGithub,
@@ -579,6 +585,28 @@ export function SessionSheet({
 						<dd>
 							<button type="button" className="sh-sheet-link" onClick={onOpenCodemap}>
 								Browse the repository
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
+				{onOpenArchitecture && (
+					<div className="sh-sheet-row">
+						<dt>Architecture</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onOpenArchitecture}>
+								Maps of the system
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
+				{onMapChanges && (
+					<div className="sh-sheet-row">
+						<dt>Changes</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onMapChanges}>
+								Map what changed
 								<ChevronRight size={14} />
 							</button>
 						</dd>

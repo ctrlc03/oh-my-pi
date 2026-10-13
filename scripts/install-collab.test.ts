@@ -16,6 +16,7 @@ const OS = process.platform === "darwin" ? "darwin" : "linux";
 const ARCH = process.arch === "arm64" ? "arm64" : "x64";
 const ASSET = `omp-${OS}-${ARCH}`;
 const PAIR_URL = "https://example.test/app/#pair:room.key&invite=once";
+const LOCAL_URL = "http://127.0.0.1:7467/#pair:room.key&invite=local";
 
 function stubOmp(version: string): string {
 	return `#!/bin/sh
@@ -32,6 +33,8 @@ case "$1 $2" in
 	echo "pair a device: scan the code or open ${PAIR_URL}"
 	if [ "$3" = "--dry-run" ]; then echo "dry run: would write plist"; else touch "$state/service"; fi ;;
 "companion --pair") echo "pair a device: scan the code or open ${PAIR_URL}" ;;
+"companion --print-local-link")
+	if [ -e "$state/service" ] && [ ! -e "$state/no-local-app" ]; then echo "${LOCAL_URL}"; else exit 1; fi ;;
 "companion --uninstall") rm -f "$state/service"; echo "service removed" ;;
 "login "*|"login ") touch "$state/logged-in" ;;
 *) echo "stub: unexpected $*" >&2; exit 2 ;;
@@ -153,7 +156,7 @@ exec /usr/bin/curl "$@"
 }
 
 describe("install-collab.sh", () => {
-	it("installs, configures, installs the service and opens the pairing link", async () => {
+	it("installs, configures, installs the service and opens the app on this computer", async () => {
 		const box = await sandbox();
 		await publish("1.0.0");
 		const result = await run(box, ["--yes"]);
@@ -169,7 +172,10 @@ describe("install-collab.sh", () => {
 		expect(await exists(path.join(box.home, "stub", "service"))).toBe(true);
 		expect(await read(path.join(box.home, "calls.log"))).toContain("companion --install");
 		const opener = OS === "darwin" ? "open.log" : "xdg-open.log";
-		expect(await read(path.join(box.home, opener))).toContain(PAIR_URL);
+		expect(await read(path.join(box.home, opener))).toContain(LOCAL_URL);
+		expect(await read(path.join(box.home, opener))).not.toContain(PAIR_URL);
+		expect(result.stdout).toContain("opened the app on this computer");
+		expect(result.stdout).toContain("--open");
 		expect(await read(path.join(box.home, ".local", "share", "omp-collab", "install"))).toContain(`path=${omp}`);
 	});
 
@@ -275,6 +281,30 @@ describe("install-collab.sh", () => {
 		expect(await exists(path.join(box.home, "stub", "service"))).toBe(false);
 		expect(await exists(path.join(box.home, "open.log"))).toBe(false);
 		expect(await exists(path.join(box.home, "xdg-open.log"))).toBe(false);
+	});
+
+	it("opens the public link when no companion serves the app", async () => {
+		const box = await sandbox();
+		await publish("1.0.0");
+		const result = await run(box, ["--yes", "--no-service"]);
+
+		expect(result.code).toBe(0);
+		const opener = OS === "darwin" ? "open.log" : "xdg-open.log";
+		expect(await read(path.join(box.home, opener))).toContain(PAIR_URL);
+		expect(result.stdout).not.toContain("opened the app on this computer");
+		expect(await read(path.join(box.home, "calls.log"))).toContain("companion --print-local-link");
+	});
+
+	it("does not claim the browser was opened with --no-open", async () => {
+		const box = await sandbox();
+		await publish("1.0.0");
+		const result = await run(box, ["--yes", "--no-open"]);
+
+		expect(result.code).toBe(0);
+		expect(result.stdout).toContain(PAIR_URL);
+		expect(result.stdout).not.toMatch(/opened/);
+		expect(result.stdout).toContain("--open");
+		expect(await read(path.join(box.home, "calls.log"))).not.toContain("--print-local-link");
 	});
 
 	it("reports a failed service install, still pairs, and exits non-zero", async () => {

@@ -143,6 +143,11 @@ export function pairCommand(): string {
 	return isCompiled ? "omp companion --pair" : "bun scripts/companion.ts --pair";
 }
 
+/** The command that opens the app this computer serves, paired with a fresh one-time invite, as the user types it. */
+export function openCommand(): string {
+	return isCompiled ? "omp companion --open" : "bun scripts/companion.ts --open";
+}
+
 /** What to tell someone whose companion was started by hand and cannot be restarted from the app. */
 export function startedByHandHint(platform: NodeJS.Platform = process.platform): string {
 	const keeper = platform === "linux" ? "systemd" : "macOS";

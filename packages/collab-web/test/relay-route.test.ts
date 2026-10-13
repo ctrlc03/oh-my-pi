@@ -6,6 +6,9 @@ import {
 	LOCAL_RELAY_COOLDOWN_MS,
 	LocalRelayHealth,
 	localRelayToTry,
+	servedByLabel,
+	servedRelay,
+	servedRoomUrl,
 } from "../src/lib/relay-route";
 
 const LOCAL = "ws://127.0.0.1:7467/r/RouteRoom_12345";
@@ -33,6 +36,36 @@ describe("local relay routing decision", () => {
 		expect(health.isDown(otherRoom, 1)).toBe(false);
 		health.markDown(LOCAL, "relay", 0);
 		expect(health.isDown(otherRoom, 1)).toBe(true);
+	});
+});
+
+const page = (url: string) => new URL(url);
+
+describe("a page served by the companion's loopback relay", () => {
+	it("knows its relay from its own origin: http on 127.0.0.1 or localhost, nothing else", () => {
+		expect(servedRelay(page("http://127.0.0.1:7467/"))).toBe("ws://127.0.0.1:7467");
+		expect(servedRelay(page("http://localhost:7468/#pair:x"))).toBe("ws://localhost:7468");
+		expect(servedRelay(page("https://ctrlc03.github.io/oh-my-pi/"))).toBeNull();
+		expect(servedRelay(page("https://127.0.0.1:7467/"))).toBeNull();
+		expect(servedRelay(page("http://192.168.1.20:7467/"))).toBeNull();
+		expect(servedRelay(page("http://127.0.0.1.evil.example:7467/"))).toBeNull();
+	});
+
+	it("tries every room on that relay first, whatever the link says, and none anywhere else", () => {
+		const relay = servedRelay(page("http://127.0.0.1:7467/"));
+		expect(servedRoomUrl("wss://my.omp.sh/r/CompanionRoom_123", relay)).toBe(
+			"ws://127.0.0.1:7467/r/CompanionRoom_123",
+		);
+		expect(servedRoomUrl("wss://other.example:8443/r/RouteRoom_12345", relay)).toBe(
+			"ws://127.0.0.1:7467/r/RouteRoom_12345",
+		);
+		expect(servedRoomUrl("wss://my.omp.sh/r/CompanionRoom_123", null)).toBeUndefined();
+	});
+
+	it("says who serves the app", () => {
+		expect(servedByLabel(page("http://127.0.0.1:7467/"))).toBe("This computer");
+		expect(servedByLabel(page("https://ctrlc03.github.io/oh-my-pi/"))).toBe("GitHub Pages");
+		expect(servedByLabel(page("https://my.omp.sh/"))).toBe("my.omp.sh");
 	});
 });
 

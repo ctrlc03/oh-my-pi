@@ -11,7 +11,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-const dist = path.join(import.meta.dir, "..", "dist");
+const dist = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "..", "dist"));
 const target = path.join(dist, "excalidraw-assets");
 // The package's `exports` hide its files; its entry point sits in the folder that holds them.
 const source = path.dirname(Bun.resolveSync("@excalidraw/excalidraw", path.join(import.meta.dir, "..")));
@@ -21,4 +21,4 @@ await fs.mkdir(target, { recursive: true });
 await fs.copyFile(path.join(source, "index.css"), path.join(target, "index.css"));
 await fs.cp(path.join(source, "fonts"), path.join(target, "fonts"), { recursive: true });
 const fonts = [...new Bun.Glob("fonts/**/*.woff2").scanSync({ cwd: target })];
-console.log(`build-assets: dist/excalidraw-assets (index.css, ${fonts.length} font files)`);
+console.log(`build-assets: ${path.relative(process.cwd(), target)} (index.css, ${fonts.length} font files)`);

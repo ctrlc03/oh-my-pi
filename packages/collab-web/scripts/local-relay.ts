@@ -18,6 +18,9 @@
  * 127.0.0.1 only and answers only requests addressed to a loopback host name, so a
  * rebound DNS name cannot reach it; a browser that opens it must come from an allowed
  * origin, and a browser can never be a room's host.
+ *
+ * With an `app` handler the same server also answers ordinary HTTP requests (the companion serves the
+ * web app this way, see ./local-app), and the origins it serves from join the allowed guest origins.
  */
 import { rewriteEnvelopePeer, unpackEnvelope } from "../src/lib/link";
 
@@ -39,6 +42,12 @@ export interface LocalRelayOptions {
 	 * client that tries this relay first falls back to another relay without having said hello.
 	 */
 	refuseMissingRooms?: boolean;
+	/**
+	 * Answers every request that is not a room (`/r/<roomId>?role=…`): the web app. The relay's own origins,
+	 * `http://127.0.0.1:<port>` and `http://localhost:<port>`, are then allowed guest origins when `allowedOrigins` is set,
+	 * because that is where the app's pages come from. Without it such requests get 404.
+	 */
+	app?: (request: Request) => Response | Promise<Response>;
 }
 
 interface SocketData {
@@ -66,19 +75,26 @@ export interface LocalRelay {
 export function startLocalRelay(port = 0, options: LocalRelayOptions = {}): LocalRelay {
 	const rooms = new Map<string, Room>();
 
+	/** A browser may join from the configured origins, plus this relay's own when it serves the app; from anywhere when none are configured. */
+	const originAllowed = (origin: string): boolean =>
+		options.allowedOrigins === undefined ||
+		options.allowedOrigins.includes(origin) ||
+		(options.app !== undefined &&
+			(origin === `http://127.0.0.1:${server.port}` || origin === `http://localhost:${server.port}`));
+
 	const server = Bun.serve({
 		port,
 		hostname: "127.0.0.1",
-		fetch(req, srv): Response | undefined {
+		fetch(req, srv): Response | Promise<Response> | undefined {
 			if (!LOOPBACK_HOST_RE.test(req.headers.get("host") ?? "")) return new Response("forbidden", { status: 403 });
 			const url = new URL(req.url);
 			const match = ROOM_PATH_RE.exec(url.pathname);
 			const role = url.searchParams.get("role");
 			if (!match || (role !== "host" && role !== "guest")) {
-				return new Response("not found", { status: 404 });
+				return options.app ? options.app(req) : new Response("not found", { status: 404 });
 			}
 			const origin = req.headers.get("origin");
-			if (origin !== null && (role === "host" || options.allowedOrigins?.includes(origin) === false)) {
+			if (origin !== null && (role === "host" || !originAllowed(origin))) {
 				return new Response("forbidden", { status: 403 });
 			}
 			if (role === "guest" && options.refuseMissingRooms && !rooms.has(match[1]!)) {

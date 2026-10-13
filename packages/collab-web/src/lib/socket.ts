@@ -9,7 +9,14 @@
 import type { GuestFrame, HostFrame, RelayControlMessage } from "@oh-my-pi/pi-wire";
 import { open, seal } from "./codec";
 import { packEnvelope, unpackEnvelope } from "./link";
-import { LOCAL_CONNECT_TIMEOUT_MS, type LocalFailure, localRelayHealth, localRelayToTry } from "./relay-route";
+import {
+	LOCAL_CONNECT_TIMEOUT_MS,
+	type LocalFailure,
+	localRelayHealth,
+	localRelayToTry,
+	pageRelay,
+	servedRoomUrl,
+} from "./relay-route";
 
 const RELAY_CLOSE_REASONS: Record<number, string> = {
 	4001: "room closed",
@@ -43,7 +50,7 @@ export interface CollabSocketOptions {
 	/**
 	 * ws://127.0.0.1:<port>/r/<roomId>: the same room on a relay on the host's machine. Tried first
 	 * where the device could be that machine, abandoned for `wsUrl` at once when it does not answer
-	 * (see `relay-route.ts`).
+	 * (see `relay-route.ts`). A guest page that the companion serves from that relay tries it for every room, link or not.
 	 */
 	localWsUrl?: string;
 	role: "host" | "guest";
@@ -61,6 +68,8 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 	onClose?: (reason: string, willReconnect: boolean) => void;
 
 	readonly #opts: CollabSocketOptions;
+	/** The loopback room to try first: the link's, else the relay this page was served from (guests only). */
+	readonly #localWsUrl: string | undefined;
 	#ws: WebSocket | null = null;
 	#retryTimer: Timer | undefined;
 	#attempt = 0;
@@ -84,6 +93,7 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 
 	constructor(opts: CollabSocketOptions) {
 		this.#opts = opts;
+		this.#localWsUrl = opts.localWsUrl ?? (opts.role === "guest" ? servedRoomUrl(opts.wsUrl) : undefined);
 	}
 
 	get isOpen(): boolean {
@@ -202,12 +212,14 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 	}
 
 	#openSocket(): void {
-		const local = localRelayToTry(this.#opts.localWsUrl, suspendsHiddenPages(), localRelayHealth, Date.now());
+		// A page served by the loopback relay is on the host's machine whatever its pointer.
+		const touch = suspendsHiddenPages() && pageRelay() === null;
+		const local = localRelayToTry(this.#localWsUrl, touch, localRelayHealth, Date.now());
 		this.#connect(local === null ? this.#opts.wsUrl : local, local === null ? "public" : "local");
 	}
 
 	#markLocalDown(failure: LocalFailure): void {
-		if (this.#opts.localWsUrl !== undefined) localRelayHealth.markDown(this.#opts.localWsUrl, failure, Date.now());
+		if (this.#localWsUrl !== undefined) localRelayHealth.markDown(this.#localWsUrl, failure, Date.now());
 	}
 
 	/** The local attempt is over: remember it and take the public relay, with no backoff. */

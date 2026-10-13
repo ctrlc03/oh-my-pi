@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { APP_BUILD } from "../../lib/pwa";
+import { servedByLabel } from "../../lib/relay-route";
 import { DiagnosticsPanel } from "../shell/DiagnosticsPanel";
 import type { SettingsEnv } from "./env";
 import { ComputerGate, SettingsGroup } from "./SettingsRows";
@@ -13,6 +14,10 @@ export function AboutSection({ env }: { env: SettingsEnv }): ReactNode {
 					<div className="sh-diag-row">
 						<dt>App build</dt>
 						<dd>{APP_BUILD}</dd>
+					</div>
+					<div className="sh-diag-row">
+						<dt>Served by</dt>
+						<dd>{servedByLabel(window.location)}</dd>
 					</div>
 				</dl>
 			</SettingsGroup>

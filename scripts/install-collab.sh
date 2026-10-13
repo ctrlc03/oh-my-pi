@@ -22,7 +22,7 @@
 #   -y, --yes             answer yes to every question (needs no terminal)
 #       --no-login        do not run `omp login`
 #       --no-service      do not install the background service
-#       --no-open         do not open the browser (the link and QR are still printed)
+#       --no-open         do not open the browser (the link and QR are still printed); without it the installer opens the app on this computer
 #       --pair            show the pairing link and QR again on a re-run (always shown on a fresh install)
 #       --prefix DIR      install DIR/omp (default: $PI_INSTALL_DIR or ~/.local/bin)
 #       --tag TAG         install this release tag instead of the latest
@@ -139,7 +139,7 @@ Options:
   -y, --yes             answer yes to every question (needs no terminal)
       --no-login        do not run `omp login`
       --no-service      do not install the background service
-      --no-open         do not open the browser (the link and QR are still printed)
+      --no-open         do not open the browser (the link and QR are still printed); without it the installer opens the app the companion serves on this computer
       --pair            show the pairing link and QR again on a re-run
       --prefix DIR      install DIR/omp (default: $PI_INSTALL_DIR or ~/.local/bin)
       --tag TAG         install this release tag instead of the latest
@@ -562,7 +562,26 @@ install_service() {
 	pair_link "$(cat "$_out")" "$FRESH"
 }
 
-# pair_link COMPANION_OUTPUT SHOW: print the QR block and open the link on a fresh install.
+# local_link TRIES: print the link that pairs a browser on this computer with the companion's own copy of the
+# app (omp companion --print-local-link), waiting up to TRIES seconds for a service that was just started.
+# Fails when the companion is not running or serves no app (--no-local-app, or a build without one).
+local_link() {
+	_tries="$1"
+	while :; do
+		_link=$("$OMP" companion --print-local-link 2>/dev/null </dev/null | grep -o 'http://[^ ]*#pair:[^ ]*' | sed -n '1p' || true)
+		if [ -n "$_link" ]; then
+			printf '%s\n' "$_link"
+			return 0
+		fi
+		[ "$_tries" -gt 1 ] || return 1
+		_tries=$((_tries - 1))
+		sleep 1
+	done
+}
+
+# pair_link COMPANION_OUTPUT SHOW: print the QR block and, on a fresh install, open the browser on this computer.
+# The printed link and QR code (the public app) are for a phone; the browser here opens the companion's own
+# copy of the app over loopback when it serves one, and the public link otherwise.
 pair_link() {
 	PAIR_OUTPUT="$1"
 	_show="$2"
@@ -583,7 +602,25 @@ pair_link() {
 	say "Pair a device"
 	printf '%s\n' "$PAIR_OUTPUT"
 	if [ "$DO_OPEN" = 1 ] && [ -n "${OPENER:-}" ]; then
-		"$OPENER" "$PAIR_URL" >/dev/null 2>&1 </dev/null || warn "could not open the browser; open the link above yourself"
+		_tries=1
+		[ "$DO_SERVICE" = 1 ] && [ "$SERVICE_FAILED" = 0 ] && _tries=15
+		if _local=$(local_link "$_tries"); then
+			OPEN_URL="$_local"
+			OPENED=local
+		else
+			OPEN_URL="$PAIR_URL"
+			OPENED=public
+		fi
+		if "$OPENER" "$OPEN_URL" >/dev/null 2>&1 </dev/null; then
+			if [ "$OPENED" = local ]; then
+				note "opened the app on this computer (served by the companion over loopback, no internet needed)"
+			else
+				note "opened the app at $WEB_URL"
+			fi
+		else
+			OPENED=""
+			warn "could not open the browser; open the link above yourself"
+		fi
 	else
 		note "open the link above in a browser, or scan the QR code with your phone"
 	fi
@@ -603,8 +640,16 @@ finish() {
 		esac
 	fi
 	say "Done. What to do next"
-	note "Open the app:   $WEB_URL"
-	note "                (a first install already opened it paired with this computer)"
+	if [ "${OPENED:-}" = local ]; then
+		note "Open the app:   the browser tab this installer opened is the app on this computer, served by the"
+		note "                companion. Open it again with '$OMP companion --open'."
+		note "                On a phone use $WEB_URL (pair it below)."
+	elif [ "${OPENED:-}" = public ]; then
+		note "Open the app:   $WEB_URL (opened paired with this computer)"
+	else
+		note "Open the app:   '$OMP companion --open' opens the copy the companion serves on this computer;"
+		note "                $WEB_URL works from any device."
+	fi
 	note "Pair a phone:   run '$OMP companion --pair' and scan the QR code it prints."
 	note "                The link and QR code work like a password: a paired device controls this computer."
 	if [ "$DO_SERVICE" = 1 ] && [ "$SERVICE_FAILED" = 0 ] && [ "$SERVICE_DRY_RUN" = 0 ]; then

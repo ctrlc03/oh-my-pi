@@ -27,18 +27,25 @@ The installer asks before anything that needs a decision, and you can answer wit
 - **tmux is missing.** The app needs it to start sessions, so the installer offers to install it with your package manager (`brew`, `apt`, `dnf`, `pacman`, `zypper` or `apk`). On Linux it offers the same for `git`.
 - **No model is logged in.** It runs `omp login` in the terminal. Pick your provider and follow its prompts; for providers that sign in through the browser, a window opens and you come back to the terminal when it is done. Skip it and run `omp login` yourself later, because sessions cannot work without a login.
 
-Then it installs the companion as a background service that starts when you log in, opens the web app in your browser, already paired with this computer, and prints the same link with a QR code. To skip the questions: `curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh -s -- --yes --no-login`.
+Then it installs the companion as a background service that starts when you log in, opens the web app in your browser, already paired with this computer, and prints a link and QR code for your phone. The app it opens is the copy the companion itself serves on this computer (`http://127.0.0.1:7467`); it needs no internet once loaded. To skip the questions: `curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh -s -- --yes --no-login`.
 
 What goes where, the checksum and build checks, and every installer option are in [Install for colleagues](../packages/collab-web/README.md#install-for-colleagues).
 
 ## Pair your devices
 
-The browser the installer opened is paired already. Its connect screen shows your computer, with every omp session on it.
+The browser the installer opened is paired already. Its address is `http://127.0.0.1:7467` (the companion logs the port it picked): the web app served by the companion on this computer. Its connect screen shows your computer, with every omp session on it. To open it again, or in another browser, run `omp companion --open` (it pairs that browser with a fresh one-time link; `omp companion --print-local-link` prints the link without opening it). A browser pairs per address, so one already paired on the Pages site pairs again at `127.0.0.1`.
+
+Use the local copy on this computer and <https://ctrlc03.github.io/oh-my-pi/> everywhere else:
+
+| Where                          | Open                                        | Why                                                                                      |
+| ------------------------------ | ------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| On the computer running omp    | `omp companion --open`                      | Same machine, no internet needed, no browser prompts about local network, installs as an app |
+| Phone, iPad, another computer  | The Pages address above                     | Needs `https`, reaches the computer through the public relay                             |
 
 To add a phone or iPad:
 
 1. Open the web app on it: <https://ctrlc03.github.io/oh-my-pi/>. It needs `https`, which that address has.
-2. On the computer, run `omp companion --pair`. It prints a one-time link and a QR code and works while the service is running. (The installer's last screen has one too, on a first install.) Or open *Devices* in the app on a device that is already paired and choose *Add a device*.
+2. On the computer, run `omp companion --pair`. It prints a one-time link (for the Pages address) and a QR code and works while the service is running. Or open *Devices* in the app on a device that is already paired and choose *Add a device*.
 3. Scan the QR code with the phone's camera, or in the app tap *Scan QR* on the connect screen. Opening the printed link on the device works as well.
 
 A pairing code works once and expires after 10 minutes. Each device then keeps its own credentials. In *Devices* you can rename or remove a device.
@@ -93,9 +100,11 @@ This stops and removes the service and, if you agree, deletes the `omp` binary. 
 
 **`omp: command not found` in a terminal.** `~/.local/bin` is not on your `PATH`. The installer prints the line to add to your shell profile: `export PATH="$HOME/.local/bin:$PATH"`. The service does not need it.
 
-**The browser did not open on Linux.** Without `xdg-open` the installer prints the pairing link instead. Open it in a browser yourself, or run `omp companion --pair` for a fresh one.
+**The browser did not open on Linux.** Without `xdg-open` the installer prints the pairing link instead. Open it in a browser yourself, or run `omp companion --print-local-link` for a link to the app on this computer (`omp companion --pair` prints one for the Pages address).
 
-**The link expired, or the app lost its pairing.** Run `omp companion --pair` and pair again. After `--rotate`, or when a device was removed in *Devices*, that device has to pair again.
+**`http://127.0.0.1:7467` does not load.** The companion is not running (see the service checks above), it picked another port because 7467 was taken (its log says `open http://127.0.0.1:<port> on this computer`; `omp companion --open` finds it), or it was started with `--no-local-app` or `--no-local-relay`. A page that loaded once still opens without the companion; it shows the computer as unreachable until the companion is back. When the companion runs from a source checkout, the first load may say the app is building; the page refreshes itself.
+
+**The link expired, or the app lost its pairing.** Run `omp companion --open` (this computer) or `omp companion --pair` (another device) and pair again. After `--rotate`, or when a device was removed in *Devices*, that device has to pair again.
 
 **The computer goes offline while you are away (macOS).** While the companion runs it keeps the Mac from idle-sleeping, but closing the lid still sleeps a Mac without an external display. Leave the lid open (the screen may turn off).
 

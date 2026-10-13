@@ -19,13 +19,16 @@ Usage: omp ${COMPANION_COMMAND} [flags]
 Flags:
   (none)       print a pairing link and QR code, then serve
   --pair       print a fresh one-time pairing link and QR code, then exit
+  --open       open this computer's own copy of the app in the browser, paired (runs the companion here when none is running)
+  --print-local-link  print that pairing link instead of opening it (needs the companion running)
+  --no-local-app      serve no app on the loopback relay's port
   --rotate     new room key: unpairs every device
   --install    run at login as a background service (launchd on macOS, a systemd user unit on Linux)
   --dry-run    with --install: print the service definition only
   --uninstall  remove the background service
   --help       this text
 
-Settings: collab.webUrl (the web app the pairing link opens), collab.relayUrl. Set them with \`omp config set\`.
+Settings: collab.webUrl (the web app the pairing link for phones opens), collab.relayUrl, collab.localRelayUrl (the loopback relay's port, which also serves this computer's app). Set them with \`omp config set\`.
 Build: ${buildLabel()}
 `;
 

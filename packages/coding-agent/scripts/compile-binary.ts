@@ -31,6 +31,11 @@ export interface CodingAgentCompileOptions {
 	readonly executablePath?: string;
 	/** Release stream baked into the binary: `omp update` follows this repository's releases. Omitted → upstream, no tag. */
 	readonly release?: { readonly repo: string; readonly tag: string };
+	/**
+	 * In-memory module overrides merged into the bundle next to the embedded addons (`Bun.build({ files })`): modules
+	 * that are null placeholders on disk and filled in for a standalone build, such as the collab companion's web app.
+	 */
+	readonly extraFiles?: Readonly<Record<string, string | Uint8Array>>;
 	/** Match release builds that minify identifiers while retaining names. */
 	readonly minifyIdentifiers?: boolean;
 	/** Disable Bun's built-in Darwin signing before the caller re-signs. */
@@ -51,7 +56,7 @@ export async function compileCodingAgent(options: CodingAgentCompileOptions): Pr
 			entrypoints: [options.entrypoint],
 			root: options.repoRoot,
 			external: [...COMPILED_EXTERNAL_DEPENDENCIES],
-			files: options.native ? await embeddedAddonFiles(options.native) : {},
+			files: { ...(options.native ? await embeddedAddonFiles(options.native) : {}), ...options.extraFiles },
 			define: {
 				"process.env.PI_COMPILED": JSON.stringify("true"),
 				"process.env.PI_RELEASE_REPO": JSON.stringify(options.release?.repo ?? UPSTREAM_RELEASE_REPO),

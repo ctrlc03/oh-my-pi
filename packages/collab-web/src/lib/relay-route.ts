@@ -11,6 +11,11 @@
  *
  * Browser limits (mixed content: an https page opening `ws://127.0.0.1`) surface as a failed
  * attempt and take the same path: Chromium and Firefox allow loopback, Safari refuses it.
+ *
+ * A page the companion itself serves (`http://127.0.0.1:<port>`, see `scripts/local-app.ts`) knows more: it came
+ * from that computer's loopback relay, so every room is tried there first, whether or not its link names a local
+ * relay, and being a touch device does not matter. It is `http`, so Safari opens the same loopback sockets too; a
+ * room the relay does not hold, or a relay that is gone, falls back to the public relay as above.
  */
 
 /** A local attempt that has not opened by then yields to the public relay. */
@@ -57,4 +62,35 @@ export function localRelayToTry(
 ): string | null {
 	if (localWsUrl === undefined || touch || health.isDown(localWsUrl, now)) return null;
 	return localWsUrl;
+}
+
+/**
+ * The relay a page was served from, `ws://<host:port>`, when that is this computer's loopback relay: an `http` page on
+ * `127.0.0.1` or `localhost`. Null for every other page (Pages, a LAN address, `https`).
+ */
+export function servedRelay(page: { protocol: string; hostname: string; host: string }): string | null {
+	if (page.protocol !== "http:" || (page.hostname !== "127.0.0.1" && page.hostname !== "localhost")) return null;
+	return `ws://${page.host}`;
+}
+
+/**
+ * {@link servedRelay} of this page; null outside a browser and in development, where `localhost` is the dev server
+ * (which holds no rooms) and the page only needs the relays its links name.
+ */
+export function pageRelay(): string | null {
+	return typeof location === "undefined" || process.env.NODE_ENV !== "production" ? null : servedRelay(location);
+}
+
+/**
+ * The room `wsUrl` (`wss://relay/r/<roomId>`) on the relay this page was served from, or undefined when the page was not
+ * served by one.
+ */
+export function servedRoomUrl(wsUrl: string, relay: string | null = pageRelay()): string | undefined {
+	return relay === null ? undefined : `${relay}${new URL(wsUrl).pathname}`;
+}
+
+/** Who serves this page, for the About screen: this computer (the companion's loopback relay), GitHub Pages, or the host name. */
+export function servedByLabel(page: { protocol: string; hostname: string; host: string }): string {
+	if (servedRelay(page) !== null) return "This computer";
+	return page.hostname.endsWith(".github.io") ? "GitHub Pages" : page.host;
 }

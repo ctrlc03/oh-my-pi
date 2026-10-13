@@ -6,6 +6,9 @@
  *   bun scripts/companion.ts             # print the pairing link + QR, then serve
  *   bun scripts/companion.ts --rotate    # new room key: unpairs every device
  *   bun scripts/companion.ts --pair      # print a fresh one-time pairing link + QR and exit
+ *   bun scripts/companion.ts --open      # open this computer's own copy of the app, paired (see below)
+ *   bun scripts/companion.ts --print-local-link   # print that link instead of opening it
+ *   bun scripts/companion.ts --no-local-app       # do not serve the app on the loopback relay's port
  *   bun scripts/companion.ts --install   # run at login as a service: LaunchAgent (macOS) or systemd user unit (Linux)
  *   bun scripts/companion.ts --install --dry-run   # print the service file only
  *   bun scripts/companion.ts --uninstall # remove the service
@@ -23,6 +26,14 @@
  * repository (but not those of a sandboxed session, nor anything inside `.git`),
  * and can start omp in any folder. The app's Devices screen lists, renames and
  * removes devices and makes new invites; removing a device cuts it off at once.
+ *
+ * The app on this computer: the loopback relay also serves the web app itself at `http://127.0.0.1:<port>`
+ * (`./local-app`), so this computer's browser needs neither GitHub Pages nor the public relay and the app works
+ * offline. From a checkout the companion builds it into `<config>/cache/collab-web/<source hash>/` in the
+ * background (`./local-app-source`); the release binary carries it. It joins this room, and the sessions the companion
+ * starts, over the loopback relay first and the public one when that fails. It has its own storage, so it pairs on its
+ * own: `--open` (or `--print-local-link`) asks the running companion for a one-time invite and opens
+ * `http://127.0.0.1:<port>/#pair:…` in the default browser. Phones keep the Pages link.
  *
  * `--install` on macOS writes `~/Library/LaunchAgents/sh.omp.collab-companion.plist`
  * (RunAtLoad + KeepAlive, absolute bun/script/omp paths, log in
@@ -109,7 +120,6 @@ import {
 	parseCollabLink,
 } from "../src/lib/link";
 import { parseOrg } from "../src/lib/session-org";
-import { CollabSocket } from "../src/lib/socket";
 import { checkFlow, checkFocus, checkSearch, codemapSearch, codemapView, loadCodemap } from "./companion-codemap";
 import { collectDiag, recordRelayEvent, recordRequestError } from "./companion-diag";
 import { readFileChunk } from "./companion-download";
@@ -146,7 +156,7 @@ import { githubItem, githubList } from "./companion-github";
 import { createPrReview } from "./companion-prreview";
 import { buildInbox } from "./companion-inbox";
 import { consumeInvite, type DeviceRecord, DeviceRegistry, issueInvite, parseDevices } from "./companion-devices";
-import { installService, managedBy, pairCommand, uninstallService } from "./companion-service";
+import { installService, managedBy, openCommand, pairCommand, uninstallService } from "./companion-service";
 import {
 	findSessionFile,
 	foreignTranscriptsDir,
@@ -160,6 +170,18 @@ import { COMPANION_RUN_DIR } from "./companion-sandbox";
 import { createSettleCleanup, loadSettleState, saveSettleState } from "./companion-settle";
 import { createSessionLister } from "./companion-list";
 import { preferredRelayPort, startCompanionRelay } from "./companion-local-relay";
+import {
+	findRunningEndpoint,
+	localEndpointFile,
+	localAppUrl,
+	openInBrowser,
+	publishLocalEndpoint,
+	removeLocalEndpoint,
+} from "./companion-local-endpoint";
+import { RoomHost } from "./companion-room";
+import { embeddedApp } from "./local-app-embedded";
+import { type AppState, createLocalAppHandler, loadEmbeddedBuild } from "./local-app";
+import { startSourceApp } from "./local-app-source";
 import { restartCompanion, updateOmp } from "./companion-maintain";
 import { findSessionHolders } from "./companion-open";
 import { capturePane, paneSessionName } from "./companion-pane";
@@ -452,6 +474,53 @@ const worktreesDir = path.join(configDir, "worktrees");
 /** VAPID `sub` claim: push services want a contact URL; Apple rejects non-https ones. */
 const pushSubject = webUrl.startsWith("https://") ? new URL(webUrl).origin : "https://my.omp.sh";
 
+/** A pairing link for the app this computer serves on `port`, with a fresh one-time invite; `expiresAt` in ms since epoch. */
+async function localPairing(port: number): Promise<{ url: string; expiresAt: number }> {
+	const invite = await issueInvite(invitesDir, Date.now());
+	return { url: formatPairingUrl(localAppUrl(port), roomLink, invite.invite), expiresAt: invite.expiresAt };
+}
+
+/** Print (and, for `--open`, open) the local pairing link. The link works once; it is printed because the user asked for it. */
+async function showLocalPairing(port: number, open: boolean): Promise<void> {
+	const { url, expiresAt } = await localPairing(port);
+	if (!open) {
+		console.log(url);
+		return;
+	}
+	const minutes = Math.round((expiresAt - Date.now()) / 60_000);
+	if (await openInBrowser(url)) {
+		console.log(`opened ${url} in your browser; the link works once and expires in ${minutes} minutes`);
+	} else {
+		console.log(
+			`could not open a browser; open this link on this computer (it works once and expires in ${minutes} minutes):\n${url}`,
+		);
+	}
+}
+
+// `--open` / `--print-local-link` talk to the companion that is already running; they start nothing and print no Pages link.
+const printLocalLink = flags.includes("--print-local-link");
+const openLocalApp = flags.includes("--open");
+if (printLocalLink || openLocalApp) {
+	const running = await findRunningEndpoint(localEndpointFile(configDir));
+	if (running?.app) {
+		await showLocalPairing(running.port, !printLocalLink);
+		process.exit(0);
+	}
+	if (running !== null) {
+		console.error(
+			"companion: the running companion does not serve the app (started with --no-local-app, or this build has none)",
+		);
+		process.exit(1);
+	}
+	if (printLocalLink) {
+		console.error(
+			"companion: no companion is running on this computer; start it (`omp companion`) or install the service",
+		);
+		process.exit(1);
+	}
+	// `--open` with no companion running: this process becomes one, and opens the app once it serves it.
+}
+
 console.log("omp collab companion");
 // A service's output goes to a log the machine's other administrators can read (the systemd journal), and a
 // live invite there would pair a device into this computer. The service prints none; `--pair` issues one on demand.
@@ -491,21 +560,69 @@ if (flags.includes("--pair")) process.exit(0);
 // ── local relay ──────────────────────────────────────────────────────────────
 
 /**
+ * Start serving the web app. Compiled, the binary carries it; from a checkout the companion builds it into its cache
+ * (`./local-app-source`). Neither blocks the companion: the app answers "building" until its files are ready.
+ */
+function startLocalApp(): () => AppState {
+	if (isCompiled) {
+		let state: AppState = { kind: "building" };
+		loadEmbeddedBuild(embeddedApp!).then(
+			build => {
+				state = { kind: "ready", build };
+			},
+			err => {
+				state = { kind: "failed" };
+				console.error(`companion: the embedded web app is unusable: ${errorText(err)}`);
+			},
+		);
+		return () => state;
+	}
+	return startSourceApp({
+		cacheDir: path.join(configDir, "cache", "collab-web"),
+		repoDir: path.join(import.meta.dir, "..", "..", ".."),
+		build: async outdir => (await import("./build-app")).buildApp(outdir, { local: true, quiet: true }),
+		log: line => console.log(`companion: ${line}`),
+	}).state;
+}
+
+/**
  * Loopback relay for the sessions this companion starts: the app on this computer joins them
  * there instead of through the public relay (omp serves each room on both). Phones still use
  * the public one. `--no-local-relay` turns it off.
  */
 let localRelayUrl: string | undefined;
+/** The relay also serves the web app (`--no-local-app` turns that off; it needs the relay). */
+const serveApp =
+	!flags.includes("--no-local-app") && !flags.includes("--no-local-relay") && (!isCompiled || embeddedApp !== null);
+if (isCompiled && embeddedApp === null && !flags.includes("--no-local-app")) {
+	console.log("companion: this build embeds no web app, so none is served on this computer");
+}
+/** What the app handler serves now; set once the relay is up. */
+let appState: () => AppState = () => ({ kind: "building" });
 if (!flags.includes("--no-local-relay")) {
 	try {
 		const configured = await configValue("collab.localRelayUrl").catch(() => "");
 		const started = startCompanionRelay({
 			preferredPort: preferredRelayPort(configured),
 			allowedOrigins: [new URL(webUrl).origin],
+			app: serveApp ? createLocalAppHandler(() => appState()) : undefined,
 		});
 		localRelayUrl = started.url;
 		console.log(`local relay on ${localRelayUrl}: sessions started from the app are also served there`);
 		console.log(`for sessions started by hand, set collab.localRelayUrl to ${localRelayUrl}`);
+		const port = Number(new URL(started.url).port);
+		await publishLocalEndpoint(localEndpointFile(configDir), { pid: process.pid, port, app: serveApp }).catch(err =>
+			console.error(
+				`companion: could not publish the local address (companion --open will not find this companion): ${errorText(err)}`,
+			),
+		);
+		if (serveApp) {
+			appState = startLocalApp();
+			console.log(
+				`open ${localAppUrl(port).replace(/\/$/, "")} on this computer (${openCommand()} pairs this browser)`,
+			);
+			if (openLocalApp) await showLocalPairing(port, true);
+		}
 	} catch (err) {
 		console.error(`companion: local relay unavailable, sessions use the public relay only: ${errorText(err)}`);
 	}
@@ -513,9 +630,9 @@ if (!flags.includes("--no-local-relay")) {
 
 // ── room ─────────────────────────────────────────────────────────────────────
 
-const socket = new CollabSocket<CompanionReply, CompanionRequest>({
-	wsUrl: (parseCollabLink(roomLink) as ParsedCollabLink).wsUrl,
-	role: "host",
+const room = new RoomHost<CompanionReply, CompanionRequest>({
+	publicUrl: (parseCollabLink(roomLink) as ParsedCollabLink).wsUrl,
+	localUrl: localRelayUrl === undefined ? undefined : `${localRelayUrl}/r/${state.roomId}`,
 	key: importRoomKey(rawKey),
 });
 
@@ -944,8 +1061,8 @@ async function refresh(targetPeer?: number): Promise<void> {
 		power: power ?? undefined,
 	};
 	const json = JSON.stringify(frame);
-	if (json !== lastHostsJson) for (const peer of peers) socket.send(frame, peer, zipPeers.has(peer));
-	else if (targetPeer !== undefined) socket.send(frame, targetPeer, zipPeers.has(targetPeer));
+	if (json !== lastHostsJson) for (const peer of peers) room.send(frame, peer, zipPeers.has(peer));
+	else if (targetPeer !== undefined) room.send(frame, targetPeer, zipPeers.has(targetPeer));
 	lastHostsJson = json;
 }
 
@@ -1355,9 +1472,9 @@ async function setSubscription(deviceId: string, subscription: unknown, on: bool
 	schedulePoll();
 }
 
-socket.onOpen = () => {
-	recordRelayEvent("open", "room open");
-	console.log("companion: room open, waiting for devices");
+room.onOpen = route => {
+	recordRelayEvent("open", `room open (${route} relay)`);
+	console.log(`companion: room open on the ${route} relay, waiting for devices`);
 };
 
 /** Stop serving a peer: it must authenticate again. */
@@ -1368,7 +1485,7 @@ function dropPeer(peer: number): void {
 	presence.delete(peer);
 }
 
-socket.onControl = msg => {
+room.onControl = msg => {
 	if (msg.t !== "peer-left") return;
 	const deviceId = peerDevice.get(msg.peer);
 	dropPeer(msg.peer);
@@ -1379,6 +1496,9 @@ socket.onControl = msg => {
 };
 
 type AuthFrame = Extract<CompanionRequest, { t: "auth" }>;
+
+/** `<device id>:<route>` of every device already logged as connected since the companion started, so a reconnect is not logged again. */
+const announced = new Set<string>();
 
 /**
  * Serve the peer as a paired device when it presents its credentials, or pairs with a valid
@@ -1401,18 +1521,23 @@ async function authenticate(frame: AuthFrame, fromPeer: number): Promise<void> {
 			}
 		}
 		if (device === null) {
-			socket.send({ t: "auth-failed", message: refusal }, fromPeer);
+			room.send({ t: "auth-failed", message: refusal }, fromPeer);
 			return;
 		}
 		peers.add(fromPeer);
 		peerDevice.set(fromPeer, device.id);
+		const route = RoomHost.routeOf(fromPeer);
+		if (!announced.has(`${device.id}:${route}`)) {
+			announced.add(`${device.id}:${route}`);
+			console.log(`companion: ${device.name} connected through the ${route} relay`);
+		}
 		registry.touch(device.id);
 		if (token === undefined) await saveState(state);
-		socket.send({ t: "authed", deviceId: device.id, token }, fromPeer);
+		room.send({ t: "authed", deviceId: device.id, token }, fromPeer);
 		schedulePoll();
 	} catch (err) {
 		console.error(`companion: authenticating a device failed: ${errorText(err)}`);
-		socket.send({ t: "auth-failed", message: "The computer could not check this device. Try again." }, fromPeer);
+		room.send({ t: "auth-failed", message: "The computer could not check this device. Try again." }, fromPeer);
 	}
 }
 
@@ -1425,11 +1550,11 @@ async function revokeDevice(deviceId: unknown): Promise<void> {
 	for (const [peer, id] of peerDevice) {
 		if (id !== removed.id) continue;
 		dropPeer(peer);
-		socket.send({ t: "auth-failed", message: "This device was removed." }, peer);
+		room.send({ t: "auth-failed", message: "This device was removed." }, peer);
 	}
 }
 
-socket.onFrame = (frame, fromPeer) => {
+room.onFrame = (frame, fromPeer) => {
 	if (frame.t === "auth") {
 		void authenticate(frame, fromPeer);
 		return;
@@ -1443,13 +1568,13 @@ socket.onFrame = (frame, fromPeer) => {
 	/** Answer a request with whatever `work` resolves to, or with its error. */
 	const respond = (reqId: number, work: () => Promise<CompanionReply>): void => {
 		work().then(
-			reply => socket.send(reply, fromPeer, zipPeers.has(fromPeer)),
+			reply => room.send(reply, fromPeer, zipPeers.has(fromPeer)),
 			err => {
 				recordRequestError(frame.t, errorText(err));
 				console.error(`companion: ${new Date().toISOString()} ${frame.t} failed: ${errorText(err)}`);
 				const openElsewhere = err instanceof SessionOpenElsewhereError ? err.holders : undefined;
 				const changed = err instanceof FileChangedError ? err.version : undefined;
-				socket.send({ t: "error", reqId, message: errorText(err), openElsewhere, changed }, fromPeer);
+				room.send({ t: "error", reqId, message: errorText(err), openElsewhere, changed }, fromPeer);
 			},
 		);
 	};
@@ -2103,17 +2228,15 @@ socket.onFrame = (frame, fromPeer) => {
 	}
 };
 
-socket.onClose = (reason, willReconnect) => {
-	recordRelayEvent("close", willReconnect ? `${reason}, reconnecting` : reason);
-	peers.clear();
-	peerDevice.clear();
-	zipPeers.clear();
-	presence.clear();
-	console.error(`companion: relay closed (${reason})${willReconnect ? ", reconnecting" : ""}`);
-	if (!willReconnect) setTimeout(() => socket.connect(), RECONNECT_MS);
+room.onClose = (route, reason, willReconnect) => {
+	recordRelayEvent("close", `${route} relay: ${willReconnect ? `${reason}, reconnecting` : reason}`);
+	// Only the guests that came through the relay that closed are gone.
+	for (const peer of [...peers, ...peerDevice.keys()]) if (RoomHost.routeOf(peer) === route) dropPeer(peer);
+	console.error(`companion: ${route} relay closed (${reason})${willReconnect ? ", reconnecting" : ""}`);
+	if (!willReconnect) setTimeout(() => room.connect(route), RECONNECT_MS);
 };
 
-socket.connect();
+room.connect();
 schedulePoll();
 // Loading the codemap module is slow and may fail on a checkout without the native extractor: never block startup on it.
 void loadCodemap().then(ready => {
@@ -2131,9 +2254,15 @@ function shutdown(): void {
 	runs.stopAll();
 	clearTimeout(pollTimer);
 	awake.release();
-	socket.close();
+	room.close();
+
 	// The warm preview browser and the speech worker are separate process trees: close them before exiting.
-	void Promise.allSettled([closePreviewBrowser(), voice.close(), scheduleIpc.stop()]).then(() => process.exit(0));
+	void Promise.allSettled([
+		closePreviewBrowser(),
+		voice.close(),
+		scheduleIpc.stop(),
+		removeLocalEndpoint(localEndpointFile(configDir), process.pid),
+	]).then(() => process.exit(0));
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

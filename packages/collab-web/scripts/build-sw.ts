@@ -28,7 +28,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const dist = path.join(import.meta.dir, "..", "dist");
+const dist = path.resolve(process.argv[2] ?? path.join(import.meta.dir, "..", "dist"));
 
 /** Site-root files the client never fetches; skipping them keeps the install small. */
 const SKIP: Record<string, true> = { "sw.js": true, "og-image.png": true, "robots.txt": true, "sitemap.xml": true };
@@ -249,4 +249,6 @@ self.addEventListener("notificationclick", event => {
 `;
 
 await Bun.write(path.join(dist, "sw.js"), sw);
-console.log(`build-sw: dist/sw.js (${files.length} files, cache omp-collab-${version})`);
+console.log(
+	`build-sw: ${path.relative(process.cwd(), path.join(dist, "sw.js"))} (${files.length} files, cache omp-collab-${version})`,
+);

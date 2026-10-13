@@ -4,7 +4,9 @@
  *
  *   bun scripts/build-collab-binary.ts --target <darwin-arm64|darwin-x64|linux-x64|linux-arm64> [--outdir <dir>]
  *
- * Output: `<outdir>/omp-<target>` (default outdir `dist/collab/`). The target's pi_natives addon(s) must already
+ * Output: `<outdir>/omp-<target>` (default outdir `dist/collab/`). The binary embeds the production build of the collab web
+ * app (the same pipeline as the Pages build, minus the analytics beacon), which its companion serves on the loopback
+ * relay's port. The target's pi_natives addon(s) must already
  * sit in `packages/natives/native/` (`OMP_NATIVE_CARGO_PROFILE=ci bun scripts/bazel-natives.ts host` builds the
  * host's; x64 hosts honor `OMP_NATIVE_X64_VARIANT=baseline|modern`). Same compile as `ci-release-build-binaries.ts`
  * (`compileCodingAgent`, embedded natives, stats bundle, tool views), with the collab entry point.
@@ -16,10 +18,14 @@
  * On a darwin host a darwin target is ad-hoc signed with the omp entitlements, as in the upstream release build.
  */
 
+import * as fs from "node:fs/promises";
 import { createRequire } from "node:module";
+import * as os from "node:os";
 import * as path from "node:path";
 import { compileCodingAgent } from "../packages/coding-agent/scripts/compile-binary";
 import { parseForkTag } from "../packages/coding-agent/src/cli/fork-release";
+import { buildApp } from "../packages/collab-web/scripts/build-app";
+import { embeddedAppFiles } from "../packages/collab-web/scripts/local-app-embed";
 
 interface CollabTarget {
 	readonly platform: string;
@@ -81,10 +87,16 @@ async function main(): Promise<void> {
 	checkBuildTag(tag, agentManifest.version);
 
 	const adhocSign = target.platform === "darwin" && process.platform === "darwin";
+	const appDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-collab-app-"));
 	// Generate inside the try so the finally restores the empty checked-in placeholders even when a step throws.
 	try {
 		await runCommand(["bun", "run", "gen:stats"]);
 		await runCommand(["bun", "--cwd=packages/collab-web", "run", "gen:tool-views"]);
+		await buildApp(appDir, { local: true });
+		const app = await embeddedAppFiles(appDir);
+		console.log(
+			`Embedding the web app (${(app.rawBytes / 1048576).toFixed(1)} MiB, ${(app.storedBytes / 1048576).toFixed(1)} MiB stored)`,
+		);
 		console.log(`Building ${outfile} (${repo} @ ${tag})...`);
 		await compileCodingAgent({
 			repoRoot,
@@ -96,6 +108,7 @@ async function main(): Promise<void> {
 			minifyIdentifiers: true,
 			skipBuiltinCodesign: adhocSign,
 			release: { repo, tag },
+			extraFiles: app.overrides,
 		});
 		// Bun 1.3.12 emits a truncated Mach-O signature on darwin builds.
 		if (adhocSign) {
@@ -110,6 +123,7 @@ async function main(): Promise<void> {
 			]);
 		}
 	} finally {
+		await fs.rm(appDir, { recursive: true, force: true });
 		await runCommand(["bun", "run", "gen:stats:reset"]);
 	}
 	console.log(outfile);

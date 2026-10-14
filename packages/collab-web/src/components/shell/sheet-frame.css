@@ -1,0 +1,142 @@
+/* Movable, resizable big sheets (a mouse as the main pointer, the wide layout; see Sheet.tsx). The handle layer is
+ * a sibling of the panel, laid over it at the panel's own rectangle (written from script): the panel scrolls and
+ * clips, and the resize zones reach past its edge. Edge zones are 8px wide, 6px of it outside the panel. */
+.sh-sheet-frame {
+	position: fixed;
+	z-index: 71;
+	pointer-events: none;
+	animation: rise 260ms var(--ease-out) backwards;
+}
+
+.sh-sheet-edge {
+	position: absolute;
+	pointer-events: auto;
+	/* The browser must not take a drag for a scroll or a swipe. */
+	touch-action: none;
+}
+
+.sh-sheet-edge[data-edge="n"],
+.sh-sheet-edge[data-edge="s"] {
+	left: 12px;
+	right: 12px;
+	height: 8px;
+	cursor: ns-resize;
+}
+
+.sh-sheet-edge[data-edge="e"],
+.sh-sheet-edge[data-edge="w"] {
+	top: 12px;
+	bottom: 12px;
+	width: 8px;
+	cursor: ew-resize;
+}
+
+.sh-sheet-edge[data-edge="n"] {
+	top: -6px;
+}
+
+.sh-sheet-edge[data-edge="s"] {
+	bottom: -6px;
+}
+
+.sh-sheet-edge[data-edge="w"] {
+	left: -6px;
+}
+
+.sh-sheet-edge[data-edge="e"] {
+	right: -6px;
+}
+
+.sh-sheet-edge[data-edge="ne"],
+.sh-sheet-edge[data-edge="nw"],
+.sh-sheet-edge[data-edge="se"],
+.sh-sheet-edge[data-edge="sw"] {
+	width: 18px;
+	height: 18px;
+}
+
+.sh-sheet-edge[data-edge="nw"],
+.sh-sheet-edge[data-edge="ne"] {
+	top: -6px;
+}
+
+.sh-sheet-edge[data-edge="sw"],
+.sh-sheet-edge[data-edge="se"] {
+	bottom: -6px;
+}
+
+.sh-sheet-edge[data-edge="nw"],
+.sh-sheet-edge[data-edge="sw"] {
+	left: -6px;
+}
+
+.sh-sheet-edge[data-edge="ne"],
+.sh-sheet-edge[data-edge="se"] {
+	right: -6px;
+}
+
+.sh-sheet-edge[data-edge="nw"],
+.sh-sheet-edge[data-edge="se"] {
+	cursor: nwse-resize;
+}
+
+.sh-sheet-edge[data-edge="ne"],
+.sh-sheet-edge[data-edge="sw"] {
+	cursor: nesw-resize;
+}
+
+/* The top strip: drag to move, double-click to reset, focus for the keys. Its pill sits in the sheet's top padding. */
+.sh-sheet-move {
+	position: absolute;
+	top: 0;
+	left: 50%;
+	width: min(160px, calc(100% - 128px));
+	height: 16px;
+	padding: 0;
+	pointer-events: auto;
+	appearance: none;
+	background: none;
+	border: 0;
+	border-radius: 6px;
+	cursor: move;
+	touch-action: none;
+	transform: translateX(-50%);
+}
+
+.sh-sheet-move::before {
+	content: "";
+	position: absolute;
+	top: 6px;
+	left: calc(50% - 18px);
+	width: 36px;
+	height: 4px;
+	background: var(--border-strong);
+	border-radius: 2px;
+	transition: background-color 120ms ease-out;
+}
+
+.sh-sheet-move:hover::before {
+	background: var(--fg-faint);
+}
+
+.sh-sheet-move:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: -2px;
+}
+
+.sh-sheet-move:focus-visible::before {
+	background: var(--ring);
+}
+
+/* The header moves the sheet too (not its buttons and fields). */
+.sh-sheet-movable .sh-sheet-head,
+.sh-sheet-movable .sh-set-nav-head,
+.sh-sheet-movable .sh-set-head {
+	cursor: move;
+}
+
+/* While a sheet is dragged: no text selection under the pointer. */
+html[data-sheet-drag] {
+	user-select: none;
+	-webkit-user-select: none;
+}

@@ -105,7 +105,12 @@ export function ScreensSheet({ screens, onJump, onClose }: ScreensSheetProps): R
 	}, [viewing, onClose]);
 
 	return (
-		<Sheet label="screens" size={viewing ? "full" : "wide"} onClose={close}>
+		<Sheet
+			label="screens"
+			frameKey={viewing ? "screens viewer" : "screens"}
+			size={viewing ? "full" : "wide"}
+			onClose={close}
+		>
 			<div className="sh-sheet-head">
 				{viewing !== null && (
 					<button type="button" className="sh-btn sh-btn-icon" onClick={close} aria-label="Back to all screens">

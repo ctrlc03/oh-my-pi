@@ -5,6 +5,11 @@
 ### Added
 
 - `AgentLoopConfig.shouldStop` and `Agent.setShouldStop()`: a graceful stop predicate checked at the same boundaries as `deadline` (run start, after each turn's tools, before each model call) that ends the run without aborting a running tool.
+
+## [18.10.4] - 2026-10-13
+
+### Added
+
 - `AgentTool.formatApprovalDetails` receives `ApprovalDetailsOptions`; `compact: true` asks for untruncated bodies so a compact approval prompt can count their lines ([#15550](https://github.com/can1357/oh-my-pi/pull/15550) by [@H4vC](https://github.com/H4vC))
 
 ### Changed

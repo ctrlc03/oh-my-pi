@@ -6,6 +6,8 @@
 
 - Added `extractSymbols` / `extractSymbolsAsync`: tree-sitter definitions (with signatures, doc comments, parents, and impl/base lists) and typed references (calls, types, constructions, paths, imports, Solidity `emit`, macros) for Rust, TypeScript/TSX/JavaScript, Solidity, Python, and Go.
 
+## [18.10.4] - 2026-10-13
+
 ### Fixed
 
 - Fixed `pwsh` code blocks rendering without PowerShell syntax colors ([#15008](https://github.com/can1357/oh-my-pi/issues/15008)).

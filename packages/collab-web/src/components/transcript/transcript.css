@@ -6,7 +6,7 @@
 	overflow-y: auto;
 	overflow-x: hidden;
 	--tr-pad-top: 32px;
-	padding: var(--tr-pad-top) 24px 20px;
+	padding: var(--tr-pad-top) var(--chat-inset) 20px;
 	font-family: var(--font-ui);
 	font-size: calc(15px * var(--reading-scale));
 	line-height: var(--reading-leading);
@@ -62,7 +62,7 @@
 
 .tr-block--prompt,
 .tr-row--user .tr-body:has(> .tr-queued) {
-	max-width: min(85%, 640px);
+	max-width: min(85%, calc(var(--prose-w) * 0.8));
 	background: color-mix(in srgb, var(--accent) 9%, var(--bg-raised));
 	border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border));
 	border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
@@ -547,6 +547,11 @@
 
 .tr-md > :last-child {
 	margin-bottom: 0;
+}
+
+/* Running text keeps a readable line; code, tables, diagrams and math run the full width of the column. */
+.tr-md > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
+	max-width: var(--prose-w);
 }
 
 .tr-md p {
@@ -1304,7 +1309,7 @@
 
 .tr-root--compact {
 	--tr-pad-top: 12px;
-	padding: var(--tr-pad-top) 14px 16px;
+	padding: var(--tr-pad-top) 10px 16px;
 	font-size: calc(13px * var(--reading-scale));
 	line-height: calc(var(--reading-leading) - 0.1);
 }
@@ -1351,11 +1356,19 @@
 	.tr-block--prompt {
 		max-width: 88%;
 	}
+	/* The edges around a reply are width the text could use: slimmer gutter, tighter inner padding. */
+	.tr-block-gutter {
+		width: 14px;
+	}
+	.tr-block-main {
+		padding-right: 10px;
+		padding-left: 4px;
+	}
 	.tr-root {
 		--tr-pad-top: 16px;
-		padding: var(--tr-pad-top) 14px 12px;
-		padding-left: max(14px, var(--safe-left));
-		padding-right: max(14px, var(--safe-right));
+		padding: var(--tr-pad-top) var(--chat-inset) 12px;
+		padding-left: max(var(--chat-inset), var(--safe-left));
+		padding-right: max(var(--chat-inset), var(--safe-right));
 		/* Momentum scrolling stays inside the transcript; the page never rubber-bands. */
 		overscroll-behavior: contain;
 	}

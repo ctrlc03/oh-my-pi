@@ -1,7 +1,7 @@
 /* ---- agent task progress bar (above the composer) ---- */
 .sh-tasks {
 	/* The composer's side inset, so the bar lines up with the chips and the message box below. */
-	--tasks-inset: 16px;
+	--tasks-inset: var(--chat-inset);
 	--tasks-pad: 12px;
 	position: relative;
 	flex: none;
@@ -222,7 +222,6 @@ button.sh-tasks-agent-row:hover {
 
 @media (max-width: 640px) {
 	.sh-tasks {
-		--tasks-inset: 8px;
 		--tasks-pad: 10px;
 	}
 	.sh-tasks-btn {

@@ -34,6 +34,9 @@ function globLiteral(file: string): string {
  * Config overlay for the architecture agent, layered after the companion's. Execution tools are denied outright,
  * and the file tools may write exactly one file: `outFile`. Defence in depth behind `--tools` (which has no shell)
  * and, where the platform has it, the sandbox profile.
+ *
+ * `ast_grep`, `trace` and `flow` are off by default in omp (`astGrep.enabled`, `codemap.enabled`), and `--tools` naming
+ * a tool that is off makes omp exit at once ("Built-in tools unavailable in this session"), so the overlay turns them on.
  */
 export function blueprintOverlayYaml(outFile: string): string {
 	return `tools:
@@ -56,6 +59,10 @@ export function blueprintOverlayYaml(outFile: string): string {
       action: deny
 bash:
   enabled: false
+astGrep:
+  enabled: true
+codemap:
+  enabled: true
 lsp:
   enabled: false
 mcp:

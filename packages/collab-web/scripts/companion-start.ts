@@ -108,6 +108,11 @@ export interface TmuxLaunch {
 	 * still confines its writes.
 	 */
 	restrict?: RestrictLaunch;
+	/**
+	 * Keep the screen of a process that exits at once, and its tmux session with it, until the caller reads it with
+	 * {@link launchEnded} and ends the session ({@link releaseLaunch} or {@link killTmuxSession}). Off: the session ends with its process.
+	 */
+	keepEnded?: boolean;
 }
 
 /** How the detached host of a foreign agent session is started; see `scripts/foreign/host-main.ts`. */
@@ -238,7 +243,17 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 			...command,
 		];
 	}
-	const args = ["new-session", "-d", "-s", name, ...env.flatMap(entry => ["-e", entry]), ...argv];
+	// With `keepEnded`, `remain-on-exit` (set in the same tmux command, before the pane can die) keeps the output of a
+	// process that exits at once, so the caller can say why; `releaseLaunch` (or killing the session) ends that.
+	const args = [
+		"new-session",
+		"-d",
+		"-s",
+		name,
+		...env.flatMap(entry => ["-e", entry]),
+		...argv,
+		...(launch.keepEnded ? [";", "set-option", "-w", "-t", `=${name}:`, "remain-on-exit", "on"] : []),
+	];
 	const proc = Bun.spawn([launch.tmux, ...args], { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
 	const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
 	if (code !== 0) {
@@ -254,14 +269,53 @@ export async function killTmuxSession(tmux: string, name: string): Promise<void>
 	await proc.exited;
 }
 
-/** True while the tmux session `name` exists: its host process has not exited. */
-export async function tmuxSessionExists(tmux: string, name: string): Promise<boolean> {
-	const proc = Bun.spawn([tmux, "has-session", "-t", `=${name}`], {
-		stdout: "ignore",
-		stderr: "ignore",
-		stdin: "ignore",
-	});
-	return (await proc.exited) === 0;
+async function tmuxOutput(tmux: string, args: string[]): Promise<{ code: number; out: string }> {
+	const proc = Bun.spawn([tmux, ...args], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+	const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+	return { code, out };
+}
+
+/** Longest tail of a dead session's screen kept for an error message. */
+const MAX_TAIL_LINES = 8;
+const MAX_TAIL_CHARS = 700;
+
+/** The last non-empty lines of a screen as one line of text, short enough for an error message; tmux's own "Pane is dead" banner is left out. */
+export function screenTail(screen: string): string {
+	const lines = screen
+		.split("\n")
+		.map(line => line.trim())
+		.filter(line => line !== "" && !line.startsWith("Pane is dead"));
+	const tail = lines.slice(-MAX_TAIL_LINES).join(" ");
+	return tail.length > MAX_TAIL_CHARS ? `…${tail.slice(-MAX_TAIL_CHARS)}` : tail;
+}
+
+/** The tail of what a session {@link launchInTmux} started shows on its screen; empty when there is none to read. */
+export async function launchScreen(tmux: string, name: string): Promise<string> {
+	const screen = await tmuxOutput(tmux, ["capture-pane", "-p", "-J", "-S", "-", "-t", `=${name}:`]);
+	return screen.code === 0 ? screenTail(screen.out) : "";
+}
+
+/**
+ * Where a session {@link launchInTmux} started stands: null while its process runs, else the tail of its last output
+ * (empty when tmux no longer has the session, so there is nothing to read).
+ */
+export async function launchEnded(tmux: string, name: string): Promise<{ tail: string } | null> {
+	const panes = await tmuxOutput(tmux, ["list-panes", "-t", `=${name}:`, "-F", "#{pane_dead}"]);
+	if (panes.code !== 0) return { tail: "" };
+	if (!panes.out.split("\n").includes("1")) return null;
+	return { tail: await launchScreen(tmux, name) };
+}
+
+/** What a launch that never hosted shows the user: `what` (no final period) happened, followed by the last output when there is any. */
+export function launchFailure(what: string, tail: string): string {
+	return tail === "" ? what : `${what}. Last output: ${tail}`;
+}
+
+/** The host is up: the tmux session ends with its process again, as for any session. */
+export async function releaseLaunch(tmux: string, name: string): Promise<void> {
+	await tmuxOutput(tmux, ["set-option", "-w", "-t", `=${name}:`, "remain-on-exit", "off"]);
+	// The process may have exited between the host appearing and now: nothing would remove the dead pane.
+	if ((await launchEnded(tmux, name)) !== null) await killTmuxSession(tmux, name);
 }
 
 /**

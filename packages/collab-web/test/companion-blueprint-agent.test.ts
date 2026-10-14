@@ -3,7 +3,12 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { BlueprintSummary } from "@oh-my-pi/pi-wire/blueprint";
-import { blueprintOverlayYaml, buildBrief, sessionFolderName } from "../scripts/companion-blueprint-agent";
+import {
+	BLUEPRINT_TOOLS,
+	blueprintOverlayYaml,
+	buildBrief,
+	sessionFolderName,
+} from "../scripts/companion-blueprint-agent";
 import { createBlueprintStore } from "../scripts/companion-blueprint-store";
 
 const INDEX = {
@@ -29,6 +34,17 @@ describe("the agent's launch", () => {
 		expect(yaml).toContain("bash: deny");
 		expect(yaml.indexOf("action: allow")).toBeLessThan(yaml.indexOf("action: deny\n"));
 		expect(() => blueprintOverlayYaml("C:\\cfg\\out\\bp-0123456789ab.json")).toThrow(/backslash/);
+	});
+
+	it("turns on the tools omp keeps off by default, or omp refuses to start with them in --tools", () => {
+		// `--tools ast_grep,trace,flow` without `astGrep.enabled` / `codemap.enabled` ends in "Built-in tools unavailable in this session".
+		const settings = Bun.YAML.parse(blueprintOverlayYaml("/out/bp-0123456789ab.json")) as {
+			astGrep?: { enabled?: boolean };
+			codemap?: { enabled?: boolean };
+		};
+		expect(BLUEPRINT_TOOLS).toEqual(expect.arrayContaining(["ast_grep", "trace", "flow"]));
+		expect(settings.astGrep?.enabled).toBe(true);
+		expect(settings.codemap?.enabled).toBe(true);
 	});
 
 	it("names the checkout folder after the map, without characters a sandbox profile refuses", () => {

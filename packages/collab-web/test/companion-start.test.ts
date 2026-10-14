@@ -2,7 +2,16 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { findTmux, foreignHostCommand, launchInTmux } from "../scripts/companion-start";
+import {
+	findTmux,
+	foreignHostCommand,
+	killTmuxSession,
+	launchEnded,
+	launchFailure,
+	launchInTmux,
+	releaseLaunch,
+	screenTail,
+} from "../scripts/companion-start";
 
 const tmuxBin = await findTmux();
 
@@ -215,6 +224,73 @@ describe.skipIf(tmuxBin === null)("launchInTmux with a real tmux", () => {
 			await expect(launchInTmux({ ...base, model, foreign })).rejects.toThrow("invalid model");
 		expect(await Bun.file(path.join(root, "pwned3")).exists()).toBe(false);
 	});
+
+	/** Poll until omp's process is gone: the awaited condition is tmux's answer, the sleep only paces the poll. */
+	async function ended(name: string): Promise<{ tail: string }> {
+		const deadline = Date.now() + 10_000;
+		while (Date.now() < deadline) {
+			const result = await launchEnded(wrapper, name);
+			if (result !== null) return result;
+			await Bun.sleep(20);
+		}
+		throw new Error("the stand-in omp never ended");
+	}
+
+	async function sessionExists(name: string): Promise<boolean> {
+		const probe = Bun.spawn([wrapper, "has-session", "-t", `=${name}`], {
+			stdout: "ignore",
+			stderr: "ignore",
+			stdin: "ignore",
+		});
+		return (await probe.exited) === 0;
+	}
+
+	it("keeps what omp printed when it exits at once, in a folder named like an architecture map", async () => {
+		const refusing = path.join(root, "refusing-omp");
+		await fs.writeFile(
+			refusing,
+			"#!/bin/sh\nprintf 'Error: Built-in tools unavailable in this session: ast_grep, trace, flow.\\nRun `omp --help` for available flags.\\n' >&2\nexit 2\n",
+			{ mode: 0o700 },
+		);
+		const folder = path.join(root, "Architecture · repo @ PR #2256");
+		await fs.mkdir(folder);
+		const launched = await launchInTmux({
+			tmux: wrapper,
+			ompBin: refusing,
+			overlayPath: path.join(root, "overlay.yml"),
+			promptDir: path.join(root, "run"),
+			cwd: folder,
+			prompt: "draw the map",
+			keepEnded: true,
+		});
+		expect(launched.cwd).toBe(folder);
+		const result = await ended(launched.name);
+		expect(result.tail).toBe(
+			"Error: Built-in tools unavailable in this session: ast_grep, trace, flow. Run `omp --help` for available flags.",
+		);
+		await killTmuxSession(wrapper, launched.name);
+		expect(await sessionExists(launched.name)).toBe(false);
+	});
+
+	it("sees a running omp as running, and lets its tmux session end with it once released", async () => {
+		const brief = path.join(root, "brief-omp");
+		await fs.writeFile(brief, "#!/bin/sh\nsleep 1\n", { mode: 0o700 });
+		const launched = await launchInTmux({
+			tmux: wrapper,
+			ompBin: brief,
+			overlayPath: path.join(root, "overlay.yml"),
+			promptDir: path.join(root, "run"),
+			cwd: root,
+			keepEnded: true,
+		});
+		expect(await launchEnded(wrapper, launched.name)).toBeNull();
+		await releaseLaunch(wrapper, launched.name);
+		expect(await sessionExists(launched.name)).toBe(true);
+		// The awaited condition is tmux dropping the session; the sleep only paces the poll.
+		const deadline = Date.now() + 10_000;
+		while ((await sessionExists(launched.name)) && Date.now() < deadline) await Bun.sleep(50);
+		expect(await sessionExists(launched.name)).toBe(false);
+	});
 });
 
 describe("foreignHostCommand", () => {
@@ -248,5 +324,32 @@ describe("foreignHostCommand", () => {
 		const command = foreignHostCommand(foreign, { cwd: evil, model: evil, resume: evil, promptFile: evil });
 		expect(command.filter(arg => arg === evil)).toHaveLength(4);
 		expect(command.every(arg => !arg.includes(" ") || arg === evil)).toBe(true);
+	});
+});
+
+describe("what a launch that never hosted tells the user", () => {
+	it("keeps the last lines of the screen as one line, without tmux's dead-pane banner", () => {
+		const screen = [
+			"",
+			"  Error: boom  ",
+			"",
+			"Run `omp --help` for available flags.",
+			"",
+			"Pane is dead (status 2, Wed Oct 14 10:50:29 2026)",
+			"",
+		];
+		expect(screenTail(screen.join("\n"))).toBe("Error: boom Run `omp --help` for available flags.");
+		const long = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n");
+		expect(screenTail(long).startsWith("line 22 ")).toBe(true);
+		expect(screenTail(long).endsWith("line 29")).toBe(true);
+		expect(screenTail("x".repeat(5_000))).toHaveLength(701);
+		expect(screenTail("\n \n")).toBe("");
+	});
+
+	it("names what failed and adds the last output only when there is some", () => {
+		expect(launchFailure("omp stopped before it was ready", "")).toBe("omp stopped before it was ready");
+		expect(launchFailure("omp stopped before it was ready", "Error: boom")).toBe(
+			"omp stopped before it was ready. Last output: Error: boom",
+		);
 	});
 });

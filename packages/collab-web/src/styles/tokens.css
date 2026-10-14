@@ -161,8 +161,13 @@
 	--radius-lg: 14px;
 	--radius-xl: 20px;
 
-	/* conversation column: transcript and composer share it */
-	--chat-width: 820px;
+	/* conversation column: transcript and composer share it. Both widths grow with the text size (Appearance → Text),
+	 * so a bigger font keeps its line length; the column is the room tool output, code and tables run in, and
+	 * --prose-w caps the lines of running text inside it. --chat-inset is the column's side padding: the
+	 * transcript, the composer and the bars above it all use it, so their edges line up. */
+	--chat-width: calc(1080px * var(--reading-scale));
+	--prose-w: calc(880px * var(--reading-scale));
+	--chat-inset: 16px;
 
 	--topbar-h: 52px;
 	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -181,6 +186,13 @@
 
 	/* scroll-edge fade: masks read alpha only, so the stop color is irrelevant */
 	--fade-bottom: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
+}
+
+/* Phones: the conversation column keeps just a sliver of padding, so the text uses the width. */
+@media (max-width: 640px) {
+	:root {
+		--chat-inset: 8px;
+	}
 }
 
 /* Finger-sized header controls (44px) need the bar, and everything offset by it, to clear them. */

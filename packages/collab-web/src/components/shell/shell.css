@@ -549,7 +549,7 @@
 	--hit: 36px;
 	width: 100%;
 	max-width: var(--chat-width);
-	padding: 0 16px 16px;
+	padding: 0 var(--chat-inset) 16px;
 	padding-bottom: calc(16px + var(--safe-bottom));
 }
 
@@ -2830,10 +2830,10 @@
 	}
 	.sh-composer {
 		max-width: none;
-		padding: 8px 8px 8px;
+		padding: 8px var(--chat-inset);
 		padding-bottom: calc(8px + var(--safe-bottom));
-		padding-left: max(8px, var(--safe-left));
-		padding-right: max(8px, var(--safe-right));
+		padding-left: max(var(--chat-inset), var(--safe-left));
+		padding-right: max(var(--chat-inset), var(--safe-right));
 	}
 	/* Phone: the pills sit in a slim row above the field (scrolling sideways if they outgrow it), and attach,
 	 * sketch and stash share one row with send under it, so no control ever drops onto a row of its own. */

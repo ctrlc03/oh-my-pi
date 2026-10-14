@@ -5,7 +5,7 @@
 	flex: none;
 	width: 100%;
 	max-width: var(--chat-width);
-	padding: 0 16px 6px;
+	padding: 0 var(--chat-inset) 6px;
 }
 
 .sh-cachestrip-btn {

@@ -224,9 +224,12 @@ import {
 	createKeyedLock,
 	findTmux,
 	killTmuxSession,
+	launchEnded,
+	launchFailure,
 	launchInTmux,
+	launchScreen,
 	parseStartPrompt,
-	tmuxSessionExists,
+	releaseLaunch,
 	type RestrictLaunch,
 } from "./companion-start";
 import {
@@ -1252,6 +1255,7 @@ async function startSession(
 				maxCostUsd: plan ? plan.maxCostUsd : maxCostUsd,
 				model: plan ? plan.model : model,
 				restrict,
+				keepEnded: true,
 				foreign: plan
 					? {
 							host: foreignHostLauncher(),
@@ -1289,17 +1293,28 @@ async function startSession(
 								console.error(`companion: remembering session ${host.sessionId} failed: ${errorText(err)}`),
 							);
 						await refresh();
+						await releaseLaunch(tmux, launched.name);
 						return host.instanceId;
 					}
 				}
-				// The host process ended (a missing adapter, a bad sign-in, a vendor that refused to start): no point waiting on.
-				if (plan && !(await tmuxSessionExists(tmux, launched.name)))
+				// The process ended (a missing adapter, a bad sign-in, a flag omp refused): no point waiting on, and its last output says why.
+				const ended = await launchEnded(tmux, launched.name);
+				if (ended !== null) {
+					await killTmuxSession(tmux, launched.name);
+					const name = plan ? plan.agent.name : "omp";
 					throw new Error(
-						`${plan.agent.name} stopped before it was ready. Check that it is installed and signed in on the computer.`,
+						launchFailure(
+							plan
+								? `${name} stopped before it was ready (check that it is installed and signed in on the computer)`
+								: `${name} stopped before it was ready`,
+							ended.tail,
+						),
 					);
+				}
 			}
+			const screen = await launchScreen(tmux, launched.name);
 			await killTmuxSession(tmux, launched.name);
-			throw new Error(`${plan ? plan.agent.name : "omp"} did not start hosting in time`);
+			throw new Error(launchFailure(`${plan ? plan.agent.name : "omp"} did not start hosting in time`, screen));
 		});
 	} catch (err) {
 		// The branch and worktree only exist for this session.

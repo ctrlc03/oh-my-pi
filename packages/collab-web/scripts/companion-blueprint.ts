@@ -543,7 +543,9 @@ export function createBlueprints(deps: BlueprintDeps): Blueprints {
 			return { output, model, costUsd, warnings };
 		} catch (err) {
 			if (err instanceof Cancelled) throw err;
-			warnings.push(`The agent diagrams are missing: ${errorText(err)}. The map shows the code-index levels only.`);
+			warnings.push(
+				`The agent diagrams are missing: ${errorText(err).replace(/[.\s]+$/, "")}. The map shows the code-index levels only.`,
+			);
 			return { warnings };
 		} finally {
 			if (instanceId !== undefined)

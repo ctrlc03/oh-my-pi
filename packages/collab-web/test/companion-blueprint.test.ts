@@ -369,6 +369,29 @@ describe.skipIf(!indexReady)("a map run", () => {
 		expect(map.warnings.join(" ")).toContain("could not be used");
 	});
 
+	it("keeps the index levels and passes on why the agent session could not start", async () => {
+		const { blueprints } = manager(
+			{
+				start: async () => {
+					throw new Error(
+						"omp stopped before it was ready. Last output: Error: Built-in tools unavailable in this session: ast_grep, trace, flow.",
+					);
+				},
+				hosts: async () => [],
+				stop: async () => undefined,
+				cost: async () => undefined,
+			},
+			"run2b",
+		);
+		const { id } = await blueprints.create({ cwd: repo });
+		await blueprints.idle();
+		const map = await blueprints.get(id);
+		expect(map.root).toBe("index:repo");
+		expect(map.warnings).toEqual([
+			"The agent diagrams are missing: omp stopped before it was ready. Last output: Error: Built-in tools unavailable in this session: ast_grep, trace, flow. The map shows the code-index levels only.",
+		]);
+	});
+
 	it("marks a diff map's changed files and fails a diff with nothing to compare", async () => {
 		await fs.appendFile(path.join(repo, "packages/lib/src/index.ts"), "export const added = 1;\n");
 		await fs.writeFile(

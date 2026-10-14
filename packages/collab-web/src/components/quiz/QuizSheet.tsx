@@ -1,4 +1,5 @@
 import type { Quiz, QuizSummary } from "@oh-my-pi/pi-wire/quiz";
+import type { SparRun, Spar } from "@oh-my-pi/pi-wire/spar";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { computerById, type ComputerHandle } from "../../lib/computers";
@@ -7,6 +8,8 @@ import "../architecture/architecture.css";
 import { NewQuizForm, type NewQuizTarget } from "./NewQuizForm";
 import { QuizList } from "./QuizList";
 import { QuizScreen } from "./QuizScreen";
+import { LazySparSheet } from "../spar/LazySparSheet";
+import type { SparStart } from "../spar/spar-flow";
 import { subjectOf, type QuizSubject } from "./quiz-flow";
 import "./quiz.css";
 
@@ -14,7 +17,8 @@ import "./quiz.css";
 export type QuizStart =
 	| { view: "home" }
 	| { view: "new"; subject: QuizSubject }
-	| { view: "quiz"; computerId: string; id: string };
+	| { view: "quiz"; computerId: string; id: string }
+	| SparStart;
 
 export interface QuizSheetProps {
 	computers: readonly ComputerHandle[];
@@ -31,13 +35,16 @@ export interface QuizSheetProps {
 	onOpenHost(computerId: string, instanceId: string): Promise<void>;
 	/** Show a file of the session's checkout, scrolled to `line` when given. */
 	onOpenFile?(path: string, line?: number): void;
+	/** Bake off the change or design of a spar; absent when bake-offs cannot be started from here. */
+	onBakeoff?(computerId: string, spar: Spar, run: SparRun): void;
 	onClose(): void;
 }
 
 type Screen =
 	| { kind: "home" }
 	| { kind: "new"; target: NewQuizTarget }
-	| { kind: "quiz"; computerId: string; id: string; hint?: QuizSummary };
+	| { kind: "quiz"; computerId: string; id: string; hint?: QuizSummary }
+	| { kind: "spar"; start: SparStart };
 
 /**
  * Quizzes on code changes: the list of a repository's quizzes (those of every computer that writes them), the
@@ -52,17 +59,22 @@ export function QuizSheet({
 	start,
 	onOpenHost,
 	onOpenFile,
+	onBakeoff,
 	onClose,
 }: QuizSheetProps): ReactNode {
 	/** The session's own repository and computer: what a quiz about "these changes" is made from. */
 	const sessionTarget = (subject: QuizSubject): NewQuizTarget | null =>
 		computerId === null || cwd === null ? null : { computerId, cwd, sessionId, subject };
 	const [screen, setScreen] = useState<Screen>(() => {
+		if (start.view === "spar-home" || start.view === "spar-new" || start.view === "spar")
+			return { kind: "spar", start };
 		if (start.view === "quiz") return { kind: "quiz", computerId: start.computerId, id: start.id };
 		const target = start.view === "new" ? sessionTarget(start.subject) : null;
 		return target === null ? { kind: "home" } : { kind: "new", target };
 	});
 	const home = (): void => setScreen({ kind: "home" });
+	const canSpar = computers.some(computer => computer.client !== null && computer.snap.canSpar);
+	const showSpar = (): void => setScreen({ kind: "spar", start: { view: "spar-home" } });
 	const changes = sessionTarget({ kind: "changes" });
 
 	if (screen.kind === "new") {
@@ -130,6 +142,23 @@ export function QuizSheet({
 			</Sheet>
 		);
 	}
+	if (screen.kind === "spar") {
+		return (
+			<LazySparSheet
+				computers={computers}
+				computerId={computerId}
+				cwd={cwd}
+				instanceId={instanceId}
+				sessionId={sessionId}
+				start={screen.start}
+				onOpenHost={onOpenHost}
+				onOpenFile={onOpenFile}
+				onBakeoff={onBakeoff}
+				onShowQuizzes={home}
+				onClose={onClose}
+			/>
+		);
+	}
 	return (
 		<Sheet label="quizzes" size="full" onClose={onClose}>
 			<QuizList
@@ -145,6 +174,7 @@ export function QuizSheet({
 					await onOpenHost(hostComputerId, host);
 					onClose();
 				}}
+				onShowSpar={canSpar ? showSpar : null}
 				onClose={onClose}
 			/>
 		</Sheet>

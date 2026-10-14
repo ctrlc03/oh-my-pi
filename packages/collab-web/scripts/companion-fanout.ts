@@ -83,15 +83,21 @@ export function parseKeepRequest(input: unknown): FanoutKeepRequest {
 	return { group, keep, removeOthers, discardDirty };
 }
 
-/** `<prefix>fan-<group>-<n>-<model>` (prefix `omp/` by default): unique per session, a valid branch name whatever the model's id holds. */
-export function fanoutBranch(groupId: string, index: number, model: string, prefix = DEFAULT_BRANCH_PREFIX): string {
+/** `<prefix>fan-<group>-<n>-<model>` (prefix `omp/` by default; a bake-off's is `bake`): unique per session, a valid branch name whatever the model's id holds. */
+export function fanoutBranch(
+	groupId: string,
+	index: number,
+	model: string,
+	prefix = DEFAULT_BRANCH_PREFIX,
+	word: "fan" | "bake" = "fan",
+): string {
 	const slug =
 		model
 			.replace(/[^A-Za-z0-9]+/g, "-")
 			.replace(/^-+|-+$/g, "")
 			.slice(0, MAX_BRANCH_SLUG_CHARS)
 			.replace(/-+$/, "") || "model";
-	return `${prefix}fan-${groupId.slice(0, 4)}-${index + 1}-${slug}`;
+	return `${prefix}${word}-${groupId.slice(0, 4)}-${index + 1}-${slug}`;
 }
 
 export interface FanoutStartDeps {
@@ -117,6 +123,12 @@ export interface FanoutStartDeps {
 	}): Promise<string>;
 	now?: () => number;
 	newId?: () => string;
+	/** Commit every worktree starts from (a full commit id); default: HEAD of the repository. */
+	startCommit?: string;
+	/** The branch name of the member at `index` on `model`; default {@link fanoutBranch}. */
+	branchName?(index: number, model: string): string;
+	/** The bake-off this group belongs to: its group is kept until the bake-off is deleted. */
+	bakeoff?: string;
 }
 
 /**
@@ -131,7 +143,13 @@ export async function startFanout(request: FanoutRequest, deps: FanoutStartDeps)
 		// One at a time: git takes its repository-wide locks per worktree.
 		for (const [i, model] of request.models.entries()) {
 			trees.push(
-				await createWorktree(request.cwd, deps.worktreesDir, fanoutBranch(id, i, model, deps.branchPrefix)),
+				await createWorktree(
+					request.cwd,
+					deps.worktreesDir,
+					deps.branchName?.(i, model) ?? fanoutBranch(id, i, model, deps.branchPrefix),
+					undefined,
+					{ start: deps.startCommit },
+				),
 			);
 		}
 	} catch (err) {
@@ -178,6 +196,7 @@ export async function startFanout(request: FanoutRequest, deps: FanoutStartDeps)
 		createdAt: (deps.now ?? Date.now)(),
 		budgetUsd: request.budgetUsd,
 		runs,
+		...(deps.bakeoff ? { bakeoff: deps.bakeoff } : {}),
 	};
 }
 
@@ -382,6 +401,7 @@ export async function loadGroups(file: string): Promise<FanoutGroup[]> {
 			budgetUsd: typeof g.budgetUsd === "number" ? g.budgetUsd : undefined,
 			runs: runs as FanoutRun[],
 			kept: typeof g.kept === "string" ? g.kept : undefined,
+			bakeoff: typeof g.bakeoff === "string" && /^bk-[0-9a-f]{12}$/.test(g.bakeoff) ? g.bakeoff : undefined,
 		});
 	}
 	return groups;
@@ -392,12 +412,23 @@ export async function saveGroups(file: string, groups: readonly FanoutGroup[]): 
 	await fs.writeFile(file, `${JSON.stringify({ groups }, null, "\t")}\n`, { mode: 0o600 });
 }
 
-/** `group` first, replacing an entry with its id; at most {@link MAX_GROUPS} are kept. */
+/** `group` first, replacing an entry with its id; at most {@link MAX_GROUPS} are kept, except that a bake-off's group stays until the bake-off is deleted. */
 export function withGroup(groups: readonly FanoutGroup[], group: FanoutGroup): FanoutGroup[] {
-	return [group, ...groups.filter(g => g.id !== group.id)].slice(0, MAX_GROUPS);
+	let plain = 0;
+	return [group, ...groups.filter(g => g.id !== group.id)].filter(
+		g => g.bakeoff !== undefined || ++plain <= MAX_GROUPS,
+	);
 }
 
 // ── models ───────────────────────────────────────────────────────────────────
+
+/** USD per million tokens as `omp models --json` lists them; undefined when either side is missing. */
+function priceOf(value: unknown): FanoutModel["cost"] {
+	if (typeof value !== "object" || value === null) return undefined;
+	const input = "input" in value ? value.input : undefined;
+	const output = "output" in value ? value.output : undefined;
+	return typeof input === "number" && typeof output === "number" ? { input, output } : undefined;
+}
 
 /** The chat models of `omp models --json` output; anything with an unusable selector is skipped. */
 export function parseModelList(json: string): FanoutModel[] {
@@ -414,7 +445,13 @@ export function parseModelList(json: string): FanoutModel[] {
 		if (typeof item?.provider !== "string" || typeof item.id !== "string") continue;
 		const selector = typeof item.selector === "string" ? item.selector : `${item.provider}/${item.id}`;
 		if (!MODEL_SELECTOR_RE.test(selector)) continue;
-		models.push({ selector, provider: item.provider, name: typeof item.name === "string" ? item.name : item.id });
+		const cost = priceOf(item.cost);
+		models.push({
+			selector,
+			provider: item.provider,
+			name: typeof item.name === "string" ? item.name : item.id,
+			...(cost ? { cost } : {}),
+		});
 	}
 	return models;
 }

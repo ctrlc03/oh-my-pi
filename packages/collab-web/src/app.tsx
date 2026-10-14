@@ -1,4 +1,5 @@
 import type { SessionCommand } from "@oh-my-pi/pi-wire";
+import type { Spar, SparRun } from "@oh-my-pi/pi-wire/spar";
 import { Activity, Archive, Eye, PenLine } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,6 +9,8 @@ import { LazyArchitectureSheet } from "./components/architecture/LazyArchitectur
 import type { ArchitectureStart } from "./components/architecture/ArchitectureSheet";
 import { LazyQuizSheet } from "./components/quiz/LazyQuizSheet";
 import type { QuizStart } from "./components/quiz/QuizSheet";
+import { LazyBakeoffSheet } from "./components/bakeoff/LazyBakeoffSheet";
+import type { BakeoffJoins, BakeoffStart } from "./components/bakeoff/bakeoff-types";
 import { LazyCodemapSheet } from "./components/codemap/LazyCodemapSheet";
 import { DiagramHost } from "./components/diagram/DiagramHost";
 import { LazyIdeSheet } from "./components/ide/LazyIdeSheet";
@@ -551,6 +554,23 @@ function Session({
 		setGithubOpen(false);
 		setQuiz({ view: "new", subject: { kind: "pr", ...pr } });
 	}, []);
+	// Sparring is listed across the computers too; sparring on this session's changes needs the computer that runs it.
+	const canSpar = computers.some(candidate => candidate.client !== null && candidate.snap.canSpar);
+	const canSparHere = companionClient !== null && hostId !== null && computer?.snap.canSpar === true;
+	const sparPr = useCallback((pr: { number: number; title: string }) => {
+		setGithubOpen(false);
+		setQuiz({ view: "spar-new", subject: { kind: "pr", ...pr } });
+	}, []);
+	// Bake-offs are listed across the computers too; bake-off of this session's changes needs the computer that runs it.
+	const [bakeoff, setBakeoff] = useState<BakeoffStart | null>(null);
+	const canBakeoff = computers.some(candidate => candidate.client !== null && candidate.snap.canBakeoff);
+	const canBakeoffHere = companionClient !== null && hostId !== null && computer?.snap.canBakeoff === true;
+	const bakeoffSpar = useCallback((computerId: string, spar: Spar, run: SparRun) => {
+		void import("./components/bakeoff/bakeoff-spar").then(({ bakeoffFromSpar }) => {
+			setQuiz(null);
+			setBakeoff(bakeoffFromSpar(computerId, spar, run));
+		});
+	}, []);
 	// The editor replaces the read-only file viewer once the paired computer can save files.
 	const canEdit = companionClient !== null && hostId !== null && computer?.snap.canEdit === true;
 	const [editor, setEditor] = useState<{ target: { path: string; line?: number } | null } | null>(null);
@@ -872,6 +892,54 @@ function Session({
 		setQuiz({ view: "new", subject: { kind: "changes" } });
 	}, []);
 	const openQuizzes = useCallback(() => setQuiz({ view: "home" }), []);
+	const sparChanges = useCallback(() => {
+		setChangesOpen(false);
+		setQuiz({ view: "spar-new", subject: { kind: "changes" } });
+	}, []);
+	const openSparring = useCallback(() => setQuiz({ view: "spar-home" }), []);
+	const sparDesign = useCallback((path: string) => {
+		setEditor(null);
+		setQuiz({ view: "spar-new", subject: { kind: "doc" }, doc: { source: "file", path } });
+	}, []);
+	const bakeoffChanges = useCallback(() => {
+		setChangesOpen(false);
+		setBakeoff({ view: "new", subject: { kind: "changes" } });
+	}, []);
+	const openBakeoffs = useCallback(() => setBakeoff({ view: "home" }), []);
+	const bakeoffJoins = useMemo<BakeoffJoins>(
+		() => ({
+			mapEntry: canMapHere
+				? (_computerId, _bakeoff, entry) => {
+						if (entry.path === undefined) return;
+						setBakeoff(null);
+						setArchitecture({ view: "new", preset: { mode: "worktree", cwd: entry.path, base: "@default" } });
+					}
+				: undefined,
+			sparEntry: canSparHere
+				? (_computerId, source, entry) => {
+						// An entry with a branch is a change to argue with; one without (a design, the original) is its write-up.
+						if (entry.branch !== undefined) {
+							setBakeoff(null);
+							setQuiz({ view: "spar-new", subject: { kind: "branch", name: entry.branch } });
+							return;
+						}
+						void import("./components/bakeoff/bakeoff-result-flow").then(({ designMarkdown }) => {
+							setBakeoff(null);
+							setQuiz({
+								view: "spar-new",
+								subject: { kind: "doc" },
+								doc: {
+									source: "paste",
+									name: `${source.title} (entry ${entry.label})`,
+									text: designMarkdown(source, entry),
+								},
+							});
+						});
+					}
+				: undefined,
+		}),
+		[canMapHere, canSparHere],
+	);
 	// The per-request timeline asks the host to read its session, so it is for writers on a live host that advertises it.
 	const canTimeline = Object.hasOwn(snap.features, "inspect") && !snap.readOnly && live;
 	const [timelineOpen, setTimelineOpen] = useState(false);
@@ -1075,6 +1143,7 @@ function Session({
 				edits={editCount}
 				onSendToAgent={snap.readOnly ? null : sendToAgent}
 				dock={ideDock}
+				onSparDesign={canSparHere ? sparDesign : null}
 				onClose={() => setEditor(null)}
 			/>
 		) : null;
@@ -1125,6 +1194,10 @@ function Session({
 			mapChanges: canMapHere && changes.length > 0 ? mapChanges : null,
 			quizChanges: canQuizHere && changes.length > 0 ? quizChanges : null,
 			openQuizzes: canQuizHere ? openQuizzes : null,
+			sparChanges: canSparHere && changes.length > 0 ? sparChanges : null,
+			openSparring: canSparHere ? openSparring : null,
+			bakeoffChanges: canBakeoffHere && changes.length > 0 ? bakeoffChanges : null,
+			openBakeoffs: canBakeoffHere ? openBakeoffs : null,
 			openPane: canPane ? openPane : null,
 			openPreview: canPreview ? openPreview : null,
 			openGithub: canGithub ? openGithub : null,
@@ -1138,6 +1211,8 @@ function Session({
 			canArchitecture,
 			canMapHere,
 			canQuizHere,
+			canSparHere,
+			canBakeoffHere,
 			canEdit,
 			canGithub,
 			canPane,
@@ -1157,6 +1232,10 @@ function Session({
 			mapChanges,
 			quizChanges,
 			openQuizzes,
+			sparChanges,
+			openSparring,
+			bakeoffChanges,
+			openBakeoffs,
 			openArchitecture,
 			openEditor,
 			openGithub,
@@ -1230,6 +1309,8 @@ function Session({
 				onOpenArchitecture={canArchitecture ? openArchitecture : null}
 				onMapChanges={canMapHere && changes.length > 0 ? mapChanges : null}
 				onOpenQuizzes={canQuizHere ? openQuizzes : null}
+				onOpenSparring={canSparHere ? openSparring : null}
+				onOpenBakeoff={canBakeoffHere ? openBakeoffs : null}
 				onOpenPane={canPane ? openPane : null}
 				onOpenPreview={canPreview ? openPreview : null}
 				onOpenGithub={canGithub ? openGithub : null}
@@ -1452,6 +1533,8 @@ function Session({
 					sessionId={sessionId}
 					onSendToAgent={snap.readOnly ? null : sendReviewToAgent}
 					onQuiz={canQuizHere ? quizChanges : null}
+					onSpar={canSparHere ? sparChanges : null}
+					onBakeoff={canBakeoffHere ? bakeoffChanges : null}
 					onClose={() => setChangesOpen(false)}
 					initialTab={changesTab}
 				/>
@@ -1492,7 +1575,7 @@ function Session({
 					onClose={() => setArchitecture(null)}
 				/>
 			)}
-			{quiz !== null && canQuiz && (
+			{quiz !== null && (canQuiz || canSpar) && (
 				<LazyQuizSheet
 					computers={computers}
 					computerId={computer?.id ?? null}
@@ -1502,7 +1585,22 @@ function Session({
 					start={quiz}
 					onOpenHost={onOpenHost}
 					onOpenFile={canEdit ? openFile : undefined}
+					onBakeoff={canBakeoff ? bakeoffSpar : undefined}
 					onClose={() => setQuiz(null)}
+				/>
+			)}
+			{bakeoff !== null && canBakeoff && (
+				<LazyBakeoffSheet
+					computers={computers}
+					computerId={computer?.id ?? null}
+					cwd={hostId !== null ? cwd : null}
+					instanceId={hostId}
+					sessionId={hostId !== null ? sessionId : null}
+					start={bakeoff}
+					joins={bakeoffJoins}
+					onOpenHost={onOpenHost}
+					onOpenFile={canEdit ? openFile : undefined}
+					onClose={() => setBakeoff(null)}
 				/>
 			)}
 			{paneOpen && canPane && companionClient !== null && hostId !== null && (
@@ -1536,6 +1634,7 @@ function Session({
 					canFixIt={computer?.snap.canFixIt === true}
 					onMapPr={canMapHere ? mapPr : null}
 					onQuizPr={canQuizHere ? quizPr : null}
+					onSparPr={canSparHere ? sparPr : null}
 					onClose={() => setGithubOpen(false)}
 				/>
 			)}

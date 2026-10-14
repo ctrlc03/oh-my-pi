@@ -13,3 +13,4 @@
 ### Fixed
 
 - Fixed the app never pairing with the companion when `omp` is a `bun link` to a source checkout: that `omp` has no `companion` command, so the app now runs the checkout's companion (`bun packages/collab-web/scripts/companion.ts`) instead of reporting "no companion to pair with".
+- Fixed the installer refusing to update or delete the app whenever any "omp collab" process ran: it now checks only the copy it is about to replace or delete.

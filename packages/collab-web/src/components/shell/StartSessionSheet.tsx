@@ -47,6 +47,8 @@ export interface StartSessionSheetProps {
 	currentComputerId: string | null;
 	/** Join the started host of `computerId`; rejects with a readable message. */
 	onOpen(computerId: string, instanceId: string): Promise<void>;
+	/** Open on this folder with this first message already written (a design to carry out); the person can still edit both. */
+	initial?: { cwd: string; prompt: string };
 	onClose(): void;
 }
 
@@ -83,6 +85,7 @@ export function StartSessionSheet({
 	computers,
 	currentComputerId,
 	onOpen,
+	initial,
 	onClose,
 }: StartSessionSheetProps): ReactNode {
 	const [computerId, setComputerId] = useStartComputer(computers, "start", currentComputerId);
@@ -109,12 +112,14 @@ export function StartSessionSheet({
 	const [model, setModel] = useState("");
 	const [permission, setPermission] = useState<ForeignPermission>("supervised");
 	const [managing, setManaging] = useState(false);
-	const [folder, setFolder] = useState<RecentFolder | null>(null);
+	const [folder, setFolder] = useState<RecentFolder | null>(
+		initial === undefined ? null : { cwd: initial.cwd, lastActive: 0, sessions: [] },
+	);
 	const [starting, setStarting] = useState<StartTarget | null>(null);
 	const [sandboxed, setSandboxed] = useState(false);
 	const [worktree, setWorktree] = useState(false);
 	const [branch, setBranch] = useState("");
-	const [prompt, setPrompt] = useState("");
+	const [prompt, setPrompt] = useState(initial?.prompt ?? "");
 	const [error, setError] = useState<string | null>(null);
 	const [fan, setFan] = useState(false);
 	const [group, setGroup] = useState<StartedGroup | null>(null);

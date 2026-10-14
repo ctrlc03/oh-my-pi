@@ -135,6 +135,12 @@
 	background: color-mix(in srgb, var(--err) 14%, transparent);
 }
 
+/* The Quizzes | Sparring switch (offered when the companion can spar); the Sparring list has the same strip as `.sp-tabs`. */
+.qz-tabs {
+	align-self: flex-start;
+	flex: none;
+}
+
 /* ---- list ---- */
 .qz-repo {
 	margin-left: 8px;
@@ -350,46 +356,6 @@
 	justify-content: flex-start;
 }
 
-.qz-subject {
-	display: flex;
-	align-items: flex-start;
-	gap: 10px;
-	padding: 10px 12px;
-	background: var(--bg-raised);
-	border: 1px solid var(--border);
-	border-radius: var(--radius-lg);
-}
-
-.qz-subject > svg {
-	flex: none;
-	margin-top: 2px;
-	color: var(--accent);
-}
-
-.qz-subject-title {
-	font-weight: 600;
-	overflow-wrap: anywhere;
-}
-
-.qz-subject-meta {
-	margin-top: 3px;
-	font-size: 12.5px;
-	line-height: 1.5;
-	color: var(--fg-muted);
-	overflow-wrap: anywhere;
-}
-
-.qz-subject-meta code {
-	font-size: 11.5px;
-}
-
-.qz-radios {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-}
-
-.qz-radio,
 .qz-check {
 	display: flex;
 	align-items: flex-start;
@@ -400,64 +366,12 @@
 	line-height: 1.45;
 }
 
-.qz-radio input,
 .qz-check input {
 	flex: none;
 	width: 16px;
 	height: 16px;
 	margin: 2px 0 0;
 	accent-color: var(--accent);
-}
-
-.qz-stack {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-	margin: 4px 0 0;
-	padding: 0;
-	list-style: none;
-	counter-reset: stack;
-}
-
-.qz-stack-pr {
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	padding: 7px 10px 7px 34px;
-	position: relative;
-	counter-increment: stack;
-	background: var(--bg-inset);
-	border: 1px solid var(--border);
-	border-radius: var(--radius);
-}
-
-.qz-stack-pr::before {
-	position: absolute;
-	left: 10px;
-	top: 7px;
-	content: counter(stack);
-	font: 600 12px / 1.4 var(--font-mono);
-	color: var(--fg-faint);
-}
-
-.qz-stack-here {
-	border-color: var(--accent);
-}
-
-.qz-stack-off {
-	opacity: 0.55;
-}
-
-.qz-stack-title {
-	font-size: 13.5px;
-	font-weight: 500;
-	overflow-wrap: anywhere;
-}
-
-.qz-stack-branches {
-	font: 400 11.5px / 1.3 var(--font-mono);
-	color: var(--fg-faint);
-	overflow-wrap: anywhere;
 }
 
 .qz-limit {
@@ -1116,13 +1030,11 @@ label.qz-choice:hover {
 		height: 36px;
 	}
 
-	.qz-radio,
 	.qz-check,
 	.qz-choice {
 		min-height: 44px;
 	}
 
-	.qz-radio input,
 	.qz-check input {
 		width: 22px;
 		height: 22px;

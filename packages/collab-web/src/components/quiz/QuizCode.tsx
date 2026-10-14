@@ -3,13 +3,11 @@ import { ChevronDown, ChevronUp, ExternalLink, LoaderCircle, RefreshCw } from "l
 import type { ReactNode } from "react";
 import { useCallback, useRef, useState } from "react";
 import { useNarrow } from "./use-narrow";
-import type { CompanionClient } from "../../lib/companion";
 import { useRequest } from "../../lib/use-request";
 import { CodeBlock } from "../architecture/CodeBlock";
 import type { ExportedExcerpt } from "../architecture/blueprint-model";
 import { refKey } from "../architecture/blueprint-model";
 import { highlightExcerpt } from "../architecture/highlight-excerpt";
-import { getQuizExcerpts } from "./quiz-api";
 
 /** Excerpts already read, by part and citation: going back to a question does not read its code again. */
 export type ExcerptCache = Map<string, ExportedExcerpt | null>;
@@ -18,9 +16,11 @@ function cacheKey(part: number, ref: BlueprintRef): string {
 	return `${part}:${refKey(ref)}`;
 }
 
+/** Reads the code around citations at a part's commit, in the order of `refs`; null for a ref the commit does not have. Keep it stable between renders. */
+export type ExcerptReader = (part: number, refs: BlueprintRef[]) => Promise<(ExportedExcerpt | null)[]>;
+
 export interface QuizCodeProps {
-	client: CompanionClient;
-	quizId: string;
+	excerpts: ExcerptReader;
 	/** The part whose commit the citations are read at. */
 	part: number;
 	refs: readonly BlueprintRef[];
@@ -30,7 +30,7 @@ export interface QuizCodeProps {
 }
 
 /** The code a question or its explanation cites: path and line, the code around it with the cited line banded. */
-export function QuizCode({ client, quizId, part, refs, cache, openInEditor }: QuizCodeProps): ReactNode {
+export function QuizCode({ excerpts, part, refs, cache, openInEditor }: QuizCodeProps): ReactNode {
 	// The same citations under a new array (an attempt reloaded after an answer) are not a new request.
 	const identity = refs.map(refKey).join("\n");
 	const held = useRef({ identity, list: [...refs] });
@@ -39,11 +39,11 @@ export function QuizCode({ client, quizId, part, refs, cache, openInEditor }: Qu
 	const load = useCallback(async (): Promise<(ExportedExcerpt | null)[]> => {
 		const missing = list.filter(ref => !cache.has(cacheKey(part, ref)));
 		if (missing.length > 0) {
-			const got = await getQuizExcerpts(client, quizId, part, missing);
+			const got = await excerpts(part, missing);
 			missing.forEach((ref, at) => cache.set(cacheKey(part, ref), got[at] ?? null));
 		}
 		return list.map(ref => cache.get(cacheKey(part, ref)) ?? null);
-	}, [client, quizId, part, list, cache]);
+	}, [excerpts, part, list, cache]);
 	const { state, reload } = useRequest(load);
 	const narrow = useNarrow();
 	const [open, setOpen] = useState(false);

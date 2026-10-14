@@ -17,7 +17,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { BlueprintCommit, BlueprintExcerpt, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
+import type { BlueprintExcerpt, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
 import {
 	QUIZ_MAX_ANSWER_CHARS,
 	QUIZ_MAX_PARTS,
@@ -26,7 +26,6 @@ import {
 	type QuizAttempt,
 	type QuizCreate,
 	type QuizGetAnswer,
-	type QuizPart,
 	type QuizStackPr,
 	type QuizStackSource,
 	type QuizSummary,
@@ -49,21 +48,15 @@ import {
 import {
 	addWorktree,
 	defaultBranch,
-	holdCommit,
 	pruneLeftoverWorktrees,
 	readBlob,
-	releaseCommits,
 	removeWorktreeDir,
 	repoInfo,
 	resolveTarget,
-	stackBase,
 } from "./companion-blueprint-git";
-import { checkCitations, readCitedFiles, type Side, Warnings } from "./companion-citations";
-import { readExcerpts, splitLines } from "./companion-excerpt";
+import { splitLines } from "./companion-excerpt";
 import { headlessRunner, type RunOmp } from "./companion-headless";
-import { type BriefPart, buildQuizBrief, DEFAULT_QUIZ_MAX_COST_USD } from "./companion-quiz-agent";
-import { partDiff } from "./companion-quiz-diff";
-import { type Digest, sessionDigest } from "./companion-quiz-digest";
+import { buildQuizBrief, DEFAULT_QUIZ_MAX_COST_USD } from "./companion-quiz-agent";
 import {
 	DEFAULT_GRADE_MODEL,
 	GRADE_TIMEOUT_MS,
@@ -74,21 +67,33 @@ import {
 	MIN_GRADE_BUDGET_USD,
 	renderExcerpts,
 } from "./companion-quiz-grade";
-import { detectStack, ghPrSource, type PrSource, type StackPr } from "./companion-quiz-stack";
+import { detectStack, ghPrSource, type PrSource } from "./companion-quiz-stack";
 import { createQuizStore, type QuizDoc } from "./companion-quiz-store";
 import { type ParsedQuestion, parseQuizOutput, verifyQuiz } from "./companion-quiz-verify";
-import { findSessionFile } from "./companion-sessions";
+import {
+	briefParts,
+	Cancelled,
+	checkSessionId,
+	createRunSlots,
+	errorText,
+	type Job,
+	type Locks,
+	locked,
+	partExcerpts,
+	positiveInt,
+	prRange,
+	pullRequestNumbers,
+	readDigest,
+	releaseParts,
+	resolveParts,
+	type Run,
+	verifiedRefs,
+} from "./companion-review-base";
 
 /** Quizzes written at once; the rest wait their turn. */
 const MAX_CONCURRENT_RUNS = 2;
 /** Of the spending limit, what the question-writing session may use; grading gets the rest and whatever it leaves. */
 const GENERATION_SHARE = 0.75;
-/** Characters of diff over all parts of a brief, and the least one part gets. */
-const TOTAL_DIFF_CHARS = 90_000;
-const MIN_PART_DIFF_CHARS = 8_000;
-/** Characters of the session conversation in the brief. */
-const DIGEST_CHARS = 24_000;
-const SESSION_ID_RE = /^[0-9A-Za-z][0-9A-Za-z-]{6,80}$/;
 
 export interface QuizDeps {
 	/** `<agent dir>/quizzes`: the index and the quizzes. */
@@ -135,107 +140,17 @@ export interface Quizzes {
 	idle(): Promise<void>;
 }
 
-/** Thrown inside a run whose quiz was deleted. */
-class Cancelled extends Error {}
-
-interface Run {
-	id: string;
-	cancelled: boolean;
-	instanceId?: string;
-	/** Parts whose commits are held, so they can be released. */
-	held: number;
-	done: Promise<void>;
-}
-
-function errorText(err: unknown): string {
-	return err instanceof Error ? err.message : String(err);
-}
-
-function positiveInt(value: unknown, what: string): number {
-	if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 999_999_999)
-		throw new Error(`invalid ${what}`);
-	return value;
-}
-
-interface Job {
-	root: string;
-	name: string;
-	github?: string;
-	title: string;
-	subject: string;
-	/** Pull requests (bottom first) or, for one change that is not a pull request, the resolved target. */
-	prs?: number[];
-	target?: { head: BlueprintCommit; base?: BlueprintCommit; label: string };
-	sessionId?: string;
-	maxCostUsd: number;
-	model?: string;
-}
-
-/** One part, resolved to the commits its questions cite. */
-interface ResolvedPart {
-	title: string;
-	pr?: StackPr;
-	head: BlueprintCommit;
-	base: BlueprintCommit;
-}
-
-/** The pull requests a request names, bottom first: its `stack`, else its `pr`; undefined for a change that is not a pull request. */
-function pullRequestNumbers(request: Pick<QuizCreate, "stack" | "pr">): number[] | undefined {
-	if (request.stack !== undefined) {
-		if (!Array.isArray(request.stack)) throw new Error("invalid stack");
-		const numbers = request.stack.map(number => positiveInt(number, "pull request number"));
-		if (numbers.length === 0 || numbers.length > QUIZ_MAX_PARTS)
-			throw new Error(`A stack has between 1 and ${QUIZ_MAX_PARTS} pull requests.`);
-		if (new Set(numbers).size !== numbers.length) throw new Error("invalid stack");
-		return numbers;
-	}
-	return request.pr === undefined ? undefined : [positiveInt(request.pr, "pull request number")];
-}
-
-function prRange(prs: readonly number[]): string {
-	const first = prs[0]!;
-	const last = prs[prs.length - 1]!;
-	return prs.length === 1 ? `PR #${first}` : `PRs #${first}–#${last}`;
-}
-
 export function createQuizzes(deps: QuizDeps): Quizzes {
 	const store = createQuizStore(deps.storeDir);
 	const workDir = path.join(deps.cacheDir, "work");
 	const outDir = path.join(deps.cacheDir, "out");
 	const overlayDir = path.join(deps.cacheDir, "overlay");
 	const runs = new Map<string, Run>();
-	const waiting: (() => void)[] = [];
-	const locks = new Map<string, Promise<unknown>>();
-	let active = 0;
+	const locks: Locks = new Map();
+	const slots = createRunSlots(MAX_CONCURRENT_RUNS);
 	const log = deps.log ?? (() => undefined);
 	const prSource = deps.prSource ?? ghPrSource;
 	const runOmp = deps.run ?? headlessRunner(GRADE_TIMEOUT_MS);
-
-	const acquire = async (): Promise<void> => {
-		if (active < MAX_CONCURRENT_RUNS) {
-			active++;
-			return;
-		}
-		await new Promise<void>(resolve => waiting.push(resolve));
-	};
-	const release = (): void => {
-		const next = waiting.shift();
-		if (next) next();
-		else active--;
-	};
-
-	/** Answers and retries of one quiz run one after the other: each rewrites the whole document. */
-	async function locked<T>(id: string, work: () => Promise<T>): Promise<T> {
-		const previous = locks.get(id) ?? Promise.resolve();
-		const next = previous.then(work, work);
-		const tail = next.catch(() => undefined);
-		locks.set(id, tail);
-		try {
-			return await next;
-		} finally {
-			if (locks.get(id) === tail) locks.delete(id);
-		}
-	}
 
 	const update = async (run: Run, patch: Partial<QuizSummary>): Promise<void> => {
 		if (run.cancelled) throw new Cancelled();
@@ -295,95 +210,21 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 		return doc;
 	}
 
-	/** The part's commits, for reading code out of git. */
-	function commitsOf(part: QuizPart): { head: string; base?: string } {
-		return { head: part.head.commit, base: part.base?.commit };
-	}
-
-	async function resolveParts(run: Run, job: Job): Promise<ResolvedPart[]> {
-		if (job.target) {
-			const { head, base } = job.target;
-			if (!base) throw new Error("There is nothing to compare these changes with.");
-			await holdCommit(job.root, `${run.id}/p0`, "head", head.commit);
-			await holdCommit(job.root, `${run.id}/p0`, "base", base.commit);
-			run.held = 1;
-			return [{ title: job.sessionId ? "What the session changed" : job.subject, head, base }];
-		}
-		const source = prSource(job.root);
-		const parts: ResolvedPart[] = [];
-		for (const number of job.prs ?? []) {
-			if (run.cancelled) throw new Cancelled();
-			await progress(run, `Fetching pull request #${number}`);
-			const target = await resolveTarget(job.root, { ref: `pr/${number}` });
-			const viewed = await source.view(number).catch(() => null);
-			const below = parts[parts.length - 1];
-			// A pull request stacked on the one below shows its own changes only, whatever the branch below has become.
-			const base =
-				below?.pr?.head && viewed?.base === below.pr.head
-					? await stackBase(job.root, target.head.commit, below.head)
-					: target.base;
-			if (!base) throw new Error(`Could not find what pull request #${number} changes: it has no base.`);
-			const index = parts.length;
-			await holdCommit(job.root, `${run.id}/p${index}`, "head", target.head.commit);
-			await holdCommit(job.root, `${run.id}/p${index}`, "base", base.commit);
-			run.held = index + 1;
-			parts.push({
-				title: `#${number} ${viewed?.title || target.head.subject || ""}`.trim(),
-				pr: viewed ?? { number, title: target.head.subject ?? "", head: "", base: "" },
-				head: target.head,
-				base,
-			});
-		}
-		return parts;
-	}
-
-	function describePart(part: ResolvedPart, index: number, count: number, subject: string): string {
-		if (part.pr) {
-			const branches = part.pr.head && part.pr.base ? ` (${part.pr.head} → ${part.pr.base})` : "";
-			return `Pull request #${part.pr.number}${branches}${count > 1 ? `, part ${index + 1} of the stack` : ""}.`;
-		}
-		return `${subject}: the changes since \`${part.base.commit.slice(0, 8)}\` (${part.base.ref ?? "the base"}), up to \`${part.head.commit.slice(0, 8)}\`.`;
-	}
-
 	async function execute(run: Run, job: Job): Promise<void> {
 		const agent = deps.agent;
 		if (agent === null) throw new Error("This computer cannot run the question-writing session (tmux is missing).");
 		const runDir = path.join(workDir, run.id);
-		await acquire();
+		await slots.acquire();
 		let checkoutDir: string | undefined;
 		try {
-			const parts = await resolveParts(run, job);
+			const parts = await resolveParts({ prSource, progress }, run, job);
 			if (run.cancelled) throw new Cancelled();
 			const last = parts[parts.length - 1]!;
 			const warnings: string[] = [];
 
 			await progress(run, "Reading the changes");
-			const share = Math.max(MIN_PART_DIFF_CHARS, Math.floor(TOTAL_DIFF_CHARS / parts.length));
-			const briefParts: BriefPart[] = [];
-			for (const [index, part] of parts.entries()) {
-				const diff = await partDiff(job.root, part.base.commit, part.head.commit, { maxChars: share });
-				if (diff.truncated)
-					warnings.push(
-						`Part ${index + 1}: the diff was too large to show whole${diff.omittedFiles > 0 ? ` (${diff.omittedFiles} files left out)` : ""}; questions are about the part that was shown.`,
-					);
-				briefParts.push({
-					title: part.title,
-					about: describePart(part, index, parts.length, job.subject),
-					body: part.pr?.body,
-					stat: diff.stat,
-					diff: diff.text,
-				});
-			}
-
-			let digest: Digest | null = null;
-			if (job.sessionId) {
-				const file = await findSessionFile(deps.sessionsDir, job.sessionId);
-				digest = file === null ? null : await sessionDigest(file, DIGEST_CHARS);
-				if (digest === null)
-					warnings.push(
-						`The conversation of session ${job.sessionId} could not be read, so the questions come from the code alone.`,
-					);
-			}
+			const briefs = await briefParts(job.root, parts, job.subject, warnings, "questions");
+			const digest = await readDigest(deps.sessionsDir, job.sessionId, warnings, "questions");
 
 			if (run.cancelled) throw new Cancelled();
 			const folder = agentFolderName("Quiz", job.name, job.subject);
@@ -404,7 +245,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 				outFile,
 				maxCostUsd: generationLimit,
 				stack: parts.length > 1,
-				parts: briefParts,
+				parts: briefs,
 				digest: digest ?? undefined,
 			});
 			await progress(run, "Starting the question-writing session");
@@ -520,14 +361,10 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 			await store.put(summaryOf(doc, current));
 			deps.changed(run.id);
 		} finally {
-			release();
+			slots.release();
 			if (checkoutDir) await removeWorktreeDir(job.root, checkoutDir).catch(() => undefined);
 			await fs.rm(runDir, { recursive: true, force: true }).catch(() => undefined);
 		}
-	}
-
-	async function releaseParts(root: string, id: string, count: number): Promise<void> {
-		for (let index = 0; index < count; index++) await releaseCommits(root, `${id}/p${index}`).catch(() => undefined);
 	}
 
 	async function fail(run: Run, root: string, err: unknown): Promise<void> {
@@ -544,43 +381,6 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 		});
 		await releaseParts(root, run.id, run.held);
 		deps.changed(run.id);
-	}
-
-	/** The part's cited code as graders and the screen read it. */
-	async function partExcerpts(
-		doc: QuizDoc,
-		part: number,
-		refs: readonly BlueprintRef[],
-	): Promise<(BlueprintExcerpt | null)[]> {
-		const found = doc.quiz.parts[part];
-		if (!found) throw new Error("There is no such part.");
-		return await readExcerpts(doc.quiz.repo.root, commitsOf(found), refs);
-	}
-
-	/** Refs the grader pointed at that hold in the part's code. */
-	async function verifiedRefs(doc: QuizDoc, part: number, refs: readonly BlueprintRef[]): Promise<BlueprintRef[]> {
-		const found = doc.quiz.parts[part];
-		if (!found || refs.length === 0) return [];
-		const commits = commitsOf(found);
-		const files = await readCitedFiles(
-			refs.map(ref => ({ side: ref.side ?? "head", path: ref.path })),
-			async (side: Side, file) => {
-				const text = await readBlob(
-					doc.quiz.repo.root,
-					side === "base" ? (commits.base ?? commits.head) : commits.head,
-					file,
-				);
-				return text === null ? null : splitLines(text);
-			},
-		);
-		return checkCitations(
-			refs,
-			"the explanation",
-			ref => ref.side ?? "head",
-			files,
-			{ verified: 0, moved: 0, dropped: 0 },
-			new Warnings(),
-		);
 	}
 
 	function refreshAttempt(doc: QuizDoc, attempt: QuizAttempt, now: number): void {
@@ -616,11 +416,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 		async create(request) {
 			const parsed = checkRunRequest(request, DEFAULT_QUIZ_MAX_COST_USD);
 			const prs = pullRequestNumbers(request);
-			if (
-				request.sessionId !== undefined &&
-				(typeof request.sessionId !== "string" || !SESSION_ID_RE.test(request.sessionId))
-			)
-				throw new Error("invalid session");
+			checkSessionId(request.sessionId);
 			if (deps.agent === null)
 				throw new Error("This computer cannot run the question-writing session (tmux is missing).");
 
@@ -683,7 +479,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 		},
 
 		answer(request) {
-			return locked(store.checkId(request.id), async () => {
+			return locked(locks, store.checkId(request.id), async () => {
 				const doc = await readReady(request.id);
 				const attempt = doc.attempts.find(candidate => candidate.id === request.attempt);
 				if (!attempt) throw new Error("There is no such attempt.");
@@ -711,7 +507,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 						throw new Error(
 							`This quiz has used up its spending limit ($${doc.maxCostUsd.toFixed(2)}), so open answers cannot be graded. Multiple-choice questions still can be.`,
 						);
-					const excerpts = await partExcerpts(doc, question.part, question.refs);
+					const excerpts = await partExcerpts(doc.quiz, question.part, question.refs);
 					let graded: GradeOpenResult;
 					try {
 						graded = await gradeOpen({
@@ -735,7 +531,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 						throw new Error(`The answer could not be graded: ${errorText(err).replace(/[.\s]+$/, "")}.`);
 					}
 					doc.gradingCostUsd += graded.costUsd ?? 0;
-					const refs = await verifiedRefs(doc, question.part, graded.grade.refs);
+					const refs = await verifiedRefs(doc.quiz, question.part, graded.grade.refs);
 					verdict = {
 						kind: graded.grade.kind,
 						explanation: graded.grade.explanation,
@@ -753,7 +549,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 		},
 
 		retry(request) {
-			return locked(store.checkId(request.id), async () => {
+			return locked(locks, store.checkId(request.id), async () => {
 				const doc = await readReady(request.id);
 				if (request.only !== undefined && request.only !== "all" && request.only !== "missed")
 					throw new Error("invalid retry");
@@ -786,7 +582,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 
 		async excerpt(id, part, refs) {
 			const doc = await readReady(id);
-			return await partExcerpts(doc, part, refs);
+			return await partExcerpts(doc.quiz, part, refs);
 		},
 
 		async remove(id) {

@@ -39,6 +39,8 @@ import type {
 	QuizSummary,
 	QuizVerdict,
 } from "@oh-my-pi/pi-wire/quiz";
+import type { SparGetAnswer, SparRecord, SparRequest, SparRun, SparSummary, SparTurn } from "@oh-my-pi/pi-wire/spar";
+import type { BakeoffReply, BakeoffRequest } from "@oh-my-pi/pi-wire/bakeoff";
 import type { Schedule, ScheduleInput } from "@oh-my-pi/pi-wire/schedule";
 import { CAN_INFLATE, importRoomKey } from "./codec";
 import { recordEvent } from "./diag-log";
@@ -1106,6 +1108,10 @@ export type CompanionRequest =
 	| BlueprintRequest
 	/** Quizzes on code changes (needs `canQuiz`); see `@oh-my-pi/pi-wire/quiz`. */
 	| QuizRequest
+	/** Sparring on code changes and designs (needs `canSpar`); see `@oh-my-pi/pi-wire/spar`. */
+	| SparRequest
+	/** Design bake-offs (needs `canBakeoff`); see `@oh-my-pi/pi-wire/bakeoff`. */
+	| BakeoffRequest
 	/** The Personal agent (needs `canPersonal`); see `@oh-my-pi/pi-wire/personal`. */
 	| PersonalRequest;
 
@@ -1131,6 +1137,10 @@ export type CompanionReply =
 			canBlueprint?: boolean;
 			/** The companion can write, grade and store quizzes on code changes (`quiz-*` requests). */
 			canQuiz?: boolean;
+			/** The companion can write, argue and store sparring sessions (`spar-*` requests). */
+			canSpar?: boolean;
+			/** The companion can run, review and store design bake-offs (`bakeoff-*` requests). */
+			canBakeoff?: boolean;
 			/** The companion can list and edit files of a session's repository. */
 			canEdit?: boolean;
 			/** The companion can screenshot local pages (it found Chrome or another Chromium browser). */
@@ -1265,6 +1275,18 @@ export type CompanionReply =
 	| { t: "quiz-stack"; reqId: number; stack: QuizStackPr[]; source: QuizStackSource }
 	/** Pushed to every authenticated device when a quiz's summary changes (progress, done, failed, answered); carries no `reqId`. */
 	| { t: "quiz-changed"; id: string }
+	| { t: "spar-list"; reqId: number; spars: SparSummary[] }
+	| { t: "spar-create"; reqId: number; id: string }
+	| ({ t: "spar-get"; reqId: number } & SparGetAnswer)
+	| { t: "spar-reply"; reqId: number; turn: SparTurn; record: SparRecord; run: SparRun }
+	| { t: "spar-close"; reqId: number; record: SparRecord; run: SparRun }
+	| { t: "spar-again"; reqId: number; run: SparRun }
+	| { t: "spar-excerpt"; reqId: number; excerpts: (BlueprintExcerpt | null)[] }
+	| { t: "spar-delete"; reqId: number }
+	/** Pushed to every authenticated device when a spar's summary changes (progress, done, failed, replied); carries no `reqId`. */
+	| { t: "spar-changed"; id: string }
+	/** The design bake-off answers and its `bakeoff-changed` push (no `reqId`); see `@oh-my-pi/pi-wire/bakeoff`. */
+	| BakeoffReply
 	/** The Personal agent's answers and its `personal-changed` push (no `reqId`); see `@oh-my-pi/pi-wire/personal`. */
 	| PersonalReply;
 
@@ -1277,6 +1299,14 @@ export type BlueprintAnswer<T extends BlueprintRequest["t"]> = Extract<Companion
 export type QuizCall = QuizRequest extends infer R ? (R extends unknown ? Omit<R, "reqId"> : never) : never;
 /** The reply to the `quiz-*` request of type `T`. */
 export type QuizAnswerOf<T extends QuizRequest["t"]> = Extract<CompanionReply, { t: T }>;
+/** Any `spar-*` request without its `reqId`. */
+export type SparCall = SparRequest extends infer R ? (R extends unknown ? Omit<R, "reqId"> : never) : never;
+/** The reply to the `spar-*` request of type `T`. */
+export type SparAnswerOf<T extends SparRequest["t"]> = Extract<CompanionReply, { t: T }>;
+/** Any `bakeoff-*` request without its `reqId`. */
+export type BakeoffCall = BakeoffRequest extends infer R ? (R extends unknown ? Omit<R, "reqId"> : never) : never;
+/** The reply to the `bakeoff-*` request of type `T`. */
+export type BakeoffAnswerOf<T extends BakeoffRequest["t"]> = Extract<CompanionReply, { t: T }>;
 
 /** Credentials the companion issued to a paired device. */
 export interface DeviceCreds {
@@ -1379,6 +1409,10 @@ export interface CompanionSnapshot {
 	canBlueprint: boolean;
 	/** The companion can write, grade and store quizzes on code changes. */
 	canQuiz: boolean;
+	/** The companion can write, argue and store sparring sessions on code changes and designs. */
+	canSpar: boolean;
+	/** The companion can run, review and store design bake-offs. */
+	canBakeoff: boolean;
 	/** The companion can list and edit files of a session's repository. */
 	canEdit: boolean;
 	/** The companion can screenshot local pages. */
@@ -1436,7 +1470,17 @@ export interface CompanionSnapshot {
 /** A reply that answers one request (everything but the `hosts` broadcast). */
 type CompanionAnswer = Exclude<
 	CompanionReply,
-	{ t: "hosts" | "authed" | "auth-failed" | "blueprint-changed" | "quiz-changed" | "personal-changed" }
+	{
+		t:
+			| "hosts"
+			| "authed"
+			| "auth-failed"
+			| "blueprint-changed"
+			| "quiz-changed"
+			| "spar-changed"
+			| "bakeoff-changed"
+			| "personal-changed";
+	}
 >;
 type AnsweredRequest = Extract<CompanionRequest, { reqId: number }>;
 /** A request that expects an answer, before its `reqId` is assigned. */
@@ -1463,6 +1507,8 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	canPr: false,
 	canBlueprint: false,
 	canQuiz: false,
+	canSpar: false,
+	canBakeoff: false,
 	canCodemap: false,
 	canEdit: false,
 	canPreview: false,
@@ -1497,6 +1543,8 @@ export class CompanionClient {
 	readonly #listeners = new Set<() => void>();
 	readonly #blueprintListeners = new Set<(id: string) => void>();
 	readonly #quizListeners = new Set<(id: string) => void>();
+	readonly #sparListeners = new Set<(id: string) => void>();
+	readonly #bakeoffListeners = new Set<(id: string) => void>();
 	readonly #personalListeners = new Set<(frame: PersonalChanged) => void>();
 	readonly #pending = new Map<number, Pending>();
 	#reqSeq = 0;
@@ -1611,6 +1659,38 @@ export class CompanionClient {
 	 */
 	requestQuiz<C extends QuizCall>(call: C, timeoutMs: number): Promise<QuizAnswerOf<C["t"]>> {
 		return this.#call(call as CompanionCall, call.t, timeoutMs) as Promise<QuizAnswerOf<C["t"]>>;
+	}
+
+	/** Called with a spar's id when the companion pushes that its summary changed (progress, done, failed, replied). */
+	onSparChanged(listener: (id: string) => void): () => void {
+		this.#sparListeners.add(listener);
+		return () => {
+			this.#sparListeners.delete(listener);
+		};
+	}
+
+	/**
+	 * One sparring request and its answer (needs `canSpar`). The typed calls over it are in
+	 * components/spar/spar-api.ts, which loads with the sparring screens rather than with the app.
+	 */
+	requestSpar<C extends SparCall>(call: C, timeoutMs: number): Promise<SparAnswerOf<C["t"]>> {
+		return this.#call(call as CompanionCall, call.t, timeoutMs) as Promise<SparAnswerOf<C["t"]>>;
+	}
+
+	/** Called with a bake-off's id when the companion pushes that its summary changed (progress, done, failed). */
+	onBakeoffChanged(listener: (id: string) => void): () => void {
+		this.#bakeoffListeners.add(listener);
+		return () => {
+			this.#bakeoffListeners.delete(listener);
+		};
+	}
+
+	/**
+	 * One design bake-off request and its answer (needs `canBakeoff`). The typed calls over it are in
+	 * components/bakeoff/bakeoff-api.ts, which loads with the bake-off screens rather than with the app.
+	 */
+	requestBakeoff<C extends BakeoffCall>(call: C, timeoutMs: number): Promise<BakeoffAnswerOf<C["t"]>> {
+		return this.#call(call as CompanionCall, call.t, timeoutMs) as Promise<BakeoffAnswerOf<C["t"]>>;
 	}
 
 	/**
@@ -2148,6 +2228,8 @@ export class CompanionClient {
 				canPr: frame.canPr ?? false,
 				canBlueprint: frame.canBlueprint ?? false,
 				canQuiz: frame.canQuiz ?? false,
+				canSpar: frame.canSpar ?? false,
+				canBakeoff: frame.canBakeoff ?? false,
 				canCodemap: frame.canCodemap ?? false,
 				canEdit: frame.canEdit ?? false,
 				canPreview: frame.canPreview ?? false,
@@ -2183,6 +2265,14 @@ export class CompanionClient {
 		}
 		if (frame.t === "quiz-changed") {
 			for (const listener of this.#quizListeners) listener(frame.id);
+			return;
+		}
+		if (frame.t === "spar-changed") {
+			for (const listener of this.#sparListeners) listener(frame.id);
+			return;
+		}
+		if (frame.t === "bakeoff-changed") {
+			for (const listener of this.#bakeoffListeners) listener(frame.id);
 			return;
 		}
 		if (frame.t === "personal-changed") {

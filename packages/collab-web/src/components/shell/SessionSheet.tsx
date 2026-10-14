@@ -88,6 +88,10 @@ export interface SessionSheetProps {
 	onMapChanges: (() => void) | null;
 	/** This repository's quizzes, with *New quiz* on this session's changes; null unless this computer writes quizzes. */
 	onOpenQuizzes: (() => void) | null;
+	/** This repository's sparring sessions, with *Spar with this change* on this session's changes; null unless this computer can spar. */
+	onOpenSparring: (() => void) | null;
+	/** This repository's bake-offs, with *Bake off these changes* on this session's changes; null unless this computer can run bake-offs. */
+	onOpenBakeoff: (() => void) | null;
 	/** The session's terminal (tmux pane); null unless the paired computer hosts this session. */
 	onOpenPane: (() => void) | null;
 	/** Live screenshot of a dev server the session runs; null unless the paired computer can capture pages. */
@@ -154,6 +158,8 @@ export function SessionSheet({
 	onOpenArchitecture,
 	onMapChanges,
 	onOpenQuizzes,
+	onOpenSparring,
+	onOpenBakeoff,
 	onOpenPane,
 	onOpenPreview,
 	onOpenGithub,
@@ -644,6 +650,28 @@ export function SessionSheet({
 						<dd>
 							<button type="button" className="sh-sheet-link" onClick={onOpenQuizzes}>
 								This repository's quizzes
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
+				{onOpenSparring && (
+					<div className="sh-sheet-row">
+						<dt>Sparring</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onOpenSparring}>
+								Defend your decisions
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
+				{onOpenBakeoff && (
+					<div className="sh-sheet-row">
+						<dt>Bake-off</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onOpenBakeoff}>
+								Compare several models' answers
 								<ChevronRight size={14} />
 							</button>
 						</dd>

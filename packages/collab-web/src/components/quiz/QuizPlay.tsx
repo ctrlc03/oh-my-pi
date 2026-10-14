@@ -2,15 +2,15 @@ import type { BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
 import type { Quiz, QuizAttempt } from "@oh-my-pi/pi-wire/quiz";
 import { LoaderCircle } from "lucide-react";
 import type { ReactNode } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { CompanionClient } from "../../lib/companion";
 import type { Draft } from "./QuestionView";
 import { QuestionView } from "./QuestionView";
 import { QuizHeader } from "./QuizHeader";
-import type { ExcerptCache } from "./QuizCode";
+import type { ExcerptCache, ExcerptReader } from "./QuizCode";
 import { SummaryView } from "./SummaryView";
 import type { QuizGiven } from "./quiz-api";
-import { answerQuiz, retryQuiz } from "./quiz-api";
+import { answerQuiz, getQuizExcerpts, retryQuiz } from "./quiz-api";
 import {
 	answerOf,
 	attemptHistory,
@@ -65,6 +65,10 @@ export function QuizPlay({
 	const [retrying, setRetrying] = useState<"all" | "missed" | null>(null);
 	const [retryError, setRetryError] = useState<string | null>(null);
 	const cache = useRef<ExcerptCache>(new Map()).current;
+	const excerpts = useCallback<ExcerptReader>(
+		(part, refs) => getQuizExcerpts(client, quiz.id, part, refs),
+		[client, quiz.id],
+	);
 	const openInEditor =
 		editor !== undefined && editor.root === quiz.repo.root
 			? (ref: BlueprintRef) => editor.open(`${editor.root}/${ref.path}`, ref.line)
@@ -141,7 +145,7 @@ export function QuizPlay({
 				<div className="qz-scroll qz-scroll-question">
 					<QuestionView
 						key={`${attempt.id}:${question.id}`}
-						code={{ client, cache, openInEditor }}
+						code={{ excerpts, cache, openInEditor }}
 						quiz={quiz}
 						question={question}
 						position={positionOf(questions, at)}

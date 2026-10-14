@@ -74,7 +74,7 @@ describe("editing", () => {
 		expect(ids(moveTopBarItem(DEFAULT_TOP_BAR, "editor", -1)).slice(0, 3)).toEqual(["settings", "editor", "find"]);
 		expect(ids(moveTopBarItem(DEFAULT_TOP_BAR, "settings", 1)).slice(0, 2)).toEqual(["find", "settings"]);
 		expect(moveTopBarItem(DEFAULT_TOP_BAR, "settings", -1)).toEqual([...DEFAULT_TOP_BAR]);
-		expect(moveTopBarItem(DEFAULT_TOP_BAR, "sessions", 1)).toEqual([...DEFAULT_TOP_BAR]);
+		expect(moveTopBarItem(DEFAULT_TOP_BAR, DEFAULT_TOP_BAR.at(-1)!.id, 1)).toEqual([...DEFAULT_TOP_BAR]);
 	});
 
 	it("keeps a hidden button's place and tells the default from a change", () => {

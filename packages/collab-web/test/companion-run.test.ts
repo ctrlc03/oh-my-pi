@@ -552,4 +552,121 @@ describe("runs", () => {
 		const info = await runScript(manager, tmp);
 		expect(manager.stop(info.runId)).toMatchObject({ state: "exited", exitCode: 0 });
 	});
+
+	describe("finished", () => {
+		it("resolves with the final record once the run has exited, and its output stays readable", async () => {
+			const manager = managerFor("echo first; echo second >&2; exit 4");
+			const started = await manager.start("inst", tmp, "fake:t");
+			expect(started.state).toBe("running");
+			const info = await manager.finished(started.runId);
+			expect(info).toMatchObject({
+				runId: started.runId,
+				state: "exited",
+				exitCode: 4,
+				signal: null,
+				instanceId: "inst",
+				command: "sh fake",
+			});
+			expect(info.endedAt).not.toBeNull();
+			expect(info.endedAt).toBeGreaterThanOrEqual(info.startedAt);
+			// The record is the same one the output read reports; the output itself is not part of it.
+			expect(manager.output(info.runId, 0).run).toEqual(info);
+			expect(Object.keys(info)).not.toContain("text");
+			const text = manager.output(info.runId, 0).text;
+			expect(text).toContain("first\n");
+			expect(text).toContain("second\n");
+		});
+
+		it("resolves immediately for a run that already finished, with the same record", async () => {
+			const manager = managerFor("echo done");
+			const info = await runScript(manager, tmp);
+			expect(await manager.finished(info.runId)).toEqual(info);
+			expect(await manager.finished(info.runId)).toEqual(info);
+			expect(await manager.finished(info.runId)).toBe(await manager.finished(info.runId));
+		});
+
+		it("rejects for a run it does not know, whatever the id looks like", async () => {
+			const manager = managerFor("true");
+			await expect(manager.finished("nope")).rejects.toThrow("unknown run");
+			await expect(manager.finished(undefined)).rejects.toThrow("unknown run");
+			await expect(manager.finished(5)).rejects.toThrow("unknown run");
+		});
+
+		it("rejects for a run that was forgotten after it finished", async () => {
+			const manager = managerFor("true");
+			const info = await runScript(manager, tmp);
+			manager.retain(new Set(["other"]));
+			await expect(manager.finished(info.runId)).rejects.toThrow("unknown run");
+		});
+
+		it("stays pending while the run goes and settles as stopped after Stop", async () => {
+			const manager = managerFor("echo ready; sleep 30", { graceMs: 50 });
+			const run = await manager.start("inst", tmp, "fake:t");
+			let settled = false;
+			const waiting = manager.finished(run.runId).then(info => {
+				settled = true;
+				return info;
+			});
+			await until(() => manager.output(run.runId, 0).text.includes("ready"));
+			expect(settled).toBe(false);
+			manager.stop(run.runId);
+			const info = await waiting;
+			expect(info.state).toBe("stopped");
+			expect(info.exitCode).toBeNull();
+			expect(info.signal).not.toBeNull();
+			expect(manager.output(run.runId, 0).text).toContain("ready");
+		});
+
+		it("settles as stopped with SIGKILL when the group ignores SIGTERM", async () => {
+			const manager = managerFor("trap '' TERM; echo ready; while true; do sleep 0.05; done", { graceMs: 100 });
+			const run = await manager.start("inst", tmp, "fake:t");
+			await until(() => manager.output(run.runId, 0).text.includes("ready"));
+			manager.stop(run.runId);
+			expect(await manager.finished(run.runId)).toMatchObject({
+				state: "stopped",
+				exitCode: null,
+				signal: "SIGKILL",
+			});
+		});
+
+		it("resolves for a command that could not start, as failed, with the reason in the output", async () => {
+			const spec: RunSpec = {
+				id: "fake:t",
+				source: "package",
+				name: "t",
+				command: "nonexistent-bin",
+				argv: ["/no/such/bin"],
+			};
+			const manager = createRunManager({ discover: async () => [spec] });
+			const run = await manager.start("inst", tmp, "fake:t");
+			const info = await manager.finished(run.runId);
+			expect(info).toMatchObject({ state: "failed", exitCode: null, signal: null });
+			expect(info.endedAt).not.toBeNull();
+			expect(manager.output(run.runId, 0).text).toContain("nonexistent-bin");
+		});
+
+		it("waits for a process the script left behind before it resolves", async () => {
+			const dir = await repo({});
+			const pidFile = path.join(dir, "bg.pid");
+			const manager = managerFor(`sleep 60 & echo $! > ${pidFile}; echo leader-done`, {
+				graceMs: 5_000,
+				groupPollMs: 20,
+			});
+			const run = await manager.start("inst", dir, "fake:t");
+			await until(() => manager.output(run.runId, 0).text.includes("leader-done"));
+			let settled = false;
+			const waiting = manager.finished(run.runId).then(info => {
+				settled = true;
+				return info;
+			});
+			// The leader has exited; the group has not, so the run is still going and `finished` has not settled.
+			expect(manager.output(run.runId, 0).run.state).toBe("running");
+			await Promise.resolve();
+			expect(settled).toBe(false);
+			const bgPid = Number((await Bun.file(pidFile).text()).trim());
+			manager.stop(run.runId);
+			expect((await waiting).state).toBe("stopped");
+			await until(() => !alive(bgPid));
+		});
+	});
 });

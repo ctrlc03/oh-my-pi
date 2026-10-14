@@ -25,7 +25,12 @@
  * started with them, listed and resumed. The worktree settings and the settle cleanup (./mock-settle) run the real code over a
  * throw-away repository too. Quizzes (./mock-quiz) are canned: a finished quiz of a two-pull-request stack, one half
  * answered, a failed one; new ones from the form tick to ready, and `quiz-stack` finds a three-pull-request stack for
- * #2243, #2244 and #2245 (any other number is alone). Every other request is refused. Ctrl+C stops it.
+ * #2243, #2244 and #2245 (any other number is alone). Sparring (./mock-spar) is canned the same way: a finished spar of two pull
+ * requests with every outcome, one on a design document, a failed one and one still being written. Design bake-offs (./mock-bakeoff) are
+ * canned too: a finished design one with a split verdict, one without a second opinion, a finished implementation one, one still
+ * running and a failed one; new ones from the form tick to a finished verdict. `--bakeoff-judge native|local|endpoint|fallback|none|unreachable`
+ * (default `endpoint`) is what the second opinion would use, and `--bakeoff-stage-ms` slows the ticks. `run-targets` lists a canned test
+ * and benchmark for the bake-off form. Every other request is refused. Ctrl+C stops it.
  *
  * `--personal fresh|enabled` (default `off`: nothing is advertised or answered, as before) adds the Personal agent (./mock-personal): `fresh`
  * is advertised and not set up (Settings → Personal agent → Set up), `enabled` is set up with sample memories, About you, proposals,
@@ -53,12 +58,15 @@ import { parseOrg } from "../src/lib/session-org";
 import { CollabSocket } from "../src/lib/socket";
 import { createSessionOrg, loadOrgFile, saveOrgFile } from "./companion-sessionorg";
 import { startLocalRelay } from "./local-relay";
+import type { MockBakeoffJudge } from "./mock-bakeoff";
+import { createMockBakeoff, MOCK_RUN_TARGETS } from "./mock-bakeoff";
 import { createMockBlueprint } from "./mock-blueprint";
 import { createMockFanout } from "./mock-fanout";
 import { createMockForeign, mockForeignHosts } from "./mock-foreign";
 import { createMockPersonal } from "./mock-personal";
 import { createMockQuiz, mockStackPrs } from "./mock-quiz";
 import { createMockSearch } from "./mock-search";
+import { createMockSpar } from "./mock-spar";
 import { createMockStart } from "./mock-start";
 import { createMockSettle } from "./mock-settle";
 
@@ -268,6 +276,28 @@ const quiz = createMockQuiz({
 	},
 });
 
+/** The sparring partner: a finished spar showing every outcome, one on a design document, a failed and a running one; new ones tick to ready. `--spar-stage-ms` slows the ticks. */
+const spar = createMockSpar({
+	instanceId: "inst-7",
+	stageMs: Number(flag("--spar-stage-ms", "700")),
+	onChanged: id => {
+		for (const peer of peers) socket.send({ t: "spar-changed", id }, peer);
+	},
+});
+
+/** Design bake-offs: canned finished, running and failed ones; new ones tick to a verdict. `--bakeoff-stage-ms` slows the ticks, `--bakeoff-judge` picks the second opinion. */
+const bakeoffJudge = flag("--bakeoff-judge", "endpoint");
+if (!["native", "local", "endpoint", "fallback", "none", "unreachable"].includes(bakeoffJudge))
+	throw new Error("--bakeoff-judge takes native, local, endpoint, fallback, none or unreachable");
+const bakeoff = createMockBakeoff({
+	instanceId: "inst-7",
+	stageMs: Number(flag("--bakeoff-stage-ms", "700")),
+	judge: bakeoffJudge as MockBakeoffJudge,
+	onChanged: id => {
+		for (const peer of peers) socket.send({ t: "bakeoff-changed", id }, peer);
+	},
+});
+
 /**
  * The Personal agent (./mock-personal), only with `--personal fresh|enabled`; without it nothing is advertised or answered.
  * Its host row joins `hosts` while the session runs; `--personal-login missing` waits for `<--dir>/personal-login-ready` to exist.
@@ -309,6 +339,8 @@ function hostsFrame(): CompanionReply {
 		...search.capabilities,
 		...blueprint.capabilities,
 		...quiz.capabilities,
+		...spar.capabilities,
+		...bakeoff.capabilities,
 		...foreign.capabilities,
 		...settle.capabilities,
 		...personal?.capabilities(),
@@ -397,6 +429,26 @@ socket.onFrame = (frame, fromPeer) => {
 					fromPeer,
 				),
 		);
+	else if (spar.handles(frame))
+		void spar.answer(frame).then(
+			reply => socket.send(reply, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
+	else if (bakeoff.handles(frame))
+		void bakeoff.answer(frame).then(
+			reply => socket.send(reply, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
+	else if (frame.t === "run-targets")
+		socket.send({ t: "run-targets", reqId: frame.reqId, targets: MOCK_RUN_TARGETS }, fromPeer);
 	else if (settle.handles(frame))
 		void settle.answer(frame).then(
 			reply => socket.send(reply, fromPeer),
@@ -457,6 +509,8 @@ const timer = setInterval(() => {
 process.on("SIGINT", () => {
 	clearInterval(timer);
 	quiz.stop();
+	spar.stop();
+	bakeoff.stop();
 	socket.close();
 	relay.stop();
 	process.exit(0);

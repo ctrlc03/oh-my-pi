@@ -8,7 +8,15 @@ import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { cfgModelRoles } from "@oh-my-pi/pi-coding-agent/config/model-settings";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { ChainJudge, hasNativeJudge, JudgmentCache, journalJudgmentUsage } from "@oh-my-pi/pi-coding-agent/judgment";
+import {
+	ChainJudge,
+	describeJudge,
+	hasNativeJudge,
+	JudgmentCache,
+	journalJudgmentUsage,
+} from "@oh-my-pi/pi-coding-agent/judgment";
+import { openStandaloneJudge } from "@oh-my-pi/pi-coding-agent/judgment/standalone";
+import * as sdkModule from "@oh-my-pi/pi-coding-agent/sdk";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { tinyModelClient } from "@oh-my-pi/pi-coding-agent/tiny/title-client";
 import { TempDir } from "@oh-my-pi/pi-utils";
@@ -472,5 +480,170 @@ describe("ChainJudge", () => {
 			["judgment", { usd: 0.01, inputUsd: 0.01, outputUsd: 0 }],
 			["judgment", { usd: 0.01, inputUsd: 0.01, outputUsd: 0 }],
 		]);
+	});
+});
+
+describe("describeJudge", () => {
+	it("is undefined when no judge-capable model is available", () => {
+		const settings = Settings.isolated({ modelRoles: { judge: `${ONLINE.provider}/${ONLINE.id}` } });
+		expect(describeJudge(settings, makeRegistry([]))).toBeUndefined();
+	});
+
+	it("describes a native judgment model assigned to the role", () => {
+		const settings = Settings.isolated({ modelRoles: { judge: "typesafe/jev-preview" } });
+		const registry = makeRegistry([JEV_PREVIEW, ONLINE], { typesafe: "ts-key", [ONLINE.provider]: "online-key" });
+		expect(describeJudge(settings, registry)).toEqual({
+			kind: "native",
+			explicit: true,
+			label: "typesafe/jev-preview",
+		});
+	});
+
+	it("describes an on-device model assigned to the role", () => {
+		const settings = Settings.isolated({ modelRoles: { judge: `${LOCAL.provider}/${LOCAL.id}` } });
+		const registry = makeRegistry([LOCAL, ONLINE], { [ONLINE.provider]: "online-key" });
+		expect(describeJudge(settings, registry)).toEqual({
+			kind: "local",
+			explicit: true,
+			label: `${LOCAL.provider}/${LOCAL.id}`,
+		});
+	});
+
+	it("describes a chat model assigned to the role, with its provider/id label", () => {
+		const settings = Settings.isolated({ modelRoles: { judge: `${ONLINE.provider}/${ONLINE.id}` } });
+		const registry = makeRegistry([ONLINE], { [ONLINE.provider]: "online-key" });
+		expect(describeJudge(settings, registry)).toEqual({
+			kind: "online",
+			explicit: true,
+			label: `${ONLINE.provider}/${ONLINE.id}`,
+		});
+	});
+
+	it("describes a model the built-in priority list picked, with no judge role assigned, as not explicit", () => {
+		const settings = Settings.isolated();
+		const registry = makeRegistry([DECISIONS], { openrouter: "or-key" });
+		expect(describeJudge(settings, registry)).toEqual({
+			kind: "native",
+			explicit: false,
+			label: "openrouter/~typesafe/jev-latest",
+		});
+	});
+
+	it("reads only the first candidate and agrees with the native gate", () => {
+		const settings = Settings.isolated({
+			modelRoles: { judge: `${ONLINE.provider}/${ONLINE.id}` },
+			"retry.fallbackChains": { judge: ["typesafe/jev-preview"] },
+		});
+		const registry = makeRegistry([JEV_PREVIEW, ONLINE], { typesafe: "ts-key", [ONLINE.provider]: "online-key" });
+		const description = describeJudge(settings, registry);
+		expect(description?.label).toBe(`${ONLINE.provider}/${ONLINE.id}`);
+		expect(description?.kind === "native").toBe(hasNativeJudge(settings, registry));
+		cfgModelRoles.override(settings, { judge: "typesafe/jev-preview" });
+		expect(describeJudge(settings, registry)?.kind === "native").toBe(hasNativeJudge(settings, registry));
+	});
+});
+
+describe("openStandaloneJudge", () => {
+	let authStorage: ReturnType<typeof createInMemoryAuthStorage> | undefined;
+
+	afterEach(() => {
+		authStorage?.close();
+		authStorage = undefined;
+	});
+
+	/** Stand in for the project settings, the auth store and the extension providers `openStandaloneJudge` reads. */
+	function arrange(settings: Settings, models: Model<Api>[], keys: Record<string, string>): void {
+		authStorage = createInMemoryAuthStorage();
+		for (const provider in keys) authStorage.keys.setRuntime(provider, keys[provider]!);
+		vi.spyOn(Settings, "init").mockResolvedValue(settings);
+		vi.spyOn(sdkModule, "discoverAuthStorage").mockResolvedValue(authStorage);
+		vi.spyOn(sdkModule, "loadCliExtensionProviders").mockResolvedValue(undefined);
+		vi.spyOn(ModelRegistry.prototype, "refresh").mockResolvedValue(undefined);
+		vi.spyOn(ModelRegistry.prototype, "getAvailable").mockReturnValue(models);
+	}
+
+	it("describes what the judge role resolves to, next to the native flag", async () => {
+		arrange(Settings.isolated({ modelRoles: { judge: `${ONLINE.provider}/${ONLINE.id}` } }), [ONLINE], {
+			[ONLINE.provider]: "online-key",
+		});
+		const standalone = await openStandaloneJudge("/work", "test");
+		expect(standalone.native).toBe(false);
+		expect(standalone.describe).toEqual({
+			kind: "online",
+			explicit: true,
+			label: `${ONLINE.provider}/${ONLINE.id}`,
+		});
+		standalone.close();
+	});
+
+	it("describes a native judge as native, and reports no description without a model", async () => {
+		arrange(Settings.isolated({ modelRoles: { judge: "typesafe/jev-preview" } }), [JEV_PREVIEW], {
+			typesafe: "ts-key",
+		});
+		const native = await openStandaloneJudge("/work", "test");
+		expect(native.native).toBe(true);
+		expect(native.describe).toEqual({ kind: "native", explicit: true, label: "typesafe/jev-preview" });
+		native.close();
+
+		vi.restoreAllMocks();
+		arrange(Settings.isolated({ modelRoles: { judge: `${ONLINE.provider}/${ONLINE.id}` } }), [], {});
+		const none = await openStandaloneJudge("/work", "test");
+		expect(none.native).toBe(false);
+		expect(none.describe).toBeUndefined();
+		none.close();
+	});
+
+	it("passes the usage of every billed judgment attempt to onUsage", async () => {
+		arrange(Settings.isolated({ modelRoles: { judge: `${ONLINE.provider}/${ONLINE.id}` } }), [ONLINE], {
+			[ONLINE.provider]: "online-key",
+		});
+		const replies = ["no idea", "level: high"];
+		vi.spyOn(ai, "completeSimple").mockImplementation(async (model, _context, options) => {
+			const response = reply(model, replies.shift() ?? "");
+			response.usage.cost = { input: 0.02, output: 0.005, cacheRead: 0, cacheWrite: 0, total: 0.025 };
+			options?.onAttempt?.(response);
+			return response;
+		});
+		const onUsage = vi.fn();
+		const standalone = await openStandaloneJudge("/work", "standalone-test", { onUsage });
+		const result = await standalone.judge.judge({
+			state: "standalone usage question",
+			questions: { level: TIER_QUESTION },
+		});
+		standalone.close();
+
+		expect(result.answers.level.choice).toBe("high");
+		// An initial attempt plus one format correction, each billed once.
+		expect(onUsage).toHaveBeenCalledTimes(2);
+		expect(onUsage.mock.calls.map(([usage]) => usage.usage.cost.total)).toEqual([0.025, 0.025]);
+		expect(onUsage).toHaveBeenCalledWith(
+			expect.objectContaining({ role: "judge", provider: ONLINE.provider, model: ONLINE.id }),
+		);
+	});
+
+	it("judges without onUsage when the caller gives none", async () => {
+		arrange(Settings.isolated({ modelRoles: { judge: `${ONLINE.provider}/${ONLINE.id}` } }), [ONLINE], {
+			[ONLINE.provider]: "online-key",
+		});
+		vi.spyOn(ai, "completeSimple").mockImplementation(async (model, _context, options) => {
+			const response = reply(model, "level: low");
+			options?.onAttempt?.(response);
+			return response;
+		});
+		const standalone = await openStandaloneJudge("/work", "standalone-test");
+		const result = await standalone.judge.judge({
+			state: "standalone without usage",
+			questions: { level: TIER_QUESTION },
+		});
+		standalone.close();
+		expect(result.answers.level.choice).toBe("low");
+	});
+
+	it("releases the auth store and rethrows when resolving fails", async () => {
+		arrange(Settings.isolated(), [ONLINE], {});
+		vi.spyOn(sdkModule, "loadCliExtensionProviders").mockRejectedValue(new Error("extension failed"));
+		const closeSpy = vi.spyOn(authStorage!, "close");
+		await expect(openStandaloneJudge("/work", "test")).rejects.toThrow("extension failed");
+		expect(closeSpy).toHaveBeenCalledTimes(1);
 	});
 });

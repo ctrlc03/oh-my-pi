@@ -457,6 +457,9 @@ interface RunRecord {
 	pgid: number | null;
 	stopRequested: boolean;
 	killTimer: Timer | undefined;
+	/** Settles once the run has ended, with its final info. */
+	finished: Promise<RunInfo>;
+	settle(info: RunInfo): void;
 }
 
 export interface RunManagerOptions {
@@ -481,6 +484,8 @@ export interface RunManager {
 	output(runId: unknown, from: unknown): RunOutput;
 	/** SIGTERM the run's process group, SIGKILL it after the grace period. */
 	stop(runId: unknown): RunInfo;
+	/** Resolves with the run's final info once it has ended (its process group gone); an unknown run rejects. */
+	finished(runId: unknown): Promise<RunInfo>;
 	/** The session's recent runs, newest first. */
 	list(instanceId: string): RunInfo[];
 	/** Forget finished runs of sessions that are not in `listed` any more. */
@@ -584,6 +589,7 @@ export function createRunManager(options: RunManagerOptions = {}): RunManager {
 			endedAt: now(),
 		};
 		prune(r.info.instanceId);
+		r.settle(r.info);
 	}
 
 	return {
@@ -599,6 +605,10 @@ export function createRunManager(options: RunManagerOptions = {}): RunManager {
 			if (spec.detail !== detail) throw new Error("The script changed since you opened Run; review it again.");
 			if (running() >= maxConcurrent)
 				throw new Error(`${maxConcurrent} runs are already going on this computer; stop one first.`);
+			let settle!: (info: RunInfo) => void;
+			const finished = new Promise<RunInfo>(resolve => {
+				settle = resolve;
+			});
 			const r: RunRecord = {
 				info: {
 					runId: randomUUID(),
@@ -615,6 +625,8 @@ export function createRunManager(options: RunManagerOptions = {}): RunManager {
 				pgid: null,
 				stopRequested: false,
 				killTimer: undefined,
+				finished,
+				settle,
 			};
 			runs.set(r.info.runId, r);
 			prune(instanceId);
@@ -633,6 +645,7 @@ export function createRunManager(options: RunManagerOptions = {}): RunManager {
 			} catch (err) {
 				r.ring.push(`${spec.command}: ${err instanceof Error ? err.message : String(err)}\n`);
 				r.info = { ...r.info, state: "failed", endedAt: now() };
+				r.settle(r.info);
 			}
 			return r.info;
 		},
@@ -656,6 +669,10 @@ export function createRunManager(options: RunManagerOptions = {}): RunManager {
 				if (groupAlive(pgid)) signalGroup(pgid, "SIGKILL");
 			}, graceMs);
 			return r.info;
+		},
+
+		async finished(runId) {
+			return await record(runId).finished;
 		},
 
 		list(instanceId) {

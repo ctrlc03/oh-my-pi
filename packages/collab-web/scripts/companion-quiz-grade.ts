@@ -47,10 +47,10 @@ export function gradeChoice(question: QuizQuestion, key: QuizKey, choice: string
 }
 
 /** Cited code as the grader reads it: the lines around each citation, numbered, the cited line marked. */
-export function renderExcerpts(excerpts: readonly (BlueprintExcerpt | null)[]): string {
+export function renderExcerpts(excerpts: readonly (BlueprintExcerpt | null)[], max = GRADE_MAX_EXCERPTS): string {
 	const blocks: string[] = [];
 	for (const excerpt of excerpts) {
-		if (excerpt === null || blocks.length >= GRADE_MAX_EXCERPTS) continue;
+		if (excerpt === null || blocks.length >= max) continue;
 		const half = Math.floor(GRADE_EXCERPT_LINES / 2);
 		const from = Math.max(excerpt.start, excerpt.line - half);
 		const to = Math.min(excerpt.start + excerpt.lines.length - 1, excerpt.line + half);

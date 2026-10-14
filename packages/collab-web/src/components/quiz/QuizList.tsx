@@ -35,6 +35,8 @@ export interface QuizListProps {
 	/** Join the omp session that is writing a running quiz. */
 	onOpenHost(computerId: string, instanceId: string): Promise<void>;
 	onClose(): void;
+	/** Switch to the sparring list; null when no computer can spar. */
+	onShowSpar: (() => void) | null;
 }
 
 interface QuizEntry {
@@ -59,6 +61,7 @@ export function QuizList({
 	onOpen,
 	onNew,
 	onOpenHost,
+	onShowSpar,
 	onClose,
 }: QuizListProps): ReactNode {
 	const several = computers.length > 1;
@@ -128,6 +131,16 @@ export function QuizList({
 					</button>
 				</span>
 			</div>
+			{onShowSpar !== null && (
+				<div className="sh-segmented qz-tabs" role="tablist" aria-label="Quizzes or sparring">
+					<button type="button" role="tab" aria-selected className="sh-segment sh-segment-on">
+						Quizzes
+					</button>
+					<button type="button" role="tab" aria-selected={false} className="sh-segment" onClick={onShowSpar}>
+						Sparring
+					</button>
+				</div>
+			)}
 			{away.map(({ computer, reason }) => (
 				<div key={computer.id} className="qz-away">
 					<span className="sh-dot" aria-hidden="true" /> {several ? `${computer.name}: ${reason}` : reason}

@@ -121,8 +121,11 @@ import {
 } from "../src/lib/link";
 import { parseOrg } from "../src/lib/session-org";
 import { type AgentRunner } from "./companion-agent";
+import { createBakeoffs } from "./companion-bakeoff";
+import type { OpenedJudge } from "./companion-bakeoff-run";
 import { createBlueprints } from "./companion-blueprint";
 import { createQuizzes } from "./companion-quiz";
+import { createSpars } from "./companion-spar";
 import {
 	checkFlow,
 	checkFocus,
@@ -237,6 +240,7 @@ import {
 	type RestrictLaunch,
 } from "./companion-start";
 import {
+	fanoutBranch,
 	compareGroup,
 	createModelCatalog,
 	keepRun,
@@ -1106,6 +1110,8 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canCodemap: codemapReady,
 		canBlueprint: codemapReady,
 		canQuiz: extras.canStart,
+		canSpar: extras.canStart,
+		canBakeoff: extras.canStart,
 		canEdit: true,
 		canPreview: previewChrome !== null,
 		// Reading issues and pull requests needs the same signed-in gh as opening one.
@@ -1513,13 +1519,79 @@ const quizzes = createQuizzes({
 	log: message => console.log(`companion: ${message}`),
 });
 
+/** Sparring on code changes and designs: stored beside the quizzes; the points are written by a read-only session, each defence answered by a headless omp run on the default model. */
+const spars = createSpars({
+	storeDir: path.join(configDir, "agent", "spars"),
+	cacheDir: path.join(configDir, "cache", "spars"),
+	sessionsDir,
+	now: Date.now,
+	changed: id => {
+		for (const peer of peers) room.send({ t: "spar-changed", id }, peer, zipPeers.has(peer));
+	},
+	agent: agentRunner,
+	ompBin,
+	log: message => console.log(`companion: ${message}`),
+});
+
+/**
+ * Design bake-offs: stored beside the quizzes; designs, write-ups and the blind review are written by read-only
+ * sessions, implementation entries are fan-out sessions in worktrees, and the second opinion is the `judge` role.
+ */
+const bakeoffs = createBakeoffs({
+	storeDir: path.join(configDir, "agent", "bakeoffs"),
+	cacheDir: path.join(configDir, "cache", "bakeoffs"),
+	sessionsDir,
+	now: Date.now,
+	changed: id => {
+		for (const peer of peers) room.send({ t: "bakeoff-changed", id }, peer, zipPeers.has(peer));
+	},
+	agent: agentRunner,
+	fanout: {
+		start: async ({ cwd, prompt, models, budgetUsd, sandboxed, startCommit, bakeoff }) =>
+			fanoutStart({ cwd, prompt, models, budgetUsd, sandboxed }, { id: bakeoff, startCommit }),
+		group: id => fanoutGroups.find(group => group.id === id),
+		keep: (_group, request) => fanoutKeep(request),
+		unlink: async id => {
+			fanoutGroups = fanoutGroups.map(group => (group.id === id ? { ...group, bakeoff: undefined } : group));
+			await saveGroups(fanoutPath, fanoutGroups);
+		},
+	},
+	models: fanoutModels,
+	measure: {
+		runs,
+		checkRoot: async root => {
+			await loadSessions();
+			await checkRunnableRoot(
+				root,
+				[...knownHosts, ...knownIdle],
+				async cwd => (await repoRoot(cwd)) ?? fs.realpath(cwd),
+			);
+		},
+	},
+	setupCheckout: tree => setupWorktree(tree, false),
+	openJudge: async (root, onUsage): Promise<OpenedJudge> => {
+		// Loaded on first use: it pulls in the agent's whole SDK (model registry, auth), which the companion otherwise never loads.
+		const { openStandaloneJudge } = await import("@oh-my-pi/pi-coding-agent/judgment/standalone");
+		const opened = await openStandaloneJudge(root, "bakeoff", { onUsage: usage => onUsage(usage.usage.cost.total) });
+		const model = opened.judge.primaryModel();
+		return {
+			judge: opened.judge,
+			native: opened.native,
+			describe: opened.describe,
+			price: model ? `$${model.cost.input}/M tokens in, $${model.cost.output}/M out` : undefined,
+			close: () => opened.close(),
+		};
+	},
+	log: message => console.log(`companion: ${message}`),
+});
+
 function fanoutGroup(id: unknown): FanoutGroup {
 	const group = typeof id === "string" ? fanoutGroups.find(g => g.id === id) : undefined;
 	if (!group) throw new Error("unknown group");
 	return group;
 }
 
-async function fanoutStart(input: unknown): Promise<FanoutGroup> {
+async function fanoutStart(input: unknown, bakeoff?: { id: string; startCommit: string }): Promise<FanoutGroup> {
 	const request = parseFanoutRequest(input);
 	if (!(await findTmux())) throw new Error("tmux is not installed on this computer");
 	// Other agents run unsandboxed for now: refuse before any member starts rather than run some of them unconfined.
@@ -1532,6 +1604,12 @@ async function fanoutStart(input: unknown): Promise<FanoutGroup> {
 	const group = await startFanout(request, {
 		worktreesDir: effectiveWorktreesDir(gitFlow.settings, worktreesDir),
 		branchPrefix: gitFlow.settings.branchPrefix,
+		// A bake-off's worktrees all start from one commit and its group is kept until the bake-off is deleted.
+		startCommit: bakeoff?.startCommit,
+		bakeoff: bakeoff?.id,
+		branchName: bakeoff
+			? (index, model) => fanoutBranch(bakeoff.id, index, model, gitFlow.settings.branchPrefix, "bake")
+			: undefined,
 		// The setup runs per tree, as for a new worktree session.
 		setup: tree => setupWorktree(tree, request.sandboxed),
 		agentRef: model => {
@@ -2208,6 +2286,111 @@ room.onFrame = (frame, fromPeer) => {
 				return { t: "quiz-stack", reqId: frame.reqId, ...(await quizzes.stack(frame.cwd, frame.pr)) };
 			});
 			return;
+		case "spar-list":
+			respond(frame.reqId, async () => {
+				if (frame.cwd !== undefined && typeof frame.cwd !== "string") throw new Error("invalid folder");
+				return { t: "spar-list", reqId: frame.reqId, spars: await spars.list(frame.cwd) };
+			});
+			return;
+		case "spar-create":
+			respond(frame.reqId, async () => {
+				const { t: _t, reqId: _reqId, ...request } = frame;
+				return { t: "spar-create", reqId: frame.reqId, ...(await spars.create(request)) };
+			});
+			return;
+		case "spar-get":
+			respond(frame.reqId, async () => ({ t: "spar-get", reqId: frame.reqId, ...(await spars.get(frame.id)) }));
+			return;
+		case "spar-reply":
+			respond(frame.reqId, async () => ({ t: "spar-reply", reqId: frame.reqId, ...(await spars.reply(frame)) }));
+			return;
+		case "spar-close":
+			respond(frame.reqId, async () => ({ t: "spar-close", reqId: frame.reqId, ...(await spars.close(frame)) }));
+			return;
+		case "spar-again":
+			respond(frame.reqId, async () => ({ t: "spar-again", reqId: frame.reqId, ...(await spars.again(frame)) }));
+			return;
+		case "spar-excerpt":
+			respond(frame.reqId, async () => {
+				if (!Array.isArray(frame.refs) || typeof frame.part !== "number") throw new Error("invalid references");
+				return {
+					t: "spar-excerpt",
+					reqId: frame.reqId,
+					excerpts: await spars.excerpt(frame.id, frame.part, frame.refs),
+				};
+			});
+			return;
+		case "spar-delete":
+			respond(frame.reqId, async () => {
+				await spars.remove(frame.id);
+				return { t: "spar-delete", reqId: frame.reqId };
+			});
+			return;
+		case "bakeoff-list":
+			respond(frame.reqId, async () => {
+				if (frame.cwd !== undefined && typeof frame.cwd !== "string") throw new Error("invalid folder");
+				return { t: "bakeoff-list", reqId: frame.reqId, bakeoffs: await bakeoffs.list(frame.cwd) };
+			});
+			return;
+		case "bakeoff-judge":
+			respond(frame.reqId, async () => ({
+				t: "bakeoff-judge",
+				reqId: frame.reqId,
+				judge: await bakeoffs.judge(typeof frame.cwd === "string" ? frame.cwd : undefined),
+			}));
+			return;
+		case "bakeoff-create":
+			respond(frame.reqId, async () => {
+				const { t: _t, reqId: _reqId, ...request } = frame;
+				return { t: "bakeoff-create", reqId: frame.reqId, ...(await bakeoffs.create(request)) };
+			});
+			return;
+		case "bakeoff-get":
+			respond(frame.reqId, async () => ({
+				t: "bakeoff-get",
+				reqId: frame.reqId,
+				bakeoff: await bakeoffs.get(frame.id),
+			}));
+			return;
+		case "bakeoff-excerpt":
+			respond(frame.reqId, async () => {
+				if (!Array.isArray(frame.refs) || typeof frame.entry !== "string") throw new Error("invalid references");
+				return {
+					t: "bakeoff-excerpt",
+					reqId: frame.reqId,
+					excerpts: await bakeoffs.excerpt(frame.id, frame.entry, frame.refs),
+				};
+			});
+			return;
+		case "bakeoff-stop":
+			respond(frame.reqId, async () => {
+				if (frame.entry !== undefined && typeof frame.entry !== "string") throw new Error("invalid entry");
+				await bakeoffs.stop(frame.id, frame.entry);
+				return { t: "bakeoff-stop", reqId: frame.reqId };
+			});
+			return;
+		case "bakeoff-take":
+			respond(frame.reqId, async () => {
+				if (typeof frame.entry !== "string") throw new Error("invalid entry");
+				for (const flag of [frame.removeOthers, frame.discardDirty])
+					if (flag !== undefined && typeof flag !== "boolean") throw new Error("invalid request");
+				const result = await bakeoffs.take(frame);
+				await refresh();
+				return { t: "bakeoff-take", reqId: frame.reqId, ...(result ? { result } : {}) };
+			});
+			return;
+		case "bakeoff-review":
+			respond(frame.reqId, async () => {
+				await bakeoffs.review(frame.id);
+				return { t: "bakeoff-review", reqId: frame.reqId };
+			});
+			return;
+		case "bakeoff-delete":
+			respond(frame.reqId, async () => {
+				await bakeoffs.remove(frame.id);
+				return { t: "bakeoff-delete", reqId: frame.reqId };
+			});
+			return;
 		case "preview":
 			respond(frame.reqId, async () => {
 				if (previewChrome === null) throw new Error("No Chrome or other Chromium browser found on this computer");
@@ -2496,6 +2679,8 @@ void findChrome().then(found => {
 // Maps a previous run left half done are marked interrupted, their checkouts removed, and their agent sessions ended.
 void blueprints.init().catch(err => console.error(`companion: starting architecture maps failed: ${errorText(err)}`));
 void quizzes.init().catch(err => console.error(`companion: starting quizzes failed: ${errorText(err)}`));
+void spars.init().catch(err => console.error(`companion: starting sparring failed: ${errorText(err)}`));
+void bakeoffs.init().catch(err => console.error(`companion: starting bake-offs failed: ${errorText(err)}`));
 
 function shutdown(): void {
 	// Runs are detached process groups: they would outlive the companion.
@@ -2512,6 +2697,8 @@ function shutdown(): void {
 		scheduleIpc.stop(),
 		blueprints.shutdown(),
 		quizzes.shutdown(),
+		spars.shutdown(),
+		bakeoffs.shutdown(),
 		removeLocalEndpoint(localEndpointFile(configDir), process.pid),
 	]).then(() => process.exit(0));
 }

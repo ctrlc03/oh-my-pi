@@ -39,7 +39,10 @@ export function Sheet({ label, size, anchor, onClose, children }: SheetProps): R
 			// Escape an inner widget already handled (the editor closing its search panel) leaves the sheet open.
 			if (e.key !== "Escape" || e.defaultPrevented) return;
 			const sheets = document.querySelectorAll(".sh-sheet");
-			if (sheets[sheets.length - 1] === panel.current) onClose();
+			if (sheets[sheets.length - 1] !== panel.current) return;
+			// Claimed: the sheet below, whose listener may run after this one's close has rendered, must not close too.
+			e.preventDefault();
+			onClose();
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);

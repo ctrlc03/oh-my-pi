@@ -288,7 +288,13 @@ export function scoreAttempt(
 		part.points += earned;
 		if (answer.verdict.kind === "right") return;
 		const key = `${question.part}\0${question.topic}`;
-		const topic = topics.get(key) ?? { topic: question.topic, part: question.part, questions: [], lost: 0, first: order };
+		const topic = topics.get(key) ?? {
+			topic: question.topic,
+			part: question.part,
+			questions: [],
+			lost: 0,
+			first: order,
+		};
 		topic.questions.push(id);
 		topic.lost += 1 - earned;
 		topics.set(key, topic);

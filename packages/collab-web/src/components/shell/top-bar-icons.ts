@@ -16,6 +16,8 @@ import {
 	Settings,
 	SquareCode,
 	SquareTerminal,
+	Swords,
+	Trophy,
 	Waypoints,
 } from "lucide-react";
 import type { TopBarId } from "../../lib/top-bar";
@@ -39,4 +41,6 @@ export const TOP_BAR_ICONS: Record<TopBarId, LucideIcon> = {
 	timeline: Activity,
 	usage: ChartColumn,
 	sessions: LayoutList,
+	sparring: Swords,
+	bakeoff: Trophy,
 };

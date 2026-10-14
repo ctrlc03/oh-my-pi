@@ -45,6 +45,8 @@ export const TOP_BAR_BUTTONS = [
 	{ id: "timeline", label: "Timeline", on: false, phone: true },
 	{ id: "usage", label: "Usage", on: false, phone: true },
 	{ id: "sessions", label: "All sessions", on: false, phone: true },
+	{ id: "sparring", label: "Sparring", on: false, phone: true },
+	{ id: "bakeoff", label: "Bake-off", on: false, phone: true },
 ] as const satisfies readonly TopBarButton[];
 
 export type TopBarId = (typeof TOP_BAR_BUTTONS)[number]["id"];

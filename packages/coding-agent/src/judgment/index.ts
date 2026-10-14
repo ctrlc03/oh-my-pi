@@ -223,6 +223,27 @@ export function hasNativeJudge(settings: Settings, registry: ModelRegistry): boo
 	return primary !== undefined && kindOf(primary) === "native";
 }
 
+/** What the `judge` role would answer with, for a person to read before a feature relies on it. */
+export interface JudgeDescription {
+	/** Backend of the first candidate; see {@link JudgeKind}. */
+	kind: JudgeKind;
+	/** The role names this model itself (`modelRoles.judge`), rather than the chain falling through to a general-purpose one. */
+	explicit: boolean;
+	/** `provider/id` of the first candidate. */
+	label: string;
+}
+
+/**
+ * The first candidate of the `judge` role chain, or undefined when no model is available. `explicit` tells a model
+ * somebody assigned to the role from one the chain fell through to (tiny, smol, default, the session model), which may
+ * be an expensive chat model.
+ */
+export function describeJudge(settings: Settings, registry: ModelRegistry): JudgeDescription | undefined {
+	const [primary] = judgeRoleChain(settings, registry);
+	if (primary === undefined) return undefined;
+	return { kind: kindOf(primary), explicit: primary.explicit, label: `${primary.model.provider}/${primary.model.id}` };
+}
+
 /** Resolve a live judge-role chain. Candidates resolve lazily and are reused for {@link CANDIDATE_TTL_MS}. */
 export function resolveJudge(deps: JudgeDeps): ChainJudge {
 	return new ChainJudge(deps);

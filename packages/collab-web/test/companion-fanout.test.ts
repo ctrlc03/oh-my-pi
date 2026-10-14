@@ -484,6 +484,29 @@ describe("group storage", () => {
 	});
 });
 
+describe("groups made for a bake-off", () => {
+	const make = (id: string, bakeoff?: string): FanoutGroup => ({
+		id,
+		root: repo,
+		prompt: "p",
+		createdAt: 1,
+		runs: [{ model: "a/1", branch: "b", path: "/x", instanceId: "i1" }],
+		...(bakeoff ? { bakeoff } : {}),
+	});
+
+	it("are never pushed out by newer groups, and keep their link through storage", async () => {
+		let groups: FanoutGroup[] = [make("bake1", "bk-0123456789ab")];
+		for (let i = 0; i < MAX_GROUPS + 3; i++) groups = withGroup(groups, make(`g${i}`));
+		expect(groups.some(group => group.id === "bake1")).toBe(true);
+		expect(groups.filter(group => group.bakeoff === undefined)).toHaveLength(MAX_GROUPS);
+		const file = path.join(tmp, "fanout-bakeoff.json");
+		await saveGroups(file, groups);
+		expect((await loadGroups(file)).find(group => group.id === "bake1")?.bakeoff).toBe("bk-0123456789ab");
+		await fs.writeFile(file, JSON.stringify({ groups: [{ ...make("x"), bakeoff: "not an id!" }] }));
+		expect((await loadGroups(file))[0]?.bakeoff).toBeUndefined();
+	});
+});
+
 describe("parseModelList", () => {
 	it("reads `omp models --json` and skips unusable selectors", () => {
 		const json = JSON.stringify({
@@ -498,5 +521,16 @@ describe("parseModelList", () => {
 			{ selector: "openai/gpt-5", provider: "openai", name: "gpt-5" },
 		]);
 		expect(parseModelList("nope")).toEqual([]);
+	});
+
+	it("keeps the price per million tokens when both sides are listed", () => {
+		const json = JSON.stringify({
+			models: [
+				{ provider: "a", id: "m", cost: { input: 1.5, output: 7 } },
+				{ provider: "a", id: "half", cost: { input: 1 } },
+				{ provider: "a", id: "none", cost: null },
+			],
+		});
+		expect(parseModelList(json).map(model => model.cost)).toEqual([{ input: 1.5, output: 7 }, undefined, undefined]);
 	});
 });

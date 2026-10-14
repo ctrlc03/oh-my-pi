@@ -22,8 +22,10 @@ export interface BriefPart {
 	/** The pull request's description, when it has one. */
 	body?: string;
 	stat: string;
-	/** The numbered diff from ./companion-quiz-diff. */
+	/** The numbered diff from ./companion-quiz-diff; empty with `noDiff` for a part that has none. */
 	diff: string;
+	/** A part that is not a change (a design document checked against the code): it has no diff to show. */
+	noDiff?: boolean;
 }
 
 export interface QuizBriefInput {
@@ -42,7 +44,7 @@ export interface QuizBriefInput {
 }
 
 /** A code fence longer than any run of backticks in `text`, so quoted code never closes it early. */
-function fenced(text: string, info = ""): string {
+export function fenced(text: string, info = ""): string {
 	let longest = 2;
 	for (const run of text.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
 	const fence = "`".repeat(longest + 1);
@@ -53,7 +55,8 @@ function clip(text: string, max: number): string {
 	return text.length <= max ? text : `${text.slice(0, max)}\n[… cut]`;
 }
 
-function partSection(part: BriefPart, index: number): string {
+/** The brief's section of one part. */
+export function partSection(part: BriefPart, index: number): string {
 	const out = [`## Part ${index + 1}: ${part.title}`, "", part.about];
 	if (part.body && part.body.trim() !== "")
 		out.push(
@@ -62,6 +65,7 @@ function partSection(part: BriefPart, index: number): string {
 			"",
 			fenced(clip(part.body.trim(), MAX_BODY_CHARS), "text"),
 		);
+	if (part.noDiff) return out.join("\n");
 	if (part.stat.trim() !== "")
 		out.push("", "Changed files:", "", fenced(clip(part.stat.trim(), MAX_STAT_CHARS), "text"));
 	out.push("", "The diff:", "", fenced(part.diff.trim() === "" ? "(no textual changes)" : part.diff.trim(), "text"));

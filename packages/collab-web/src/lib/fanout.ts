@@ -40,6 +40,8 @@ export interface FanoutModel {
 	provider: string;
 	/** The vendor agent that runs it; absent for an omp model. */
 	agent?: AgentRef;
+	/** Price in USD per million tokens, when the model list has one: a bake-off's cost estimate reads it. */
+	cost?: { input: number; output: number };
 }
 
 /** Start one prompt on each of `models` (2–4 distinct) in new worktrees of the repository containing `cwd`. */
@@ -81,6 +83,8 @@ export interface FanoutGroup {
 	runs: FanoutRun[];
 	/** instanceId of the run the user kept. */
 	kept?: string;
+	/** The bake-off this group belongs to; its group is kept until the bake-off is deleted. */
+	bakeoff?: string;
 }
 
 /** The group a listed session belongs to, as the `hosts` frame carries it. */

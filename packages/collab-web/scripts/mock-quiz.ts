@@ -302,7 +302,7 @@ function sourceOf(path: string, side: Side): string | undefined {
 }
 
 /** A citation of the first line of `path` holding `token`. */
-function cite(path: string, token: string, side: Side = "head"): BlueprintRef {
+export function cite(path: string, token: string, side: Side = "head"): BlueprintRef {
 	const text = sourceOf(path, side);
 	if (text === undefined) throw new Error(`mock quiz: no file ${path} (${side})`);
 	const index = text.split("\n").findIndex(line => line.includes(token));
@@ -314,7 +314,7 @@ function cite(path: string, token: string, side: Side = "head"): BlueprintRef {
 
 const LANGUAGES: Record<string, string> = { rs: "rust", toml: "ini" };
 
-function excerptOf(ref: BlueprintRef, commit: BlueprintCommit | undefined): BlueprintExcerpt | null {
+export function excerptOf(ref: BlueprintRef, commit: BlueprintCommit | undefined): BlueprintExcerpt | null {
 	const side = ref.side ?? "head";
 	const text = sourceOf(ref.path, side);
 	if (text === undefined) return null;

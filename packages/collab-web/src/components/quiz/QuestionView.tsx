@@ -29,7 +29,7 @@ function onTouchInput(): boolean {
 }
 
 export interface QuestionViewProps {
-	code: Pick<QuizCodeProps, "client" | "cache" | "openInEditor">;
+	code: Pick<QuizCodeProps, "excerpts" | "cache" | "openInEditor">;
 	quiz: Quiz;
 	question: QuizQuestion;
 	position: Position;
@@ -112,11 +112,11 @@ export function QuestionView({
 				</div>
 				<div className="qz-code-area">
 					<h3 className="qz-heading">{question.refs.length === 1 ? "The code" : "The code this is about"}</h3>
-					<QuizCode {...code} quizId={quiz.id} part={question.part} refs={question.refs} />
+					<QuizCode {...code} part={question.part} refs={question.refs} />
 					{verdictRefs.length > 0 && (
 						<>
 							<h3 className="qz-heading">What the explanation points at</h3>
-							<QuizCode {...code} quizId={quiz.id} part={question.part} refs={verdictRefs} />
+							<QuizCode {...code} part={question.part} refs={verdictRefs} />
 						</>
 					)}
 				</div>

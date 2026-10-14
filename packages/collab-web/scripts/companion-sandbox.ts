@@ -49,8 +49,13 @@ const PROTECTED_NAMES = [".git", ".omp", ".claude", ".vscode", ".envrc", ".mcp.j
 /** Under the config dir: a folder only the companion reaches (start prompts wait here for their shell), denied to every sandbox, whose `run/` is otherwise writable. */
 export const COMPANION_RUN_DIR = "run/collab-companion";
 
-/** Under the config dir: where architecture map and quiz runs check the code out; a sandboxed agent works in one of these folders. */
-export const AGENT_WORK_DIRS: readonly string[] = ["cache/blueprints/work", "cache/quizzes/work"];
+/** Under the config dir: where architecture map, quiz, sparring and bake-off runs check the code out; a sandboxed agent works in one of these folders. */
+export const AGENT_WORK_DIRS: readonly string[] = [
+	"cache/blueprints/work",
+	"cache/quizzes/work",
+	"cache/spars/work",
+	"cache/bakeoffs/work",
+];
 
 /** Credential stores under the home directory a sandboxed session may not read. */
 const SECRET_DIRS = [".ssh", ".aws", ".azure", ".gnupg", ".kube", ".docker", ".config/gh", ".config/gcloud"];

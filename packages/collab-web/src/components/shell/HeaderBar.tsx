@@ -66,6 +66,10 @@ export interface HeaderBarProps {
 	onMapChanges: (() => void) | null;
 	/** This repository's quizzes, with *New quiz* on this session's changes; null unless this computer writes quizzes. */
 	onOpenQuizzes: (() => void) | null;
+	/** The sparring list, with *Spar with this change* on this session's changes; null unless this computer can spar. */
+	onOpenSparring: (() => void) | null;
+	/** The bake-off list, with *Bake off these changes* on this session's changes; null unless this computer can run bake-offs. */
+	onOpenBakeoff: (() => void) | null;
 	/** The session's terminal (tmux pane); null unless the paired computer hosts this session. */
 	onOpenPane: (() => void) | null;
 	/** Live screenshot of a dev server the session runs; null unless the paired computer can capture pages. */
@@ -130,6 +134,8 @@ export const HeaderBar = memo(function HeaderBar({
 	onOpenArchitecture,
 	onMapChanges,
 	onOpenQuizzes,
+	onOpenSparring,
+	onOpenBakeoff,
 	onOpenPane,
 	onOpenPreview,
 	onOpenGithub,
@@ -172,6 +178,8 @@ export const HeaderBar = memo(function HeaderBar({
 		timeline: { aria: "Open request timeline", run: onOpenTimeline },
 		usage: { aria: "Open usage", run: onOpenUsage },
 		sessions: { aria: "Open all sessions", run: onOpenSessions },
+		sparring: { aria: "Open sparring", run: onOpenSparring },
+		bakeoff: { aria: "Open bake-offs", run: onOpenBakeoff },
 	};
 	const visible = visibleTopBar(topBar, id => bar[id].run !== null);
 	const drawn = phone ? phoneTopBar(visible) : visible;
@@ -398,6 +406,20 @@ export const HeaderBar = memo(function HeaderBar({
 						(() => {
 							setSheetOpen(false);
 							onOpenQuizzes();
+						})
+					}
+					onOpenSparring={
+						onOpenSparring &&
+						(() => {
+							setSheetOpen(false);
+							onOpenSparring();
+						})
+					}
+					onOpenBakeoff={
+						onOpenBakeoff &&
+						(() => {
+							setSheetOpen(false);
+							onOpenBakeoff();
 						})
 					}
 					onOpenPane={

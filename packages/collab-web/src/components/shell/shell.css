@@ -1941,6 +1941,22 @@
 	gap: 4px;
 }
 
+/* The changes sheet carries up to three actions beside its title; on a narrow screen they drop to a row of their own. */
+.sh-changes-head {
+	flex-wrap: wrap;
+}
+
+.sh-changes-head .sh-sheet-title {
+	flex: 1 1 140px;
+}
+
+.sh-changes-head .sh-sheet-head-actions {
+	flex: 0 1 auto;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	margin-left: auto;
+}
+
 .sh-edit-prompt-note {
 	margin: 0;
 	font-size: 13.5px;

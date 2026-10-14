@@ -14,6 +14,7 @@ import {
 	LoaderCircle,
 	RefreshCw,
 	SendHorizontal,
+	Swords,
 	Wrench,
 	X,
 } from "lucide-react";
@@ -54,6 +55,8 @@ export interface GithubSheetProps {
 	onMapPr?: ((pr: { number: number; title: string }) => void) | null;
 	/** Start a quiz on a pull request; null unless the paired computer can write quizzes. */
 	onQuizPr?: ((pr: { number: number; title: string }) => void) | null;
+	/** Start a sparring session on a pull request; null unless the paired computer can spar. */
+	onSparPr?: ((pr: { number: number; title: string }) => void) | null;
 	onClose(): void;
 }
 
@@ -97,6 +100,7 @@ export function GithubSheet({
 	canFixIt,
 	onMapPr,
 	onQuizPr,
+	onSparPr,
 	onClose,
 }: GithubSheetProps): ReactNode {
 	const [kind, setKind] = useState<GithubKind>("issue");
@@ -136,6 +140,7 @@ export function GithubSheet({
 					canFixIt={canFixIt === true}
 					onMapPr={onMapPr ?? null}
 					onQuizPr={onQuizPr ?? null}
+					onSparPr={onSparPr ?? null}
 					onClose={onClose}
 				/>
 			)}
@@ -260,6 +265,7 @@ interface ItemDetailProps {
 	canFixIt: boolean;
 	onMapPr: ((pr: { number: number; title: string }) => void) | null;
 	onQuizPr: ((pr: { number: number; title: string }) => void) | null;
+	onSparPr: ((pr: { number: number; title: string }) => void) | null;
 	onClose(): void;
 }
 
@@ -274,6 +280,7 @@ function ItemDetail({
 	canFixIt,
 	onMapPr,
 	onQuizPr,
+	onSparPr,
 	onClose,
 }: ItemDetailProps): ReactNode {
 	const load = useCallback(
@@ -373,6 +380,15 @@ function ItemDetail({
 							onClick={() => onQuizPr({ number: head.number, title: head.title })}
 						>
 							<GraduationCap size={14} /> Quiz me
+						</button>
+					)}
+					{item.kind === "pr" && onSparPr !== null && (
+						<button
+							type="button"
+							className="sh-btn"
+							onClick={() => onSparPr({ number: head.number, title: head.title })}
+						>
+							<Swords size={14} /> Spar with this change
 						</button>
 					)}
 					{head.url && (

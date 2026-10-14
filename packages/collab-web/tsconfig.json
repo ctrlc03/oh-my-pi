@@ -12,6 +12,7 @@
 			"@oh-my-pi/omp-stats/trace": ["./scripts/omp-stats.d.ts"],
 			"@oh-my-pi/pi-coding-agent/codemap/index": ["./scripts/omp-codemap.d.ts"],
 			"@oh-my-pi/pi-coding-agent/collab/registry": ["./scripts/omp-registry.d.ts"],
+			"@oh-my-pi/pi-coding-agent/judgment/standalone": ["./scripts/omp-judge.d.ts"],
 			"@oh-my-pi/pi-coding-agent/tools/approval-grants": ["./scripts/omp-grants.d.ts"],
 			"@oh-my-pi/pi-coding-agent/tools/path-rules": ["./scripts/omp-grants.d.ts"],
 			"@oh-my-pi/pi-coding-agent/tools/schedule": ["./scripts/omp-schedule-tool.d.ts"],

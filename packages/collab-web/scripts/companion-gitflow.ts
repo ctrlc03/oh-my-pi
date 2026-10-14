@@ -336,8 +336,8 @@ function defaultBranchName(now: Date, prefix: string): string {
 export const DEFAULT_BRANCH_PREFIX = "omp/";
 
 /**
- * A new branch (default `<prefix><YYYYMMDD-HHmm>-<4 hex>`, prefix `omp/`) from HEAD
- * in its own worktree at `<worktreesRoot>/<repo>/<branch, / as ->`, so a session
+ * A new branch (default `<prefix><YYYYMMDD-HHmm>-<4 hex>`, prefix `omp/`) from HEAD, or from the commit `options.start`
+ * (a full commit id), in its own worktree at `<worktreesRoot>/<repo>/<branch, / as ->`, so a session
  * can work without touching the checkout it started from. A branch name given
  * explicitly is used as written, without the prefix.
  */
@@ -346,7 +346,7 @@ export async function createWorktree(
 	worktreesRoot: string,
 	branch?: string,
 	now = new Date(),
-	options: { branchPrefix?: string } = {},
+	options: { branchPrefix?: string; start?: string } = {},
 ): Promise<{ root: string; path: string; branch: string }> {
 	const root = await requireRoot(cwd);
 	const name = branch?.trim() || defaultBranchName(now, options.branchPrefix ?? DEFAULT_BRANCH_PREFIX);
@@ -358,7 +358,8 @@ export async function createWorktree(
 	const target = path.join(worktreesRoot, path.basename(root), name.replaceAll("/", "-"));
 	if (!isInside(worktreesRoot, target) || target === worktreesRoot) throw new Error("invalid branch name");
 	await fs.mkdir(path.dirname(target), { recursive: true });
-	const added = await git(root, ["worktree", "add", "-b", name, target, "HEAD"], { write: true });
+	if (options.start !== undefined && !/^[0-9a-f]{40}$/.test(options.start)) throw new Error("invalid start commit");
+	const added = await git(root, ["worktree", "add", "-b", name, target, options.start ?? "HEAD"], { write: true });
 	if (added.code !== 0) throw writeFailure(added, "git worktree add");
 	return { root, path: target, branch: name };
 }

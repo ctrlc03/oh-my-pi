@@ -1,0 +1,493 @@
+/* Bake-off: the sheet's list and the new-bake-off form. They sit in the shell's sheet and reuse its controls (sh-btn,
+ * sh-input, sh-field, sh-model). Token colours only: a row's hue is --ok, --warn or --err, always with an icon or a word.
+ * The screen of one bake-off is in bakeoff-result.css. */
+
+/* ---- sheet ---- */
+.bo-sheet-center {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 12px;
+	min-height: 0;
+	max-width: 620px;
+	padding: 8px 2px;
+}
+
+.bo-sheet-alert {
+	padding: 8px 10px;
+	font-size: 13px;
+	color: var(--err);
+	background: color-mix(in srgb, var(--err) 12%, transparent);
+	border: 1px solid color-mix(in srgb, var(--err) 35%, transparent);
+	border-radius: var(--radius);
+}
+
+/* ---- list ---- */
+.bo-home-scroll {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	gap: 14px;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.bo-home-repo {
+	margin-left: 8px;
+	font: 400 12.5px / 1 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+.bo-home-away {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 2px;
+	font-size: 12.5px;
+	color: var(--fg-muted);
+}
+
+.bo-home-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 12px 2px;
+	color: var(--accent);
+}
+
+.bo-home-empty p {
+	margin: 0;
+	max-width: 56ch;
+	line-height: 1.55;
+	color: var(--fg);
+}
+
+.bo-home-empty .bo-home-muted {
+	color: var(--fg-muted);
+}
+
+.bo-home-group {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-bottom: 16px;
+}
+
+.bo-home-group-name {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.bo-home-group-computer {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 11.5px;
+	font-weight: 400;
+	color: var(--fg-faint);
+}
+
+.bo-home-rows {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.bo-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+	padding: 10px 12px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+}
+
+.bo-row-main {
+	display: flex;
+	flex: 1 1 200px;
+	flex-direction: column;
+	gap: 5px;
+	min-width: 0;
+	padding: 0;
+	text-align: left;
+	color: inherit;
+	background: none;
+	border: 0;
+}
+
+.bo-row-main:hover .bo-row-title {
+	color: var(--accent);
+}
+
+.bo-row-title {
+	font-size: 14.5px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.bo-row-sub {
+	font-size: 12.5px;
+	color: var(--fg-muted);
+	overflow-wrap: anywhere;
+}
+
+.bo-row-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 12px;
+	font-size: 12px;
+	color: var(--fg-faint);
+}
+
+.bo-row-rank {
+	font-size: 12.5px;
+	font-weight: 600;
+	color: var(--accent-soft-fg);
+}
+
+.bo-row-note {
+	font-size: 12.5px;
+	color: var(--warn);
+	overflow-wrap: anywhere;
+}
+
+.bo-row-progress,
+.bo-row-failed {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12.5px;
+	color: var(--fg-muted);
+}
+
+.bo-row-failed,
+.bo-row-error {
+	color: var(--err);
+}
+
+.bo-row-error {
+	flex-basis: 100%;
+	font-size: 12.5px;
+}
+
+.bo-row-actions {
+	display: flex;
+	flex: none;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin-left: auto;
+}
+
+.bo-row-tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 0 8px;
+	font: 600 11px / 18px var(--font-ui);
+	color: var(--fg-muted);
+	background: var(--hover);
+	border-radius: 999px;
+}
+
+.bo-row-tag[data-kind="ready"] {
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft);
+}
+
+.bo-row-tag[data-kind="running"] {
+	color: var(--warn);
+	background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+
+.bo-row-tag[data-kind="failed"] {
+	color: var(--err);
+	background: color-mix(in srgb, var(--err) 14%, transparent);
+}
+
+.bo-danger {
+	color: var(--err);
+	border-color: color-mix(in srgb, var(--err) 50%, transparent);
+}
+
+/* ---- form ---- */
+.bo-form {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	gap: 12px;
+	min-height: 0;
+}
+
+.bo-form-title {
+	margin: 0;
+	font-size: 18px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.bo-form-body {
+	display: flex;
+	flex: 0 1 auto;
+	flex-direction: column;
+	gap: 16px;
+	min-height: 0;
+	max-width: 640px;
+	overflow-y: auto;
+}
+
+/* A tall list scrolls the form; it does not squeeze the fields. */
+.bo-form-body > * {
+	flex: none;
+}
+
+.bo-form-actions {
+	display: flex;
+	flex: none;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	justify-content: flex-start;
+}
+
+.bo-form-check {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	min-height: 32px;
+	padding: 4px 0;
+	font-size: 13.5px;
+	line-height: 1.45;
+}
+
+.bo-form-check input {
+	flex: none;
+	width: 16px;
+	height: 16px;
+	margin: 2px 0 0;
+	accent-color: var(--accent);
+}
+
+.bo-form-limit {
+	width: 8em;
+}
+
+.sh-input.bo-form-doc,
+.sh-input.bo-form-text {
+	height: auto;
+	padding: 9px 11px;
+	resize: vertical;
+}
+
+.sh-input.bo-form-doc {
+	min-height: 160px;
+	font-family: var(--font-mono);
+	font-size: 12.5px;
+	line-height: 1.5;
+}
+
+.sh-input.bo-form-text {
+	min-height: 72px;
+	line-height: 1.5;
+}
+
+.bo-form-over {
+	color: var(--err);
+}
+
+.bo-form-why {
+	color: var(--warn);
+}
+
+/* What matters: a row per preset with its hint and a star, then what the person wrote. */
+.bo-matters {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.bo-matters-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.bo-matters-label {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.bo-matters-custom {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: 4px 0;
+	font-size: 13.5px;
+	line-height: 1.45;
+	overflow-wrap: anywhere;
+}
+
+.bo-matters-star {
+	flex: none;
+}
+
+.bo-matters-star[aria-pressed="true"] {
+	color: var(--warn);
+}
+
+.bo-matters-add {
+	display: flex;
+	gap: 8px;
+}
+
+.bo-matters-add .sh-input {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+/* Challengers and the reviewer: chosen models as chips over the filterable list. */
+.bo-model-chosen {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.bo-model-chip {
+	gap: 5px;
+	height: 26px;
+	font-family: var(--font-mono);
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft);
+	border-color: transparent;
+	cursor: pointer;
+}
+
+.bo-model-list {
+	display: flex;
+	flex-direction: column;
+	max-height: 220px;
+	margin: 0;
+	padding: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	list-style: none;
+}
+
+.bo-model-list .sh-model {
+	width: 100%;
+	min-height: 40px;
+}
+
+.bo-model-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.bo-model-agent {
+	padding: 8px 10px 4px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--fg-muted);
+	background: var(--bg-raised);
+}
+
+/* Second opinion. */
+.bo-judge-retry {
+	align-self: flex-start;
+}
+
+/* Tests and speed: a command to pick, with what it runs shown under it. */
+.bo-pick {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.bo-pick-detail {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 8px 10px;
+	font-size: 12px;
+	color: var(--fg-muted);
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.bo-pick-detail pre {
+	max-height: 160px;
+	margin: 0;
+	overflow: auto;
+	font: 12px / 1.5 var(--font-mono);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+/* ---- finger-sized targets ---- */
+@media (any-pointer: coarse) {
+	.bo-form-body .sh-input {
+		min-height: 44px;
+		font-size: 16px;
+	}
+
+	.bo-form-check {
+		min-height: 44px;
+	}
+
+	.bo-form-check input {
+		width: 22px;
+		height: 22px;
+	}
+
+	.bo-matters-star,
+	.bo-matters-row .sh-btn-icon {
+		min-width: 44px;
+		min-height: 44px;
+	}
+
+	.bo-matters-add .sh-btn,
+	.bo-form-actions .sh-btn {
+		min-height: 44px;
+	}
+
+	.bo-model-list .sh-model {
+		min-height: 44px;
+	}
+
+	.bo-model-chip {
+		height: 36px;
+	}
+}
+
+@media (max-width: 640px) {
+	.bo-form-actions > .sh-btn {
+		flex: 1 1 auto;
+	}
+
+	.bo-row-actions {
+		margin-left: 0;
+	}
+}

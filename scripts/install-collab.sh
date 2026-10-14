@@ -591,7 +591,10 @@ desktop_default_dir() { printf '%s' "${OMP_COLLAB_DESKTOP_DIR:-$HOME/Application
 # plist_value APP KEY: a value of the app's Info.plist (empty when unreadable).
 plist_value() { /usr/bin/plutil -extract "$2" raw -o - "$1/Contents/Info.plist" 2>/dev/null || true; }
 
-desktop_running() { pgrep -x "omp collab" >/dev/null 2>&1; }
+# desktop_running APP: the app at APP is running (its own executable, not any copy elsewhere).
+desktop_running() {
+	ps -axo command= 2>/dev/null | awk -v exe="$1/Contents/MacOS/${DESKTOP_APP_NAME%.app}" 'index($0, exe) == 1 { found = 1 } END { exit !found }'
+}
 
 # True on a Mac with a desktop session: not over ssh, and launchd says this is a GUI (Aqua) session.
 has_desktop_session() {
@@ -672,7 +675,7 @@ install_desktop() {
 		DESKTOP_READY=1
 		return 0
 	fi
-	if [ -d "$_dest" ] && desktop_running; then
+	if [ -d "$_dest" ] && desktop_running "$_dest"; then
 		warn "omp collab is running, so $_dest was not replaced; quit it and run the installer again to update"
 		DESKTOP_READY=1
 		return 0
@@ -735,7 +738,7 @@ uninstall_desktop() {
 		warn "$_app is not the omp collab desktop app; leaving it alone"
 		return 0
 	fi
-	if desktop_running; then
+	if desktop_running "$_app"; then
 		warn "omp collab is running; quit it and run the uninstall again to delete $_app"
 		DESKTOP_KEPT="$_app"
 	elif ask "Delete the desktop app $_app?" n; then

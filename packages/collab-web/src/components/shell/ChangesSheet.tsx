@@ -1,4 +1,4 @@
-import { ChevronRight, GraduationCap, X } from "lucide-react";
+import { ChevronRight, GraduationCap, Swords, Trophy, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import type { FileChange } from "../../lib/changes";
@@ -42,6 +42,10 @@ export interface ChangesSheetProps {
 	onSendToAgent: ((text: string) => void) | null;
 	/** Start a quiz on this session's changes; null unless the paired computer can write quizzes. */
 	onQuiz?: (() => void) | null;
+	/** Start a sparring session on this session's changes; null unless the paired computer can spar. */
+	onSpar?: (() => void) | null;
+	/** Start a bake-off on this session's changes; null unless the paired computer can run bake-offs. */
+	onBakeoff?: (() => void) | null;
 	onClose(): void;
 	/** Open on the branch review (commit, push, pull request), e.g. after keeping a model comparison's winner. */
 	initialTab?: "branch";
@@ -60,6 +64,8 @@ export function ChangesSheet({
 	sessionId,
 	onSendToAgent,
 	onQuiz,
+	onSpar,
+	onBakeoff,
 	onClose,
 	initialTab,
 }: ChangesSheetProps): ReactNode {
@@ -89,7 +95,7 @@ export function ChangesSheet({
 	};
 	return (
 		<Sheet label="changes" size="wide" onClose={onClose}>
-			<div className="sh-sheet-head">
+			<div className="sh-sheet-head sh-changes-head">
 				<div className="sh-sheet-title">
 					{tree === null
 						? `${changes.length} file${changes.length === 1 ? "" : "s"} changed`
@@ -103,6 +109,16 @@ export function ChangesSheet({
 					{onQuiz && (
 						<button type="button" className="sh-btn" onClick={onQuiz}>
 							<GraduationCap size={14} /> Quiz me
+						</button>
+					)}
+					{onSpar && (
+						<button type="button" className="sh-btn" onClick={onSpar}>
+							<Swords size={14} /> Spar with this change
+						</button>
+					)}
+					{onBakeoff && (
+						<button type="button" className="sh-btn" onClick={onBakeoff}>
+							<Trophy size={14} /> Bake off this change
 						</button>
 					)}
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">

@@ -16,6 +16,7 @@ import {
 	RefreshCw,
 	Save,
 	TriangleAlert,
+	Swords,
 	X,
 } from "lucide-react";
 import type { KeyboardEvent, ReactNode, RefObject } from "react";
@@ -54,6 +55,8 @@ export interface IdeSheetProps {
 	onSendToAgent: ((text: string) => void) | null;
 	/** Docking the editor beside the transcript is possible: the header offers the toggle. null: it is always a sheet. */
 	dock?: { docked: boolean; onDockedChange(docked: boolean): void } | null;
+	/** Spar with a design: the file's path relative to the repository (markdown and text files only). null: not offered. */
+	onSparDesign?: ((path: string) => void) | null;
 	onClose(): void;
 }
 
@@ -63,6 +66,8 @@ const POLL_MS = 2500;
 const MAX_POLLED = 20;
 /** Quick-open rows shown. */
 const QUICK_OPEN_ROWS = 40;
+/** Files a design is likely to be written in: the header offers sparring with them. */
+const DESIGN_FILE = /\.(md|mdx|markdown|txt|rst|adoc)$/i;
 
 type Conflict = { kind: "changed"; version: string } | { kind: "gone" };
 
@@ -158,6 +163,7 @@ export function IdeSheet({
 	edits,
 	onSendToAgent,
 	dock,
+	onSparDesign,
 	onClose,
 }: IdeSheetProps): ReactNode {
 	const mem = memoryFor(instanceId);
@@ -554,6 +560,17 @@ export function IdeSheet({
 							title="Ask the agent about the selection"
 						>
 							<MessageSquarePlus size={16} />
+						</button>
+					)}
+					{onSparDesign != null && active !== undefined && DESIGN_FILE.test(active.path) && (
+						<button
+							type="button"
+							className="sh-btn"
+							onClick={() => onSparDesign(active.path)}
+							aria-label="Spar with this design"
+						>
+							<Swords size={14} />
+							<span>Spar</span>
 						</button>
 					)}
 					{active !== undefined && (

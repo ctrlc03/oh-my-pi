@@ -40,6 +40,8 @@ import {
 	Play,
 	ChevronsRight,
 	ChevronsLeft,
+	Swords,
+	Trophy,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useMemo, useState } from "react";
@@ -82,6 +84,10 @@ export interface PaletteActions {
 	mapChanges: (() => void) | null;
 	quizChanges: (() => void) | null;
 	openQuizzes: (() => void) | null;
+	sparChanges: (() => void) | null;
+	openSparring: (() => void) | null;
+	bakeoffChanges: (() => void) | null;
+	openBakeoffs: (() => void) | null;
 	openPane: (() => void) | null;
 	openPreview: (() => void) | null;
 	openGithub: (() => void) | null;
@@ -330,6 +336,38 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 				["quiz", "test", "understand", "questions", "learn"],
 				GraduationCap,
 				actions.openQuizzes,
+			],
+			[
+				"app:spar-changes",
+				"Spar with this change",
+				"Review",
+				["spar", "argue", "defend", "challenge", "decisions", "what changed"],
+				Swords,
+				actions.sparChanges,
+			],
+			[
+				"app:sparring",
+				"Sparring sessions of this repository",
+				"Review",
+				["spar", "argue", "defend", "challenge", "design"],
+				Swords,
+				actions.openSparring,
+			],
+			[
+				"app:bakeoff-changes",
+				"Bake off this session's changes",
+				"Review",
+				["bake-off", "bakeoff", "compare", "models", "redo", "better", "what changed"],
+				Trophy,
+				actions.bakeoffChanges,
+			],
+			[
+				"app:bakeoffs",
+				"Bake-offs of this repository",
+				"Review",
+				["bake-off", "bakeoff", "compare", "models", "design", "winner"],
+				Trophy,
+				actions.openBakeoffs,
 			],
 			["app:pane", "Watch the terminal", "Computer", ["tmux", "screen", "pane"], SquareTerminal, actions.openPane],
 			["app:preview", "Preview the running app", "Computer", ["screenshot", "dev server"], Eye, actions.openPreview],

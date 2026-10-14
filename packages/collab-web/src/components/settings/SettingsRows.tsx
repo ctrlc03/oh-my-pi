@@ -2,7 +2,7 @@ import { Laptop, RefreshCw, Smartphone } from "lucide-react";
 import type { ReactNode } from "react";
 import { useId } from "react";
 import type { CompanionClient } from "../../lib/companion";
-import type { CompanionHandle } from "../../lib/use-companion";
+import type { ComputerHandle } from "../../lib/computers";
 
 /** Where a setting is kept: this browser, or the paired computer. */
 export function Where({ machine }: { machine: string | null }): ReactNode {
@@ -15,25 +15,34 @@ export function Where({ machine }: { machine: string | null }): ReactNode {
 	);
 }
 
-/** A titled run of rows; `where` says where the group's settings are kept when the section's own header does not. */
+/**
+ * A titled run of rows; `where` says where the group's settings are kept when the section's own header does not.
+ * `nested` is a group inside another (one computer's block holds its own groups).
+ */
 export function SettingsGroup({
 	title,
 	where,
+	nested = false,
 	children,
 }: {
 	title?: string;
 	where?: ReactNode;
+	nested?: boolean;
 	children: ReactNode;
 }): ReactNode {
 	const titleId = useId();
+	const Heading = nested ? "h4" : "h3";
 	return (
-		<section className="sh-set-group" aria-labelledby={title === undefined ? undefined : titleId}>
+		<section
+			className={nested ? "sh-set-group sh-set-group-nested" : "sh-set-group"}
+			aria-labelledby={title === undefined ? undefined : titleId}
+		>
 			{(title !== undefined || where !== undefined) && (
 				<div className="sh-set-group-head">
 					{title !== undefined && (
-						<h3 id={titleId} className="sh-set-group-title">
+						<Heading id={titleId} className="sh-set-group-title">
 							{title}
-						</h3>
+						</Heading>
 					)}
 					{where}
 				</div>
@@ -95,22 +104,27 @@ export function Choice<T extends string | number | boolean>({
 	);
 }
 
-/** Content that needs the computer, given its client; while the computer is unreachable the section says so instead. */
+/**
+ * Content that needs one computer, given its client; while that computer is unreachable the section says so
+ * instead. `named` (several computers are paired) says which computer in that text.
+ */
 export function ComputerGate({
-	companion,
+	computer,
+	named = false,
 	children,
 }: {
-	companion: CompanionHandle;
+	computer: ComputerHandle;
+	named?: boolean;
 	children(client: CompanionClient): ReactNode;
 }): ReactNode {
-	const { snap, client } = companion;
+	const { snap, client } = computer;
 	if (snap.phase === "live" && client !== null) return children(client);
 	return (
 		<div className="sh-companion-offline">
 			<span>
 				{snap.phase === "connecting"
-					? "Connecting to your computer…"
-					: (snap.error ?? "Your computer is unreachable right now.")}
+					? `Connecting to ${named ? computer.name : "your computer"}…`
+					: (snap.error ?? `${named ? computer.name : "Your computer"} is unreachable right now.`)}
 			</span>
 			{client !== null && snap.phase !== "connecting" && (
 				<button type="button" className="sh-btn" onClick={() => client.connect()}>

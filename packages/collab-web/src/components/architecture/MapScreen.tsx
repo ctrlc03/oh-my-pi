@@ -23,8 +23,12 @@ export interface MapScreenProps {
 	onClose(): void;
 }
 
-/** Where each map was last looked at, so closing the sheet and coming back resumes. */
+/** Where each map was last looked at (by computer and map id: ids are only unique per computer), so closing the sheet and coming back resumes. */
 const lastLocation = new Map<string, MapLocation>();
+
+function locationKey(client: CompanionClient, mapId: string): string {
+	return `${client.computerId}:${mapId}`;
+}
 
 /** The app's highlighter over an excerpt's lines; undefined where the file type has no grammar. */
 async function highlightExcerpt(excerpt: { path: string; lines: string[] }): Promise<string | undefined> {
@@ -138,14 +142,14 @@ function LoadedMap({
 	onClose(): void;
 }): ReactNode {
 	const [location, setLocation] = useState<MapLocation>(
-		() => lastLocation.get(map.id) ?? { diagram: rootDiagram(map)?.id ?? "" },
+		() => lastLocation.get(locationKey(client, map.id)) ?? { diagram: rootDiagram(map)?.id ?? "" },
 	);
 	const move = useCallback(
 		(next: MapLocation): void => {
-			lastLocation.set(map.id, next);
+			lastLocation.set(locationKey(client, map.id), next);
 			setLocation(next);
 		},
-		[map.id],
+		[client, map.id],
 	);
 	const source = useMemo<MapSource>(
 		() => ({

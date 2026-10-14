@@ -167,21 +167,21 @@ function FixItBody({
 	const openSession = (chosen: CiLogSession): Promise<void> =>
 		run(async () => {
 			if (chosen.host) {
-				setOpenIntent(chosen.instanceId, { draft: draft(chosen.branch) });
+				setOpenIntent(client.computerId, chosen.instanceId, { draft: draft(chosen.branch) });
 				await onOpenHost(chosen.instanceId);
 				return;
 			}
 			const link = extractLink(await client.shareSession(chosen.instanceId));
 			if (!link) throw new Error("the computer returned an unreadable link");
-			setOpenIntent(chosen.instanceId, { draft: draft(chosen.branch) });
-			applyOpenIntent(chosen.instanceId, link);
+			setOpenIntent(client.computerId, chosen.instanceId, { draft: draft(chosen.branch) });
+			applyOpenIntent(client.computerId, chosen.instanceId, link);
 			onOpenLink(link);
 		});
 
 	const startIn = (chosen: CiLogFolder): Promise<void> =>
 		run(async () => {
 			const instanceId = await client.startSession(chosen.cwd);
-			setOpenIntent(instanceId, { draft: draft(chosen.branch) });
+			setOpenIntent(client.computerId, instanceId, { draft: draft(chosen.branch) });
 			await onOpenHost(instanceId);
 		});
 

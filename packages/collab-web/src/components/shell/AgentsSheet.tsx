@@ -26,13 +26,15 @@ import {
 	newEnvRow,
 } from "../../lib/agents";
 import type { CompanionAgent, CompanionClient } from "../../lib/companion";
+import { computerById, type ComputerHandle, unavailableReason } from "../../lib/computers";
 import { useRequest } from "../../lib/use-request";
+import { ComputerPicker } from "./ComputerPicker";
 import { Sheet } from "./Sheet";
 import "./agents.css";
 import "./review.css";
 
 export interface AgentsSheetProps {
-	client: CompanionClient;
+	computers: readonly ComputerHandle[];
 	onClose(): void;
 }
 
@@ -49,10 +51,58 @@ const READINESS_CLASS: Record<AgentReadiness, string> = {
 };
 
 /**
- * Other vendors' coding agents on the paired computer: what is installed and signed in, installing or updating the
- * adapters the companion manages, the commands to run for the rest, and custom ACP commands.
+ * Other vendors' coding agents on a paired computer: what is installed and signed in, installing or updating the
+ * adapters the companion manages, the commands to run for the rest, and custom ACP commands. With several
+ * computers, one is picked at the top (each has its own agents).
  */
-export function AgentsSheet({ client, onClose }: AgentsSheetProps): ReactNode {
+export function AgentsSheet({ computers, onClose }: AgentsSheetProps): ReactNode {
+	const [picked, setPicked] = useState<string | null>(null);
+	const selected =
+		computerById(computers, picked) ??
+		computers.find(computer => unavailableReason(computer, "foreign") === null) ??
+		computers[0] ??
+		null;
+	/** Where the agents run, in the hints: the computer's name once there is a choice. */
+	const where = computers.length > 1 && selected !== null ? selected.name : "your computer";
+	const picker = (
+		<ComputerPicker computers={computers} feature="foreign" value={selected?.id ?? null} onChange={setPicked} />
+	);
+	const reason = selected === null ? "No computer is paired." : unavailableReason(selected, "foreign");
+	return (
+		<Sheet label="Agents" onClose={onClose}>
+			{selected !== null && selected.client !== null && reason === null ? (
+				<AgentsPanel key={selected.id} client={selected.client} where={where} picker={picker} onClose={onClose} />
+			) : (
+				<>
+					<div className="sh-sheet-head">
+						<div className="sh-sheet-title">Agents</div>
+						<span className="sh-agents-head-actions">
+							<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
+								<X size={16} />
+							</button>
+						</span>
+					</div>
+					{picker}
+					<div className="sh-companion-offline">
+						<span>{reason ?? "This computer is not connected."}</span>
+					</div>
+				</>
+			)}
+		</Sheet>
+	);
+}
+
+interface AgentsPanelProps {
+	client: CompanionClient;
+	/** The computer's name for the hints, or "your computer" when it is the only one. */
+	where: string;
+	/** The computer picker, shown under the title when there are several computers. */
+	picker: ReactNode;
+	onClose(): void;
+}
+
+/** The agents of one computer, under the sheet's title. */
+function AgentsPanel({ client, where, picker, onClose }: AgentsPanelProps): ReactNode {
 	const load = useCallback(() => client.requestAgents(), [client]);
 	const { state } = useRequest(load);
 	const [agents, setAgents] = useState<CompanionAgent[] | null>(null);
@@ -95,7 +145,7 @@ export function AgentsSheet({ client, onClose }: AgentsSheetProps): ReactNode {
 	const custom = agents?.filter(agent => agent.kind === "custom") ?? [];
 
 	return (
-		<Sheet label="Agents" onClose={onClose}>
+		<>
 			<div className="sh-sheet-head">
 				{editing !== null && (
 					<button
@@ -130,6 +180,7 @@ export function AgentsSheet({ client, onClose }: AgentsSheetProps): ReactNode {
 					</button>
 				</span>
 			</div>
+			{editing === null && picker}
 			{error && <div className="sh-connect-error">{error}</div>}
 			{editing !== null ? (
 				<CustomAgentEditor
@@ -155,14 +206,15 @@ export function AgentsSheet({ client, onClose }: AgentsSheetProps): ReactNode {
 			) : (
 				<>
 					<div className="sh-field-hint">
-						Coding agents your computer can run beside omp. Each runs as its own session on your computer, with
-						its own sign-in.
+						Coding agents {where} can run beside omp. Each runs as its own session on {where}, with its own
+						sign-in.
 					</div>
 					<ul className="sh-agents-list" aria-label="Agents">
 						{builtin.map(agent => (
 							<AgentRow
 								key={agent.id}
 								agent={agent}
+								where={where}
 								busy={busy}
 								onInstall={() => void act(agent.id, () => client.installAgent(agent.id))}
 							/>
@@ -192,6 +244,7 @@ export function AgentsSheet({ client, onClose }: AgentsSheetProps): ReactNode {
 								<AgentRow
 									key={agent.id}
 									agent={agent}
+									where={where}
 									busy={busy}
 									deleting={deleting === agent.id}
 									onEdit={() => {
@@ -211,12 +264,14 @@ export function AgentsSheet({ client, onClose }: AgentsSheetProps): ReactNode {
 					)}
 				</>
 			)}
-		</Sheet>
+		</>
 	);
 }
 
 interface AgentRowProps {
 	agent: CompanionAgent;
+	/** The computer the agents run on, as the hints name it. */
+	where: string;
 	/** Id of the agent being worked on (any value disables every action). */
 	busy: string | null;
 	deleting?: boolean;
@@ -229,6 +284,7 @@ interface AgentRowProps {
 
 function AgentRow({
 	agent,
+	where,
 	busy,
 	deleting = false,
 	onInstall,
@@ -283,10 +339,10 @@ function AgentRow({
 				<code className="sh-agent-argv">{commandLine(agent.command)}</code>
 			)}
 			{!agent.installed && agent.kind === "builtin" && !agent.installable && agent.installCommand !== null && (
-				<CopyCommand label="Install on your computer" command={agent.installCommand} />
+				<CopyCommand label={`Install on ${where}`} command={agent.installCommand} />
 			)}
 			{agent.installed && agent.auth === "needed" && agent.loginCommand !== null && (
-				<CopyCommand label="Sign in on your computer" command={agent.loginCommand} />
+				<CopyCommand label={`Sign in on ${where}`} command={agent.loginCommand} />
 			)}
 			{deleting && (
 				<div className="sh-review-confirm" role="group" aria-label={`Delete ${agent.name}`}>
@@ -501,16 +557,18 @@ function CustomAgentEditor({ draft, saving, onChange, onSubmit, onCancel }: Cust
 	);
 }
 
-/** The button that opens the agents screen. */
+/** The button that opens the agents screen; absent while no computer can run other vendors' agents. */
 export function AgentsEntry({
-	client,
+	computers,
 	variant,
 }: {
-	client: CompanionClient;
+	computers: readonly ComputerHandle[];
 	/** `card`: labelled button in the start screen's action row; `icon`: sidebar footer button. */
 	variant: "card" | "icon";
 }): ReactNode {
 	const [open, setOpen] = useState(false);
+	// A sheet already open stays when the last computer drops: it lists why.
+	if (!open && !computers.some(computer => unavailableReason(computer, "foreign") === null)) return null;
 	return (
 		<>
 			<button
@@ -522,7 +580,7 @@ export function AgentsEntry({
 				<Bot size={15} />
 				{variant === "card" && " Agents"}
 			</button>
-			{open && <AgentsSheet client={client} onClose={() => setOpen(false)} />}
+			{open && <AgentsSheet computers={computers} onClose={() => setOpen(false)} />}
 		</>
 	);
 }

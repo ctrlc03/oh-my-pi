@@ -5,6 +5,12 @@
  * browser — two tabs pair with it and see each other's changes.
  *
  *   bun scripts/mock-companion.ts [--port 7468] [--web http://localhost:3000/] [--dir /tmp/mock-companion] [--session-link <room link>]
+ *                                 [--machine <name>] [--hosts 1,2,3]
+ *
+ * `--machine` names the computer and gives its sessions ids of their own (the way two real computers never share a session id,
+ * though their processes may share an instance id: `inst-1` here and there); `--hosts` lists only those fixture sessions
+ * (without it, all of them and the vendor agents' too). The room and its key are kept in `<--dir>/room.json`, so a restarted
+ * mock is the same computer to the devices paired with it.
  *
  * Prints a pairing link (`#pair:…`); open it in as many browsers or tabs as you like (each
  * is a new device). It never touches ~/.omp, tmux, or GitHub: listing and pull request
@@ -51,15 +57,25 @@ const flag = (name: string, fallback: string): string => {
 const dir = flag("--dir", await fs.mkdtemp(path.join(os.tmpdir(), "mock-companion-")));
 await fs.mkdir(dir, { recursive: true });
 const webUrl = flag("--web", "http://localhost:3000/");
+const machine = flag("--machine", "");
+const only = flag("--hosts", "")
+	.split(",")
+	.filter(n => n !== "")
+	.map(Number);
 const relay = startLocalRelay(Number(flag("--port", "7468")));
-const rawKey = generateRoomKey();
-const roomLink = formatCollabLink(relay.url, generateRoomId(), rawKey);
+const roomFile = path.join(dir, "room.json");
+const kept = (await Bun.file(roomFile)
+	.json()
+	.catch(() => null)) as { link?: string; key?: string } | null;
+const rawKey = kept?.key ? Uint8Array.from(atob(kept.key), c => c.charCodeAt(0)) : generateRoomKey();
+const roomLink = kept?.link ?? formatCollabLink(relay.url, generateRoomId(), rawKey);
+await Bun.write(roomFile, JSON.stringify({ link: roomLink, key: btoa(String.fromCharCode(...rawKey)) }));
 
 const now = Date.now();
 const HOUR = 60 * 60 * 1000;
 const host = (n: number, name: string, over: Partial<CompanionHost> = {}): CompanionHost => ({
 	instanceId: `inst-${n}`,
-	sessionId: `session-${n}`,
+	sessionId: machine ? `${machine}-session-${n}` : `session-${n}`,
 	sessionName: name,
 	cwd: `/work/${name}`,
 	model: "anthropic/claude-sonnet-5-5",
@@ -81,12 +97,12 @@ const hosts: CompanionHost[] = [
 	host(9, "perf-profiling"),
 	host(10, "i18n-strings"),
 	host(11, "ci-cache"),
-	...mockForeignHosts(now),
-];
+].filter(h => only.length === 0 || only.includes(Number(h.instanceId.slice("inst-".length))));
+if (only.length === 0) hosts.push(...mockForeignHosts(now));
 const idle: CompanionIdleSession[] = [
 	{
 		instanceId: "inst-6",
-		sessionId: "session-6",
+		sessionId: machine ? `${machine}-session-6` : "session-6",
 		sessionName: "old-experiment",
 		cwd: "/work/old-experiment",
 		model: null,
@@ -222,7 +238,7 @@ const blueprint = createMockBlueprint({
 function hostsFrame(): CompanionReply {
 	return {
 		t: "hosts",
-		machine: "mock-computer",
+		machine: machine || "mock-computer",
 		hosts: fanout.annotate(hosts),
 		...fanout.capabilities,
 		...starts.capabilities,

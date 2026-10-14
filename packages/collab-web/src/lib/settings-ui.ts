@@ -14,6 +14,7 @@ const LABELS = {
 	notifications: "Notifications",
 	sessions: "Sessions",
 	keyboard: "Keyboard",
+	computers: "Computers",
 	devices: "Devices",
 	about: "About & maintenance",
 } as const;
@@ -30,18 +31,19 @@ export function isSettingsSection(value: unknown): value is SettingsSection {
 	return typeof value === "string" && Object.hasOwn(LABELS, value);
 }
 
-/** Sections that act on the paired computer (or, for notifications, need it to send them). Sessions works without one: auto-settle is kept on this device. */
+/** Sections that act on the paired computers (or, for notifications, need one to send them). Sessions works without one: auto-settle is kept on this device. Computers is where the first one is added. */
 const NEEDS_COMPUTER: Record<SettingsSection, boolean> = {
 	appearance: false,
 	messages: false,
 	notifications: true,
 	sessions: false,
 	keyboard: false,
+	computers: false,
 	devices: true,
 	about: false,
 };
 
-/** The sections to list: the ones that need the paired computer only while one is paired. */
+/** The sections to list: the ones that need a paired computer only while at least one is paired. */
 export function visibleSettingsSections(computer: boolean): readonly SettingsSection[] {
 	return SETTINGS_SECTIONS.filter(section => computer || !NEEDS_COMPUTER[section]);
 }

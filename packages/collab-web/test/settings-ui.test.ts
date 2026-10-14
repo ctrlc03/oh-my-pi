@@ -18,6 +18,7 @@ describe("settings sections", () => {
 			"notifications",
 			"sessions",
 			"keyboard",
+			"computers",
 			"devices",
 			"about",
 		]);
@@ -25,7 +26,14 @@ describe("settings sections", () => {
 	});
 
 	it("hides the computer's sections until a computer is paired", () => {
-		expect(visibleSettingsSections(false)).toEqual(["appearance", "messages", "sessions", "keyboard", "about"]);
+		expect(visibleSettingsSections(false)).toEqual([
+			"appearance",
+			"messages",
+			"sessions",
+			"keyboard",
+			"computers",
+			"about",
+		]);
 		expect(visibleSettingsSections(true)).toEqual(SETTINGS_SECTIONS);
 	});
 

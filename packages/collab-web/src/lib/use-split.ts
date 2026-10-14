@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMedia } from "../components/codemap/shared";
 import { GuestClient } from "./client";
-import type { CompanionClient } from "./companion";
+import { computerById, type ComputerHandle } from "./computers";
 import { extractLink, forgetRoom, moveRoom, type RecentRoom, roomIdOf } from "./rooms";
 import { suspendsHiddenPages } from "./socket";
 import { readJson, writeJson } from "./storage";
@@ -107,8 +107,8 @@ export interface BesideControl {
 	pane: BesidePane | null;
 	/** Open `link` beside; returns a readable refusal, or null. */
 	openLink(link: string): string | null;
-	/** Fetch a link for a companion host and open it beside; rejects with a readable message. */
-	openHost(instanceId: string): Promise<void>;
+	/** Fetch a link for a host of a computer (instance ids are only unique per computer) and open it beside; rejects with a readable message. */
+	openHost(computerId: string, instanceId: string): Promise<void>;
 	/** Reconnect the pane to its room with a fresh client. */
 	rejoin(): void;
 	/** The host replaced the pane's room: follow it, carrying the draft and queued prompts. */
@@ -125,7 +125,7 @@ export interface BesideControl {
  */
 export function useBesideSession(
 	mainLink: string | null,
-	companionClient: CompanionClient | null,
+	computers: readonly ComputerHandle[],
 	displayName: () => string,
 	onRooms: (rooms: RecentRoom[]) => void,
 ): BesideControl {
@@ -172,14 +172,15 @@ export function useBesideSession(
 	);
 
 	const openHost = useCallback(
-		async (instanceId: string): Promise<void> => {
-			if (companionClient === null) throw new Error("no paired computer");
-			const link = extractLink(await companionClient.requestLink(instanceId));
+		async (computerId: string, instanceId: string): Promise<void> => {
+			const client = computerById(computers, computerId)?.client ?? null;
+			if (client === null) throw new Error("that computer is not paired");
+			const link = extractLink(await client.requestLink(instanceId));
 			if (link === null) throw new Error("the computer returned an unreadable link");
 			const refusal = openLink(link);
 			if (refusal !== null) throw new Error(refusal);
 		},
-		[companionClient, openLink],
+		[computers, openLink],
 	);
 
 	const rejoin = useCallback((): void => {

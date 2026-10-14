@@ -220,8 +220,64 @@
 	max-width: 100%;
 }
 
+/* A computer's own groups, inside its block when several computers are paired. */
+.sh-set-group-nested {
+	padding-left: 12px;
+	border-left: 2px solid var(--border);
+}
+
+/* The Computers section: one row per paired computer, and the add form under it. */
+.sh-set-computers {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-set-computer {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 10px 0;
+	border-bottom: 1px solid var(--border);
+}
+
+.sh-set-computer:last-child {
+	border-bottom: 0;
+}
+
+.sh-set-computer-main {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.sh-set-computer-text {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.sh-set-computer-name {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 14px;
+	overflow-wrap: anywhere;
+}
+
+.sh-add-computer {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
 @media (any-pointer: coarse) {
-	.sh-set-item {
+	.sh-set-item,
+	.sh-set-computer .sh-btn {
 		min-height: 44px;
 	}
 }

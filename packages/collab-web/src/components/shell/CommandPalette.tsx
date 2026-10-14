@@ -1,10 +1,12 @@
 import type { CollabCommand, SessionEntry } from "@oh-my-pi/pi-wire";
 import { Laptop, LoaderCircle, type LucideIcon, MessageSquareText, Search, Slash, Zap } from "lucide-react";
 import type { KeyboardEvent, ReactNode } from "react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { AgentRef, CompanionClient, SessionOverview, SessionSearchHit } from "../../lib/companion";
+import { computerById, type ComputerHandle } from "../../lib/computers";
 import { highlightRuns } from "../../lib/fuzzy";
 import { relTime, shortenPath } from "../../lib/format";
+import { hostKey } from "../../lib/inbox";
 import { setJumpIntent } from "../../lib/jump-intent";
 import {
 	closePalette,
@@ -24,7 +26,6 @@ import { findMessages } from "../../lib/palette-messages";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
 import { queryTerms, searchable, splitMatches } from "../../lib/search-terms";
 import { effectiveKeys, formatCombo, IS_MAC, shortcutFires, useOverrides } from "../../lib/shortcuts";
-import type { CompanionHandle } from "../../lib/use-companion";
 import { AgentChip } from "./AgentChip";
 import { Sheet } from "./Sheet";
 import "./palette.css";
@@ -85,6 +86,8 @@ interface Row extends PaletteItem {
 	trailing?: string;
 	/** The vendor agent behind a session row; absent for omp. */
 	agent?: AgentRef;
+	/** The computer a session or message is on; set only when there are several computers. */
+	computer?: string;
 	/** Keycaps of the shortcut that does the same. */
 	keys?: string;
 	/** Words of a message hit to mark in its title. */
@@ -94,23 +97,40 @@ interface Row extends PaletteItem {
 	run(): void | Promise<void>;
 }
 
-interface Remote {
-	sessions: SessionOverview[];
-	hits: SessionSearchHit[];
-	truncated: boolean;
-	loading: boolean;
-	error: string | null;
+/** A live computer the palette searches. */
+interface RemoteTarget {
+	id: string;
+	name: string;
+	client: CompanionClient;
+	canSearch: boolean;
 }
 
-const NO_REMOTE: Remote = { sessions: [], hits: [], truncated: false, loading: false, error: null };
+interface Remote {
+	sessions: { computerId: string; session: SessionOverview }[];
+	hits: { computerId: string; hit: SessionSearchHit }[];
+	truncated: boolean;
+	loading: boolean;
+	/** One per computer whose search failed. */
+	failures: { name: string; message: string }[];
+}
 
-/** Past sessions and messages from the paired computer for what is typed; empty until it answers, and for a query too short to search. */
-function useRemote(
-	client: CompanionClient | null,
-	canSearch: boolean,
-	scope: PaletteScope | null,
-	text: string,
-): Remote {
+const NO_REMOTE: Remote = { sessions: [], hits: [], truncated: false, loading: false, failures: [] };
+
+/** `next`, or the list before it while the same computers stay searchable: a snapshot change elsewhere does not search again. */
+function useStableTargets(next: RemoteTarget[]): RemoteTarget[] {
+	const kept = useRef(next);
+	const same =
+		kept.current.length === next.length &&
+		next.every((target, at) => {
+			const before = kept.current[at]!;
+			return before.id === target.id && before.client === target.client && before.canSearch === target.canSearch;
+		});
+	if (!same) kept.current = next;
+	return kept.current;
+}
+
+/** Past sessions and messages from the paired computers for what is typed; empty until they answer, and for a query too short to search. */
+function useRemote(targets: readonly RemoteTarget[], scope: PaletteScope | null, text: string): Remote {
 	const [typed, setTyped] = useState(text);
 	useEffect(() => {
 		const timer = setTimeout(() => setTyped(text), REMOTE_DEBOUNCE_MS);
@@ -118,36 +138,56 @@ function useRemote(
 	}, [text]);
 	const [remote, setRemote] = useState<Remote>(NO_REMOTE);
 	const wantSessions = scope === null || scope === "sessions";
-	const wantMessages = canSearch && (scope === null || scope === "messages");
+	const wantMessages = scope === null || scope === "messages";
 	useEffect(() => {
-		if (client === null || !searchable(typed) || (!wantSessions && !wantMessages)) {
+		const asking = targets.filter(target => wantSessions || (wantMessages && target.canSearch));
+		if (asking.length === 0 || !searchable(typed)) {
 			setRemote(NO_REMOTE);
 			return;
 		}
 		let stale = false;
-		setRemote(previous => ({ ...previous, loading: true, error: null }));
-		const sessionsCall = wantSessions
-			? client.requestSessions({ limit: REMOTE_LIMIT, q: typed })
-			: Promise.resolve<SessionOverview[]>([]);
-		const messagesCall = wantMessages
-			? client.searchSessions(typed, REMOTE_LIMIT)
-			: Promise.resolve({ results: [] as SessionSearchHit[], truncated: false });
-		void Promise.allSettled([sessionsCall, messagesCall]).then(([sessions, messages]) => {
+		setRemote(previous => ({ ...previous, loading: true, failures: [] }));
+		const answers = asking.map(async target => {
+			const [sessions, messages] = await Promise.allSettled([
+				wantSessions
+					? target.client.requestSessions({ limit: REMOTE_LIMIT, q: typed })
+					: Promise.resolve<SessionOverview[]>([]),
+				wantMessages && target.canSearch
+					? target.client.searchSessions(typed, REMOTE_LIMIT)
+					: Promise.resolve({ results: [] as SessionSearchHit[], truncated: false }),
+			]);
+			return { target, sessions, messages };
+		});
+		void Promise.all(answers).then(settled => {
 			if (stale) return;
-			const failure =
-				sessions.status === "rejected" ? sessions.reason : messages.status === "rejected" ? messages.reason : null;
-			setRemote({
-				sessions: sessions.status === "fulfilled" ? sessions.value : [],
-				hits: messages.status === "fulfilled" ? messages.value.results : [],
-				truncated: messages.status === "fulfilled" && messages.value.truncated,
-				loading: false,
-				error: failure === null ? null : failure instanceof Error ? failure.message : String(failure),
-			});
+			const next: Remote = { sessions: [], hits: [], truncated: false, loading: false, failures: [] };
+			for (const { target, sessions, messages } of settled) {
+				if (sessions.status === "fulfilled") {
+					for (const session of sessions.value) next.sessions.push({ computerId: target.id, session });
+				}
+				if (messages.status === "fulfilled") {
+					for (const hit of messages.value.results) next.hits.push({ computerId: target.id, hit });
+					if (messages.value.truncated) next.truncated = true;
+				}
+				const failure =
+					sessions.status === "rejected"
+						? sessions.reason
+						: messages.status === "rejected"
+							? messages.reason
+							: null;
+				if (failure !== null) {
+					next.failures.push({
+						name: target.name,
+						message: failure instanceof Error ? failure.message : String(failure),
+					});
+				}
+			}
+			setRemote(next);
 		});
 		return () => {
 			stale = true;
 		};
-	}, [client, wantSessions, wantMessages, typed]);
+	}, [targets, wantSessions, wantMessages, typed]);
 	return remote;
 }
 
@@ -160,13 +200,16 @@ export interface CommandPaletteProps {
 	entries: readonly SessionEntry[];
 	/** The session on screen; null before it is known. */
 	sessionId: string | null;
-	companion: CompanionHandle | null;
+	/** Every paired computer: their sessions and past sessions and messages are searched together. */
+	computers: readonly ComputerHandle[];
+	/** The computer of the session on screen; null when none is open. */
+	currentComputerId: string | null;
 	rooms: readonly RecentRoom[];
 	currentRoomId: string | null;
 	/** Put `text` (`/name `) in the message box. */
 	onCommand(text: string): void;
 	/** Fetch a link for a hosting session and join it; rejects with a readable message. */
-	onOpenHost(instanceId: string): Promise<void>;
+	onOpenHost(computerId: string, instanceId: string): Promise<void>;
 	onOpenLink(link: string): void;
 	/** Open the all-sessions sheet on a search, for results that need a choice (resume, share) before they open. */
 	onOpenAllSessions(initial: { mode: "sessions" | "messages"; query: string }): void;
@@ -187,7 +230,8 @@ export function CommandPalette({
 	commands,
 	entries,
 	sessionId,
-	companion,
+	computers,
+	currentComputerId,
 	rooms,
 	currentRoomId,
 	onCommand,
@@ -206,9 +250,15 @@ export function CommandPalette({
 	const [busy, setBusy] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
-	const live = companion?.snap.phase === "live";
-	const client = live ? (companion?.client ?? null) : null;
-	const remote = useRemote(client, live && companion?.snap.canSearch === true, scope, text);
+	const several = computers.length > 1;
+	const targets = useStableTargets(
+		computers.flatMap(computer =>
+			computer.snap.phase === "live" && computer.client !== null
+				? [{ id: computer.id, name: computer.name, client: computer.client, canSearch: computer.snap.canSearch }]
+				: [],
+		),
+	);
+	const remote = useRemote(targets, scope, text);
 
 	// The palette's own shortcut closes it from anywhere in the dialog (the one in the app only opens it).
 	useEffect(() => {
@@ -250,45 +300,52 @@ export function CommandPalette({
 				});
 			}
 		}
-		const seen = new Set<string>(sessionId === null ? [] : [sessionId]);
+		// Sessions are told apart by computer: the same id on two computers is two sessions.
+		const seen = new Set<string>();
+		const isCurrent = (computerId: string, id: string): boolean =>
+			sessionId !== null && id === sessionId && (currentComputerId === null || computerId === currentComputerId);
+		const named = (computerId: string | undefined): string | undefined =>
+			several && computerId !== undefined ? computerById(computers, computerId)?.name : undefined;
 		const hostInstances = new Set<string>();
-		if (live && companion !== null) {
-			for (const host of companion.snap.hosts) {
-				hostInstances.add(host.instanceId);
-				if (seen.has(host.sessionId)) continue;
-				seen.add(host.sessionId);
+		for (const computer of computers) {
+			const { client } = computer;
+			if (computer.snap.phase !== "live" || client === null) continue;
+			for (const host of computer.snap.hosts) {
+				hostInstances.add(hostKey(computer.id, host.instanceId));
+				if (isCurrent(computer.id, host.sessionId) || seen.has(`${computer.id}:${host.sessionId}`)) continue;
+				seen.add(`${computer.id}:${host.sessionId}`);
 				const state = host.inputRequired ? "needs input" : host.busy === true ? "working" : "live";
 				list.push({
-					key: `session:${host.sessionId}`,
+					key: `session:${computer.id}:${host.sessionId}`,
 					kind: "session",
 					icon: Laptop,
 					title: sessionTitle(host.sessionName, host.cwd),
 					keywords: [host.cwd],
 					subtitle: shortenPath(host.cwd),
 					agent: host.agent,
+					computer: named(computer.id),
 					trailing: state,
 					pending: true,
-					run: () => onOpenHost(host.instanceId),
+					run: () => onOpenHost(computer.id, host.instanceId),
 				});
 			}
-			for (const idle of companion.snap.idle) {
-				hostInstances.add(idle.instanceId);
-				if (seen.has(idle.sessionId)) continue;
-				seen.add(idle.sessionId);
+			for (const idle of computer.snap.idle) {
+				hostInstances.add(hostKey(computer.id, idle.instanceId));
+				if (isCurrent(computer.id, idle.sessionId) || seen.has(`${computer.id}:${idle.sessionId}`)) continue;
+				seen.add(`${computer.id}:${idle.sessionId}`);
 				list.push({
-					key: `session:${idle.sessionId}`,
+					key: `session:${computer.id}:${idle.sessionId}`,
 					kind: "session",
 					icon: Laptop,
 					title: sessionTitle(idle.sessionName, idle.cwd),
 					keywords: [idle.cwd],
 					subtitle: shortenPath(idle.cwd),
 					agent: idle.agent,
+					computer: named(computer.id),
 					trailing: "running",
 					pending: true,
 					run: async () => {
-						const shared = companion.client;
-						if (shared === null) throw new Error("the computer is not connected");
-						const link = extractLink(await shared.shareSession(idle.instanceId));
+						const link = extractLink(await client.shareSession(idle.instanceId));
 						if (!link) throw new Error("the computer returned an unreadable link");
 						onOpenLink(link);
 					},
@@ -297,7 +354,12 @@ export function CommandPalette({
 		}
 		for (const room of rooms) {
 			if (room.roomId === currentRoomId) continue;
-			if (room.instanceId !== undefined && hostInstances.has(room.instanceId)) continue;
+			if (
+				room.instanceId !== undefined &&
+				room.computerId !== undefined &&
+				hostInstances.has(hostKey(room.computerId, room.instanceId))
+			)
+				continue;
 			list.push({
 				key: `room:${room.roomId}`,
 				kind: "session",
@@ -305,21 +367,24 @@ export function CommandPalette({
 				title: room.title,
 				keywords: room.cwd === null ? undefined : [room.cwd],
 				subtitle: room.cwd === null ? undefined : shortenPath(room.cwd),
+				computer: named(room.computerId),
 				trailing: relTime(room.lastSeen),
 				run: () => onOpenLink(room.link),
 			});
 		}
-		for (const past of remote.sessions) {
-			if (seen.has(past.sessionId) || past.live !== undefined) continue;
-			seen.add(past.sessionId);
+		for (const { computerId, session: past } of remote.sessions) {
+			if (isCurrent(computerId, past.sessionId) || past.live !== undefined) continue;
+			if (seen.has(`${computerId}:${past.sessionId}`)) continue;
+			seen.add(`${computerId}:${past.sessionId}`);
 			list.push({
-				key: `past:${past.sessionId}`,
+				key: `past:${computerId}:${past.sessionId}`,
 				kind: "session",
 				icon: Laptop,
 				title: sessionTitle(past.title, past.folder),
 				keywords: [past.folder],
 				subtitle: shortenPath(past.folder),
 				agent: past.agent,
+				computer: named(computerId),
 				trailing: `ended ${relTime(past.endedAt ?? past.startedAt)}`,
 				run: () => onOpenAllSessions({ mode: "sessions", query: text }),
 			});
@@ -340,17 +405,18 @@ export function CommandPalette({
 		}
 		if (searchable(text)) {
 			const terms = queryTerms(text);
-			for (const hit of remote.hits) {
-				if (hit.sessionId === sessionId) continue;
+			for (const { computerId, hit } of remote.hits) {
+				if (isCurrent(computerId, hit.sessionId)) continue;
 				const { instanceId } = hit;
 				const base = {
-					key: `message:${hit.sessionId}:${hit.entryId}`,
+					key: `message:${computerId}:${hit.sessionId}:${hit.entryId}`,
 					kind: "message",
 					icon: MessageSquareText,
 					title: hit.snippet,
 					terms,
 					subtitle: sessionTitle(hit.title, hit.cwd),
 					agent: hit.agent,
+					computer: named(computerId),
 					trailing: `${hit.role === "user" ? "You" : "Agent"} · ${relTime(hit.time)}`,
 				} satisfies Omit<Row, "run">;
 				if (hit.live === "host" && instanceId !== undefined) {
@@ -360,7 +426,7 @@ export function CommandPalette({
 						run: async () => {
 							setJumpIntent({ sessionId: hit.sessionId, entryId: hit.entryId });
 							try {
-								await onOpenHost(instanceId);
+								await onOpenHost(computerId, instanceId);
 							} catch (err) {
 								setJumpIntent(null);
 								throw err;
@@ -376,8 +442,9 @@ export function CommandPalette({
 		commands,
 		entries,
 		sessionId,
-		companion,
-		live,
+		computers,
+		currentComputerId,
+		several,
 		rooms,
 		currentRoomId,
 		remote,
@@ -498,9 +565,12 @@ export function CommandPalette({
 					))}
 				</div>
 				{error !== null && <div className="sh-connect-error">{error}</div>}
-				{remote.error !== null && (
-					<div className="sh-palette-note">Your computer's search failed: {remote.error}</div>
-				)}
+				{remote.failures.map(failure => (
+					<div key={failure.name} className="sh-palette-note">
+						{several ? `${failure.name}'s search failed: ` : "Your computer's search failed: "}
+						{failure.message}
+					</div>
+				))}
 				<ul className="sh-palette-list" id={listId} role="listbox" aria-label="Results">
 					{groups.map(group => (
 						<li key={group.label} role="presentation" className="sh-palette-section">
@@ -539,6 +609,9 @@ export function CommandPalette({
 											) : (
 												<>
 													<AgentChip agent={item.agent} />
+													{item.computer !== undefined && (
+														<span className="sh-palette-computer">{item.computer}</span>
+													)}
 													{item.trailing !== undefined && (
 														<span className="sh-palette-trail">{item.trailing}</span>
 													)}

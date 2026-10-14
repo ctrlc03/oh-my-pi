@@ -4,9 +4,9 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { ConnectionPhase, GuestClient } from "../../lib/client";
 import { blobToBase64 } from "../../lib/images";
+import { type ComputerHandle, resolveSessionHome } from "../../lib/computers";
 import { type RecentRoom, roomIdOf } from "../../lib/rooms";
 import { focusedPane } from "../../lib/use-split";
-import type { CompanionHandle } from "../../lib/use-companion";
 import { useGuestSnapshot } from "../../lib/use-guest";
 import { useHostRecovery } from "../../lib/use-host-recovery";
 import { useNewSince } from "../../lib/new-since";
@@ -28,7 +28,8 @@ const PHASE_LABEL: Record<ConnectionPhase, string> = {
 export interface SplitPaneProps {
 	client: GuestClient;
 	link: string;
-	companion: CompanionHandle | null;
+	/** Every paired computer; the one that hosts this session is found among them. */
+	computers: readonly ComputerHandle[];
 	/** Chat view preference of the main session, shared so both panes read alike. */
 	chat: boolean;
 	onClose(): void;
@@ -51,7 +52,7 @@ export interface SplitPaneProps {
 export function SplitPane({
 	client,
 	link,
-	companion,
+	computers,
 	chat,
 	onClose,
 	onRejoin,
@@ -67,24 +68,33 @@ export function SplitPane({
 	const sessionId = snap.header?.id ?? null;
 	const title = snap.state?.sessionName ?? snap.header?.title ?? "session";
 	const cwd = snap.state?.cwd ?? snap.header?.cwd ?? null;
-	const companionClient = companion?.client ?? null;
-	const hostId = companion?.snap.hosts.find(host => host.sessionId === sessionId)?.instanceId ?? null;
-	const storedInstance = rooms.find(room => room.roomId === roomId)?.instanceId;
-	const instanceId = hostId ?? storedInstance ?? null;
+	const stored = rooms.find(room => room.roomId === roomId) ?? null;
+	const home = useMemo(() => resolveSessionHome(computers, sessionId, null, stored), [computers, sessionId, stored]);
+	const { computer, hostId, instanceId } = home;
+	const companionClient = computer?.client ?? null;
 	const composerExtras = useComposerExtras(
 		snap,
 		companionClient,
 		hostId,
-		companionClient !== null && hostId !== null && companion?.snap.canGithub === true,
+		companionClient !== null && hostId !== null && computer?.snap.canGithub === true,
 	);
 
 	// Remember the room, so a collapsed or closed pane's session stays one tap away in recents.
+	const computerId = computer?.id;
 	useEffect(() => {
 		if (live && roomId !== null)
-			onRemember({ roomId, link, title, cwd, readOnly: snap.readOnly, instanceId: instanceId ?? undefined });
-	}, [live, roomId, link, title, cwd, snap.readOnly, instanceId, onRemember]);
+			onRemember({
+				roomId,
+				link,
+				title,
+				cwd,
+				readOnly: snap.readOnly,
+				computerId,
+				instanceId: instanceId ?? undefined,
+			});
+	}, [live, roomId, link, title, cwd, snap.readOnly, computerId, instanceId, onRemember]);
 
-	const recovery = useHostRecovery(companion, instanceId, snap.phase, roomId, onReplaced);
+	const recovery = useHostRecovery(computer, instanceId, snap.phase, roomId, onReplaced);
 	const ended = snap.phase === "ended" && recovery === "absent";
 	const gone = ended && snap.endedReason === "no such room";
 	useEffect(() => {
@@ -103,8 +113,8 @@ export function SplitPane({
 	const cancelQueued = useCallback((id: string) => client.cancelQueued(id), [client]);
 
 	// Attachments the composer cannot inline are saved on the computer that hosts this session.
-	const companionPhase = companion?.snap.phase;
-	const canUpload = companion?.snap.canUpload === true;
+	const companionPhase = computer?.snap.phase;
+	const canUpload = computer?.snap.canUpload === true;
 	const upload = useMemo(
 		() =>
 			companionClient !== null &&

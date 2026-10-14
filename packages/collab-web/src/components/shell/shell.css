@@ -1491,11 +1491,11 @@
 	margin: 16px 0 calc(var(--view-h) * 0.08);
 }
 
-/* Wide screens (iPad landscape, desktop): the computer card and the join cards side by side
- * instead of a narrow column in the middle. The first row is as tall as the card beside the
- * computer, so the join card never drifts down when the computer card is the longer one. */
+/* Wide screens (iPad landscape, desktop): the computer cards and the join cards side by side
+ * instead of a narrow column in the middle. The first row is as tall as the cards beside the
+ * computers, so the join card never drifts down when the computers' column is the longer one. */
 @media (min-width: 900px) {
-	.sh-connect-stack:has(> .sh-companion) {
+	.sh-connect-stack:has(> .sh-connect-cards) {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 		grid-template-rows: auto 1fr;
@@ -1503,9 +1503,26 @@
 		max-width: 880px;
 	}
 
-	.sh-connect-stack > .sh-companion {
+	.sh-connect-stack > .sh-connect-cards {
 		grid-row: 1 / span 2;
 	}
+}
+
+/* One card per paired computer, with the way to add another beneath. */
+.sh-connect-cards,
+.sh-connect-add {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.sh-connect-add {
+	align-items: flex-start;
+	gap: 8px;
+}
+
+.sh-connect-add > .sh-connect-card {
+	align-self: stretch;
 }
 
 .sh-connect-card {
@@ -2376,6 +2393,65 @@
 	gap: 6px;
 }
 
+/* One computer's sessions in the sidebar, headed by its name once there are several. */
+.sh-computer-group-body {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.sh-computer-group-body[hidden] {
+	display: none;
+}
+
+.sh-group-title {
+	margin: 0;
+}
+
+/* The heading is the fold button: chevron, name and online dot on one row. */
+.sh-group-toggle {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	min-width: 0;
+	min-height: 32px;
+	padding: 0 4px 0 0;
+	font: inherit;
+	color: inherit;
+	text-align: left;
+	background: transparent;
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.sh-group-toggle:hover {
+	background: var(--hover);
+}
+
+.sh-sidebar-add {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+/* The computer a session or room lives on, named beside its title. */
+.sh-computer-chip {
+	gap: 4px;
+	max-width: 140px;
+}
+
+.sh-computer-chip > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+@media (pointer: coarse) {
+	.sh-group-toggle {
+		min-height: 44px;
+	}
+}
+
 /* ---- files changed ---- */
 .sh-changes {
 	display: flex;
@@ -2887,4 +2963,18 @@
 	.sh-header {
 		min-height: calc(var(--topbar-h) + var(--safe-top));
 	}
+}
+
+/* Why a computer in a group or card is not answering (Offline, Connecting…, Needs pairing). */
+.sh-group-state {
+	margin-left: 2px;
+	font-size: 12px;
+	font-weight: 400;
+	text-transform: none;
+	letter-spacing: 0;
+	color: var(--fg-muted);
+}
+
+.sh-card-more {
+	align-self: flex-start;
 }

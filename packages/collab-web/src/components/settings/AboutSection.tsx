@@ -6,7 +6,8 @@ import type { SettingsEnv } from "./env";
 import { ComputerGate, SettingsGroup } from "./SettingsRows";
 
 export function AboutSection({ env }: { env: SettingsEnv }): ReactNode {
-	const { companion } = env;
+	const { computers } = env;
+	const many = computers.length > 1;
 	return (
 		<>
 			<SettingsGroup title="This app">
@@ -21,11 +22,13 @@ export function AboutSection({ env }: { env: SettingsEnv }): ReactNode {
 					</div>
 				</dl>
 			</SettingsGroup>
-			{companion !== null && (
-				<SettingsGroup title={companion.snap.machine ?? "Your computer"}>
-					<ComputerGate companion={companion}>{client => <DiagnosticsPanel client={client} />}</ComputerGate>
+			{computers.map(computer => (
+				<SettingsGroup key={computer.id} title={many ? computer.name : (computer.snap.machine ?? "Your computer")}>
+					<ComputerGate computer={computer} named={many}>
+						{client => <DiagnosticsPanel client={client} computerName={many ? computer.name : undefined} />}
+					</ComputerGate>
 				</SettingsGroup>
-			)}
+			))}
 		</>
 	);
 }

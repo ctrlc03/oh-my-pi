@@ -4,6 +4,7 @@ import {
 	ChevronRight,
 	Info,
 	Keyboard,
+	Laptop,
 	LayoutList,
 	type LucideIcon,
 	MessageSquare,
@@ -13,6 +14,7 @@ import {
 } from "lucide-react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
+import type { ComputerHandle } from "../../lib/computers";
 import {
 	lastSettingsSection,
 	rememberSettingsSection,
@@ -21,16 +23,17 @@ import {
 	visibleSettingsSections,
 } from "../../lib/settings-ui";
 import { PHONE_QUERY, useMedia } from "../codemap/shared";
-import { DevicesPanel } from "../shell/DevicesPanel";
 import { Sheet } from "../shell/Sheet";
 import { ShortcutsPanel } from "../shell/ShortcutsPanel";
 import { AboutSection } from "./AboutSection";
 import { AppearanceSection } from "./AppearanceSection";
+import { ComputersSection } from "./ComputersSection";
+import { DevicesSection } from "./DevicesSection";
 import type { SettingsEnv } from "./env";
 import { MessagesSection } from "./MessagesSection";
 import { NotificationsSection } from "./NotificationsSection";
 import { SessionsSection } from "./SessionsSection";
-import { ComputerGate, Where } from "./SettingsRows";
+import { Where } from "./SettingsRows";
 import "./settings.css";
 
 export const SECTION_ICONS: Record<SettingsSection, LucideIcon> = {
@@ -39,6 +42,7 @@ export const SECTION_ICONS: Record<SettingsSection, LucideIcon> = {
 	notifications: Bell,
 	sessions: LayoutList,
 	keyboard: Keyboard,
+	computers: Laptop,
 	devices: Smartphone,
 	about: Info,
 };
@@ -59,10 +63,10 @@ function SectionContent({ section, env }: { section: SettingsSection; env: Setti
 			return <SessionsSection env={env} />;
 		case "keyboard":
 			return <ShortcutsPanel />;
+		case "computers":
+			return <ComputersSection env={env} />;
 		case "devices":
-			return env.companion === null ? null : (
-				<ComputerGate companion={env.companion}>{client => <DevicesPanel client={client} />}</ComputerGate>
-			);
+			return <DevicesSection env={env} />;
 		case "about":
 			return <AboutSection env={env} />;
 	}
@@ -75,6 +79,30 @@ export interface SettingsSheetProps {
 	onClose(): void;
 }
 
+/** `names` as a sentence list: "a", "a and b", "a, b and c". */
+function joinNames(names: readonly string[]): string {
+	const last = names.at(-1);
+	if (last === undefined) return "";
+	return names.length === 1 ? last : `${names.slice(0, -1).join(", ")} and ${last}`;
+}
+
+/**
+ * The computer(s) a section keeps its settings on, or null when it keeps them on this device alone. With one
+ * computer its machine name; with several the ones that hold the section's settings ("each computer" when all do).
+ */
+function whereMachine(section: SettingsSection, env: SettingsEnv): string | null {
+	const { computers, orgs } = env;
+	const named = (computer: ComputerHandle): string =>
+		computers.length === 1 ? (computer.snap.machine ?? "your computer") : computer.name;
+	let holders: readonly ComputerHandle[];
+	if (section === "devices") holders = computers;
+	else if (section === "sessions") holders = computers.filter(computer => orgs.of(computer.id).synced);
+	else return null;
+	if (holders.length === 0) return null;
+	if (holders.length === computers.length && computers.length > 1) return "each computer";
+	return joinNames(holders.map(named));
+}
+
 /**
  * Every setting in one place: a section list on the left and the section on the right, and on a phone the list
  * with each section drilling in behind a back button. Settings kept on this device and settings kept on the paired
@@ -82,7 +110,7 @@ export interface SettingsSheetProps {
  */
 export function SettingsSheet({ initial, env, onClose }: SettingsSheetProps): ReactNode {
 	const phone = useMedia(PHONE_QUERY);
-	const sections = visibleSettingsSections(env.companion !== null);
+	const sections = visibleSettingsSections(env.computers.length > 0);
 	const [selected, setSelected] = useState<SettingsSection>(initial ?? lastSettingsSection() ?? "appearance");
 	// A section that went away (the computer was unpaired) gives way to the first.
 	const section = sections.includes(selected) ? selected : (sections[0] ?? "appearance");
@@ -139,12 +167,9 @@ export function SettingsSheet({ initial, env, onClose }: SettingsSheetProps): Re
 		root.current?.querySelector<HTMLElement>(`.sh-set-list [data-section="${next}"]`)?.focus();
 	};
 
-	const machine = env.companion?.snap.machine ?? "your computer";
-	// Notifications and About mark the location per group: they mix this device and the computer.
+	// Notifications and About mark the location per group: they mix this device and the computers.
 	const whereLine =
-		section === "notifications" || section === "about" ? null : (
-			<Where machine={section === "devices" || (section === "sessions" && env.org.synced) ? machine : null} />
-		);
+		section === "notifications" || section === "about" ? null : <Where machine={whereMachine(section, env)} />;
 
 	return (
 		<Sheet label="Settings" size="settings" onClose={onClose}>

@@ -1,10 +1,12 @@
 import { LoaderCircle, RefreshCw, X } from "lucide-react";
 import type { PointerEvent, ReactNode } from "react";
-import { useCallback, useRef, useState } from "react";
-import type { CompanionClient, UsageRange, UsageReport } from "../../lib/companion";
+import { useState } from "react";
+import type { UsageRange, UsageReport } from "../../lib/companion";
+import type { ComputerHandle } from "../../lib/computers";
 import { fmtCost, fmtTokens, relTime, shortenPath } from "../../lib/format";
 import { readJson, writeJson } from "../../lib/storage";
-import { useRequest } from "../../lib/use-request";
+import { combineUsage, seriesAligned } from "../../lib/usage-combine";
+import { useComputerRequests } from "../../lib/use-computer-requests";
 import { LimitWindows, type LimitWindowsProps } from "./LimitWindows";
 import { Sheet } from "./Sheet";
 import "./stats.css";
@@ -26,9 +28,11 @@ const METRICS: { value: Metric; label: string }[] = [
 ];
 
 export interface UsageSheetProps {
-	client: CompanionClient;
+	computers: readonly ComputerHandle[];
 	/** The open session's subscription limit windows (host feature `usage-limits`); absent hides the Limits section. */
 	limits?: LimitWindowsProps;
+	/** The computer that hosts the open session, whose limits these are; limits show only where that computer's usage does. */
+	limitsComputerId?: string;
 	onClose(): void;
 }
 
@@ -37,17 +41,40 @@ function storedRange(): UsageRange {
 	return RANGES.find(r => r.value === raw)?.value ?? DEFAULT_RANGE;
 }
 
-/** Spend and token totals across every omp session on the paired computer. */
-export function UsageSheet({ client, limits, onClose }: UsageSheetProps): ReactNode {
+/** One computer's report. */
+interface ComputerReport {
+	computer: ComputerHandle;
+	report: UsageReport;
+}
+
+/** Spend and token totals across every omp session on the paired computers, all together or one at a time. */
+export function UsageSheet({ computers, limits, limitsComputerId, onClose }: UsageSheetProps): ReactNode {
 	const [range, setRange] = useState(storedRange);
 	const [metric, setMetric] = useState<Metric>("cost");
-	const load = useCallback(() => client.requestUsage(range), [client, range]);
-	const { state, reload } = useRequest(load);
-	// Keep the previous report on screen (dimmed) while another range loads.
-	const shown = useRef<UsageReport | null>(null);
-	if (state.status === "ready") shown.current = state.value;
-	const report = shown.current;
-	const loading = state.status === "loading";
+	// null: all computers together.
+	const [picked, setPicked] = useState<string | null>(null);
+	// Another range asks again; the last report of each computer stays on screen (dimmed) meanwhile.
+	const { entries, loading, reload } = useComputerRequests(
+		computers,
+		null,
+		client => client.requestUsage(range),
+		range,
+	);
+	const several = computers.length > 1;
+	const view = several
+		? computers.some(computer => computer.id === picked)
+			? picked
+			: null
+		: (computers[0]?.id ?? null);
+	const shown = view === null ? entries : entries.filter(entry => entry.computer.id === view);
+	const reports = shown.flatMap(({ computer, state }) =>
+		state?.status === "ready" ? [{ computer, report: state.value }] : [],
+	);
+	const reading = shown.some(entry => entry.state?.status === "loading");
+	// Limits belong to the computer that hosts the open session: with several, only where its usage is shown.
+	const limitsHere =
+		!several || limitsComputerId === undefined || shown.some(entry => entry.computer.id === limitsComputerId);
+	const limitsHost = computers.find(computer => computer.id === limitsComputerId);
 
 	const pickRange = (value: UsageRange): void => {
 		setRange(value);
@@ -73,7 +100,39 @@ export function UsageSheet({ client, limits, onClose }: UsageSheetProps): ReactN
 					</button>
 				</span>
 			</div>
-			{limits !== undefined && <LimitWindows {...limits} />}
+			{several && (
+				<div className="sh-segmented sh-segmented-wrap" role="radiogroup" aria-label="Computer">
+					<button
+						type="button"
+						role="radio"
+						aria-checked={view === null}
+						className={view === null ? "sh-segment sh-segment-on" : "sh-segment"}
+						onClick={() => setPicked(null)}
+					>
+						All computers
+					</button>
+					{computers.map(computer => (
+						<button
+							key={computer.id}
+							type="button"
+							role="radio"
+							aria-checked={view === computer.id}
+							className={view === computer.id ? "sh-segment sh-segment-on" : "sh-segment"}
+							onClick={() => setPicked(computer.id)}
+						>
+							{computer.name}
+						</button>
+					))}
+				</div>
+			)}
+			{limits !== undefined && limitsHere && (
+				<>
+					{several && view === null && limitsHost !== undefined && (
+						<div className="sh-field-hint">Limits of {limitsHost.name}</div>
+					)}
+					<LimitWindows {...limits} />
+				</>
+			)}
 			<div className="sh-segmented sh-segmented-fill" role="radiogroup" aria-label="Time range">
 				{RANGES.map(r => (
 					<button
@@ -88,76 +147,133 @@ export function UsageSheet({ client, limits, onClose }: UsageSheetProps): ReactN
 					</button>
 				))}
 			</div>
-			{state.status === "error" && (
-				<div className="sh-tree-error">
-					<div className="sh-connect-error">{state.message}</div>
-					<button type="button" className="sh-btn" onClick={reload}>
-						<RefreshCw size={14} /> Retry
-					</button>
-				</div>
-			)}
-			{report === null ? (
-				state.status === "loading" && (
+			{shown.map(({ computer, state, reason }) => {
+				const name = several ? `${computer.name}: ` : "";
+				if (state?.status === "error")
+					return (
+						<div key={computer.id} className="sh-tree-error">
+							<div className="sh-connect-error">
+								{name}
+								{state.message}
+							</div>
+							<button type="button" className="sh-btn" onClick={reload}>
+								<RefreshCw size={14} /> Retry
+							</button>
+						</div>
+					);
+				return reason !== null ? (
+					<div key={computer.id} className="sh-field-hint">
+						{name}
+						{reason}
+					</div>
+				) : null;
+			})}
+			{reports.length === 0 ? (
+				reading && (
 					<div className="sh-companion-empty sh-file-status">
 						<LoaderCircle size={14} className="sh-spin" /> Reading usage… the first read can take a while.
 					</div>
 				)
 			) : (
 				<div className={loading ? "sh-stats-body sh-stats-stale" : "sh-stats-body"}>
-					<Headline report={report} />
-					<section className="sh-stats-section" aria-label="Usage over time">
-						<div className="sh-stats-section-head">
-							<h2 className="sh-recents-title">Over time</h2>
-							<div className="sh-segmented" role="radiogroup" aria-label="Chart metric">
-								{METRICS.map(m => (
-									<button
-										key={m.value}
-										type="button"
-										role="radio"
-										aria-checked={metric === m.value}
-										className={metric === m.value ? "sh-segment sh-segment-on" : "sh-segment"}
-										onClick={() => setMetric(m.value)}
-									>
-										{m.label}
-									</button>
-								))}
-							</div>
-						</div>
-						<BarChart key={`${report.range}:${metric}`} report={report} metric={metric} />
-					</section>
-					<Breakdown
-						title="By model"
-						rows={report.byModel.map(m => ({
-							key: `${m.provider}/${m.model}`,
-							name: m.model,
-							sub: m.provider,
-							cost: m.cost,
-							tokens: m.tokens,
-							requests: m.requests,
-						}))}
-					/>
-					<Breakdown
-						title="By project"
-						rows={report.byProject.map(p => ({
-							key: p.folder,
-							name: shortenPath(p.folder),
-							title: p.folder,
-							cost: p.cost,
-							tokens: p.tokens,
-							requests: p.requests,
-						}))}
-					/>
-					{report.overall.unpricedRequests > 0 && (
-						<div className="sh-field-hint">
-							{report.overall.unpricedRequests} request
-							{report.overall.unpricedRequests === 1 ? " has" : "s have"} no known price (subscription models)
-							and {report.overall.unpricedRequests === 1 ? "counts" : "count"} as $0.
-						</div>
-					)}
-					{report.syncedAt > 0 && <div className="sh-stats-foot">Synced {relTime(report.syncedAt)}</div>}
+					<UsageBody reports={reports} grouped={view === null} metric={metric} onMetric={setMetric} />
 				</div>
 			)}
 		</Sheet>
+	);
+}
+
+/** The report of one computer, or the totals of several (`grouped`: the computers are named where their data stays apart). */
+function UsageBody({
+	reports,
+	grouped,
+	metric,
+	onMetric,
+}: {
+	reports: readonly ComputerReport[];
+	grouped: boolean;
+	metric: Metric;
+	onMetric(metric: Metric): void;
+}): ReactNode {
+	const combined = combineUsage(reports.map(entry => entry.report));
+	if (combined === null) return null;
+	// One computer reports as itself; several are added up (the folder breakdown stays per computer).
+	const named = grouped && reports.length > 1;
+	const charts = named && !seriesAligned(reports.map(entry => entry.report)) ? reports : null;
+	const projects = (entry: ComputerReport, title: string): ReactNode => (
+		<Breakdown
+			key={entry.computer.id}
+			title={title}
+			rows={entry.report.byProject.map(p => ({
+				key: p.folder,
+				name: shortenPath(p.folder),
+				title: p.folder,
+				cost: p.cost,
+				tokens: p.tokens,
+				requests: p.requests,
+			}))}
+		/>
+	);
+	return (
+		<>
+			<Headline report={combined} />
+			<section className="sh-stats-section" aria-label="Usage over time">
+				<div className="sh-stats-section-head">
+					<h2 className="sh-recents-title">Over time</h2>
+					<div className="sh-segmented" role="radiogroup" aria-label="Chart metric">
+						{METRICS.map(m => (
+							<button
+								key={m.value}
+								type="button"
+								role="radio"
+								aria-checked={metric === m.value}
+								className={metric === m.value ? "sh-segment sh-segment-on" : "sh-segment"}
+								onClick={() => onMetric(m.value)}
+							>
+								{m.label}
+							</button>
+						))}
+					</div>
+				</div>
+				{charts === null ? (
+					<BarChart key={`${combined.range}:${metric}`} report={combined} metric={metric} />
+				) : (
+					charts.map(entry => (
+						<div key={entry.computer.id} className="sh-usage-computer">
+							<div className="sh-field-hint">{entry.computer.name}</div>
+							<BarChart key={`${entry.report.range}:${metric}`} report={entry.report} metric={metric} />
+						</div>
+					))
+				)}
+			</section>
+			<Breakdown
+				title="By model"
+				rows={combined.byModel.map(m => ({
+					key: `${m.provider}/${m.model}`,
+					name: m.model,
+					sub: m.provider,
+					cost: m.cost,
+					tokens: m.tokens,
+					requests: m.requests,
+				}))}
+			/>
+			{reports.map(entry => projects(entry, named ? `By project · ${entry.computer.name}` : "By project"))}
+			{combined.overall.unpricedRequests > 0 && (
+				<div className="sh-field-hint">
+					{combined.overall.unpricedRequests} request
+					{combined.overall.unpricedRequests === 1 ? " has" : "s have"} no known price (subscription models) and{" "}
+					{combined.overall.unpricedRequests === 1 ? "counts" : "count"} as $0.
+				</div>
+			)}
+			{reports.map(
+				entry =>
+					entry.report.syncedAt > 0 && (
+						<div key={entry.computer.id} className="sh-stats-foot">
+							{named ? `${entry.computer.name} · ` : ""}Synced {relTime(entry.report.syncedAt)}
+						</div>
+					),
+			)}
+		</>
 	);
 }
 

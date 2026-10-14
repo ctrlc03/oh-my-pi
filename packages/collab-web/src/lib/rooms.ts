@@ -27,7 +27,9 @@ export interface RecentRoom {
 	title: string;
 	cwd: string | null;
 	readOnly: boolean;
-	/** omp process the paired computer lists for this room; absent from rooms never seen through a companion. */
+	/** The computer whose companion lists this room's process; absent from rooms never seen through a companion. */
+	computerId?: string;
+	/** omp process that computer lists for this room (an id only that computer makes sense of). */
 	instanceId?: string;
 	/** epoch ms of the last successful join. */
 	lastSeen: number;
@@ -42,6 +44,7 @@ function isRoom(value: unknown): value is RecentRoom {
 		typeof r.title === "string" &&
 		(r.cwd === null || typeof r.cwd === "string") &&
 		typeof r.readOnly === "boolean" &&
+		(r.computerId === undefined || typeof r.computerId === "string") &&
 		(r.instanceId === undefined || typeof r.instanceId === "string") &&
 		typeof r.lastSeen === "number"
 	);
@@ -70,6 +73,16 @@ export function rememberRoom(room: Omit<RecentRoom, "lastSeen">): RecentRoom[] {
 	return next;
 }
 
+/** Rooms remembered while one computer was paired were all listed under it: they are saved under the id it now has. */
+export function claimLegacyRooms(computerId: string): void {
+	const raw = readJson(ROOMS_KEY);
+	if (!Array.isArray(raw)) return;
+	writeJson(
+		ROOMS_KEY,
+		raw.map(room => (isRoom(room) && room.computerId === undefined ? { ...room, computerId } : room)),
+	);
+}
+
 export function forgetRoom(roomId: string): RecentRoom[] {
 	const next = loadRooms().filter(r => r.roomId !== roomId);
 	writeJson(ROOMS_KEY, next);
@@ -83,6 +96,13 @@ export function forgetRoom(roomId: string): RecentRoom[] {
 	replicaStore()
 		?.forget(roomId)
 		.catch(err => console.warn("collab: forgetting the saved transcript failed", err));
+	return next;
+}
+
+/** Forget every room that ran on a computer that is no longer paired: their links reach sessions this device can no longer list. */
+export function forgetComputerRooms(computerId: string): RecentRoom[] {
+	let next = loadRooms();
+	for (const room of next.filter(r => r.computerId === computerId)) next = forgetRoom(room.roomId);
 	return next;
 }
 

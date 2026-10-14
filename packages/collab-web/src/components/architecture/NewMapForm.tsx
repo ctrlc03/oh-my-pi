@@ -2,9 +2,11 @@ import type { BlueprintCreate, BlueprintRefsAnswer } from "@oh-my-pi/pi-wire/blu
 import { ChevronLeft, LoaderCircle, Play, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { CompanionClient } from "../../lib/companion";
+import { computerById, type ComputerHandle, saveLastComputer } from "../../lib/computers";
+import type { RecentFolder } from "../../lib/companion";
 import { shortenPath } from "../../lib/format";
 import { useRequest } from "../../lib/use-request";
+import { ComputerPicker, useStartComputer } from "../shell/ComputerPicker";
 import { createBlueprint, getBlueprintRefs } from "./blueprint-api";
 
 export type MapMode = "branch" | "pr" | "worktree";
@@ -21,12 +23,15 @@ export interface NewMapPreset {
 }
 
 export interface NewMapFormProps {
-	client: CompanionClient;
-	/** The session's folder; null from the start screen, where any recent folder can be picked. */
+	computers: readonly ComputerHandle[];
+	/** The computer of the session on screen, which the map starts on unless another is picked; null from the start screen. */
+	computerId: string | null;
+	/** The session's folder (on `computerId`); null from the start screen, where any recent folder can be picked. */
 	cwd: string | null;
+	/** Applies only while the session's computer is the one picked: its folders and branches are not another computer's. */
 	preset?: NewMapPreset;
 	onBack(): void;
-	onStarted(id: string): void;
+	onStarted(computerId: string, id: string): void;
 	onClose(): void;
 }
 
@@ -40,8 +45,22 @@ const DEFAULT_LIMIT_USD = "2";
 const FILTER_DEBOUNCE_MS = 250;
 const NO_REFS: BlueprintRefsAnswer = { branches: [] };
 
-/** The form that starts a map: which repository, what to map, what to compare with, and how much to spend. */
-export function NewMapForm({ client, cwd, preset, onBack, onStarted, onClose }: NewMapFormProps): ReactNode {
+/** The form that starts a map: which computer and repository, what to map, what to compare with, and how much to spend. */
+export function NewMapForm({
+	computers,
+	computerId,
+	cwd: sessionCwd,
+	preset: sessionPreset,
+	onBack,
+	onStarted,
+	onClose,
+}: NewMapFormProps): ReactNode {
+	const [chosenId, pickComputer] = useStartComputer(computers, "blueprint", computerId);
+	const chosen = computerById(computers, chosenId);
+	const client = chosen?.client ?? null;
+	const onSession = chosenId !== null && chosenId === computerId;
+	const cwd = onSession ? sessionCwd : null;
+	const preset = onSession ? sessionPreset : undefined;
 	const [repo, setRepo] = useState(cwd ?? preset?.cwd ?? "");
 	const [mode, setMode] = useState<MapMode>(preset?.mode ?? "branch");
 	const [branch, setBranch] = useState<string | null>(preset?.branch ?? null);
@@ -58,7 +77,12 @@ export function NewMapForm({ client, cwd, preset, onBack, onStarted, onClose }: 
 		return () => clearTimeout(timer);
 	}, [filter]);
 
-	const folders = useRequest(useCallback(() => client.requestFolders(), [client]));
+	const folders = useRequest(
+		useCallback(
+			(): Promise<RecentFolder[]> => (client === null ? Promise.resolve([]) : client.requestFolders()),
+			[client],
+		),
+	);
 	const repos = useMemo(() => {
 		const list: string[] = [];
 		const add = (path: string | null | undefined): void => {
@@ -75,7 +99,7 @@ export function NewMapForm({ client, cwd, preset, onBack, onStarted, onClose }: 
 
 	const load = useCallback(
 		(): Promise<BlueprintRefsAnswer> =>
-			repo === "" ? Promise.resolve(NO_REFS) : getBlueprintRefs(client, repo, query || undefined),
+			repo === "" || client === null ? Promise.resolve(NO_REFS) : getBlueprintRefs(client, repo, query || undefined),
 		[client, repo, query],
 	);
 	const refs = useRequest(load);
@@ -95,8 +119,21 @@ export function NewMapForm({ client, cwd, preset, onBack, onStarted, onClose }: 
 		[answer.branches, effectiveBranch],
 	);
 
+	/** Another computer has other folders, branches and pull requests: what was picked on the last one goes. */
+	const pick = (id: string): void => {
+		if (id === chosenId) return;
+		pickComputer(id);
+		setRepo("");
+		setBranch(null);
+		setPr(null);
+		setCompare(mode === "worktree" ? "@default" : "");
+		setFilter("");
+		setError(null);
+	};
+
 	const submit = async (e: FormEvent): Promise<void> => {
 		e.preventDefault();
+		if (client === null || chosenId === null) return setError("No computer can make a map right now.");
 		const maxCostUsd = Number(limit);
 		if (repo === "") return setError("Pick the repository to map.");
 		if (!Number.isFinite(maxCostUsd) || maxCostUsd <= 0) return setError("The cost limit must be more than $0.");
@@ -109,7 +146,9 @@ export function NewMapForm({ client, cwd, preset, onBack, onStarted, onClose }: 
 		setStarting(true);
 		setError(null);
 		try {
-			onStarted(await createBlueprint(client, request));
+			const id = await createBlueprint(client, request);
+			saveLastComputer(chosenId);
+			onStarted(chosenId, id);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 			setStarting(false);
@@ -128,6 +167,7 @@ export function NewMapForm({ client, cwd, preset, onBack, onStarted, onClose }: 
 			</div>
 			<h2 className="ar-form-title">New architecture map</h2>
 			<div className="ar-form-body">
+				<ComputerPicker computers={computers} feature="blueprint" value={chosenId} onChange={pick} />
 				{repos.length !== 1 && (
 					<label className="sh-field">
 						<span className="sh-field-label">Repository</span>

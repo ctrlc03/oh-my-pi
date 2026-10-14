@@ -46,7 +46,7 @@ import { exportFilename } from "../../lib/export";
 import { type PaletteEntry, usePaletteEntries, usePaletteOpen } from "../../lib/palette";
 import type { RecentRoom } from "../../lib/rooms";
 import { setThemePreference, type ThemePreference, useThemePreference } from "../../lib/theme";
-import type { CompanionHandle } from "../../lib/use-companion";
+import { type ComputerHandle, unavailableReason } from "../../lib/computers";
 import { usableCommands } from "../../lib/slash-menu";
 import { CommandPalette } from "./CommandPalette";
 import { AgentsSheet } from "./AgentsSheet";
@@ -110,12 +110,15 @@ export interface PaletteHostProps {
 	followsRoom: boolean;
 	entries: readonly SessionEntry[];
 	sessionId: string | null;
-	companion: CompanionHandle | null;
+	/** Every paired computer: sessions, search and the computer tools span all of them. */
+	computers: readonly ComputerHandle[];
+	/** The computer of the session on screen; null when none is open. */
+	currentComputerId: string | null;
 	rooms: readonly RecentRoom[];
 	currentRoomId: string | null;
 	/** Put text in the message box (nothing is sent). */
 	insertDraft(text: string): void;
-	onOpenHost(instanceId: string): Promise<void>;
+	onOpenHost(computerId: string, instanceId: string): Promise<void>;
 	onOpenLink(link: string): void;
 	onOpenAllSessions(initial: { mode: "sessions" | "messages"; query: string }): void;
 }
@@ -142,14 +145,18 @@ function download(filename: string, text: string): void {
  * sidebar used to open (so the palette reaches them with the sidebar closed), and shows the palette while it is open.
  */
 export function PaletteHost(props: PaletteHostProps): ReactNode {
-	const { actions, control, title, exportMarkdown, companion, commands, followsRoom, insertDraft } = props;
+	const { actions, control, title, exportMarkdown, computers, currentComputerId, commands, followsRoom, insertDraft } =
+		props;
 	const open = usePaletteOpen();
 	const { preference } = useThemePreference();
 	const [tool, setTool] = useState<CompanionTool | null>(null);
 	const closeTool = useCallback(() => setTool(null), []);
 
-	const snap = companion?.snap;
-	const toolClient = snap?.phase === "live" ? (companion?.client ?? null) : null;
+	// What the computer entries depend on, as booleans: a snapshot change that flips none of them leaves the list alone.
+	const anyLive = computers.some(computer => computer.snap.phase === "live");
+	const canStart = computers.some(computer => unavailableReason(computer, "start") === null);
+	const canSchedule = computers.some(computer => unavailableReason(computer, "schedule") === null);
+	const canForeign = computers.some(computer => unavailableReason(computer, "foreign") === null);
 
 	const entries = useMemo<PaletteEntry[]>(() => {
 		const list: PaletteEntry[] = [
@@ -374,8 +381,8 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 				run: () => setThemePreference(theme.value),
 			});
 		}
-		if (toolClient !== null && snap !== undefined) {
-			if (snap.canStart)
+		if (anyLive) {
+			if (canStart)
 				list.push({
 					id: "app:start",
 					title: "Start a session",
@@ -410,7 +417,7 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 					run: () => openSettings("devices"),
 				},
 			);
-			if (snap.canSchedule)
+			if (canSchedule)
 				list.push({
 					id: "app:schedules",
 					title: "Scheduled runs",
@@ -419,7 +426,7 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 					icon: CalendarClock,
 					run: () => setTool("schedules"),
 				});
-			if (snap.canForeign)
+			if (canForeign)
 				list.push({
 					id: "app:agents",
 					title: "Agents: Claude Code, Codex, Cursor and more",
@@ -456,7 +463,7 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 			}
 		}
 		return list;
-	}, [actions, control, exportMarkdown, preference, snap, title, toolClient]);
+	}, [actions, control, exportMarkdown, preference, anyLive, canStart, canSchedule, canForeign, title]);
 	usePaletteEntries(entries);
 
 	const usable = useMemo(() => usableCommands(commands, followsRoom), [commands, followsRoom]);
@@ -469,7 +476,8 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 					commands={usable}
 					entries={props.entries}
 					sessionId={props.sessionId}
-					companion={companion}
+					computers={computers}
+					currentComputerId={currentComputerId}
 					rooms={props.rooms}
 					currentRoomId={props.currentRoomId}
 					onCommand={insertDraft}
@@ -478,28 +486,19 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 					onOpenAllSessions={props.onOpenAllSessions}
 				/>
 			)}
-			{tool === "start" && toolClient !== null && snap !== undefined && (
+			{tool === "start" && (
 				<StartSessionSheet
-					client={toolClient}
-					canSandbox={snap.canSandbox}
-					canFanout={snap.canFanout}
+					computers={computers}
+					currentComputerId={currentComputerId}
 					onOpen={props.onOpenHost}
 					onClose={closeTool}
 				/>
 			)}
-			{tool === "inbox" && toolClient !== null && (
-				<InboxSheet client={toolClient} onOpenHost={props.onOpenHost} onClose={closeTool} />
+			{tool === "inbox" && <InboxSheet computers={computers} onOpenHost={props.onOpenHost} onClose={closeTool} />}
+			{tool === "schedules" && (
+				<SchedulesSheet computers={computers} onOpenHost={props.onOpenHost} onClose={closeTool} />
 			)}
-			{tool === "schedules" && toolClient !== null && snap !== undefined && (
-				<SchedulesSheet
-					client={toolClient}
-					canSandbox={snap.canSandbox}
-					canCron={snap.canScheduleCron}
-					onOpenHost={props.onOpenHost}
-					onClose={closeTool}
-				/>
-			)}
-			{tool === "agents" && toolClient !== null && <AgentsSheet client={toolClient} onClose={closeTool} />}
+			{tool === "agents" && <AgentsSheet computers={computers} onClose={closeTool} />}
 		</>
 	);
 }

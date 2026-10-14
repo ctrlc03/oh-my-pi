@@ -53,7 +53,8 @@ import { Transcript } from "./components/transcript/Transcript";
 import { collectChanges } from "./lib/changes";
 import { GuestClient } from "./lib/client";
 import { togglePalette, usePaletteEntries } from "./lib/palette";
-import { type CompanionHost, extractPairing, loadPairing, type Pairing, savePairing } from "./lib/companion";
+import { type CompanionHost, extractPairing, type PairingLink } from "./lib/companion";
+import { type ComputerHandle, computerById, planOpen, resolveSessionHome } from "./lib/computers";
 import { latestClear } from "./lib/context-clear";
 import { subscribeDraft } from "./lib/draft-bus";
 import { openDiagramFile, openSketch } from "./lib/diagram-store";
@@ -70,6 +71,7 @@ import { onJumpIntent, takeJumpIntent } from "./lib/jump-intent";
 import { useNewSince } from "./lib/new-since";
 import { emitRoute, parseRoute } from "./lib/notify-route";
 import { usePush } from "./lib/push";
+import { usePresence } from "./lib/use-presence";
 import { registerServiceWorker, takeSharedLink } from "./lib/pwa";
 import {
 	activeLink,
@@ -102,10 +104,11 @@ import { currentTodos } from "./lib/todos";
 import { loadTrim, saveTrim, trimEntries } from "./lib/trim";
 import { sumUsage } from "./lib/usage";
 import { limitedUntil } from "./lib/usage-limits";
-import { type CompanionHandle, useCompanion } from "./lib/use-companion";
+import { useComputers } from "./lib/use-computers";
 import { useHostRecovery } from "./lib/use-host-recovery";
 import { useGuestSnapshot } from "./lib/use-guest";
-import { type SessionOrgControl, useSessionOrg } from "./lib/use-session-org";
+import { DEVICE_ORG } from "./lib/org-storage";
+import { type SessionOrgs, useSessionOrgs } from "./lib/use-session-org";
 import type { ToolRenderHost } from "./tool-render";
 import "./components/shell/shell.css";
 import "./components/shell/companion.css";
@@ -120,8 +123,19 @@ const WIDE_QUERY = "(min-width: 901px)";
 /** Visual viewport this much shorter than the layout viewport means an on-screen keyboard is up. */
 const KEYBOARD_MIN_PX = 120;
 
-/** The pet's view of the paired computer's sessions while none is paired. */
-const NO_HOSTS: readonly CompanionHost[] = [];
+/** How the open session was reached, until its welcome identifies the computer it runs on. */
+interface Opened {
+	link: string;
+	computerId: string;
+	instanceId: string;
+}
+
+/** A notification tap waiting for its computer to answer: open `instanceId`, sending `reply` once the session is live. */
+interface PendingOpen {
+	instanceId: string;
+	computerId: string | null;
+	reply: string | null;
+}
 
 /** Deep link = everything after the FIRST `#` (legacy links carry a second `#` inside the fragment). */
 function hashLink(): string | null {
@@ -141,30 +155,24 @@ export function App(): ReactNode {
 	const [link, setLink] = useState<string | null>(null);
 	const [connectError, setConnectError] = useState<string | null>(null);
 	const [rooms, setRooms] = useState<RecentRoom[]>(loadRooms);
-	const [pairing, setPairing] = useState<Pairing | null>(loadPairing);
-	/** Companion host to open once the companion is live (notification tap). */
-	const [pendingOpen, setPendingOpen] = useState<string | null>(null);
-	/** The companion process the current link was fetched from, until the session's welcome identifies it. */
-	const [opened, setOpened] = useState<{ link: string; instanceId: string } | null>(null);
+	/** Session to open once its computer is live (notification tap). */
+	const [pendingOpen, setPendingOpen] = useState<PendingOpen | null>(null);
+	/** The computer process the current link was fetched from, until the session's welcome identifies it. */
+	const [opened, setOpened] = useState<Opened | null>(null);
 	/** The link of the session on screen, to rejoin it. */
 	const lastLinkRef = useRef<string | null>(null);
 	/** The current session was reopened from storage, not chosen by the user this launch. */
 	const resumedRef = useRef(false);
-	const companion = useCompanion(pairing);
-	const push = usePush(companion.client, companion.snap.vapidKey);
-	const org = useSessionOrg(
-		{
-			client: companion.client,
-			live: companion.snap.phase === "live",
-			orgRev: companion.snap.sessionOrgRev,
-			orderSessions: companion.snap.canOrderSessions,
-			endOnSettle: companion.snap.canEndOnSettle,
-		},
-		rooms,
-	);
+	const { computers, pair: pairComputer, remove } = useComputers();
+	const pushes = usePush(computers);
+	usePresence(computers, pushes);
+	const orgs = useSessionOrgs(computers, rooms);
+
+	const pair = useCallback((next: PairingLink): void => void pairComputer(next), [pairComputer]);
+	const removeComputer = useCallback(async (id: string): Promise<void> => setRooms(await remove(id)), [remove]);
 	const settingsEnv = useMemo<SettingsEnv>(
-		() => ({ companion: pairing ? companion : null, push, org }),
-		[pairing, companion, push, org],
+		() => ({ computers, pushes, orgs, onPair: pair, onRemoveComputer: removeComputer }),
+		[computers, pushes, orgs, pair, removeComputer],
 	);
 
 	const connect = useCallback((link: string): void => {
@@ -207,34 +215,29 @@ export function App(): ReactNode {
 
 	// The host replaced the session's room: follow it, carrying the draft and queued prompts.
 	const replaceRoom = useCallback(
-		(from: string, next: string, instanceId: string): void => {
+		(from: string, next: string, computerId: string, instanceId: string): void => {
 			const to = roomIdOf(next);
 			if (to !== null) setRooms(moveRoom(from, to));
 			resumedRef.current = false;
 			connect(next);
-			setOpened({ link: next, instanceId });
+			setOpened({ link: next, computerId, instanceId });
 		},
 		[connect],
 	);
 
-	const pair = useCallback((next: Pairing | null): void => {
-		savePairing(next);
-		setPairing(next);
-	}, []);
-
-	const companionClient = companion.client;
 	const openHost = useCallback(
-		async (instanceId: string): Promise<void> => {
-			if (!companionClient) throw new Error("no paired computer");
-			const url = await companionClient.requestLink(instanceId);
+		async (computerId: string, instanceId: string): Promise<void> => {
+			const computerClient = computerById(computers, computerId)?.client ?? null;
+			if (!computerClient) throw new Error("that computer is not paired");
+			const url = await computerClient.requestLink(instanceId);
 			const next = extractLink(url);
 			if (!next) throw new Error("the computer returned an unreadable link");
-			applyOpenIntent(instanceId, next);
+			applyOpenIntent(computerId, instanceId, next);
 			resumedRef.current = false;
 			connect(next);
-			setOpened({ link: next, instanceId });
+			setOpened({ link: next, computerId, instanceId });
 		},
-		[companionClient, connect],
+		[computers, connect],
 	);
 
 	const openLink = useCallback(
@@ -245,61 +248,72 @@ export function App(): ReactNode {
 		[connect],
 	);
 
-	const { phase: companionPhase, hosts } = companion.snap;
-	// The app icon shows how many sessions wait on an answer, once the computer's list is known.
-	useAppBadge(companionPhase === "live" ? hosts.filter(host => host.inputRequired).length : null);
+	// The app icon shows how many sessions wait on an answer, summed over the computers whose lists are known.
+	const answering = computers.filter(computer => computer.snap.phase === "live");
+	useAppBadge(
+		answering.length > 0
+			? answering.reduce((sum, computer) => sum + computer.snap.hosts.filter(host => host.inputRequired).length, 0)
+			: null,
+	);
 
 	/** A notification tap's route: open a session (sending the reply typed in the notification once it is live), or pass it to the component that owns it. */
 	const followRoute = useCallback((hash: string): boolean => {
 		const route = parseRoute(hash);
 		if (route === null) return false;
 		if (route.kind === "route") {
-			emitRoute(route.route);
+			emitRoute(route.route, route.computerId);
 			return true;
 		}
-		if (route.reply !== null) setOpenIntent(route.instanceId, { prompt: route.reply });
-		setPendingOpen(route.instanceId);
+		setPendingOpen({ instanceId: route.instanceId, computerId: route.computerId, reply: route.reply });
 		return true;
 	}, []);
 
-	// A notification tap: open its session as soon as the companion lists hosts.
+	// A notification tap: open its session on the computer it came from as soon as that computer lists hosts.
 	useEffect(() => {
-		if (pendingOpen === null || companionPhase !== "live") return;
+		if (pendingOpen === null) return;
+		const plan = planOpen(computers, pendingOpen.instanceId, pendingOpen.computerId);
+		if (plan.kind === "wait") return;
 		setPendingOpen(null);
-		if (!hosts.some(host => host.instanceId === pendingOpen)) {
-			setConnectError("That session is no longer sharing.");
+		if (plan.kind === "error") {
+			setConnectError(plan.message);
 			return;
 		}
-		openHost(pendingOpen).catch((err: unknown) => setConnectError(err instanceof Error ? err.message : String(err)));
-	}, [pendingOpen, companionPhase, hosts, openHost]);
+		if (pendingOpen.reply !== null) {
+			setOpenIntent(plan.computer.id, pendingOpen.instanceId, { prompt: pendingOpen.reply });
+		}
+		openHost(plan.computer.id, pendingOpen.instanceId).catch((err: unknown) =>
+			setConnectError(err instanceof Error ? err.message : String(err)),
+		);
+	}, [pendingOpen, computers, openHost]);
 
 	useEffect(() => {
 		if (!("serviceWorker" in navigator)) return;
 		const onMessage = (e: MessageEvent): void => {
-			const data = e.data as { t?: unknown; instanceId?: unknown; text?: unknown; route?: unknown } | null;
-			if (data?.t === "open-session" && typeof data.instanceId === "string") setPendingOpen(data.instanceId);
-			else if (
+			const data = e.data as {
+				t?: unknown;
+				instanceId?: unknown;
+				computer?: unknown;
+				text?: unknown;
+				route?: unknown;
+			} | null;
+			const computerId = typeof data?.computer === "string" ? data.computer : null;
+			if (data?.t === "open-session" && typeof data.instanceId === "string") {
+				setPendingOpen({ instanceId: data.instanceId, computerId, reply: null });
+			} else if (
 				data?.t === "notification-reply" &&
 				typeof data.instanceId === "string" &&
 				typeof data.text === "string"
 			) {
-				if (data.text.trim()) setOpenIntent(data.instanceId, { prompt: data.text });
-				setPendingOpen(data.instanceId);
-			} else if (data?.t === "open-route" && typeof data.route === "string") followRoute(data.route);
+				setPendingOpen({
+					instanceId: data.instanceId,
+					computerId,
+					reply: data.text.trim() ? data.text : null,
+				});
+			} else if (data?.t === "open-route" && typeof data.route === "string") emitRoute(data.route, computerId);
 		};
 		navigator.serviceWorker.addEventListener("message", onMessage);
 		return () => navigator.serviceWorker.removeEventListener("message", onMessage);
-	}, [followRoute]);
-
-	// The companion holds pushes for this device while it shows the app.
-	const pushEndpoint = push.endpoint;
-	useEffect(() => {
-		if (!companionClient) return;
-		const report = (): void => companionClient.setPresence(pushEndpoint, document.visibilityState === "visible");
-		report();
-		document.addEventListener("visibilitychange", report);
-		return () => document.removeEventListener("visibilitychange", report);
-	}, [companionClient, pushEndpoint]);
+	}, []);
 
 	// A room reopened from storage that the host has since closed: go straight to the
 	// session list instead of parking on an "ended" card the user never asked for.
@@ -361,7 +375,13 @@ export function App(): ReactNode {
 
 	// Back from the background, network back, going to the background: see `useClientWake`.
 	useClientWake(client);
-	const beside = useBesideSession(client ? link : null, companion.client, displayName, setRooms);
+	const beside = useBesideSession(client ? link : null, computers, displayName, setRooms);
+	// The pet's view of every computer's sessions on the home screen.
+	const allHosts = useMemo<readonly CompanionHost[]>(
+		() => computers.flatMap(computer => computer.snap.hosts),
+		[computers],
+	);
+	const anyLive = computers.some(computer => computer.snap.phase === "live");
 
 	useEffect(() => {
 		if (!client) document.title = "omp collab";
@@ -371,37 +391,30 @@ export function App(): ReactNode {
 		<>
 			<UpdateBar />
 			<Tooltip />
-			<FixItHost
-				client={companionClient}
-				live={companionPhase === "live"}
-				canFixIt={companion.snap.canFixIt}
-				canStart={companion.snap.canStart}
-				onOpenHost={openHost}
-				onOpenLink={openLink}
-			/>
+			<FixItHost computers={computers} onOpenHost={openHost} onOpenLink={openLink} />
 			{!client || !link ? (
 				<ConnectScreen
 					error={connectError}
 					rooms={rooms}
-					companion={pairing ? companion : null}
+					computers={computers}
 					onConnect={next => {
 						resumedRef.current = false;
 						connect(next);
 					}}
 					onForget={forget}
 					onPair={pair}
-					onUnpair={() => {
-						if (window.confirm("Unpair this computer? You will need its pairing code to pair again.")) pair(null);
-					}}
+					onOpenHost={openHost}
+					onRemoveComputer={removeComputer}
 				/>
 			) : (
 				<Session
 					key={link}
 					client={client}
 					link={link}
-					openedInstance={opened?.link === link ? opened.instanceId : null}
-					companion={pairing ? companion : null}
-					org={org}
+					openedHint={opened?.link === link ? opened : null}
+					computers={computers}
+					orgs={orgs}
+					onPair={pair}
 					rooms={rooms}
 					onLeave={leave}
 					onRejoin={rejoin}
@@ -413,11 +426,7 @@ export function App(): ReactNode {
 					onOpenLink={openLink}
 				/>
 			)}
-			<PetHost
-				client={client}
-				hosts={pairing ? hosts : NO_HOSTS}
-				hostsLive={pairing !== null && companionPhase === "live"}
-			/>
+			<PetHost client={client} hosts={allHosts} hostsLive={anyLive} />
 			<SettingsHost env={settingsEnv} />
 			<ZoomHost />
 		</>
@@ -427,16 +436,18 @@ export function App(): ReactNode {
 interface SessionProps {
 	client: GuestClient;
 	link: string;
-	openedInstance: string | null;
-	companion: CompanionHandle | null;
-	org: SessionOrgControl;
+	/** How this session was opened this launch (the computer and process its link came from), until the welcome identifies them. */
+	openedHint: Opened | null;
+	computers: readonly ComputerHandle[];
+	orgs: SessionOrgs;
+	onPair(link: PairingLink): void;
 	rooms: readonly RecentRoom[];
 	onLeave(): void;
 	onRejoin(): void;
 	onRemember(room: Omit<RecentRoom, "lastSeen">): void;
 	onRoomGone(roomId: string): void;
-	onRoomReplaced(from: string, link: string, instanceId: string): void;
-	onOpenHost(instanceId: string): Promise<void>;
+	onRoomReplaced(from: string, link: string, computerId: string, instanceId: string): void;
+	onOpenHost(computerId: string, instanceId: string): Promise<void>;
 	onOpenLink(link: string): void;
 	/** Split view: the second session pane and the controls that open it. */
 	beside: BesideControl;
@@ -460,9 +471,10 @@ interface SearchState {
 function Session({
 	client,
 	link,
-	openedInstance,
-	companion,
-	org,
+	openedHint,
+	computers,
+	orgs,
+	onPair,
 	rooms,
 	onLeave,
 	onRejoin,
@@ -476,27 +488,39 @@ function Session({
 	const snap = useGuestSnapshot(client);
 	const [railOpen, setRailOpen] = useState(false);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
-	const autoOpenedRef = useRef(false);
 
-	// Parked and aborted subagents stay in the rail (folded) but do not count on the badge or open the rail.
+	// Parked and aborted subagents stay in the rail (folded) but do not count on the badge.
 	const subCount = useMemo(() => snap.agents.filter(a => a.kind === "sub" && !isInactive(a)).length, [snap.agents]);
 
-	// The paired computer's host for this very session. Working tree and file
+	// The computer that runs this very session, and its host row. Working tree and file
 	// viewing read through it, and are hidden when there is none.
 	const sessionId = snap.header?.id ?? null;
-	const companionClient = companion?.client ?? null;
-	const hosts = companion?.snap.hosts;
-	const hostId = useMemo(
-		() => hosts?.find(host => host.sessionId === sessionId)?.instanceId ?? null,
-		[hosts, sessionId],
+	const roomId = useMemo(() => roomIdOf(link), [link]);
+	const stored = useMemo(() => rooms.find(room => room.roomId === roomId) ?? null, [rooms, roomId]);
+	const home = useMemo(
+		() => resolveSessionHome(computers, sessionId, openedHint, stored),
+		[computers, sessionId, openedHint, stored],
 	);
+	const { computer, hostId, instanceId } = home;
+	const companionClient = computer?.client ?? null;
+	const hosts = computer?.snap.hosts;
 	const hostRow = hosts?.find(host => host.instanceId === hostId);
+	/** This session's computer's id as a `onOpenHost` target for the sheets that only know instance ids. */
+	const openHere = useCallback(
+		(id: string): Promise<void> => {
+			if (computer === null) return Promise.reject(new Error("that computer is not paired"));
+			return onOpenHost(computer.id, id);
+		},
+		[computer, onOpenHost],
+	);
 	const [file, setFile] = useState<{ path: string; line?: number } | null>(null);
 	const [codemap, setCodemap] = useState<{ file?: string } | null>(null);
-	const canCodemap = companionClient !== null && hostId !== null && companion?.snap.canCodemap === true;
+	const canCodemap = companionClient !== null && hostId !== null && computer?.snap.canCodemap === true;
 	const openCodemap = useCallback(() => setCodemap({}), []);
 	const [architecture, setArchitecture] = useState<ArchitectureStart | null>(null);
-	const canArchitecture = companionClient !== null && companion?.snap.canBlueprint === true;
+	// Maps are listed across the computers; making one of this session's changes needs the computer that runs it.
+	const canArchitecture = computers.some(candidate => candidate.client !== null && candidate.snap.canBlueprint);
+	const canMapHere = companionClient !== null && hostId !== null && computer?.snap.canBlueprint === true;
 	const openArchitecture = useCallback(() => setArchitecture({ view: "home" }), []);
 	const mapChanges = useCallback(
 		() => setArchitecture({ view: "new", preset: { mode: "worktree", base: "@default" } }),
@@ -507,7 +531,7 @@ function Session({
 		setArchitecture({ view: "new", preset: { mode: "pr", pr } });
 	}, []);
 	// The editor replaces the read-only file viewer once the paired computer can save files.
-	const canEdit = companionClient !== null && hostId !== null && companion?.snap.canEdit === true;
+	const canEdit = companionClient !== null && hostId !== null && computer?.snap.canEdit === true;
 	const [editor, setEditor] = useState<{ target: { path: string; line?: number } | null } | null>(null);
 	const openEditor = useCallback(() => setEditor(open => open ?? { target: null }), []);
 	const openFile = useCallback(
@@ -524,11 +548,11 @@ function Session({
 	// A vendor agent's host process has no terminal worth watching: the transcript is the session.
 	const canPane = companionClient !== null && hostId !== null && snap.agent === null;
 	const canPreview =
-		companionClient !== null && hostId !== null && sessionId !== null && companion?.snap.canPreview === true;
+		companionClient !== null && hostId !== null && sessionId !== null && computer?.snap.canPreview === true;
 	// Voice input rides the companion; a reconnect blip (`connecting`) must not discard a recording.
-	const companionPhase = companion?.snap.phase;
-	const transcribe = companion?.snap.transcribe ?? null;
-	const machine = companion?.snap.machine ?? null;
+	const companionPhase = computer?.snap.phase;
+	const transcribe = computer?.snap.transcribe ?? null;
+	const machine = computer?.snap.machine ?? null;
 	const voice = useMemo(
 		() =>
 			companionClient !== null &&
@@ -539,7 +563,7 @@ function Session({
 		[companionClient, transcribe, machine, companionPhase],
 	);
 	// Attachments the composer cannot inline are saved on the computer, which the agent reads them from.
-	const canUpload = companion?.snap.canUpload === true;
+	const canUpload = computer?.snap.canUpload === true;
 	const upload = useMemo(
 		() =>
 			companionClient !== null &&
@@ -554,14 +578,14 @@ function Session({
 	);
 	const [previewOpen, setPreviewOpen] = useState(false);
 	const openPreview = useCallback(() => setPreviewOpen(true), []);
-	const canGithub = companionClient !== null && hostId !== null && companion?.snap.canGithub === true;
+	const canGithub = companionClient !== null && hostId !== null && computer?.snap.canGithub === true;
 	const composerExtras = useComposerExtras(snap, companionClient, hostId, canGithub);
 	const [githubOpen, setGithubOpen] = useState(false);
 	const openGithub = useCallback(() => setGithubOpen(true), []);
 	// Running commands needs a session this device may control and that is not confined to file tools.
-	const runSandboxed = companion?.snap.hosts.some(host => host.instanceId === hostId && host.sandboxed) ?? false;
+	const runSandboxed = computer?.snap.hosts.some(host => host.instanceId === hostId && host.sandboxed) ?? false;
 	const canRun =
-		companionClient !== null && hostId !== null && companion?.snap.canRun === true && !snap.readOnly && !runSandboxed;
+		companionClient !== null && hostId !== null && computer?.snap.canRun === true && !snap.readOnly && !runSandboxed;
 	const [runOpen, setRunOpen] = useState(false);
 	const openRun = useCallback(() => setRunOpen(true), []);
 	const sendRunOutput = useCallback((prompt: string) => {
@@ -626,27 +650,15 @@ function Session({
 		),
 	);
 	const cwd = snap.state?.cwd ?? snap.header?.cwd ?? null;
-	// "Try on several models": the composer's draft starts in worktrees of this session's repository on the paired computer.
+	// "Try on several models": the composer's draft starts in worktrees of this session's repository on the computer that runs it.
+	const canFanout = computer?.snap.canFanout === true;
+	const canSandbox = computer?.snap.canSandbox === true;
 	const fanoutTarget = useMemo<FanoutTarget | null>(
 		() =>
-			companionClient !== null &&
-			hostId !== null &&
-			cwd !== null &&
-			companion?.snap.canFanout === true &&
-			!snap.readOnly &&
-			!runSandboxed
-				? { client: companionClient, cwd, canSandbox: companion.snap.canSandbox, onOpen: onOpenHost }
+			companionClient !== null && hostId !== null && cwd !== null && canFanout && !snap.readOnly && !runSandboxed
+				? { client: companionClient, cwd, canSandbox, onOpen: openHere }
 				: null,
-		[
-			companionClient,
-			hostId,
-			cwd,
-			companion?.snap.canFanout,
-			companion?.snap.canSandbox,
-			snap.readOnly,
-			runSandboxed,
-			onOpenHost,
-		],
+		[companionClient, hostId, cwd, canFanout, canSandbox, snap.readOnly, runSandboxed, openHere],
 	);
 
 	// Task-card agent chips drill into the same drawer the rail uses.
@@ -674,16 +686,6 @@ function Session({
 		[hasAgent, openAgent, hostId, canCodemap, cwd, openFile],
 	);
 
-	// Auto-open the rail the first time a subagent appears, only where it docks
-	// beside the transcript. On narrow screens it would cover the conversation;
-	// the header badge announces subagents there instead.
-	useEffect(() => {
-		if (subCount > 0 && !autoOpenedRef.current) {
-			autoOpenedRef.current = true;
-			if (matchesMedia(WIDE_QUERY)) setRailOpen(true);
-		}
-	}, [subCount]);
-
 	// The live name first: the header carries the session file's title as of joining, so a rename would not show.
 	const title = snap.state?.sessionName ?? snap.header?.title ?? "session";
 	useEffect(() => {
@@ -691,7 +693,6 @@ function Session({
 	}, [title]);
 
 	// Remember every room that welcomed us, so a later launch can offer it again.
-	const roomId = useMemo(() => roomIdOf(link), [link]);
 	const live = snap.phase === "live";
 	// An answer picked in the inbox goes to the ask it was meant for, once this session is live.
 	const uiRequest = snap.uiRequest;
@@ -709,24 +710,34 @@ function Session({
 			return composer !== null;
 		});
 	}, [roomId]);
-	// The computer's process for this room. Matched by session id once welcomed; until
+	// `instanceId` is the computer's process for this room: matched by session id once welcomed; until
 	// then (and after the host switched sessions) the one it was opened from or last seen as.
-	const storedInstance = rooms.find(room => room.roomId === roomId)?.instanceId;
-	const instanceId = hostId ?? openedInstance ?? storedInstance ?? null;
+	const computerId = computer?.id ?? null;
 	useEffect(() => {
-		if (live && roomId !== null)
-			onRemember({ roomId, link, title, cwd, readOnly: snap.readOnly, instanceId: instanceId ?? undefined });
-	}, [live, roomId, link, title, cwd, snap.readOnly, instanceId, onRemember]);
+		if (live && roomId !== null) {
+			onRemember({
+				roomId,
+				link,
+				title,
+				cwd,
+				readOnly: snap.readOnly,
+				computerId: computerId ?? undefined,
+				instanceId: instanceId ?? undefined,
+			});
+		}
+	}, [live, roomId, link, title, cwd, snap.readOnly, computerId, instanceId, onRemember]);
 
-	// A room the host replaced reopens through the paired computer; "ended" and
+	// A room the host replaced reopens through the computer that runs it; "ended" and
 	// forgetting the room wait until the computer has answered.
 	const followRoom = useCallback(
 		(next: string): void => {
-			if (roomId !== null && instanceId !== null) onRoomReplaced(roomId, next, instanceId);
+			if (roomId !== null && computerId !== null && instanceId !== null) {
+				onRoomReplaced(roomId, next, computerId, instanceId);
+			}
 		},
-		[roomId, instanceId, onRoomReplaced],
+		[roomId, computerId, instanceId, onRoomReplaced],
 	);
-	const recovery = useHostRecovery(companion, instanceId, snap.phase, roomId, followRoom);
+	const recovery = useHostRecovery(computer, instanceId, snap.phase, roomId, followRoom);
 	const ended = snap.phase === "ended" && recovery === "absent";
 
 	// The relay no longer knows this room: the host closed it.
@@ -831,10 +842,10 @@ function Session({
 		setChangesOpen(true);
 	}, []);
 	useEffect(() => {
-		if (hostId === null || !takePendingReview(hostId)) return;
+		if (computerId === null || hostId === null || !takePendingReview(computerId, hostId)) return;
 		setChangesTab("branch");
 		setChangesOpen(true);
-	}, [hostId]);
+	}, [computerId, hostId]);
 	// The per-request timeline asks the host to read its session, so it is for writers on a live host that advertises it.
 	const canTimeline = Object.hasOwn(snap.features, "inspect") && !snap.readOnly && live;
 	const [timelineOpen, setTimelineOpen] = useState(false);
@@ -864,7 +875,7 @@ function Session({
 	}, []);
 
 	const [sidebarOpen, setSidebarOpen] = useState(initialSidebar);
-	const otherHosts = companion?.snap.hosts.filter(host => host.sessionId !== sessionId) ?? [];
+	const otherHosts = computers.flatMap(candidate => candidate.snap.hosts.filter(host => host.sessionId !== sessionId));
 	const canSwitch = otherHosts.length > 0 || rooms.some(room => room.roomId !== roomId);
 	// Only the docked sidebar's state is remembered: a drawer reopening on the next
 	// launch would cover the transcript.
@@ -922,7 +933,8 @@ function Session({
 	// Desktop shortcuts (the keymap lives in lib/shortcuts.ts, which the help sheet lists too). Typing in a
 	// field suppresses everything but Esc; an open sheet or drawer owns Esc itself, and the composer aborts a
 	// running turn on its own Esc. The transcript handles its own keys (blocks, jump, copy, edit).
-	const canShowSidebar = canSwitch || companion !== null;
+	const paired = computers.length > 0;
+	const canShowSidebar = canSwitch || paired;
 	const showSidebar = sidebarOpen && canShowSidebar;
 	const readOnly = snap.readOnly;
 	const working = snap.working;
@@ -1080,11 +1092,11 @@ function Session({
 			openChanges: hasChanges ? openChanges : null,
 			openScreens,
 			openShortcuts: openKeyboardSettings,
-			openUsage: companion ? openUsage : null,
-			openSessions: companion ? openSessions : null,
+			openUsage: paired ? openUsage : null,
+			openSessions: paired ? openSessions : null,
 			openCodemap: canCodemap ? openCodemap : null,
 			openArchitecture: canArchitecture ? openArchitecture : null,
-			mapChanges: canArchitecture && hostId !== null && changes.length > 0 ? mapChanges : null,
+			mapChanges: canMapHere && changes.length > 0 ? mapChanges : null,
 			openPane: canPane ? openPane : null,
 			openPreview: canPreview ? openPreview : null,
 			openGithub: canGithub ? openGithub : null,
@@ -1096,6 +1108,7 @@ function Session({
 		[
 			canCodemap,
 			canArchitecture,
+			canMapHere,
 			canEdit,
 			canGithub,
 			canPane,
@@ -1105,8 +1118,7 @@ function Session({
 			changeChat,
 			changes.length,
 			chat,
-			companion,
-			companionClient,
+			paired,
 			hasChanges,
 			hostId,
 			onLeave,
@@ -1153,7 +1165,7 @@ function Session({
 				state={snap.state}
 				phase={snap.phase}
 				readOnly={snap.readOnly}
-				sandboxed={companion?.snap.hosts.some(host => host.sessionId === sessionId && host.sandboxed) ?? false}
+				sandboxed={computer?.snap.hosts.some(host => host.sessionId === sessionId && host.sandboxed) ?? false}
 				agent={snap.agent}
 				canPermission={Object.hasOwn(snap.features, "permission-mode")}
 				subCount={subCount}
@@ -1181,11 +1193,11 @@ function Session({
 				canWatchPr={Object.hasOwn(snap.features, "pr-watch")}
 				exportMarkdown={exportMarkdown}
 				onOpenChanges={openChanges}
-				onOpenUsage={companion ? openUsage : null}
-				onOpenSessions={companion ? openSessions : null}
+				onOpenUsage={paired ? openUsage : null}
+				onOpenSessions={paired ? openSessions : null}
 				onOpenCodemap={canCodemap ? openCodemap : null}
 				onOpenArchitecture={canArchitecture ? openArchitecture : null}
-				onMapChanges={canArchitecture && changes.length > 0 ? mapChanges : null}
+				onMapChanges={canMapHere && changes.length > 0 ? mapChanges : null}
 				onOpenPane={canPane ? openPane : null}
 				onOpenPreview={canPreview ? openPreview : null}
 				onOpenGithub={canGithub ? openGithub : null}
@@ -1201,17 +1213,18 @@ function Session({
 						<div className="sh-sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
 						<aside className="sh-sidebar-dock">
 							<SessionsSidebar
-								companion={companion}
+								computers={computers}
 								rooms={rooms}
 								currentSessionId={sessionId}
 								currentRoomId={roomId}
 								onOpenHost={onOpenHost}
 								onOpenLink={onOpenLink}
-								onOpenUsage={companion ? openUsage : null}
-								onOpenSessions={companion ? openSessions : null}
+								onOpenUsage={paired ? openUsage : null}
+								onOpenSessions={paired ? openSessions : null}
 								onClose={closeSidebar}
 								beside={beside.available ? beside : null}
-								org={org}
+								orgs={orgs}
+								onPair={onPair}
 								limitResetAt={limitedUntil(snap.state ?? undefined, Date.now())}
 							/>
 						</aside>
@@ -1255,7 +1268,11 @@ function Session({
 							model={snap.state?.model}
 							readOnly={snap.readOnly}
 							onSessionCommand={sendSessionCommand}
-							onSnooze={sessionId === null ? undefined : until => org.act(sessionId, { type: "snooze", until })}
+							onSnooze={
+								sessionId === null
+									? undefined
+									: until => orgs.of(computer?.id ?? DEVICE_ORG).act(sessionId, { type: "snooze", until })
+							}
 						/>
 					)}
 					<TaskProgress todos={todos} subagents={subagents} hasAgent={hasAgent} onOpenAgent={openAgent} />
@@ -1313,7 +1330,7 @@ function Session({
 						key={beside.pane.link}
 						client={beside.pane.client}
 						link={beside.pane.link}
-						companion={companion}
+						computers={computers}
 						chat={chat}
 						rooms={rooms}
 						onClose={beside.close}
@@ -1357,10 +1374,11 @@ function Session({
 			{turnUndo.bar}
 			<SpendCapBar spend={Object.hasOwn(snap.features, "spend-cap") ? snap.state?.spend : undefined} />
 			<Toasts notices={snap.notices} />
-			{companion && <SessionAlert hosts={companion.snap.hosts} currentSessionId={sessionId} onOpen={onOpenHost} />}
-			{statsSheet === "usage" && companionClient !== null && (
+			<SessionAlert computers={computers} currentSessionId={sessionId} onOpen={onOpenHost} />
+			{statsSheet === "usage" && paired && (
 				<UsageSheet
-					client={companionClient}
+					computers={computers}
+					limitsComputerId={computer?.id}
 					limits={
 						limitsOn
 							? {
@@ -1373,13 +1391,10 @@ function Session({
 					onClose={() => setStatsSheet(null)}
 				/>
 			)}
-			{statsSheet === "sessions" && companionClient !== null && companion !== null && (
+			{statsSheet === "sessions" && paired && (
 				<SessionsSheet
-					client={companionClient}
-					canStart={companion.snap.canStart}
-					canSearch={companion.snap.canSearch}
+					computers={computers}
 					initial={sessionsSearch ?? undefined}
-					canForeign={companion.snap.canForeign}
 					currentSessionId={sessionId}
 					onOpenHost={onOpenHost}
 					onOpenLink={onOpenLink}
@@ -1395,8 +1410,8 @@ function Session({
 							? {
 									client: companionClient,
 									instanceId: hostId,
-									canPr: companion?.snap.canPr ?? false,
-									canGitFlow: companion?.snap.canGitFlow ?? false,
+									canPr: computer?.snap.canPr ?? false,
+									canGitFlow: computer?.snap.canGitFlow ?? false,
 									busy: hostRow?.busy ?? null,
 									title: hostRow?.sessionName ?? null,
 								}
@@ -1418,23 +1433,24 @@ function Session({
 					onClose={closeTimeline}
 				/>
 			)}
-			{codemap !== null && canCodemap && companion !== null && (
+			{codemap !== null && canCodemap && computer !== null && (
 				<LazyCodemapSheet
 					key={codemap.file ?? ""}
 					client={companionClient}
 					instanceId={hostId}
 					initialFile={codemap.file}
-					canStart={companion.snap.canStart}
+					canStart={computer.snap.canStart}
 					currentSessionId={sessionId}
-					onOpenHost={onOpenHost}
+					onOpenHost={openHere}
 					onOpenLink={onOpenLink}
 					onOpenFile={openFile}
 					onClose={() => setCodemap(null)}
 				/>
 			)}
-			{architecture !== null && canArchitecture && companionClient !== null && (
+			{architecture !== null && canArchitecture && (
 				<LazyArchitectureSheet
-					client={companionClient}
+					computers={computers}
+					computerId={computer?.id ?? null}
 					cwd={hostId !== null ? cwd : null}
 					instanceId={hostId}
 					start={architecture}
@@ -1469,10 +1485,10 @@ function Session({
 					client={companionClient}
 					instanceId={hostId}
 					onSendToAgent={snap.readOnly ? null : sendToAgent}
-					canReview={companion?.snap.canPrReview === true}
-					sandboxed={companion?.snap.hosts.some(host => host.instanceId === hostId && host.sandboxed) ?? false}
-					canFixIt={companion?.snap.canFixIt === true}
-					onMapPr={canArchitecture ? mapPr : null}
+					canReview={computer?.snap.canPrReview === true}
+					sandboxed={computer?.snap.hosts.some(host => host.instanceId === hostId && host.sandboxed) ?? false}
+					canFixIt={computer?.snap.canFixIt === true}
+					onMapPr={canMapHere ? mapPr : null}
 					onClose={() => setGithubOpen(false)}
 				/>
 			)}
@@ -1485,7 +1501,8 @@ function Session({
 				followsRoom={companionClient !== null && instanceId !== null}
 				entries={snap.entries}
 				sessionId={sessionId}
-				companion={companion}
+				computers={computers}
+				currentComputerId={computer?.id ?? null}
 				rooms={rooms}
 				currentRoomId={roomId}
 				insertDraft={insertDraft}

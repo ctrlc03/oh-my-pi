@@ -33,19 +33,25 @@ const intents = new Map<string, OpenIntent & { at: number }>();
 /** Answers waiting for their ask to arrive, by room. */
 const pendingAnswers = new Map<string, { question: string; option: string; at: number }>();
 
-/** Record what to do when `instanceId` is next opened. */
-export function setOpenIntent(instanceId: string, intent: OpenIntent, now = Date.now()): void {
-	intents.set(instanceId, { ...intent, at: now });
+/** A process of one computer: instance ids are only unique per computer, so everything keyed by one carries the computer. */
+export function hostKey(computerId: string, instanceId: string): string {
+	return `${computerId}|${instanceId}`;
+}
+
+/** Record what to do when `instanceId` of the computer `computerId` is next opened. */
+export function setOpenIntent(computerId: string, instanceId: string, intent: OpenIntent, now = Date.now()): void {
+	intents.set(hostKey(computerId, instanceId), { ...intent, at: now });
 }
 
 /**
- * A link for `instanceId` resolved: carry out its recorded intent. The prompt joins the room's
+ * A link for `instanceId` of `computerId` resolved: carry out its recorded intent. The prompt joins the room's
  * queue (which the client for that room sends once live); the answer waits for the ask.
  */
-export function applyOpenIntent(instanceId: string, link: string, now = Date.now()): void {
-	const intent = intents.get(instanceId);
+export function applyOpenIntent(computerId: string, instanceId: string, link: string, now = Date.now()): void {
+	const key = hostKey(computerId, instanceId);
+	const intent = intents.get(key);
 	if (!intent) return;
-	intents.delete(instanceId);
+	intents.delete(key);
 	const roomId = roomIdOf(link);
 	if (roomId === null || now - intent.at > INTENT_TTL_MS) return;
 	if (intent.prompt) enqueuePrompt(roomId, intent.prompt);
@@ -82,9 +88,9 @@ export function claimPendingAnswer(roomId: string, request: CollabUiRequest, now
 	return null;
 }
 
-/** Stable identity of an inbox item: a new question or reply in the same session is a new item. */
-export function inboxKey(item: InboxItem): string {
-	return `${item.instanceId}:${item.kind}:${item.at}`;
+/** Stable identity of an inbox item of one computer: a new question or reply in the same session is a new item. */
+export function inboxKey(computerId: string, item: InboxItem): string {
+	return `${hostKey(computerId, item.instanceId)}:${item.kind}:${item.at}`;
 }
 
 /** Keys of items the user dismissed, oldest first. */
@@ -95,4 +101,9 @@ export function loadDismissed(): string[] {
 
 export function saveDismissed(keys: readonly string[]): void {
 	writeJson(DISMISSED_KEY, keys.slice(-MAX_DISMISSED));
+}
+
+/** Items dismissed while one computer was paired were its own: their keys gain its id. */
+export function claimLegacyDismissed(computerId: string): void {
+	saveDismissed(loadDismissed().map(key => (key.includes("|") ? key : `${computerId}|${key}`)));
 }

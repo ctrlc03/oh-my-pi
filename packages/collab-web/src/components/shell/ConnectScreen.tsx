@@ -1,12 +1,14 @@
-import { ArrowRight, ClipboardPaste, Eye, Lock, ScanLine, Settings, X } from "lucide-react";
+import { ArrowRight, ClipboardPaste, Eye, Lock, Plus, ScanLine, Settings, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import { extractPairing, type PairingLink } from "../../lib/companion";
+import type { ComputerHandle } from "../../lib/computers";
 import { relTime, shortenPath } from "../../lib/format";
 import { openSettings } from "../../lib/settings-ui";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
-import type { CompanionHandle } from "../../lib/use-companion";
+import { AddComputer } from "./AddComputer";
 import { CompanionCard } from "./CompanionCard";
+import { ComputerChip } from "./ComputerChip";
 import { OmpMark } from "./OmpMark";
 import { QrScanner } from "./QrScanner";
 
@@ -14,26 +16,32 @@ export interface ConnectScreenProps {
 	error: string | null;
 	/** Recently joined rooms, newest first. */
 	rooms: readonly RecentRoom[];
-	/** The paired computer's companion, if any. */
-	companion: CompanionHandle | null;
+	/** The paired computers, one card each. */
+	computers: readonly ComputerHandle[];
 	onConnect(link: string): void;
+	/** Open a computer's host the way the app does; without it a card fetches the link itself. */
+	onOpenHost?: (computerId: string, instanceId: string) => Promise<void>;
 	onForget(roomId: string): void;
+	/** A pairing link was pasted or scanned: pairs with (adds) the computer it names. */
 	onPair(pairing: PairingLink): void;
-	onUnpair(): void;
+	/** Take a computer off this device; the screen asks for confirmation first. */
+	onRemoveComputer(id: string): Promise<void>;
 }
 
 export function ConnectScreen({
 	error,
 	rooms,
-	companion,
+	computers,
 	onConnect,
+	onOpenHost,
 	onForget,
 	onPair,
-	onUnpair,
+	onRemoveComputer,
 }: ConnectScreenProps): ReactNode {
 	const [link, setLink] = useState("");
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [scanning, setScanning] = useState(false);
+	const [adding, setAdding] = useState(false);
 
 	/** Joins a session link, or pairs when handed a companion pairing link. */
 	const join = (raw: string): void => {
@@ -77,6 +85,22 @@ export function ConnectScreen({
 	const shown = localError ?? error;
 	const canPaste = typeof navigator !== "undefined" && typeof navigator.clipboard?.readText === "function";
 
+	const remove = (computer: ComputerHandle): void => {
+		const confirmed = window.confirm(
+			`Remove ${computer.name} from this device? Its remembered sessions here are forgotten and this device is signed out of it. You can pair it again later.`,
+		);
+		if (!confirmed) return;
+		onRemoveComputer(computer.id).catch((err: unknown) =>
+			setLocalError(err instanceof Error ? err.message : String(err)),
+		);
+	};
+
+	/** Names the computer a room ran on, once there are several to tell apart; nothing for a room whose computer is gone. */
+	const computerChip = (room: RecentRoom): ReactNode => {
+		const home = computers.length > 1 ? computers.find(computer => computer.id === room.computerId) : undefined;
+		return home === undefined ? null : <ComputerChip name={home.name} />;
+	};
+
 	return (
 		<div className="sh-connect">
 			<div className="sh-ambient" />
@@ -99,16 +123,38 @@ export function ConnectScreen({
 				</div>
 			</div>
 			<div className="sh-connect-stack">
-				{companion && (
-					<CompanionCard
-						companion={companion}
-						onPair={onPair}
-						onJoin={next => {
-							setLocalError(null);
-							onConnect(next);
-						}}
-						onUnpair={onUnpair}
-					/>
+				{computers.length > 0 && (
+					<div className="sh-connect-cards">
+						{computers.map(computer => (
+							<CompanionCard
+								key={computer.id}
+								computer={computer}
+								showName={computers.length > 1}
+								onPair={onPair}
+								onJoin={next => {
+									setLocalError(null);
+									onConnect(next);
+								}}
+								onOpenHost={onOpenHost}
+								onRemove={() => remove(computer)}
+							/>
+						))}
+						<div className="sh-connect-add">
+							<button
+								type="button"
+								className="sh-btn"
+								aria-expanded={adding}
+								onClick={() => setAdding(open => !open)}
+							>
+								<Plus size={15} /> Add a computer
+							</button>
+							{adding && (
+								<section className="sh-connect-card" aria-label="Add a computer">
+									<AddComputer onPair={onPair} onPaired={() => setAdding(false)} />
+								</section>
+							)}
+						</div>
+					</div>
 				)}
 				{rooms.length > 0 && (
 					<section className="sh-connect-card sh-recents" aria-label="Recent sessions">
@@ -124,6 +170,7 @@ export function ConnectScreen({
 									>
 										<span className="sh-recent-title">
 											<span className="sh-recent-name">{room.title}</span>
+											{computerChip(room)}
 											{room.readOnly && <Eye size={13} aria-label="View-only" />}
 										</span>
 										<span className="sh-recent-meta">

@@ -52,6 +52,17 @@ A pairing code works once and expires after 10 minutes. Each device then keeps i
 
 To keep the app on your home screen: in Safari tap Share, then *Add to Home Screen*; in Chrome choose *Install app*. The installed app reopens the last session, lists recent ones, and on iOS 16.4 or newer it is the only form that can send push notifications (*Notify* on the computer card).
 
+## Add another computer, such as a server
+
+You can pair the same phone or browser with several computers and see all their sessions in one list, labelled by computer. A server that stays on is the usual second one: sessions on it keep running when you close the laptop, and the phone still reaches them.
+
+1. Log in to the server over SSH and install omp the way you did on the laptop (the install line above). On a server with no browser, use `--no-open`.
+2. There, run `omp companion --install` (the installer does it unless you passed `--no-service`): a systemd user unit on Linux, started now and at login. On a server that nobody logs in to, run `loginctl enable-linger <user>` once so the unit keeps running after you disconnect.
+3. Run `omp companion --pair`. It prints a one-time pairing link and a QR code.
+4. In the app, on the phone or the laptop's browser, open Settings → *Computers* (or *Add a computer* on the connect screen), then scan the QR code or paste the link.
+
+The new computer appears as its own group in the sessions list under its machine name, and *Start session* asks which computer to use. Closing the laptop, or any one computer going offline, only greys out that computer's group: sessions on the others keep running and stay reachable. *Remove* in Settings → *Computers* forgets a computer on this device.
+
 ## Your first session
 
 1. On the connect screen, under your computer, tap *Start session*.

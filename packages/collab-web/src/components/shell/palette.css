@@ -169,6 +169,20 @@
 	color: var(--fg-faint);
 }
 
+/* The computer a session or message is on, when there is more than one. */
+.sh-palette-computer {
+	flex: none;
+	max-width: 40%;
+	padding: 1px 7px;
+	overflow: hidden;
+	font-size: 11.5px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--fg-muted);
+	background: var(--bg-inset);
+	border-radius: var(--radius-sm);
+}
+
 .sh-palette-kbd {
 	flex: none;
 	font-size: 11px;

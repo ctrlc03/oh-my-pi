@@ -685,7 +685,11 @@ function hostTitle(host: CompanionHost): string {
 	return host.sessionName || path.basename(host.cwd) || "session";
 }
 
-/** `topic` defaults to the session: a newer notice for it replaces one still undelivered. `tag` and `url` reach the service worker (notification replacement, tap target). */
+/**
+ * `topic` defaults to the session: a newer notice for it replaces one still undelivered. `tag` and `url` reach the service worker
+ * (notification replacement, tap target). Every payload carries this companion's room id as `computer`, so a device paired with
+ * several computers opens the session on the right one: instance ids are only unique per computer.
+ */
 function push(
 	subscription: PushSubscriptionJson,
 	payload: {
@@ -700,7 +704,7 @@ function push(
 	},
 	topic = payload.instanceId,
 ): void {
-	sendPush(subscription, payload, state.vapid, pushSubject, topic).then(
+	sendPush(subscription, { ...payload, computer: state.roomId }, state.vapid, pushSubject, topic).then(
 		status => {
 			// 404/410: the browser dropped the subscription (unsubscribed, app removed).
 			if (status === 404 || status === 410)

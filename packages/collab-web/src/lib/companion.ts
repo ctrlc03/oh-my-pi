@@ -37,10 +37,8 @@ import type {
 } from "./fanout";
 import type { OrgDoc } from "./session-org";
 import { CollabSocket } from "./socket";
-import { readJson, writeJson } from "./storage";
 
 export const PAIR_PREFIX = "pair:";
-const PAIRING_KEY = "omp.collab.companion";
 /** Separates the room link from the one-time invite in a pairing link. */
 const INVITE_MARK = "&invite=";
 const INVITE_RE = /^[A-Za-z0-9_-]{16,64}$/;
@@ -1311,27 +1309,6 @@ export function formatPairingUrl(webUrl: string, link: string, invite: string): 
 	return `${webUrl.replace(/#.*$/, "")}#${PAIR_PREFIX}${link}${INVITE_MARK}${invite}`;
 }
 
-/** The stored pairing. A bare link string is what pairings looked like before devices authenticated: it has no credentials. */
-export function loadPairing(): Pairing | null {
-	const raw = readJson(PAIRING_KEY);
-	if (typeof raw === "string") return { link: raw };
-	if (typeof raw !== "object" || raw === null) return null;
-	const { link, invite, device, machine } = raw as Record<string, unknown>;
-	if (typeof link !== "string") return null;
-	const pairing: Pairing = { link };
-	if (typeof invite === "string") pairing.invite = invite;
-	const creds = device as Partial<DeviceCreds> | undefined;
-	if (typeof creds?.id === "string" && typeof creds.token === "string") {
-		pairing.device = { id: creds.id, token: creds.token };
-	}
-	if (typeof machine === "string") pairing.machine = machine;
-	return pairing;
-}
-
-export function savePairing(pairing: Pairing | null): void {
-	writeJson(PAIRING_KEY, pairing);
-}
-
 /** `unpaired`: the companion refuses this device (not paired yet, or removed): scan a new pairing code. */
 export type CompanionPhase = "connecting" | "live" | "offline" | "unpaired";
 
@@ -1417,6 +1394,43 @@ interface Pending {
 	timer: Timer;
 }
 
+/** What a computer shows before it has answered: connecting, nothing known, nothing offered. */
+export const INITIAL_SNAPSHOT: CompanionSnapshot = {
+	phase: "connecting",
+	machine: null,
+	deviceId: null,
+	hosts: [],
+	idle: [],
+	canStart: false,
+	canSandbox: false,
+	canPr: false,
+	canBlueprint: false,
+	canCodemap: false,
+	canEdit: false,
+	canPreview: false,
+	canGithub: false,
+	canPrReview: false,
+	canFixIt: false,
+	canUpload: false,
+	canSchedule: false,
+	canScheduleCron: false,
+	canGitFlow: false,
+	canFanout: false,
+	canDownload: false,
+	canRun: false,
+	canSearch: false,
+	canScratch: false,
+	canBackgroundStart: false,
+	canForeign: false,
+	sessionOrgRev: null,
+	canOrderSessions: false,
+	canEndOnSettle: false,
+	transcribe: null,
+	power: null,
+	vapidKey: null,
+	error: null,
+};
+
 /** Guest end of the companion room; `useSyncExternalStore`-compatible. */
 export class CompanionClient {
 	readonly #socket: CollabSocket<CompanionRequest, CompanionReply>;
@@ -1427,51 +1441,25 @@ export class CompanionClient {
 	#presence: Extract<CompanionRequest, { t: "presence" }> | null = null;
 	#everOpened = false;
 	#pairing: Pairing;
+	/** The room id of the pairing link: names this computer on every device that pairs with it. */
+	readonly computerId: string;
+	readonly #persist: (pairing: Pairing) => void;
 	/** The companion serves this device (or predates authentication): requests may flow. */
 	#authed = false;
 	/** Requests made before {@link #authed}; the companion would ignore them. */
 	#held: CompanionRequest[] = [];
 	#authTimer: Timer | undefined;
-	#snapshot: CompanionSnapshot = {
-		phase: "connecting",
-		machine: null,
-		deviceId: null,
-		hosts: [],
-		idle: [],
-		canStart: false,
-		canSandbox: false,
-		canPr: false,
-		canBlueprint: false,
-		canCodemap: false,
-		canEdit: false,
-		canPreview: false,
-		canGithub: false,
-		canPrReview: false,
-		canFixIt: false,
-		canUpload: false,
-		canSchedule: false,
-		canScheduleCron: false,
-		canGitFlow: false,
-		canFanout: false,
-		canDownload: false,
-		canRun: false,
-		canSearch: false,
-		canScratch: false,
-		canBackgroundStart: false,
-		canForeign: false,
-		sessionOrgRev: null,
-		canOrderSessions: false,
-		canEndOnSettle: false,
-		transcribe: null,
-		power: null,
-		vapidKey: null,
-		error: null,
-	};
+	#snapshot: CompanionSnapshot = INITIAL_SNAPSHOT;
 
-	/** @throws Error when the pairing's room link does not parse. */
-	constructor(pairing: Pairing) {
+	/**
+	 * `persist` keeps what the connection learns about its computer (the credentials a spent invite bought, the machine name).
+	 * @throws Error when the pairing's room link does not parse.
+	 */
+	constructor(pairing: Pairing, persist: (pairing: Pairing) => void) {
 		const parsed = parseCollabLink(pairing.link);
 		if ("error" in parsed) throw new Error(parsed.error);
+		this.computerId = parsed.roomId;
+		this.#persist = persist;
 		this.#pairing = pairing;
 		this.#snapshot = { ...this.#snapshot, machine: pairing.machine ?? null, deviceId: pairing.device?.id ?? null };
 		this.#socket = new CollabSocket({ wsUrl: parsed.wsUrl, role: "guest", key: importRoomKey(parsed.key) });
@@ -1492,13 +1480,13 @@ export class CompanionClient {
 			this.#rejectPending(new Error(`companion disconnected: ${reason}`));
 			// After `auth-failed` the companion's verdict stands; the socket was closed on purpose.
 			if (this.#snapshot.phase === "unpaired") return;
+			// The relay answered but the companion's room is gone (it stopped, or never ran): offline, though the socket keeps
+			// retrying, so the computer is live again as soon as the companion is back. Any other loss is a retry in progress.
+			const gone = reason === "room closed" || reason === "no such room";
+			const connecting = willReconnect && !gone;
 			this.#update({
-				phase: willReconnect ? "connecting" : "offline",
-				error: willReconnect
-					? null
-					: reason === "no such room"
-						? "The companion is not running on your computer."
-						: reason,
+				phase: connecting ? "connecting" : "offline",
+				error: connecting ? null : gone ? "Its companion is not running." : reason,
 			});
 		};
 	}
@@ -1520,7 +1508,7 @@ export class CompanionClient {
 	 */
 	resume(cause: "foreground" | "online" = "foreground"): void {
 		if (this.#snapshot.phase === "offline") this.connect();
-		else this.#socket.resume(cause);
+		this.#socket.resume(cause);
 	}
 
 	close(): void {
@@ -2030,7 +2018,7 @@ export class CompanionClient {
 					device: { id: frame.deviceId, token: frame.token },
 					machine: this.#pairing.machine,
 				};
-				savePairing(this.#pairing);
+				this.#persist(this.#pairing);
 			}
 			this.#update({ deviceId: frame.deviceId });
 			this.#ready(false);
@@ -2053,7 +2041,7 @@ export class CompanionClient {
 			this.#ready(true);
 			if (frame.machine !== this.#pairing.machine) {
 				this.#pairing = { ...this.#pairing, machine: frame.machine };
-				savePairing(this.#pairing);
+				this.#persist(this.#pairing);
 			}
 			this.#update({
 				phase: "live",

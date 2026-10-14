@@ -1,8 +1,9 @@
-import { LoaderCircle, Play, RefreshCw, Search, Share2, Trash2, X } from "lucide-react";
+import { Laptop, LoaderCircle, Play, RefreshCw, Search, Share2, Trash2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { agentFilterOptions, filterByAgent } from "../../lib/agents";
 import type { AgentRef, CompanionClient, SessionOverview, SessionSearchHit } from "../../lib/companion";
+import type { ComputerHandle } from "../../lib/computers";
 import { fmtCost, fmtTokens, relTime, shortenPath } from "../../lib/format";
 import { setJumpIntent } from "../../lib/jump-intent";
 import { extractLink } from "../../lib/rooms";
@@ -10,6 +11,7 @@ import { MIN_QUERY_CHARS, searchable } from "../../lib/search-terms";
 import { useRequest } from "../../lib/use-request";
 import { AgentChip } from "./AgentChip";
 import { AgentsEntry } from "./AgentsSheet";
+import { ComputerChip } from "./ComputerChip";
 import { MessageSearch } from "./MessageSearch";
 import { useOpenElsewhere } from "./OpenElsewhere";
 import { Sheet } from "./Sheet";
@@ -19,36 +21,78 @@ import "./stats.css";
 const SEARCH_DEBOUNCE_MS = 300;
 const SESSION_LIMIT = 200;
 
+/** A computer that is connected and answering: the ones whose sessions can be listed. */
+type Reachable = ComputerHandle & { client: CompanionClient };
+
+const isReachable = (computer: ComputerHandle): computer is Reachable =>
+	computer.client !== null && computer.snap.phase === "live";
+
+/** One listed session and the computer it is on. */
+interface Listed {
+	session: SessionOverview;
+	computerId: string;
+}
+
+/** The sessions of every computer that answered, and the ones that did not. */
+interface Combined {
+	rows: Listed[];
+	failures: { name: string; message: string }[];
+}
+
+const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+const recency = (session: SessionOverview): number => session.endedAt ?? session.startedAt;
+
+/** Why a computer's sessions are not listed. */
+function unreachableNote(computer: ComputerHandle): string {
+	if (computer.snap.phase === "connecting") return "connecting…";
+	const reason = computer.error ?? computer.snap.error;
+	return reason === null ? "not reachable." : `not reachable. ${reason}`;
+}
+
+/** The sessions of one folder of one computer, listed together. */
+interface FolderGroup {
+	computer: Reachable;
+	folder: string;
+	sessions: SessionOverview[];
+	cost: number;
+}
+
 export interface SessionsSheetProps {
-	client: CompanionClient;
-	/** The companion can start omp, so ended sessions can be resumed. */
-	canStart: boolean;
-	/** The companion answers message searches (`canSearch`); without it only the title and folder search is offered. */
-	canSearch?: boolean;
-	/** The companion can drive other vendors' agents (`canForeign`): the head offers the Agents settings. */
-	canForeign?: boolean;
+	/** Every paired computer: the sessions of those that are connected are listed together. */
+	computers: readonly ComputerHandle[];
 	/** A search to open on (from the command palette): sessions by title or folder, or messages. */
 	initial?: { mode: "sessions" | "messages"; query: string };
 	/** Session on screen: marked and not openable. */
 	currentSessionId?: string | null;
-	/** Fetch a link for a hosting session and join it; rejects with a readable message. */
-	onOpenHost(instanceId: string): Promise<void>;
+	/** Fetch a link for a hosting session of a computer and join it; rejects with a readable message. */
+	onOpenHost(computerId: string, instanceId: string): Promise<void>;
 	onOpenLink(link: string): void;
 	onClose(): void;
 }
 
-/** Every omp session on the computer across projects, grouped by folder; open, share or resume from here. */
+/** Every omp session on the computers across projects, grouped by folder; open, share or resume from here. */
 export function SessionsSheet({
-	client,
-	canStart,
-	canSearch,
-	canForeign,
+	computers,
 	initial,
 	currentSessionId,
 	onOpenHost,
 	onOpenLink,
 	onClose,
 }: SessionsSheetProps): ReactNode {
+	const several = computers.length > 1;
+	/** Id of the computer the list is narrowed to; null: every computer. */
+	const [computerFilter, setComputerFilter] = useState<string | null>(null);
+	const activeComputer = computers.some(computer => computer.id === computerFilter) ? computerFilter : null;
+	const inScope = computers.filter(computer => activeComputer === null || computer.id === activeComputer);
+	const targets = inScope.filter(isReachable);
+	const unreachable = inScope.filter(computer => !isReachable(computer));
+	const targetsRef = useRef(targets);
+	targetsRef.current = targets;
+	const targetIds = targets.map(computer => computer.id).join(",");
+	const searchTargets = targets.filter(computer => computer.snap.canSearch);
+	const foreignTargets = targets.filter(computer => computer.snap.canForeign);
+
 	const [query, setQuery] = useState(initial?.mode === "sessions" ? initial.query : "");
 	const [q, setQ] = useState(query.trim());
 	useEffect(() => {
@@ -56,24 +100,44 @@ export function SessionsSheet({
 		return () => clearTimeout(timer);
 	}, [query]);
 	const [mode, setMode] = useState<"sessions" | "messages">(initial?.mode ?? "sessions");
-	const messages = canSearch === true && mode === "messages";
+	const messages = searchTargets.length > 0 && mode === "messages";
 	const [msgQuery, setMsgQuery] = useState(initial?.mode === "messages" ? initial.query : "");
 	const [mq, setMq] = useState(msgQuery.trim());
 	useEffect(() => {
 		const timer = setTimeout(() => setMq(msgQuery.trim()), SEARCH_DEBOUNCE_MS);
 		return () => clearTimeout(timer);
 	}, [msgQuery]);
-	const load = useCallback(() => client.requestSessions({ limit: SESSION_LIMIT, q: q || undefined }), [client, q]);
+	// Re-lists when the computers asked change (targetIds) or the search does; their clients are stable.
+	const load = useCallback(async (): Promise<Combined> => {
+		const asked = targetsRef.current;
+		const answers = await Promise.allSettled(
+			asked.map(computer => computer.client.requestSessions({ limit: SESSION_LIMIT, q: q || undefined })),
+		);
+		const refused = answers.flatMap(answer => (answer.status === "rejected" ? [messageOf(answer.reason)] : []));
+		// Every computer failing is the list failing; one failing is a line under the others.
+		if (answers.length > 0 && refused.length === answers.length) throw new Error(refused[0]);
+		const rows: Listed[] = [];
+		const failures: Combined["failures"] = [];
+		for (let i = 0; i < asked.length; i++) {
+			const answer = answers[i]!;
+			if (answer.status === "fulfilled") {
+				for (const session of answer.value) rows.push({ session, computerId: asked[i]!.id });
+			} else failures.push({ name: asked[i]!.name, message: messageOf(answer.reason) });
+		}
+		if (asked.length > 1) rows.sort((a, b) => recency(b.session) - recency(a.session));
+		return { rows, failures };
+	}, [targetIds, q]);
 	const { state, reload } = useRequest(load);
 	// Keep the previous list on screen (dimmed) while a new search loads.
-	const shown = useRef<SessionOverview[] | null>(null);
+	const shown = useRef<Combined | null>(null);
 	if (state.status === "ready") shown.current = state.value;
-	const sessions = shown.current;
+	const listed = shown.current;
 	const loading = state.status === "loading";
+	const byId = new Map(targets.map(computer => [computer.id, computer]));
 
 	const [busy, setBusy] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	/** Folder of the worktree whose removal awaits confirmation. */
+	/** The folder (of one computer) whose worktree removal awaits confirmation. */
 	const [removing, setRemoving] = useState<string | null>(null);
 	/** Id of the agent the list is narrowed to; null: every agent. */
 	const [agentFilter, setAgentFilter] = useState<string | null>(null);
@@ -98,25 +162,27 @@ export function SessionsSheet({
 		} catch (err) {
 			if (closedRef.current) return;
 			if (!openElsewhere.intercept(err, () => void run(id, action, true))) {
-				setError(err instanceof Error ? err.message : String(err));
+				setError(messageOf(err));
 			}
 		} finally {
 			if (!closedRef.current) setBusy(null);
 		}
 	};
 
-	const share = async (instanceId: string): Promise<void> => {
-		const link = extractLink(await client.shareSession(instanceId));
+	const share = async (computer: Reachable, instanceId: string): Promise<void> => {
+		const link = extractLink(await computer.client.shareSession(instanceId));
 		if (!link) throw new Error("the computer returned an unreadable link");
 		onOpenLink(link);
 	};
 
 	const resume = async (
+		computer: Reachable,
 		session: { sessionId: string; folder: string; agent?: AgentRef },
 		force: boolean,
 	): Promise<void> => {
 		await onOpenHost(
-			await client.startSession(session.folder, {
+			computer.id,
+			await computer.client.startSession(session.folder, {
 				resume: session.sessionId,
 				agent: session.agent?.id,
 				force: force || undefined,
@@ -138,44 +204,58 @@ export function SessionsSheet({
 		}
 	};
 
-	const openHit = (hit: SessionSearchHit): void => {
+	const openHit = (computer: Reachable, hit: SessionSearchHit): void => {
 		if (hit.sessionId === currentSessionId) {
 			setJumpIntent({ sessionId: hit.sessionId, entryId: hit.entryId });
 			onClose();
 			return;
 		}
 		const { instanceId } = hit;
-		if (instanceId !== undefined) void run(hit.sessionId, () => withJump(hit, () => onOpenHost(instanceId)));
+		if (instanceId !== undefined)
+			void run(hit.sessionId, () => withJump(hit, () => onOpenHost(computer.id, instanceId)));
 	};
-	const shareHit = (hit: SessionSearchHit): void => {
+	const shareHit = (computer: Reachable, hit: SessionSearchHit): void => {
 		const { instanceId } = hit;
-		if (instanceId !== undefined) void run(hit.sessionId, () => withJump(hit, () => share(instanceId)));
+		if (instanceId !== undefined) void run(hit.sessionId, () => withJump(hit, () => share(computer, instanceId)));
 	};
-	const resumeHit = (hit: SessionSearchHit): void => {
+	const resumeHit = (computer: Reachable, hit: SessionSearchHit): void => {
 		void run(hit.sessionId, force =>
-			withJump(hit, () => resume({ sessionId: hit.sessionId, folder: hit.cwd, agent: hit.agent }, force)),
+			withJump(hit, () => resume(computer, { sessionId: hit.sessionId, folder: hit.cwd, agent: hit.agent }, force)),
 		);
 	};
 
-	const removeWorktree = async (folder: string): Promise<void> => {
-		await client.removeWorktree(folder);
+	const removeWorktree = async (computer: Reachable, folder: string): Promise<void> => {
+		await computer.client.removeWorktree(folder);
 		if (closedRef.current) return;
 		setRemoving(null);
 		reload();
 	};
 
-	const agentOptions = agentFilterOptions(sessions ?? []);
+	// A computer that left the list (went offline since) takes its rows with it.
+	const rows = (listed?.rows ?? []).filter(row => byId.has(row.computerId));
+	const agentOptions = agentFilterOptions(rows.map(row => row.session));
 	// A filter whose agent left the list (a narrower search) shows everything again rather than nothing.
 	const activeAgent = agentOptions.some(option => option.id === agentFilter) ? agentFilter : null;
-	const visible = filterByAgent(sessions ?? [], activeAgent);
+	const visible = filterByAgent(
+		rows.map(row => ({ ...row, agent: row.session.agent })),
+		activeAgent,
+	);
 
-	const groups = new Map<string, { sessions: SessionOverview[]; cost: number }>();
-	for (const session of visible) {
-		const group = groups.get(session.folder);
+	const groups = new Map<string, FolderGroup>();
+	for (const { session, computerId } of visible) {
+		const key = `${computerId}\n${session.folder}`;
+		const group = groups.get(key);
 		if (group) {
 			group.sessions.push(session);
 			group.cost += session.cost;
-		} else groups.set(session.folder, { sessions: [session], cost: session.cost });
+		} else {
+			groups.set(key, {
+				computer: byId.get(computerId)!,
+				folder: session.folder,
+				sessions: [session],
+				cost: session.cost,
+			});
+		}
 	}
 
 	return (
@@ -183,7 +263,7 @@ export function SessionsSheet({
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">All sessions</div>
 				<span className="sh-stats-head-actions">
-					{canForeign === true && <AgentsEntry client={client} variant="icon" />}
+					<AgentsEntry computers={foreignTargets} variant="icon" />
 					<button
 						type="button"
 						className="sh-btn sh-btn-icon"
@@ -200,7 +280,46 @@ export function SessionsSheet({
 			</div>
 			{openElsewhere.notice}
 			{error && <div className="sh-connect-error">{error}</div>}
-			{canSearch === true && (
+			{several && (
+				<div className="sh-segmented sh-segmented-wrap" role="radiogroup" aria-label="Filter by computer">
+					<button
+						type="button"
+						role="radio"
+						aria-checked={activeComputer === null}
+						className={activeComputer === null ? "sh-segment sh-segment-on" : "sh-segment"}
+						onClick={() => setComputerFilter(null)}
+					>
+						All computers
+					</button>
+					{computers.map(computer => (
+						<button
+							key={computer.id}
+							type="button"
+							role="radio"
+							aria-checked={activeComputer === computer.id}
+							className={activeComputer === computer.id ? "sh-segment sh-segment-on" : "sh-segment"}
+							onClick={() => setComputerFilter(computer.id)}
+						>
+							<span
+								className={`sh-dot${computer.snap.phase === "live" ? " sh-dot-live" : ""}`}
+								aria-hidden="true"
+							/>
+							{computer.name}
+						</button>
+					))}
+				</div>
+			)}
+			{unreachable.map(computer => (
+				<div key={computer.id} className="sh-companion-empty">
+					{computer.name}: {unreachableNote(computer)}
+				</div>
+			))}
+			{(listed?.failures ?? []).map(failure => (
+				<div key={failure.name} className="sh-companion-empty">
+					{failure.name}: {failure.message}
+				</div>
+			))}
+			{searchTargets.length > 0 && (
 				<div className="sh-segmented sh-segmented-fill" role="radiogroup" aria-label="Search in">
 					<button
 						type="button"
@@ -271,23 +390,38 @@ export function SessionsSheet({
 			)}
 			{messages ? (
 				searchable(mq) ? (
-					<MessageSearch
-						client={client}
-						query={mq}
-						canStart={canStart}
-						currentSessionId={currentSessionId}
-						busy={busy}
-						onOpen={openHit}
-						onShare={shareHit}
-						onResume={resumeHit}
-						agent={activeAgent}
-					/>
+					searchTargets.map(computer => {
+						const search = (
+							<MessageSearch
+								client={computer.client}
+								query={mq}
+								canStart={computer.snap.canStart}
+								currentSessionId={currentSessionId}
+								busy={busy}
+								onOpen={hit => openHit(computer, hit)}
+								onShare={hit => shareHit(computer, hit)}
+								onResume={hit => resumeHit(computer, hit)}
+								agent={activeAgent}
+							/>
+						);
+						return several ? (
+							<section key={computer.id} className="sh-switch-section" aria-label={computer.name}>
+								<h2 className="sh-recents-title">
+									<Laptop size={14} />
+									{computer.name}
+								</h2>
+								{search}
+							</section>
+						) : (
+							<div key={computer.id}>{search}</div>
+						);
+					})
 				) : (
 					<div className="sh-companion-empty">
 						Type at least {MIN_QUERY_CHARS} characters to search what was said in your sessions.
 					</div>
 				)
-			) : sessions === null ? (
+			) : listed === null ? (
 				state.status === "loading" && (
 					<div className="sh-companion-empty sh-file-status">
 						<LoaderCircle size={14} className="sh-spin" /> Loading sessions… the first read can take a while.
@@ -299,75 +433,83 @@ export function SessionsSheet({
 				</div>
 			) : (
 				<div className={loading ? "sh-stats-body sh-stats-cols sh-stats-stale" : "sh-stats-body sh-stats-cols"}>
-					{[...groups].map(([folder, group]) => (
-						<section key={folder} className="sh-switch-section" aria-label={folder}>
-							<h2 className="sh-recents-title sh-stats-group" title={folder}>
-								<span className="sh-recent-cwd">{shortenPath(folder)}</span>
-								{group.sessions.length > 1 && (
-									<span className="sh-stats-group-cost">{fmtCost(group.cost)}</span>
-								)}
-							</h2>
-							{group.sessions.every(session => session.worktree === true && session.live === undefined) && (
-								<div className="sh-review-worktree">
-									{removing === folder ? (
-										<div className="sh-review-confirm" role="group" aria-label="Confirm">
-											<div className="sh-field-label">This will run on your computer:</div>
-											<pre className="sh-review-cmd">git worktree remove {folder}</pre>
-											<div className="sh-field-hint">
-												The branch is kept. Refused if the tree has uncommitted changes.
-											</div>
-											<div className="sh-review-confirm-actions">
-												<button
-													type="button"
-													className="sh-btn"
-													onClick={() => setRemoving(null)}
-													disabled={busy !== null}
-												>
-													Cancel
-												</button>
-												<button
-													type="button"
-													className="sh-btn sh-btn-stop"
-													disabled={busy !== null}
-													onClick={() => void run(folder, () => removeWorktree(folder))}
-												>
-													{busy === folder ? (
-														<LoaderCircle size={14} className="sh-spin" />
-													) : (
-														<Trash2 size={14} />
-													)}{" "}
-													Remove
-												</button>
-											</div>
-										</div>
-									) : (
-										<button
-											type="button"
-											className="sh-btn"
-											disabled={busy !== null}
-											onClick={() => setRemoving(folder)}
-										>
-											<Trash2 size={14} /> Remove worktree
-										</button>
+					{[...groups].map(([groupKey, group]) => {
+						const { computer, folder } = group;
+						return (
+							<section key={groupKey} className="sh-switch-section" aria-label={folder}>
+								<h2 className="sh-recents-title sh-stats-group" title={folder}>
+									<span className="sh-recent-cwd">{shortenPath(folder)}</span>
+									{group.sessions.length > 1 && (
+										<span className="sh-stats-group-cost">{fmtCost(group.cost)}</span>
 									)}
-								</div>
-							)}
-							<ul className="sh-recents-list">
-								{group.sessions.map(session => (
-									<SessionRow
-										key={session.sessionId}
-										session={session}
-										current={session.sessionId === currentSessionId}
-										busy={busy}
-										canStart={canStart}
-										onOpen={instanceId => run(session.sessionId, () => onOpenHost(instanceId))}
-										onShare={instanceId => run(session.sessionId, () => share(instanceId))}
-										onResume={() => run(session.sessionId, force => resume(session, force))}
-									/>
-								))}
-							</ul>
-						</section>
-					))}
+								</h2>
+								{group.sessions.every(session => session.worktree === true && session.live === undefined) && (
+									<div className="sh-review-worktree">
+										{removing === groupKey ? (
+											<div className="sh-review-confirm" role="group" aria-label="Confirm">
+												<div className="sh-field-label">
+													This will run on {several ? computer.name : "your computer"}:
+												</div>
+												<pre className="sh-review-cmd">git worktree remove {folder}</pre>
+												<div className="sh-field-hint">
+													The branch is kept. Refused if the tree has uncommitted changes.
+												</div>
+												<div className="sh-review-confirm-actions">
+													<button
+														type="button"
+														className="sh-btn"
+														onClick={() => setRemoving(null)}
+														disabled={busy !== null}
+													>
+														Cancel
+													</button>
+													<button
+														type="button"
+														className="sh-btn sh-btn-stop"
+														disabled={busy !== null}
+														onClick={() => void run(groupKey, () => removeWorktree(computer, folder))}
+													>
+														{busy === groupKey ? (
+															<LoaderCircle size={14} className="sh-spin" />
+														) : (
+															<Trash2 size={14} />
+														)}{" "}
+														Remove
+													</button>
+												</div>
+											</div>
+										) : (
+											<button
+												type="button"
+												className="sh-btn"
+												disabled={busy !== null}
+												onClick={() => setRemoving(groupKey)}
+											>
+												<Trash2 size={14} /> Remove worktree
+											</button>
+										)}
+									</div>
+								)}
+								<ul className="sh-recents-list">
+									{group.sessions.map(session => (
+										<SessionRow
+											key={session.sessionId}
+											session={session}
+											current={session.sessionId === currentSessionId}
+											busy={busy}
+											canStart={computer.snap.canStart}
+											computerName={several && activeComputer === null ? computer.name : undefined}
+											onOpen={instanceId =>
+												run(session.sessionId, () => onOpenHost(computer.id, instanceId))
+											}
+											onShare={instanceId => run(session.sessionId, () => share(computer, instanceId))}
+											onResume={() => run(session.sessionId, force => resume(computer, session, force))}
+										/>
+									))}
+								</ul>
+							</section>
+						);
+					})}
 				</div>
 			)}
 		</Sheet>
@@ -380,6 +522,8 @@ export interface SessionRowProps {
 	/** sessionId whose action is running; any value disables every action. */
 	busy: string | null;
 	canStart: boolean;
+	/** The computer the session is on, named when there are several. */
+	computerName?: string;
 	onOpen(instanceId: string): void;
 	onShare(instanceId: string): void;
 	onResume(): void;
@@ -390,6 +534,7 @@ export function SessionRow({
 	current,
 	busy,
 	canStart,
+	computerName,
 	onOpen,
 	onShare,
 	onResume,
@@ -400,9 +545,10 @@ export function SessionRow({
 	return (
 		<li className="sh-recent">
 			<div className="sh-recent-join sh-idle-info" title={session.folder}>
-				<span className="sh-recent-title">
+				<span className="sh-recent-title sh-recent-title-wrap">
 					<span className="sh-recent-name">{session.title ?? "Untitled"}</span>
 					<AgentChip agent={session.agent} />
+					{computerName !== undefined && <ComputerChip name={computerName} />}
 					{current && <span className="sh-chip">here</span>}
 					{session.live === "host" && <span className="sh-chip sh-chip-live">live</span>}
 					{session.live === "idle" && <span className="sh-chip">running</span>}

@@ -352,12 +352,12 @@ export function FanoutCompareSheet({ client, groupId, onOpen, onClose }: FanoutC
 	/** Join `run`'s session; its branch review (commit, push, pull request) opens with it. */
 	const openWinner = async (run: FanoutRunView): Promise<void> => {
 		if (run.instanceId === null) return;
-		setPendingReview(run.instanceId);
+		setPendingReview(client.computerId, run.instanceId);
 		try {
 			await onOpen(run.instanceId);
 			onClose();
 		} catch (err) {
-			takePendingReview(run.instanceId);
+			takePendingReview(client.computerId, run.instanceId);
 			setError(errorText(err));
 			setBusy(false);
 			reload();

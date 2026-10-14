@@ -15,7 +15,14 @@ function parseAmount(text: string): number | null | undefined {
 const show = (limit: number | null): string => (limit === null ? "" : String(limit));
 
 /** Spend limits the companion pushes an alert at, once per day / once per session. */
-export function SpendAlerts({ client }: { client: CompanionClient }): ReactNode {
+export function SpendAlerts({
+	client,
+	computerName,
+}: {
+	client: CompanionClient;
+	/** The computer's name, given when several are paired so the text can say which one; undefined: "this computer". */
+	computerName?: string;
+}): ReactNode {
 	const load = useCallback(() => client.spendLimits(), [client]);
 	const { state, reload } = useRequest(load);
 	return (
@@ -33,12 +40,20 @@ export function SpendAlerts({ client }: { client: CompanionClient }): ReactNode 
 					</button>
 				</div>
 			)}
-			{state.status === "ready" && <SpendForm client={client} saved={state.value} />}
+			{state.status === "ready" && <SpendForm client={client} saved={state.value} computerName={computerName} />}
 		</>
 	);
 }
 
-function SpendForm({ client, saved }: { client: CompanionClient; saved: SpendLimits }): ReactNode {
+function SpendForm({
+	client,
+	saved,
+	computerName,
+}: {
+	client: CompanionClient;
+	saved: SpendLimits;
+	computerName: string | undefined;
+}): ReactNode {
 	const [current, setCurrent] = useState(saved);
 	const [daily, setDaily] = useState(show(saved.dailyUsd));
 	const [session, setSession] = useState(show(saved.sessionUsd));
@@ -92,7 +107,8 @@ function SpendForm({ client, saved }: { client: CompanionClient; saved: SpendLim
 			</button>
 			<div className="sh-field-hint">
 				US dollars; leave empty for no limit. Each limit notifies once (the daily one once per day, from local
-				midnight), so turn notifications on for this computer. Spend is checked about every five minutes.
+				midnight), so turn notifications on for {computerName ?? "this computer"}. Spend is checked about every five
+				minutes.
 			</div>
 			{!valid && <div className="sh-connect-error">Enter a positive amount, or leave the field empty.</div>}
 			{error && <div className="sh-connect-error">{error}</div>}

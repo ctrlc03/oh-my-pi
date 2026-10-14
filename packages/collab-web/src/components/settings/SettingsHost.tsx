@@ -20,7 +20,7 @@ import { SECTION_ICONS, SettingsSheet } from "./SettingsSheet";
  */
 export function SettingsHost({ env }: { env: SettingsEnv }): ReactNode {
 	const request = useSettingsRequest();
-	const computer = env.companion !== null;
+	const computer = env.computers.length > 0;
 
 	const entries = useMemo<readonly PaletteEntry[]>(
 		() => [

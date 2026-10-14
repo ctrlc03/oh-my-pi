@@ -16,7 +16,7 @@ import {
 	Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
 	type CompanionHost,
 	type CompanionIdleSession,
@@ -26,10 +26,10 @@ import {
 	type PairingLink,
 } from "../../lib/companion";
 import { ArchitectureEntry } from "../architecture/ArchitectureEntry";
+import { type ComputerHandle, stateWord } from "../../lib/computers";
 import { relTime, shortenPath } from "../../lib/format";
 import { applyOpenIntent } from "../../lib/inbox";
 import { extractLink } from "../../lib/rooms";
-import type { CompanionHandle } from "../../lib/use-companion";
 import { AgentChip } from "./AgentChip";
 import { AgentsEntry } from "./AgentsSheet";
 import { FanoutChip, FanoutGroups } from "./FanoutSheet";
@@ -41,34 +41,72 @@ import { StartSessionSheet } from "./StartSessionSheet";
 import { UsageSheet } from "./UsageSheet";
 
 export interface CompanionCardProps {
-	companion: CompanionHandle;
+	computer: ComputerHandle;
+	/** Several computers are paired: the heading names this one. */
+	showName: boolean;
 	onJoin(link: string): void;
-	/** A pairing code was scanned while this device is refused (not paired yet, or removed). */
+	/** A pairing code was scanned while this device is refused (not paired yet, or removed): pairs with the computer it names. */
 	onPair(pairing: PairingLink): void;
-	onUnpair(): void;
+	/** Take this computer off the device (the caller confirms first). */
+	onRemove(): void;
+	/** Open one of this computer's hosts the way the app does; without it the card fetches the link and joins it itself. */
+	onOpenHost?: (computerId: string, instanceId: string) => Promise<void>;
+}
+
+/** Rows one computer's card shows when there are several computers, so the later cards are not far down the page. */
+const CARD_ROWS = 5;
+
+/** What a session needs from you first: an answer, then work in progress, then the most recent. */
+function attention(host: CompanionHost): number {
+	return host.inputRequired ? 0 : host.busy ? 1 : 2;
+}
+
+/** The first `limit` sessions of a card (those waiting on you, working, newest), then the idle ones that still fit. */
+export function capRows(
+	hosts: readonly CompanionHost[],
+	idle: readonly CompanionIdleSession[],
+	limit: number,
+): { hosts: readonly CompanionHost[]; idle: readonly CompanionIdleSession[]; hidden: number } {
+	const total = hosts.length + idle.length;
+	if (total <= limit) return { hosts, idle, hidden: 0 };
+	const ranked = hosts.toSorted((a, b) => attention(a) - attention(b) || b.startedAt - a.startedAt);
+	const shownHosts = ranked.slice(0, limit);
+	const shownIdle = idle.slice(0, limit - shownHosts.length);
+	return { hosts: shownHosts, idle: shownIdle, hidden: total - shownHosts.length - shownIdle.length };
 }
 
 export function hostTitle(host: { sessionName: string | null; cwd: string }): string {
 	return host.sessionName || host.cwd.split("/").filter(Boolean).pop() || "session";
 }
 
-/** Live list of every collab session on the paired computer; tap one to join it. */
-export function CompanionCard({ companion, onJoin, onPair, onUnpair }: CompanionCardProps): ReactNode {
-	const { client, snap } = companion;
+/** Live list of every collab session on one paired computer; tap one to join it. */
+export function CompanionCard({
+	computer,
+	showName,
+	onJoin,
+	onPair,
+	onRemove,
+	onOpenHost,
+}: CompanionCardProps): ReactNode {
+	const { client, snap } = computer;
 	const [error, setError] = useState<string | null>(null);
 	const [joining, setJoining] = useState<string | null>(null);
 	const live = snap.phase === "live";
+	// The entries and sheets below take a list of computers; this card scopes them to its own.
+	const only = useMemo(() => [computer], [computer]);
 
 	const [starting, setStarting] = useState(false);
 	const [scanning, setScanning] = useState(false);
+	const [expanded, setExpanded] = useState(false);
 	const [statsSheet, setStatsSheet] = useState<"usage" | "sessions" | null>(null);
 
 	/** Open a hosted session's control link. */
-	const open = async (instanceId: string): Promise<void> => {
+	const open = async (computerId: string, instanceId: string): Promise<void> => {
+		if (onOpenHost) return onOpenHost(computerId, instanceId);
 		if (!client) throw new Error("no paired computer");
 		const link = extractLink(await client.requestLink(instanceId));
 		if (!link) throw new Error("the computer returned an unreadable link");
-		applyOpenIntent(instanceId, link);
+		applyOpenIntent(computerId, instanceId, link);
 		onJoin(link);
 	};
 
@@ -77,7 +115,7 @@ export function CompanionCard({ companion, onJoin, onPair, onUnpair }: Companion
 		setJoining(host.instanceId);
 		setError(null);
 		try {
-			await open(host.instanceId);
+			await open(computer.id, host.instanceId);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 			setJoining(null);
@@ -104,21 +142,30 @@ export function CompanionCard({ companion, onJoin, onPair, onUnpair }: Companion
 		}
 	};
 
-	const shown = companion.error ?? error;
+	const name = showName ? computer.name : (snap.machine ?? "Your computer");
+	const rows = useMemo(
+		() => capRows(snap.hosts, snap.idle, showName && !expanded ? CARD_ROWS : Infinity),
+		[snap.hosts, snap.idle, showName, expanded],
+	);
+	const shown = computer.error ?? error;
 	return (
-		<section className="sh-connect-card sh-recents sh-companion" aria-label="Sessions on your computer">
+		<section
+			className="sh-connect-card sh-recents sh-companion"
+			aria-label={showName ? `Sessions on ${computer.name}` : "Sessions on your computer"}
+		>
 			<div className="sh-companion-head">
 				<h2 className="sh-recents-title">
 					<Laptop size={14} />
-					{snap.machine ?? "Your computer"}
+					{name}
 					<span className={`sh-dot${live ? " sh-dot-live" : ""}`} aria-label={live ? "Online" : "Offline"} />
+					{showName && !live && <span className="sh-group-state">{stateWord(snap.phase)}</span>}
 				</h2>
 				<span className="sh-companion-actions">
 					<button
 						type="button"
 						className="sh-btn sh-btn-icon"
-						onClick={onUnpair}
-						aria-label="Unpair this computer"
+						onClick={onRemove}
+						aria-label={showName ? `Remove ${computer.name}` : "Remove this computer"}
 					>
 						<Unlink size={15} />
 					</button>
@@ -144,15 +191,20 @@ export function CompanionCard({ companion, onJoin, onPair, onUnpair }: Companion
 					<div className="sh-companion-empty">Connecting…</div>
 				) : (
 					<>
-						{live && <FanoutGroups hosts={snap.hosts} client={client} onOpen={open} />}
+						{live && <FanoutGroups hosts={snap.hosts} client={client} onOpen={id => open(computer.id, id)} />}
 						{snap.hosts.length === 0 ? (
 							<div className="sh-companion-empty">
 								No session is sharing. Run <code>/collab</code> in omp.
 							</div>
 						) : (
-							<HostList hosts={snap.hosts} joining={joining} disabled={!live} onJoin={join} />
+							<HostList hosts={rows.hosts} joining={joining} disabled={!live} onJoin={join} />
 						)}
-						<IdleList idle={snap.idle} joining={joining} disabled={!live} onShare={share} />
+						<IdleList idle={rows.idle} joining={joining} disabled={!live} onShare={share} />
+						{rows.hidden > 0 && (
+							<button type="button" className="sh-btn sh-card-more" onClick={() => setExpanded(true)}>
+								Show all {snap.hosts.length + snap.idle.length}
+							</button>
+						)}
 						<div className="sh-card-actions">
 							{snap.canStart && live && (
 								<button type="button" className="sh-btn sh-card-action" onClick={() => setStarting(true)}>
@@ -161,12 +213,7 @@ export function CompanionCard({ companion, onJoin, onPair, onUnpair }: Companion
 							)}
 							{live && (
 								<>
-									<InboxEntry
-										client={client}
-										count={snap.hosts.filter(host => host.inputRequired).length}
-										onOpenHost={open}
-										variant="card"
-									/>
+									<InboxEntry computers={only} onOpenHost={open} variant="card" />
 									<button
 										type="button"
 										className="sh-btn sh-card-action"
@@ -181,28 +228,19 @@ export function CompanionCard({ companion, onJoin, onPair, onUnpair }: Companion
 									>
 										<LayoutList size={15} /> All sessions
 									</button>
-									{snap.canSchedule && (
-										<SchedulesEntry
-											client={client}
-											canSandbox={snap.canSandbox}
-											canCron={snap.canScheduleCron}
-											onOpenHost={open}
-											variant="card"
-										/>
-									)}
-									{snap.canForeign && <AgentsEntry client={client} variant="card" />}
-									{snap.canBlueprint && <ArchitectureEntry client={client} onOpenHost={open} />}
+									<SchedulesEntry computers={only} onOpenHost={open} variant="card" />
+									<AgentsEntry computers={only} variant="card" />
+									{snap.canBlueprint && <ArchitectureEntry computers={only} onOpenHost={open} />}
 								</>
 							)}
 						</div>
 					</>
 				))}
 			{shown && <div className="sh-connect-error">{shown}</div>}
-			{starting && client && (
+			{starting && (
 				<StartSessionSheet
-					client={client}
-					canSandbox={snap.canSandbox}
-					canFanout={snap.canFanout}
+					computers={only}
+					currentComputerId={computer.id}
 					onOpen={open}
 					onClose={() => setStarting(false)}
 				/>
@@ -218,17 +256,9 @@ export function CompanionCard({ companion, onJoin, onPair, onUnpair }: Companion
 					onClose={() => setScanning(false)}
 				/>
 			)}
-			{statsSheet === "usage" && client && <UsageSheet client={client} onClose={() => setStatsSheet(null)} />}
-			{statsSheet === "sessions" && client && (
-				<SessionsSheet
-					client={client}
-					canStart={snap.canStart}
-					canSearch={snap.canSearch}
-					canForeign={snap.canForeign}
-					onOpenHost={open}
-					onOpenLink={onJoin}
-					onClose={() => setStatsSheet(null)}
-				/>
+			{statsSheet === "usage" && <UsageSheet computers={only} onClose={() => setStatsSheet(null)} />}
+			{statsSheet === "sessions" && (
+				<SessionsSheet computers={only} onOpenHost={open} onOpenLink={onJoin} onClose={() => setStatsSheet(null)} />
 			)}
 		</section>
 	);

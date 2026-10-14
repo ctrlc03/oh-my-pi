@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CompanionClient } from "./companion";
+import type { ComputerHandle } from "./computers";
+import { DEVICE_ORG, loadOrg, saveOrg } from "./org-storage";
 import type { RecentRoom } from "./rooms";
 import {
 	applyOrg,
@@ -10,16 +12,13 @@ import {
 	type OrgDoc,
 	type OrgEntry,
 	type OrgSettings,
-	parseOrg,
 	pruneOrg,
 	restoreEntries,
 	roomOrgKey,
 	sameOrg,
 	withSettings,
 } from "./session-org";
-import { readJson, writeJson } from "./storage";
 
-const STORAGE_KEY = "omp.collab.session-org";
 /** Snoozes wake and the clock-driven views refresh this often. */
 const CLOCK_MS = 30_000;
 
@@ -27,7 +26,7 @@ export interface SessionOrgControl {
 	doc: OrgDoc;
 	/** Wall clock, refreshed every {@link CLOCK_MS}: a snooze past it shows as active. */
 	now: number;
-	/** The document is kept on the paired computer and follows the user across devices. */
+	/** The document is kept on the computer and follows the user across devices. */
 	synced: boolean;
 	act(key: string, action: OrgAction): void;
 	/**
@@ -39,119 +38,179 @@ export interface SessionOrgControl {
 	restore(prev: Readonly<Record<string, OrgEntry | null>>): void;
 	/** The active order and the per-session auto-settle choice are kept: always on this device, and with a paired computer only when it keeps them too. */
 	extras: boolean;
-	/** The paired computer can end sessions when they settle ({@link CompanionSnapshot.canEndOnSettle}); the setting is only offered then. */
+	/** The computer can end sessions when they settle ({@link CompanionSnapshot.canEndOnSettle}); the setting is only offered then. */
 	canEndOnSettle: boolean;
 	setSettings(patch: Partial<Pick<OrgSettings, "idleDays" | "settleOnPr" | "endOnSettle">>): void;
 }
 
-export interface SessionOrgSource {
-	client: CompanionClient | null;
-	/** The computer answers, and keeps a document ({@link CompanionSnapshot.sessionOrgRev}). */
-	live: boolean;
-	orgRev: number | null;
-	/** The computer keeps the active order and the auto-settle choice ({@link CompanionSnapshot.canOrderSessions}). */
-	orderSessions: boolean;
-	/** The computer ends the sessions it started when they settle, if asked ({@link CompanionSnapshot.canEndOnSettle}). */
-	endOnSettle: boolean;
+/** The organisation of every computer's sessions: each computer keeps its own document, and sessions no computer lists share the device's. */
+export interface SessionOrgs {
+	/** The control for a computer (its id), or for the device's own ({@link DEVICE_ORG}). */
+	of(owner: string): SessionOrgControl;
+}
+
+/** What one document's control last showed, kept so an unchanged document hands out the same control. */
+interface Cached {
+	doc: OrgDoc;
+	now: number;
+	synced: boolean;
+	extras: boolean;
+	canEndOnSettle: boolean;
+	control: SessionOrgControl;
+}
+
+/** The owner whose document a recent room belongs to. */
+export function roomOwner(room: RecentRoom, computers: readonly Pick<ComputerHandle, "id">[]): string {
+	return room.computerId !== undefined && computers.some(computer => computer.id === room.computerId)
+		? room.computerId
+		: DEVICE_ORG;
 }
 
 /**
- * The user's pin / snooze / settle choices. Kept in localStorage; with a paired
- * computer that keeps a document they are merged into it (last writer wins per
- * session), so every device shows the same organisation. Idle auto-settle runs
- * here for recent rooms, which the computer does not know; for its sessions the
- * computer applies it.
+ * The user's pin / snooze / settle choices. Kept in localStorage, one document per computer; with a computer that
+ * keeps one they are merged into it (last writer wins per session), so every device shows the same organisation.
+ * Idle auto-settle runs here for recent rooms, which the computer does not know; for its sessions the computer
+ * applies it.
  */
-export function useSessionOrg(source: SessionOrgSource, rooms: readonly RecentRoom[]): SessionOrgControl {
-	const { client, live, orgRev, orderSessions, endOnSettle } = source;
-	const [doc, setDoc] = useState<OrgDoc>(() => parseOrg(readJson(STORAGE_KEY)));
-	const [now, setNow] = useState(() => Date.now());
-	const docRef = useRef(doc);
+export function useSessionOrgs(computers: readonly ComputerHandle[], rooms: readonly RecentRoom[]): SessionOrgs {
+	const docs = useRef<Record<string, OrgDoc>>({});
 	/** Local changes the computer has not acknowledged yet. */
-	const dirty = useRef(false);
-	const lastRev = useRef<number | null>(null);
-	const synced = live && orgRev !== null && client !== null;
+	const dirty = useRef<Record<string, boolean>>({});
+	const lastRev = useRef<Record<string, number | null>>({});
+	const cache = useRef<Record<string, Cached>>({});
+	const [version, setVersion] = useState(0);
+	const [now, setNow] = useState(() => Date.now());
+	const computersRef = useRef(computers);
+	computersRef.current = computers;
 
-	const commit = useCallback((next: OrgDoc): void => {
-		if (sameOrg(next, docRef.current)) return;
-		docRef.current = next;
-		setDoc(next);
-		writeJson(STORAGE_KEY, next);
+	const docOf = useCallback((owner: string): OrgDoc => {
+		if (!Object.hasOwn(docs.current, owner)) docs.current[owner] = loadOrg(owner);
+		return docs.current[owner]!;
+	}, []);
+
+	const commit = useCallback(
+		(owner: string, next: OrgDoc): void => {
+			if (sameOrg(next, docOf(owner))) return;
+			docs.current[owner] = next;
+			saveOrg(owner, next);
+			setVersion(v => v + 1);
+		},
+		[docOf],
+	);
+
+	const syncedClient = useCallback((owner: string): CompanionClient | null => {
+		const computer = computersRef.current.find(candidate => candidate.id === owner);
+		return computer?.snap.phase === "live" && computer.snap.sessionOrgRev !== null ? computer.client : null;
 	}, []);
 
 	const push = useCallback(
-		async (to: CompanionClient): Promise<void> => {
-			dirty.current = false;
+		async (owner: string, to: CompanionClient): Promise<void> => {
+			dirty.current[owner] = false;
 			try {
-				const reply = await to.syncSessionOrg(docRef.current);
-				lastRev.current = reply.rev;
-				commit(pruneOrg(mergeOrg(docRef.current, reply.doc), Date.now()));
+				const reply = await to.syncSessionOrg(docOf(owner));
+				lastRev.current[owner] = reply.rev;
+				commit(owner, pruneOrg(mergeOrg(docOf(owner), reply.doc), Date.now()));
 			} catch {
 				// Offline: the next connection or change sends it again.
-				dirty.current = true;
+				dirty.current[owner] = true;
 			}
 		},
-		[commit],
+		[commit, docOf],
 	);
 
 	const change = useCallback(
-		(next: OrgDoc): void => {
-			if (next === docRef.current) return;
-			commit(next);
-			dirty.current = true;
-			if (synced && client) void push(client);
+		(owner: string, next: OrgDoc): void => {
+			if (next === docOf(owner)) return;
+			commit(owner, next);
+			dirty.current[owner] = true;
+			const client = syncedClient(owner);
+			if (client !== null) void push(owner, client);
 		},
-		[commit, push, synced, client],
+		[commit, docOf, push, syncedClient],
 	);
 
 	useEffect(() => {
-		if (!synced || !client) return;
-		if (dirty.current || orgRev !== lastRev.current) void push(client);
-	}, [synced, client, orgRev, push]);
+		for (const computer of computers) {
+			const client = syncedClient(computer.id);
+			if (client === null) continue;
+			docOf(computer.id);
+			const known = Object.hasOwn(lastRev.current, computer.id) ? lastRev.current[computer.id] : undefined;
+			if (dirty.current[computer.id] === true || computer.snap.sessionOrgRev !== known)
+				void push(computer.id, client);
+		}
+	}, [computers, docOf, push, syncedClient]);
 
 	useEffect(() => {
 		const timer = setInterval(() => setNow(Date.now()), CLOCK_MS);
 		return () => clearInterval(timer);
 	}, []);
 
+	// A removed computer's document goes with it.
 	useEffect(() => {
-		const idle = rooms.map(room => ({ key: roomOrgKey(room.roomId), lastActive: room.lastSeen, working: false }));
-		change(autoSettleIdle(docRef.current, idle, now));
-	}, [rooms, now, doc.settings.idleDays, change]);
+		const present = new Set<string>(computers.map(computer => computer.id));
+		for (const owner of Object.keys(docs.current)) {
+			if (owner === DEVICE_ORG || present.has(owner)) continue;
+			delete docs.current[owner];
+			delete dirty.current[owner];
+			delete lastRev.current[owner];
+			delete cache.current[owner];
+		}
+	}, [computers]);
 
-	const act = useCallback(
-		(key: string, action: OrgAction): void => change(applyOrg(docRef.current, key, action, Date.now())),
-		[change],
-	);
-	const edit = useCallback(
-		(run: (doc: OrgDoc, at: number) => OrgDoc): Record<string, OrgEntry | null> => {
-			const next = run(docRef.current, Date.now());
-			const prev = changedEntries(docRef.current, next);
-			change(next);
-			return prev;
+	const idleDays = [DEVICE_ORG, ...computers.map(computer => computer.id)]
+		.map(owner => docOf(owner).settings.idleDays)
+		.join(",");
+	useEffect(() => {
+		const owners = new Set<string>([DEVICE_ORG, ...computersRef.current.map(computer => computer.id)]);
+		for (const owner of owners) {
+			const idle = rooms
+				.filter(room => roomOwner(room, computersRef.current) === owner)
+				.map(room => ({ key: roomOrgKey(room.roomId), lastActive: room.lastSeen, working: false }));
+			change(owner, autoSettleIdle(docOf(owner), idle, now));
+		}
+	}, [rooms, now, idleDays, change, docOf]);
+
+	const controlFor = useCallback(
+		(owner: string): SessionOrgControl => {
+			const doc = docOf(owner);
+			const computer = computers.find(candidate => candidate.id === owner);
+			const synced = syncedClient(owner) !== null;
+			const extras = !synced || computer?.snap.canOrderSessions === true;
+			const canEndOnSettle = synced && computer?.snap.canEndOnSettle === true;
+			const hit = Object.hasOwn(cache.current, owner) ? cache.current[owner]! : null;
+			if (
+				hit !== null &&
+				hit.doc === doc &&
+				hit.now === now &&
+				hit.synced === synced &&
+				hit.extras === extras &&
+				hit.canEndOnSettle === canEndOnSettle
+			) {
+				return hit.control;
+			}
+			// The actions read the document when they run: they stay the same through changes to it.
+			const control: SessionOrgControl = {
+				doc,
+				now,
+				synced,
+				extras,
+				canEndOnSettle,
+				act: (key, action) => change(owner, applyOrg(docOf(owner), key, action, Date.now())),
+				edit: run => {
+					const next = run(docOf(owner), Date.now());
+					const prev = changedEntries(docOf(owner), next);
+					change(owner, next);
+					return prev;
+				},
+				restore: prev => change(owner, restoreEntries(docOf(owner), prev, Date.now())),
+				setSettings: patch => change(owner, withSettings(docOf(owner), patch, Date.now())),
+			};
+			cache.current[owner] = { doc, now, synced, extras, canEndOnSettle, control };
+			return control;
 		},
-		[change],
-	);
-	const restore = useCallback(
-		(prev: Readonly<Record<string, OrgEntry | null>>): void =>
-			change(restoreEntries(docRef.current, prev, Date.now())),
-		[change],
-	);
-	const setSettings = useCallback(
-		(patch: Partial<Pick<OrgSettings, "idleDays" | "settleOnPr" | "endOnSettle">>): void =>
-			change(withSettings(docRef.current, patch, Date.now())),
-		[change],
+		[change, computers, docOf, now, syncedClient],
 	);
 
-	return {
-		doc,
-		now,
-		synced,
-		act,
-		edit,
-		restore,
-		extras: !synced || orderSessions,
-		canEndOnSettle: synced && endOnSettle,
-		setSettings,
-	};
+	// `version` is what changes when a document does; the controls read the documents from the refs.
+	return useMemo<SessionOrgs>(() => ({ of: controlFor }), [controlFor, version]);
 }

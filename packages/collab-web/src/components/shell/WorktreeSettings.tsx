@@ -19,7 +19,14 @@ const CLEANUP_MODES: { mode: GitFlowSettings["cleanup"]["mode"]; label: string }
 ];
 
 /** The computer's git worktree settings: where and how new ones are made, and when old ones go. */
-export function WorktreeSettings({ client }: { client: CompanionClient }): ReactNode {
+export function WorktreeSettings({
+	client,
+	computerName,
+}: {
+	client: CompanionClient;
+	/** The computer's name, given when several are paired so the text can say which one; undefined: "the computer". */
+	computerName?: string;
+}): ReactNode {
 	const load = useCallback(() => client.gitSettings(), [client]);
 	const { state, reload } = useRequest(load);
 	return (
@@ -37,12 +44,20 @@ export function WorktreeSettings({ client }: { client: CompanionClient }): React
 					</button>
 				</div>
 			)}
-			{state.status === "ready" && <WorktreeForm client={client} saved={state.value} />}
+			{state.status === "ready" && <WorktreeForm client={client} saved={state.value} computerName={computerName} />}
 		</>
 	);
 }
 
-function WorktreeForm({ client, saved }: { client: CompanionClient; saved: GitFlowSettingsReply }): ReactNode {
+function WorktreeForm({
+	client,
+	saved,
+	computerName,
+}: {
+	client: CompanionClient;
+	saved: GitFlowSettingsReply;
+	computerName: string | undefined;
+}): ReactNode {
 	const [current, setCurrent] = useState(saved);
 	const [draft, setDraft] = useState(saved.settings);
 	const [busy, setBusy] = useState(false);
@@ -109,8 +124,8 @@ function WorktreeForm({ client, saved }: { client: CompanionClient; saved: GitFl
 					spellCheck={false}
 				/>
 				<span className="sh-field-hint">
-					Absolute path on the computer; empty keeps the default. Now: {current.worktreesDir}. Worktrees made
-					earlier stay where they are.
+					Absolute path on {computerName ?? "the computer"}; empty keeps the default. Now: {current.worktreesDir}.
+					Worktrees made earlier stay where they are.
 				</span>
 			</label>
 			<label className="sh-field">
@@ -219,7 +234,7 @@ function WorktreeForm({ client, saved }: { client: CompanionClient; saved: GitFl
 				)}
 				<span className="sh-field-hint">
 					{draft.cleanup.mode === "off"
-						? "The computer keeps every worktree until you remove it."
+						? `${computerName ?? "The computer"} keeps every worktree until you remove it.`
 						: draft.cleanup.mode === "merged"
 							? "Once the branch's pull request is merged."
 							: "Once nothing was committed or checked out in it for that long."}{" "}
@@ -240,8 +255,9 @@ function WorktreeForm({ client, saved }: { client: CompanionClient; saved: GitFl
 					spellCheck={false}
 				/>
 				<span className="sh-field-hint">
-					A model id or role (<code>@smol</code>, the cheap one, by default) the computer's omp uses to write the
-					text offered before committing and opening a pull request.
+					A model id or role (<code>@smol</code>, the cheap one, by default){" "}
+					{computerName ? `${computerName}'s` : "the computer's"} omp uses to write the text offered before
+					committing and opening a pull request.
 				</span>
 			</label>
 			<div className="sh-review-confirm-actions">

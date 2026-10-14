@@ -2,6 +2,7 @@ import {
 	CalendarClock,
 	ChevronLeft,
 	GitBranch,
+	Laptop,
 	LoaderCircle,
 	Pencil,
 	Play,
@@ -12,9 +13,11 @@ import {
 	X,
 } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import type { CompanionClient, RecentFolder } from "../../lib/companion";
+import { type ComputerHandle, computerById, saveLastComputer } from "../../lib/computers";
 import { relTime, shortenPath } from "../../lib/format";
+import { hostKey } from "../../lib/inbox";
 import {
 	type CatchUpPolicy,
 	describeWhen,
@@ -26,26 +29,32 @@ import {
 	type ScheduleInput,
 } from "@oh-my-pi/pi-wire/schedule";
 import { untilWords } from "../../lib/schedules";
+import { useComputerRequests } from "../../lib/use-computer-requests";
 import { useRequest } from "../../lib/use-request";
+import { ComputerPicker, useStartComputer } from "./ComputerPicker";
 import { QuickReplies } from "./QuickReplies";
 import { blankWhenDraft, ScheduleWhenEditor, type WhenDraft, whenDraftOf, whenOf } from "./ScheduleWhenEditor";
 import { Sheet } from "./Sheet";
 import "./schedules.css";
 
 export interface SchedulesSheetProps {
-	client: CompanionClient;
-	/** The companion can start sandboxed sessions: offer the toggle. */
-	canSandbox: boolean;
-	/** The companion understands cron and interval schedules and catch-up policies. */
-	canCron: boolean;
-	/** Fetch a link for a hosting session and join it; rejects with a readable message. */
-	onOpenHost(instanceId: string): Promise<void>;
+	computers: readonly ComputerHandle[];
+	/** Fetch a link for a hosting session of `computerId` and join it; rejects with a readable message. */
+	onOpenHost(computerId: string, instanceId: string): Promise<void>;
 	onClose(): void;
+}
+
+/** The connection to a computer's companion, which the lists of schedules are read through. */
+function clientOf(computer: ComputerHandle): CompanionClient {
+	if (computer.client === null) throw new Error(`${computer.name} is not reachable`);
+	return computer.client;
 }
 
 /** The form's state; the timetable part lives with its editor. */
 interface Draft {
 	id?: string;
+	/** The computer an existing schedule lives on; null for a new one, which takes the computer picked in the editor. */
+	computerId: string | null;
 	title: string;
 	prompt: string;
 	cwd: string;
@@ -67,6 +76,7 @@ function folderName(cwd: string): string {
 
 function blankDraft(): Draft {
 	return {
+		computerId: null,
 		title: "",
 		prompt: "",
 		cwd: "",
@@ -81,10 +91,11 @@ function blankDraft(): Draft {
 	};
 }
 
-function draftOf(schedule: Schedule): Draft {
+function draftOf(schedule: Schedule, computerId: string): Draft {
 	return {
 		...blankDraft(),
 		id: schedule.id,
+		computerId,
 		title: schedule.title,
 		prompt: schedule.prompt,
 		cwd: schedule.cwd,
@@ -141,20 +152,25 @@ function inputFromSchedule(schedule: Schedule, enabled: boolean): ScheduleInput 
 }
 
 /** Prompts the computer runs on a timetable: each starts a hosted omp session that begins working at once. */
-export function SchedulesSheet({ client, canSandbox, canCron, onOpenHost, onClose }: SchedulesSheetProps): ReactNode {
-	const load = useCallback(() => client.requestSchedules(), [client]);
-	const { state, reload } = useRequest(load);
-	// Keep the last list on screen while it reloads.
-	const shown = useRef<Schedule[] | null>(null);
-	if (state.status === "ready") shown.current = state.value;
-	const list = shown.current;
+export function SchedulesSheet({ computers, onOpenHost, onClose }: SchedulesSheetProps): ReactNode {
+	const { entries, loading, reload } = useComputerRequests(computers, "schedule", client => client.requestSchedules());
 	const [draft, setDraft] = useState<Draft | null>(null);
-	const [confirming, setConfirming] = useState<{ id: string; action: "run" | "delete" } | null>(null);
+	const [pickedId, setPickedId] = useStartComputer(computers, "schedule", null);
+	const [confirming, setConfirming] = useState<{ key: string; action: "run" | "delete" } | null>(null);
 	const [busy, setBusy] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const several = computers.length > 1;
+	// An existing schedule stays on its computer; a new one goes where it was picked.
+	const editing =
+		draft === null ? null : computerById(computers, draft.id === undefined ? pickedId : draft.computerId);
 
-	const act = async (id: string, work: () => Promise<unknown>): Promise<void> => {
-		setBusy(id);
+	const rows = entries.flatMap(({ computer, state }) =>
+		state?.status === "ready" ? state.value.map(schedule => ({ computer, schedule })) : [],
+	);
+	const answered = entries.some(entry => entry.state?.status === "ready");
+
+	const act = async (key: string, work: () => Promise<unknown>): Promise<void> => {
+		setBusy(key);
 		setError(null);
 		setConfirming(null);
 		try {
@@ -167,11 +183,12 @@ export function SchedulesSheet({ client, canSandbox, canCron, onOpenHost, onClos
 		}
 	};
 
-	const save = async (input: ScheduleInput): Promise<void> => {
+	const save = async (computer: ComputerHandle, input: ScheduleInput): Promise<void> => {
 		setBusy("save");
 		setError(null);
 		try {
-			await client.saveSchedule(input);
+			await clientOf(computer).saveSchedule(input);
+			saveLastComputer(computer.id);
 			setDraft(null);
 			reload();
 		} catch (err) {
@@ -181,18 +198,31 @@ export function SchedulesSheet({ client, canSandbox, canCron, onOpenHost, onClos
 		}
 	};
 
-	const open = async (instanceId: string): Promise<void> => {
-		setBusy(instanceId);
+	const open = async (computer: ComputerHandle, instanceId: string): Promise<void> => {
+		setBusy(hostKey(computer.id, instanceId));
 		setError(null);
 		try {
-			await onOpenHost(instanceId);
+			await onOpenHost(computer.id, instanceId);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 			setBusy(null);
 		}
 	};
 
-	const loading = state.status === "loading";
+	/** Another computer for a new schedule: what the old one listed or could do no longer applies. */
+	const pickComputer = (id: string): void => {
+		setPickedId(id);
+		if (draft === null) return;
+		const next = computerById(computers, id);
+		setDraft({
+			...draft,
+			cwd: "",
+			sessionId: "",
+			sandboxed: draft.sandboxed && (next?.snap.canSandbox ?? false),
+			...(next?.snap.canScheduleCron === true ? {} : { when: blankWhenDraft(), catchUp: "skip" as const }),
+		});
+	};
+
 	return (
 		<Sheet label="schedules" onClose={onClose}>
 			<div className="sh-sheet-head">
@@ -224,50 +254,61 @@ export function SchedulesSheet({ client, canSandbox, canCron, onOpenHost, onClos
 			</div>
 			{draft !== null ? (
 				<ScheduleEditor
-					client={client}
-					canSandbox={canSandbox}
-					canCron={canCron}
+					computers={computers}
+					computer={editing}
 					draft={draft}
 					busy={busy === "save"}
 					onChange={setDraft}
-					onSave={input => void save(input)}
+					onComputer={pickComputer}
+					onSave={input => {
+						if (editing === null) setError("No computer can run a schedule right now.");
+						else void save(editing, input);
+					}}
 				/>
 			) : (
 				<>
 					<p className="sh-field-hint sh-sched-note">
-						Each run starts omp on this computer with your prompt, as a session you can open from here. Runs use
-						your omp and cost money; they never start once today's spend limit (Usage → Spend alerts) is reached.
-						A run missed while the computer was off follows its catch-up setting (by default it still starts if it
-						is under an hour late).
+						Each run starts omp on {several ? "its" : "this"} computer with your prompt, as a session you can open
+						from here. Runs use your omp and cost money; they never start once today's spend limit (Usage → Spend
+						alerts) is reached. A run missed while the computer was off follows its catch-up setting (by default
+						it still starts if it is under an hour late).
 					</p>
-					{list === null ? (
+					{!answered ? (
 						loading ? (
 							<div className="sh-companion-empty sh-file-status">
 								<LoaderCircle size={14} className="sh-spin" /> Reading schedules…
 							</div>
 						) : null
-					) : list.length === 0 ? (
+					) : rows.length === 0 ? (
 						<div className="sh-companion-empty">No schedules yet.</div>
 					) : (
 						<ul className="sh-sched-list" aria-label="Schedules">
-							{list.map(schedule => (
-								<ScheduleRow
-									key={schedule.id}
-									schedule={schedule}
-									busy={busy}
-									confirming={confirming?.id === schedule.id ? confirming.action : null}
-									onConfirm={action => setConfirming(action === null ? null : { id: schedule.id, action })}
-									onToggle={() =>
-										void act(schedule.id, () =>
-											client.saveSchedule(inputFromSchedule(schedule, !schedule.enabled)),
-										)
-									}
-									onRun={() => void act(schedule.id, () => client.runScheduleNow(schedule.id))}
-									onDelete={() => void act(schedule.id, () => client.deleteSchedule(schedule.id))}
-									onEdit={() => setDraft(draftOf(schedule))}
-									onOpen={open}
-								/>
-							))}
+							{rows.map(({ computer, schedule }) => {
+								const key = hostKey(computer.id, schedule.id);
+								return (
+									<ScheduleRow
+										key={key}
+										schedule={schedule}
+										computerName={several ? computer.name : null}
+										working={busy === key}
+										disabled={busy !== null}
+										confirming={confirming?.key === key ? confirming.action : null}
+										onConfirm={action => setConfirming(action === null ? null : { key, action })}
+										onToggle={() =>
+											void act(key, () =>
+												clientOf(computer).saveSchedule(inputFromSchedule(schedule, !schedule.enabled)),
+											)
+										}
+										onRun={() => void act(key, () => clientOf(computer).runScheduleNow(schedule.id))}
+										onDelete={() => void act(key, () => clientOf(computer).deleteSchedule(schedule.id))}
+										onEdit={() => {
+											setError(null);
+											setDraft(draftOf(schedule, computer.id));
+										}}
+										onOpen={instanceId => open(computer, instanceId)}
+									/>
+								);
+							})}
 						</ul>
 					)}
 					<button
@@ -280,17 +321,35 @@ export function SchedulesSheet({ client, canSandbox, canCron, onOpenHost, onClos
 					</button>
 				</>
 			)}
-			{(error ?? (state.status === "error" ? state.message : null)) && (
-				<div className="sh-connect-error">{error ?? (state.status === "error" ? state.message : null)}</div>
+			{error && <div className="sh-connect-error">{error}</div>}
+			{entries.map(({ computer, state }) =>
+				state?.status === "error" ? (
+					<div key={computer.id} className="sh-connect-error">
+						{several ? `${computer.name}: ` : ""}
+						{state.message}
+					</div>
+				) : null,
 			)}
+			{several &&
+				entries.map(({ computer, reason }) =>
+					reason !== null && computer.snap.phase !== "live" ? (
+						<div key={computer.id} className="sh-field-hint">
+							{computer.name}: {reason}
+						</div>
+					) : null,
+				)}
 		</Sheet>
 	);
 }
 
 interface ScheduleRowProps {
 	schedule: Schedule;
-	/** Id of the schedule (or session) with a request in flight. */
-	busy: string | null;
+	/** The computer's name, shown when there are several. */
+	computerName: string | null;
+	/** A request of this schedule is in flight. */
+	working: boolean;
+	/** Some request is in flight. */
+	disabled: boolean;
 	confirming: "run" | "delete" | null;
 	onConfirm(action: "run" | "delete" | null): void;
 	onToggle(): void;
@@ -315,7 +374,9 @@ function lastResult(schedule: Schedule): { text: string; tone: "ok" | "skip" | "
 
 function ScheduleRow({
 	schedule,
-	busy,
+	computerName,
+	working,
+	disabled,
 	confirming,
 	onConfirm,
 	onToggle,
@@ -324,8 +385,6 @@ function ScheduleRow({
 	onEdit,
 	onOpen,
 }: ScheduleRowProps): ReactNode {
-	const working = busy === schedule.id;
-	const disabled = busy !== null;
 	const result = lastResult(schedule);
 	const next =
 		schedule.nextRun !== null && schedule.enabled
@@ -351,6 +410,11 @@ function ScheduleRow({
 						<span>{next}</span>
 					</span>
 					<span className="sh-recent-meta">
+						{computerName !== null && (
+							<span className="sh-sched-computer">
+								<Laptop size={12} /> {computerName}
+							</span>
+						)}
 						<span className="sh-recent-cwd" title={schedule.cwd}>
 							{shortenPath(schedule.cwd)}
 						</span>
@@ -431,25 +495,33 @@ function ScheduleRow({
 }
 
 interface ScheduleEditorProps {
-	client: CompanionClient;
-	canSandbox: boolean;
-	canCron: boolean;
+	computers: readonly ComputerHandle[];
+	/** The computer the schedule is saved to; null when none can take one. */
+	computer: ComputerHandle | null;
 	draft: Draft;
 	busy: boolean;
 	onChange(draft: Draft): void;
+	/** A new schedule's computer was picked. */
+	onComputer(id: string): void;
 	onSave(input: ScheduleInput): void;
 }
 
 function ScheduleEditor({
-	client,
-	canSandbox,
-	canCron,
+	computers,
+	computer,
 	draft,
 	busy,
 	onChange,
+	onComputer,
 	onSave,
 }: ScheduleEditorProps): ReactNode {
-	const loadFolders = useCallback(() => client.requestFolders(), [client]);
+	const client = computer?.client ?? null;
+	const canSandbox = computer?.snap.canSandbox ?? false;
+	const canCron = computer?.snap.canScheduleCron ?? false;
+	const loadFolders = useCallback(
+		() => (client === null ? Promise.resolve<RecentFolder[]>([]) : client.requestFolders()),
+		[client],
+	);
 	const { state: folders } = useRequest(loadFolders);
 	const [problem, setProblem] = useState<string | null>(null);
 	const set = (patch: Partial<Draft>): void => {
@@ -474,6 +546,22 @@ function ScheduleEditor({
 
 	return (
 		<form className="sh-sched-form" onSubmit={submit}>
+			{draft.id === undefined ? (
+				<ComputerPicker
+					computers={computers}
+					feature="schedule"
+					value={computer?.id ?? null}
+					onChange={onComputer}
+				/>
+			) : (
+				computers.length > 1 &&
+				computer !== null && (
+					<div className="sh-sched-field">
+						<span className="sh-field-label">Computer</span>
+						<span className="sh-field-hint">{computer.name}</span>
+					</div>
+				)
+			)}
 			<label className="sh-sched-field">
 				<span className="sh-field-label">Title</span>
 				<input
@@ -655,18 +743,17 @@ function ScheduleEditor({
 }
 
 export interface SchedulesEntryProps {
-	client: CompanionClient;
-	canSandbox: boolean;
-	/** The companion understands cron and interval schedules and catch-up policies. */
-	canCron: boolean;
-	onOpenHost(instanceId: string): Promise<void>;
+	computers: readonly ComputerHandle[];
+	/** Fetch a link for a hosting session of `computerId` and join it; rejects with a readable message. */
+	onOpenHost(computerId: string, instanceId: string): Promise<void>;
 	/** `card`: labelled button in the start screen's action row; `icon`: sidebar footer button. */
 	variant: "card" | "icon";
 }
 
-/** The button that opens the schedules sheet. */
-export function SchedulesEntry({ client, canSandbox, canCron, onOpenHost, variant }: SchedulesEntryProps): ReactNode {
+/** The button that opens the schedules sheet; absent unless some computer runs schedules. */
+export function SchedulesEntry({ computers, onOpenHost, variant }: SchedulesEntryProps): ReactNode {
 	const [open, setOpen] = useState(false);
+	if (!computers.some(computer => computer.snap.canSchedule)) return null;
 	return (
 		<>
 			<button
@@ -679,15 +766,7 @@ export function SchedulesEntry({ client, canSandbox, canCron, onOpenHost, varian
 				<CalendarClock size={15} />
 				{variant === "card" && " Schedules"}
 			</button>
-			{open && (
-				<SchedulesSheet
-					client={client}
-					canSandbox={canSandbox}
-					canCron={canCron}
-					onOpenHost={onOpenHost}
-					onClose={() => setOpen(false)}
-				/>
-			)}
+			{open && <SchedulesSheet computers={computers} onOpenHost={onOpenHost} onClose={() => setOpen(false)} />}
 		</>
 	);
 }

@@ -85,3 +85,9 @@
 	top: -3px;
 	right: -3px;
 }
+
+.sh-inbox-computer {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+}

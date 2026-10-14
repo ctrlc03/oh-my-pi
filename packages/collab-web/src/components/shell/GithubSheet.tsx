@@ -339,7 +339,7 @@ function ItemDetail({
 						<button
 							type="button"
 							className="sh-btn"
-							onClick={() => emitRoute(fixRoute(fixRepo, head.number))}
+							onClick={() => emitRoute(fixRoute(fixRepo, head.number), client.computerId)}
 							title="Read the failing checks' logs and open a session with a prompt to fix them"
 						>
 							<Wrench size={14} /> Fix it

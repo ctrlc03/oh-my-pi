@@ -1,23 +1,54 @@
 import type { BlueprintSummary } from "@oh-my-pi/pi-wire/blueprint";
-import { Eye, GitCompare, LoaderCircle, Plus, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
+import { Eye, GitCompare, Laptop, LoaderCircle, Plus, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CompanionClient } from "../../lib/companion";
+import { type ComputerHandle, unavailableReason } from "../../lib/computers";
 import { fmtCost, relTime } from "../../lib/format";
 import { useRequest } from "../../lib/use-request";
 import { createBlueprint, deleteBlueprint, listBlueprints } from "./blueprint-api";
 import { refLabel, shortCommit } from "./blueprint-model";
 
 export interface MapListProps {
-	client: CompanionClient;
-	/** The session's folder: only its repository's maps are listed. Null lists every repository's. */
+	computers: readonly ComputerHandle[];
+	/** The computer of the session on screen; null from the start screen. */
+	computerId: string | null;
+	/** The session's folder: only its repository's maps (on its computer) are listed. Null lists every repository's. */
 	cwd: string | null;
-	/** Host of the session on screen, so its own map-writing session is not offered as a link. */
+	/** Host of the session on screen (on `computerId`), so its own map-writing session is not offered as a link. */
 	currentInstanceId: string | null;
-	onOpen(id: string): void;
+	onOpen(computerId: string, id: string): void;
 	onNew(): void;
 	/** Join the omp session that is writing a running map. */
-	onOpenHost(instanceId: string): Promise<void>;
+	onOpenHost(computerId: string, instanceId: string): Promise<void>;
+}
+
+/** A computer whose maps are listed. */
+interface Target {
+	id: string;
+	name: string;
+	client: CompanionClient;
+}
+
+/** A map and the computer that holds it. */
+interface MapEntry {
+	target: Target;
+	map: BlueprintSummary;
+}
+
+interface Listing {
+	entries: MapEntry[];
+	failures: { target: Target; message: string }[];
+}
+
+/** `targets`, the same array while the same computers stay connected (a snapshot change on another field is not a new list). */
+function useStableTargets(next: Target[]): Target[] {
+	const kept = useRef(next);
+	const same =
+		kept.current.length === next.length &&
+		next.every((target, at) => target.id === kept.current[at]!.id && target.client === kept.current[at]!.client);
+	if (!same) kept.current = next;
+	return kept.current;
 }
 
 /** `/a/b/repo` → `repo`. */
@@ -32,15 +63,63 @@ function describe(map: BlueprintSummary): string {
 	return `${head} vs ${map.base.ref === undefined ? shortCommit(map.base.commit) : refLabel(map.base.ref)}`;
 }
 
-/** The maps of the repository (or of every repository), with progress while they build. */
-export function MapList({ client, cwd, currentInstanceId, onOpen, onNew, onOpenHost }: MapListProps): ReactNode {
-	const load = useCallback(() => listBlueprints(client, cwd ?? undefined), [client, cwd]);
+/**
+ * The maps of the repository (or of every repository) on every computer that makes them, with progress while they
+ * build. Each computer answers on its own: one that fails shows its own line and the others are listed anyway.
+ */
+export function MapList({
+	computers,
+	computerId,
+	cwd,
+	currentInstanceId,
+	onOpen,
+	onNew,
+	onOpenHost,
+}: MapListProps): ReactNode {
+	const several = computers.length > 1;
+	const targets = useStableTargets(
+		computers.flatMap(computer =>
+			computer.client !== null && unavailableReason(computer, "blueprint") === null
+				? [{ id: computer.id, name: computer.name, client: computer.client }]
+				: [],
+		),
+	);
+	const away = computers.flatMap(computer => {
+		const reason = unavailableReason(computer, "blueprint");
+		return reason === null ? [] : [{ computer, reason }];
+	});
+	const load = useCallback(async (): Promise<Listing> => {
+		const answers = await Promise.allSettled(
+			// The session's folder narrows its own computer's maps; another computer has its own checkouts.
+			targets.map(target =>
+				listBlueprints(target.client, target.id === computerId ? (cwd ?? undefined) : undefined),
+			),
+		);
+		const entries: MapEntry[] = [];
+		const failures: Listing["failures"] = [];
+		answers.forEach((answer, at) => {
+			const target = targets[at]!;
+			if (answer.status === "fulfilled") for (const map of answer.value) entries.push({ target, map });
+			else
+				failures.push({
+					target,
+					message: answer.reason instanceof Error ? answer.reason.message : String(answer.reason),
+				});
+		});
+		if (targets.length > 1) entries.sort((a, b) => b.map.createdAt - a.map.createdAt);
+		return { entries, failures };
+	}, [targets, computerId, cwd]);
 	const { state, reload } = useRequest(load);
 	// Keep the list on screen (dimmed) while a push refreshes it.
-	const shown = useRef<BlueprintSummary[] | null>(null);
+	const shown = useRef<Listing | null>(null);
 	if (state.status === "ready") shown.current = state.value;
-	const maps = shown.current;
-	useEffect(() => client.onBlueprintChanged(() => reload()), [client, reload]);
+	const listing = shown.current;
+	useEffect(() => {
+		const stops = targets.map(target => target.client.onBlueprintChanged(() => reload()));
+		return () => {
+			for (const stop of stops) stop();
+		};
+	}, [targets, reload]);
 	const loading = state.status === "loading";
 
 	return (
@@ -65,42 +144,56 @@ export function MapList({ client, cwd, currentInstanceId, onOpen, onNew, onOpenH
 					</button>
 				</span>
 			</div>
-			{state.status === "error" && (
-				<div className="sh-tree-error">
-					<div className="sh-connect-error">{state.message}</div>
+			{away.map(({ computer, reason }) => (
+				<div key={computer.id} className="ar-computer-away">
+					<span className="sh-dot" aria-hidden="true" /> {several ? `${computer.name}: ${reason}` : reason}
+				</div>
+			))}
+			{listing?.failures.map(failure => (
+				<div key={failure.target.id} className="sh-tree-error">
+					<div className="sh-connect-error">
+						{several ? `${failure.target.name}: ${failure.message}` : failure.message}
+					</div>
 					<button type="button" className="sh-btn" onClick={reload}>
 						<RefreshCw size={14} /> Retry
 					</button>
 				</div>
-			)}
-			{maps === null ? (
+			))}
+			{listing === null ? (
 				loading && (
 					<div className="sh-companion-empty sh-file-status">
 						<LoaderCircle size={14} className="sh-spin" /> Loading the maps…
 					</div>
 				)
-			) : maps.length === 0 ? (
-				<div className="ar-home-empty">
-					<p>No maps yet{cwd !== null ? " for this repository" : ""}.</p>
-					<p className="ar-muted">
-						A map shows how the code fits together: the whole system, then each part down to files and symbols,
-						with the code behind every arrow.
-					</p>
-					<button type="button" className="sh-btn sh-btn-primary" onClick={onNew}>
-						<Plus size={14} /> Make the first map
-					</button>
-				</div>
+			) : listing.entries.length === 0 ? (
+				listing.failures.length === 0 &&
+				targets.length > 0 && (
+					<div className="ar-home-empty">
+						<p>No maps yet{cwd !== null ? " for this repository" : ""}.</p>
+						<p className="ar-muted">
+							A map shows how the code fits together: the whole system, then each part down to files and symbols,
+							with the code behind every arrow.
+						</p>
+						<button type="button" className="sh-btn sh-btn-primary" onClick={onNew}>
+							<Plus size={14} /> Make the first map
+						</button>
+					</div>
+				)
 			) : (
 				<ul className={loading ? "ar-maps sh-stats-stale" : "ar-maps"}>
-					{maps.map(map => (
+					{listing.entries.map(({ target, map }) => (
 						<MapRow
-							key={map.id}
+							key={`${target.id}:${map.id}`}
 							map={map}
-							client={client}
-							showRepo={cwd === null}
-							canWatch={map.instanceId !== undefined && map.instanceId !== currentInstanceId}
-							onOpen={onOpen}
-							onOpenHost={onOpenHost}
+							client={target.client}
+							computerName={several ? target.name : null}
+							showRepo={cwd === null || target.id !== computerId}
+							canWatch={
+								map.instanceId !== undefined &&
+								!(target.id === computerId && map.instanceId === currentInstanceId)
+							}
+							onOpen={id => onOpen(target.id, id)}
+							onOpenHost={instanceId => onOpenHost(target.id, instanceId)}
 							onChanged={reload}
 						/>
 					))}
@@ -113,6 +206,8 @@ export function MapList({ client, cwd, currentInstanceId, onOpen, onNew, onOpenH
 interface MapRowProps {
 	map: BlueprintSummary;
 	client: CompanionClient;
+	/** The computer holding the map, named when there are several; null with one. */
+	computerName: string | null;
 	showRepo: boolean;
 	canWatch: boolean;
 	onOpen(id: string): void;
@@ -120,7 +215,16 @@ interface MapRowProps {
 	onChanged(): void;
 }
 
-function MapRow({ map, client, showRepo, canWatch, onOpen, onOpenHost, onChanged }: MapRowProps): ReactNode {
+function MapRow({
+	map,
+	client,
+	computerName,
+	showRepo,
+	canWatch,
+	onOpen,
+	onOpenHost,
+	onChanged,
+}: MapRowProps): ReactNode {
 	const [busy, setBusy] = useState<"update" | "delete" | "watch" | null>(null);
 	const [confirming, setConfirming] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -169,6 +273,11 @@ function MapRow({ map, client, showRepo, canWatch, onOpen, onOpenHost, onChanged
 							</>
 						)}
 					</span>
+					{computerName !== null && (
+						<span className="ar-map-computer">
+							<Laptop size={11} /> {computerName}
+						</span>
+					)}
 					{showRepo && <span>{folderName(map.repoRoot)}</span>}
 					<span>{describe(map)}</span>
 					<span>{relTime(map.createdAt)}</span>

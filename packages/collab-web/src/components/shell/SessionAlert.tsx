@@ -1,25 +1,27 @@
 import { BellRing, LoaderCircle, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import type { CompanionHost } from "../../lib/companion";
+import type { ComputerHandle } from "../../lib/computers";
+import { hostKey } from "../../lib/inbox";
 import { hostTitle } from "./CompanionCard";
 
 export interface SessionAlertProps {
-	hosts: readonly CompanionHost[];
+	computers: readonly ComputerHandle[];
 	/** Session on screen; its own prompts show in the composer instead. */
 	currentSessionId: string | null;
-	onOpen(instanceId: string): Promise<void>;
+	onOpen(computerId: string, instanceId: string): Promise<void>;
 }
 
 /**
- * "Other session needs input" notice. Raised when a host on the paired
+ * "Other session needs input" notice. Raised when a host on any paired
  * computer is seen to start waiting on a prompt: hosts already waiting (or
  * not yet listed) when this view opened stay with the switcher badge.
- * Cleared once the host stops waiting.
+ * Cleared once the host stops waiting. With several computers the notice
+ * names the one the session runs on.
  */
-export function SessionAlert({ hosts, currentSessionId, onOpen }: SessionAlertProps): ReactNode {
+export function SessionAlert({ computers, currentSessionId, onOpen }: SessionAlertProps): ReactNode {
 	const seenRef = useRef<Record<string, boolean> | null>(null);
-	/** Raised instanceIds, oldest first. */
+	/** Raised sessions (`computer|instance`, see `hostKey`), oldest first. */
 	const [raised, setRaised] = useState<string[]>([]);
 	const [opening, setOpening] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -27,28 +29,38 @@ export function SessionAlert({ hosts, currentSessionId, onOpen }: SessionAlertPr
 	useEffect(() => {
 		const before = seenRef.current;
 		const now: Record<string, boolean> = {};
-		for (const host of hosts) now[host.instanceId] = host.inputRequired;
+		for (const computer of computers) {
+			for (const host of computer.snap.hosts) now[hostKey(computer.id, host.instanceId)] = host.inputRequired;
+		}
 		seenRef.current = now;
 		setRaised(list => {
-			const kept = list.filter(id => now[id]);
+			const kept = list.filter(key => now[key]);
 			if (before === null) return kept;
-			for (const host of hosts) {
-				if (host.inputRequired && before[host.instanceId] === false && host.sessionId !== currentSessionId) {
-					kept.push(host.instanceId);
+			for (const computer of computers) {
+				for (const host of computer.snap.hosts) {
+					const key = hostKey(computer.id, host.instanceId);
+					if (host.inputRequired && before[key] === false && host.sessionId !== currentSessionId) kept.push(key);
 				}
 			}
-			return kept.length === list.length && kept.every((id, i) => id === list[i]) ? list : kept;
+			return kept.length === list.length && kept.every((key, i) => key === list[i]) ? list : kept;
 		});
-	}, [hosts, currentSessionId]);
+	}, [computers, currentSessionId]);
 
 	const latest = raised.at(-1);
-	const host = latest === undefined ? undefined : hosts.find(h => h.instanceId === latest);
-	if (!host) return null;
+	let found: { computer: ComputerHandle; instanceId: string; title: string } | null = null;
+	if (latest !== undefined) {
+		for (const computer of computers) {
+			const host = computer.snap.hosts.find(row => hostKey(computer.id, row.instanceId) === latest);
+			if (host !== undefined) found = { computer, instanceId: host.instanceId, title: hostTitle(host) };
+		}
+	}
+	if (found === null) return null;
+	const { computer, instanceId, title } = found;
 
 	const open = (): void => {
 		setOpening(true);
 		setError(null);
-		onOpen(host.instanceId).catch((err: unknown) => {
+		onOpen(computer.id, instanceId).catch((err: unknown) => {
 			setError(err instanceof Error ? err.message : String(err));
 			setOpening(false);
 		});
@@ -59,14 +71,16 @@ export function SessionAlert({ hosts, currentSessionId, onOpen }: SessionAlertPr
 			<button type="button" className="sh-alert-open" onClick={open} disabled={opening}>
 				{opening ? <LoaderCircle size={15} className="sh-spin" /> : <BellRing size={15} />}
 				<span className="sh-alert-text">
-					<strong>{hostTitle(host)}</strong> {error ?? "needs input"}
+					<strong>{title}</strong>
+					{computers.length > 1 && <span className="sh-alert-where"> on {computer.name}</span>}{" "}
+					{error ?? "needs input"}
 					{raised.length > 1 && <span className="sh-alert-more"> +{raised.length - 1}</span>}
 				</span>
 			</button>
 			<button
 				type="button"
 				className="sh-btn sh-btn-icon"
-				onClick={() => setRaised(list => list.filter(id => id !== host.instanceId))}
+				onClick={() => setRaised(list => list.filter(key => key !== latest))}
 				aria-label="Dismiss"
 			>
 				<X size={14} />

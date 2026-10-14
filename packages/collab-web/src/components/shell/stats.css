@@ -297,3 +297,9 @@
 .sh-spend .sh-btn {
 	justify-self: start;
 }
+
+.sh-usage-computer {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}

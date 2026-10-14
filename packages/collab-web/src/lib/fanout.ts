@@ -1,4 +1,5 @@
 import type { AgentRef } from "@oh-my-pi/pi-wire";
+import { hostKey } from "./inbox";
 
 /**
  * Best-of-N: one prompt on several models, each in its own git worktree, then a
@@ -168,14 +169,14 @@ export function hostFanout(groups: readonly FanoutGroup[]): Record<string, HostF
 	return out;
 }
 
-/** Pending "open the winner's pull request flow": consumed once when the kept session opens. */
+/** Pending "open the winner's pull request flow": consumed once when the kept session opens. Keyed by {@link hostKey}: instance ids repeat across computers. */
 const pendingReview = new Set<string>();
 
-export function setPendingReview(instanceId: string): void {
-	pendingReview.add(instanceId);
+export function setPendingReview(computerId: string, instanceId: string): void {
+	pendingReview.add(hostKey(computerId, instanceId));
 }
 
-/** True once for an instance that {@link setPendingReview} marked. */
-export function takePendingReview(instanceId: string): boolean {
-	return pendingReview.delete(instanceId);
+/** True once for a process that {@link setPendingReview} marked. */
+export function takePendingReview(computerId: string, instanceId: string): boolean {
+	return pendingReview.delete(hostKey(computerId, instanceId));
 }

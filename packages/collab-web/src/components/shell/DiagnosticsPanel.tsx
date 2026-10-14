@@ -11,12 +11,14 @@ import "./diagnostics.css";
 /** Newest events shown; the app keeps 50 and the companion 20. */
 const EVENTS_SHOWN = 30;
 
-const CONFIRM: Record<MaintainAction, string> = {
-	"restart-companion":
-		"Restart the companion? The app loses contact with your computer for a few seconds. Running sessions are not affected.",
-	"update-omp":
-		"Update omp on your computer? This installs the newest release. Sessions already running keep the old version until they are restarted.",
-};
+function confirmText(action: MaintainAction, computer: string): string {
+	switch (action) {
+		case "restart-companion":
+			return `Restart the companion? The app loses contact with ${computer} for a few seconds. Running sessions are not affected.`;
+		case "update-omp":
+			return `Update omp on ${computer}? This installs the newest release. Sessions already running keep the old version until they are restarted.`;
+	}
+}
 
 const SOURCE_LABEL: Record<DiagEvent["source"], string> = {
 	companion: "app → computer",
@@ -26,6 +28,8 @@ const SOURCE_LABEL: Record<DiagEvent["source"], string> = {
 
 export interface DiagnosticsPanelProps {
 	client: CompanionClient;
+	/** The computer's name, given when several are paired so the text can say which one; undefined: "your computer". */
+	computerName?: string;
 }
 
 interface Reading {
@@ -51,7 +55,8 @@ function Row({ label, children }: { label: string; children: ReactNode }): React
 }
 
 /** Connection health between this app, the companion on the computer, and the sessions it joins, plus computer maintenance. */
-export function DiagnosticsPanel({ client }: DiagnosticsPanelProps): ReactNode {
+export function DiagnosticsPanel({ client, computerName }: DiagnosticsPanelProps): ReactNode {
+	const yours = computerName ?? "your computer";
 	const load = useCallback(async (): Promise<Reading> => {
 		const rttMs = await client.measureRtt();
 		const diag = await client.requestDiag();
@@ -69,7 +74,7 @@ export function DiagnosticsPanel({ client }: DiagnosticsPanelProps): ReactNode {
 	const [running, setRunning] = useState<MaintainAction | null>(null);
 	const [outcome, setOutcome] = useState<{ ok: boolean; text: string } | null>(null);
 	const maintain = async (action: MaintainAction): Promise<void> => {
-		if (running || !window.confirm(CONFIRM[action])) return;
+		if (running || !window.confirm(confirmText(action, yours))) return;
 		setRunning(action);
 		setOutcome(null);
 		try {
@@ -90,7 +95,9 @@ export function DiagnosticsPanel({ client }: DiagnosticsPanelProps): ReactNode {
 	return (
 		<div className="sh-diag">
 			<div className="sh-diag-bar">
-				<span className="sh-field-hint">How this app reaches your computer, and what the computer is doing.</span>
+				<span className="sh-field-hint">
+					How this app reaches {yours}, and what {computerName ?? "the computer"} is doing.
+				</span>
 				<button
 					type="button"
 					className="sh-btn sh-btn-icon"
@@ -105,7 +112,7 @@ export function DiagnosticsPanel({ client }: DiagnosticsPanelProps): ReactNode {
 				<div className="sh-tree-error">
 					<div className="sh-connect-error">
 						{state.message === "the companion did not answer"
-							? "The companion did not answer. It may predate diagnostics: restart it on your computer to pick up the new version."
+							? `The companion did not answer. It may predate diagnostics: restart it on ${yours} to pick up the new version.`
 							: state.message}
 					</div>
 					<button type="button" className="sh-btn" onClick={reload}>

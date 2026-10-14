@@ -254,15 +254,15 @@ export function AutoSettlePanel({ org }: { org: SessionOrgControl }): ReactNode 
 					<span className="sh-org-check-text">
 						End sessions when they settle
 						<span className="sh-field-hint">
-							Ends the session on this computer when it settles; open it to resume.
+							Ends the session on its computer when it settles; open it to resume.
 						</span>
 					</span>
 				</label>
 			)}
 			<span className="sh-field-hint">
 				{org.synced
-					? "Pins, snoozes and settled sessions follow you across devices through your computer."
-					: "Kept on this device. Pair your computer to share it across devices."}
+					? "Pins, snoozes and settled sessions follow you across devices through their computer."
+					: "Kept on this device. Pair a computer to share it across devices."}
 			</span>
 		</div>
 	);

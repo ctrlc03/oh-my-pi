@@ -1,28 +1,28 @@
-import { BellRing, CircleCheck, Inbox, LoaderCircle, RefreshCw, SendHorizontal, X } from "lucide-react";
+import { BellRing, CircleCheck, Inbox, Laptop, LoaderCircle, RefreshCw, SendHorizontal, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { CompanionClient, InboxItem } from "../../lib/companion";
+import { useEffect, useRef, useState } from "react";
+import type { InboxItem } from "../../lib/companion";
+import type { ComputerHandle } from "../../lib/computers";
 import { relTime, shortenPath } from "../../lib/format";
-import { inboxKey, loadDismissed, type OpenIntent, saveDismissed, setOpenIntent } from "../../lib/inbox";
-import { useRequest } from "../../lib/use-request";
+import { hostKey, inboxKey, loadDismissed, type OpenIntent, saveDismissed, setOpenIntent } from "../../lib/inbox";
+import { useComputerRequests } from "../../lib/use-computer-requests";
 import { AgentChip } from "./AgentChip";
 import { Sheet } from "./Sheet";
 import "./inbox.css";
 
 export interface InboxSheetProps {
-	client: CompanionClient;
-	/** Fetch a link for a hosting session and join it; rejects with a readable message. */
-	onOpenHost(instanceId: string): Promise<void>;
+	computers: readonly ComputerHandle[];
+	/** Fetch a link for a hosting session of `computerId` and join it; rejects with a readable message. */
+	onOpenHost(computerId: string, instanceId: string): Promise<void>;
 	onClose(): void;
 }
 
 /**
- * Sessions across the computer that wait on an answer or just finished a turn. Tapping one opens
+ * Sessions across the computers that wait on an answer or just finished a turn. Tapping one opens
  * it; an option chip or the reply field opens it and delivers the answer once it has joined.
  */
-export function InboxSheet({ client, onOpenHost, onClose }: InboxSheetProps): ReactNode {
-	const load = useCallback(() => client.requestInbox(), [client]);
-	const { state, reload } = useRequest(load);
+export function InboxSheet({ computers, onOpenHost, onClose }: InboxSheetProps): ReactNode {
+	const { entries, loading, reload } = useComputerRequests(computers, null, client => client.requestInbox());
 	const [dismissed, setDismissed] = useState(loadDismissed);
 	const [busy, setBusy] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
@@ -33,14 +33,15 @@ export function InboxSheet({ client, onOpenHost, onClose }: InboxSheetProps): Re
 			closedRef.current = true;
 		};
 	}, []);
+	const several = computers.length > 1;
 
-	const open = async (item: InboxItem, intent?: OpenIntent): Promise<void> => {
+	const open = async (computerId: string, item: InboxItem, intent?: OpenIntent): Promise<void> => {
 		if (busy !== null) return;
-		setBusy(item.instanceId);
+		setBusy(hostKey(computerId, item.instanceId));
 		setError(null);
-		if (intent) setOpenIntent(item.instanceId, intent);
+		if (intent) setOpenIntent(computerId, item.instanceId, intent);
 		try {
-			await onOpenHost(item.instanceId);
+			await onOpenHost(computerId, item.instanceId);
 			if (!closedRef.current) onClose();
 		} catch (err) {
 			if (closedRef.current) return;
@@ -49,14 +50,20 @@ export function InboxSheet({ client, onOpenHost, onClose }: InboxSheetProps): Re
 		}
 	};
 
-	const dismiss = (item: InboxItem): void => {
-		const next = [...dismissed, inboxKey(item)];
+	const dismiss = (computerId: string, item: InboxItem): void => {
+		const next = [...dismissed, inboxKey(computerId, item)];
 		setDismissed(next);
 		saveDismissed(next);
 	};
 
-	const items = state.status === "ready" ? state.value.filter(item => !dismissed.includes(inboxKey(item))) : null;
-	const loading = state.status === "loading";
+	// Each computer lists its newest first: merged, still newest first.
+	const items = entries
+		.flatMap(({ computer, state }) =>
+			state?.status === "ready" ? state.value.map(item => ({ computer, item })) : [],
+		)
+		.filter(({ computer, item }) => !dismissed.includes(inboxKey(computer.id, item)))
+		.sort((a, b) => b.item.at - a.item.at);
+	const answered = entries.some(entry => entry.state?.status === "ready");
 
 	return (
 		<Sheet label="Inbox" onClose={onClose}>
@@ -77,32 +84,46 @@ export function InboxSheet({ client, onOpenHost, onClose }: InboxSheetProps): Re
 					</button>
 				</span>
 			</div>
-			{state.status === "error" && (
-				<div className="sh-tree-error">
-					<div className="sh-connect-error">{state.message}</div>
-					<button type="button" className="sh-btn" onClick={reload}>
-						<RefreshCw size={14} /> Retry
-					</button>
-				</div>
+			{entries.map(({ computer, state }) =>
+				state?.status === "error" ? (
+					<div key={computer.id} className="sh-tree-error">
+						<div className="sh-connect-error">
+							{several ? `${computer.name}: ` : ""}
+							{state.message}
+						</div>
+						<button type="button" className="sh-btn" onClick={reload}>
+							<RefreshCw size={14} /> Retry
+						</button>
+					</div>
+				) : null,
 			)}
-			{loading && (
+			{several &&
+				entries.map(({ computer, reason }) =>
+					reason === null ? null : (
+						<div key={computer.id} className="sh-field-hint">
+							{computer.name}: {reason}
+						</div>
+					),
+				)}
+			{loading && items.length === 0 && (
 				<div className="sh-companion-empty sh-file-status">
 					<LoaderCircle size={14} className="sh-spin" /> Loading…
 				</div>
 			)}
-			{items !== null && items.length === 0 && (
+			{!loading && answered && items.length === 0 && (
 				<div className="sh-companion-empty">Nothing needs you. Questions and finished turns show up here.</div>
 			)}
-			{items !== null && items.length > 0 && (
+			{items.length > 0 && (
 				<ul className="sh-inbox-list">
-					{items.map(item => (
+					{items.map(({ computer, item }) => (
 						<InboxRow
-							key={inboxKey(item)}
+							key={inboxKey(computer.id, item)}
 							item={item}
-							busy={busy === item.instanceId}
+							computerName={several ? computer.name : null}
+							busy={busy === hostKey(computer.id, item.instanceId)}
 							disabled={busy !== null}
-							onOpen={intent => void open(item, intent)}
-							onDismiss={() => dismiss(item)}
+							onOpen={intent => void open(computer.id, item, intent)}
+							onDismiss={() => dismiss(computer.id, item)}
 						/>
 					))}
 				</ul>
@@ -114,13 +135,15 @@ export function InboxSheet({ client, onOpenHost, onClose }: InboxSheetProps): Re
 
 interface InboxRowProps {
 	item: InboxItem;
+	/** The computer's name, shown when there are several. */
+	computerName: string | null;
 	busy: boolean;
 	disabled: boolean;
 	onOpen(intent?: OpenIntent): void;
 	onDismiss(): void;
 }
 
-function InboxRow({ item, busy, disabled, onOpen, onDismiss }: InboxRowProps): ReactNode {
+function InboxRow({ item, computerName, busy, disabled, onOpen, onDismiss }: InboxRowProps): ReactNode {
 	const [reply, setReply] = useState("");
 	const waiting = item.kind === "input";
 	// An answer is only matched against the ask when the question text is known.
@@ -154,6 +177,11 @@ function InboxRow({ item, busy, disabled, onOpen, onDismiss }: InboxRowProps): R
 						<AgentChip agent={item.agent} />
 					</span>
 					<span className="sh-recent-meta">
+						{computerName !== null && (
+							<span className="sh-inbox-computer">
+								<Laptop size={12} /> {computerName}
+							</span>
+						)}
 						<span className="sh-recent-cwd">{shortenPath(item.cwd)}</span>
 						<span>{relTime(item.at)}</span>
 					</span>
@@ -213,17 +241,22 @@ function InboxRow({ item, busy, disabled, onOpen, onDismiss }: InboxRowProps): R
 }
 
 export interface InboxEntryProps {
-	client: CompanionClient;
-	/** Sessions waiting on an answer, from the hosts frame; no request is made while the sheet is closed. */
-	count: number;
-	onOpenHost(instanceId: string): Promise<void>;
+	computers: readonly ComputerHandle[];
+	/** Fetch a link for a hosting session of `computerId` and join it; rejects with a readable message. */
+	onOpenHost(computerId: string, instanceId: string): Promise<void>;
 	/** `card`: labelled button in the start screen's action row; `icon`: sidebar footer button. */
 	variant: "card" | "icon";
 }
 
-/** The button that opens the inbox, badged with the number of sessions waiting on an answer. */
-export function InboxEntry({ client, count, onOpenHost, variant }: InboxEntryProps): ReactNode {
+/** The button that opens the inbox, badged with the number of sessions waiting on an answer on any live computer. */
+export function InboxEntry({ computers, onOpenHost, variant }: InboxEntryProps): ReactNode {
 	const [open, setOpen] = useState(false);
+	// From the hosts frames: no request is made while the sheet is closed.
+	const count = computers.reduce(
+		(sum, computer) =>
+			computer.snap.phase === "live" ? sum + computer.snap.hosts.filter(host => host.inputRequired).length : sum,
+		0,
+	);
 	return (
 		<>
 			<button
@@ -236,7 +269,7 @@ export function InboxEntry({ client, count, onOpenHost, variant }: InboxEntryPro
 				{variant === "card" && " Inbox"}
 				{count > 0 && <span className="sh-inbox-badge">{count}</span>}
 			</button>
-			{open && <InboxSheet client={client} onOpenHost={onOpenHost} onClose={() => setOpen(false)} />}
+			{open && <InboxSheet computers={computers} onOpenHost={onOpenHost} onClose={() => setOpen(false)} />}
 		</>
 	);
 }

@@ -20,6 +20,8 @@ Host a session from any omp instance (`/collab`, or `/collab ws://localhost:7466
 
 The mock host supports the message box features: it advertises `queue-edit` and `mentions` (queue follow-ups with *After turn* while its scripted turn runs, then edit, reorder or steer them; a prompt that carries mentions gets the `<referenced-context>` block in its transcript entry). To try `#` and `@` pickers, pair with `bun scripts/mock-companion.ts --session-link <join link>`, whose canned pull requests and sessions they list; without a paired computer `#` offers only pull request links the conversation contains. See [Collab → The message box](../../docs/collab.md#the-message-box) for stash, recall and large paste.
 
+To try several computers offline, start two mock companions on different ports and pair with both: `bun scripts/mock-companion.ts --port 7471 --machine laptop --dir /tmp/laptop` and `bun scripts/mock-companion.ts --port 7472 --machine moonstone --hosts 1,2,3 --dir /tmp/moonstone` (each with `--session-link` of its own `mock-host`). `--machine` names the computer and gives its sessions ids of their own (their processes still share instance ids, as two real computers can), `--hosts` lists only those fixture sessions, and the room is kept in `<dir>/room.json` so a restarted mock is the same computer. Stop one to see its group go offline while the other keeps working. See [Collab → Several computers](../../docs/collab.md#several-computers).
+
 ## Build & deploy
 
 ```sh

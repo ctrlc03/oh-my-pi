@@ -14,6 +14,8 @@ const QR_QUIET_MODULES = 4;
 
 export interface DevicesPanelProps {
 	client: CompanionClient;
+	/** The computer's name, given when several are paired so the text can say which one; undefined: "this computer". */
+	computerName?: string;
 }
 
 interface Invite {
@@ -25,7 +27,7 @@ interface Invite {
 }
 
 /** Devices paired with the computer: rename or remove them, and add another with a one-time QR code. */
-export function DevicesPanel({ client }: DevicesPanelProps): ReactNode {
+export function DevicesPanel({ client, computerName }: DevicesPanelProps): ReactNode {
 	const load = useCallback(() => client.requestDevices(), [client]);
 	const { state, reload } = useRequest(load);
 	// Keep the last list on screen while it reloads.
@@ -94,7 +96,9 @@ export function DevicesPanel({ client }: DevicesPanelProps): ReactNode {
 	return (
 		<div className="sh-devices">
 			<div className="sh-devices-bar">
-				<span className="sh-field-hint">Phones, tablets and computers that can control this computer.</span>
+				<span className="sh-field-hint">
+					Phones, tablets and computers that can control {computerName ?? "this computer"}.
+				</span>
 				<button
 					type="button"
 					className="sh-btn sh-btn-icon"

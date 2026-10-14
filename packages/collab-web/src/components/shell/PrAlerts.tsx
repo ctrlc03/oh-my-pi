@@ -5,7 +5,14 @@ import type { CompanionClient, PrAlertSettings } from "../../lib/companion";
 import { useRequest } from "../../lib/use-request";
 
 /** Whether the companion pushes when checks finish or reviews and comments arrive on the user's open pull requests. */
-export function PrAlerts({ client }: { client: CompanionClient }): ReactNode {
+export function PrAlerts({
+	client,
+	computerName,
+}: {
+	client: CompanionClient;
+	/** The computer's name, given when several are paired so the text can say which one; undefined: "the computer". */
+	computerName?: string;
+}): ReactNode {
 	const load = useCallback(() => client.prAlerts(), [client]);
 	const { state, reload } = useRequest(load);
 	return (
@@ -23,12 +30,20 @@ export function PrAlerts({ client }: { client: CompanionClient }): ReactNode {
 					</button>
 				</div>
 			)}
-			{state.status === "ready" && <PrAlertsForm client={client} saved={state.value} />}
+			{state.status === "ready" && <PrAlertsForm client={client} saved={state.value} computerName={computerName} />}
 		</>
 	);
 }
 
-function PrAlertsForm({ client, saved }: { client: CompanionClient; saved: PrAlertSettings }): ReactNode {
+function PrAlertsForm({
+	client,
+	saved,
+	computerName,
+}: {
+	client: CompanionClient;
+	saved: PrAlertSettings;
+	computerName: string | undefined;
+}): ReactNode {
 	const [current, setCurrent] = useState(saved);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -72,8 +87,10 @@ function PrAlertsForm({ client, saved }: { client: CompanionClient; saved: PrAle
 				</span>
 			</label>
 			<div className="sh-field-hint">
-				Pull requests are looked up in the repositories of your sessions through the computer's signed-in gh, every
-				few minutes, and notify this computer's subscribed devices. Turn notifications on for this computer.
+				Pull requests are looked up in the repositories of your sessions through{" "}
+				{computerName ? `${computerName}'s` : "the computer's"} signed-in gh, every few minutes, and notify{" "}
+				{computerName ? `${computerName}'s` : "this computer's"} subscribed devices. Turn notifications on for{" "}
+				{computerName ?? "this computer"}.
 			</div>
 			{error && <div className="sh-connect-error">{error}</div>}
 		</div>

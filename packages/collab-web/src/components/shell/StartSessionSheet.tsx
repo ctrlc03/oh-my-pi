@@ -12,8 +12,9 @@ import {
 	X,
 } from "lucide-react";
 import type { KeyboardEvent, ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CompanionAgent, CompanionClient, ForeignPermission, RecentFolder } from "../../lib/companion";
+import { type ComputerHandle, computerById, saveLastComputer } from "../../lib/computers";
 import { relTime, shortenPath } from "../../lib/format";
 import { setOpenIntent } from "../../lib/inbox";
 import { type Combo, formatCombo, IS_MAC, matchCombo } from "../../lib/shortcuts";
@@ -35,17 +36,17 @@ import type { FanoutGroup } from "../../lib/fanout";
 import { AgentChip } from "./AgentChip";
 import { AgentPicker } from "./AgentPicker";
 import { AgentsSheet } from "./AgentsSheet";
+import { ComputerPicker, useStartComputer } from "./ComputerPicker";
 import { FanoutCompareSheet, FanoutPicker } from "./FanoutSheet";
 import { Sheet } from "./Sheet";
 
 export interface StartSessionSheetProps {
-	client: CompanionClient;
-	/** The companion can start sandboxed sessions: offer the toggle. */
-	canSandbox: boolean;
-	/** The companion can start one prompt on several models in separate worktrees: offer "Compare models". */
-	canFanout?: boolean;
-	/** Join the started host; rejects with a readable message. */
-	onOpen(instanceId: string): Promise<void>;
+	/** Every paired computer: the sheet starts on the one picked here (a choice only with two or more). */
+	computers: readonly ComputerHandle[];
+	/** The computer of the session on screen, offered first; null when none is open. */
+	currentComputerId: string | null;
+	/** Join the started host of `computerId`; rejects with a readable message. */
+	onOpen(computerId: string, instanceId: string): Promise<void>;
 	onClose(): void;
 }
 
@@ -60,6 +61,8 @@ const NO_PROJECT_FOLDER: RecentFolder = { cwd: NO_PROJECT, lastActive: 0, sessio
 /** A session started without leaving the sheet. */
 interface BackgroundRun {
 	key: number;
+	/** The computer it runs on. */
+	computerId: string;
 	/** The prompt's first words, else the folder. */
 	title: string;
 	/** What it runs in: folder (when the title is the prompt), sandbox, worktree. */
@@ -68,20 +71,37 @@ interface BackgroundRun {
 	instanceId?: string;
 }
 
+/** A started best-of-N group, with the computer that runs it. */
+interface StartedGroup {
+	group: FanoutGroup;
+	client: CompanionClient;
+	computerId: string;
+}
+
 /** Pick a folder omp has run in (or none), then start a new session there or resume one. */
 export function StartSessionSheet({
-	client,
-	canSandbox,
-	canFanout = false,
+	computers,
+	currentComputerId,
 	onOpen,
 	onClose,
 }: StartSessionSheetProps): ReactNode {
-	const load = useCallback(() => client.requestFolders(), [client]);
+	const [computerId, setComputerId] = useStartComputer(computers, "start", currentComputerId);
+	const computer = computerById(computers, computerId);
+	const client = computer?.client ?? null;
+	/** Where the session runs, in the hints: the computer's name once there is a choice. */
+	const where = computers.length > 1 && computer !== null ? computer.name : "your computer";
+	const load = useCallback(
+		() => (client === null ? Promise.resolve<RecentFolder[]>([]) : client.requestFolders()),
+		[client],
+	);
 	const { state, reload } = useRequest(load);
-	const subscribe = useCallback((listener: () => void) => client.subscribe(listener), [client]);
-	const { canScratch, canBackgroundStart, canForeign } = useSyncExternalStore(subscribe, () => client.getSnapshot());
+	const canSandbox = computer?.snap.canSandbox ?? false;
+	const canFanout = computer?.snap.canFanout ?? false;
+	const canScratch = computer?.snap.canScratch ?? false;
+	const canBackgroundStart = computer?.snap.canBackgroundStart ?? false;
+	const canForeign = computer?.snap.canForeign ?? false;
 	const loadAgents = useCallback(
-		() => (canForeign ? client.requestAgents() : Promise.resolve<CompanionAgent[]>([])),
+		() => (canForeign && client !== null ? client.requestAgents() : Promise.resolve<CompanionAgent[]>([])),
 		[client, canForeign],
 	);
 	const { state: agentsState, reload: reloadAgents } = useRequest(loadAgents);
@@ -97,7 +117,7 @@ export function StartSessionSheet({
 	const [prompt, setPrompt] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [fan, setFan] = useState(false);
-	const [group, setGroup] = useState<FanoutGroup | null>(null);
+	const [group, setGroup] = useState<StartedGroup | null>(null);
 	const [runs, setRuns] = useState<BackgroundRun[]>([]);
 	const runKey = useRef(0);
 	const openElsewhere = useOpenElsewhere();
@@ -108,6 +128,31 @@ export function StartSessionSheet({
 			closedRef.current = true;
 		};
 	}, []);
+	// The folder, agent and model on screen belong to the computer that listed them: another computer starts afresh.
+	const shownComputer = useRef(computerId);
+	useEffect(() => {
+		if (shownComputer.current === computerId) return;
+		shownComputer.current = computerId;
+		setFolder(null);
+		setAgent(null);
+		setModel("");
+		setFan(false);
+		setError(null);
+	}, [computerId]);
+
+	if (computer === null || client === null)
+		return (
+			<Sheet label="Start a session" onClose={onClose}>
+				<div className="sh-sheet-head">
+					<div className="sh-sheet-title sh-start-title">Start a session</div>
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
+						<X size={16} />
+					</button>
+				</div>
+				<ComputerPicker computers={computers} feature="start" value={computerId} onChange={setComputerId} />
+				<div className="sh-field-hint">No computer can start a session right now.</div>
+			</Sheet>
+		);
 
 	const agentList = agentsState.status === "ready" ? agentsState.value : [];
 	/** The chosen agent as the computer lists it; null for omp (and for one that was removed meanwhile). */
@@ -135,11 +180,12 @@ export function StartSessionSheet({
 		openElsewhere.dismiss();
 		try {
 			const instanceId = await client.startSession(target.cwd, startOptions(target, { force }));
+			saveLastComputer(computer.id);
 			const first = prompt.trim();
 			// Recorded even if the sheet was closed meanwhile: opening the session later still sends it.
-			if (first) setOpenIntent(instanceId, { prompt: first });
+			if (first) setOpenIntent(computer.id, instanceId, { prompt: first });
 			// Closed while omp booted: the session still appears in the computer's list.
-			if (!closedRef.current) await onOpen(instanceId);
+			if (!closedRef.current) await onOpen(computer.id, instanceId);
 		} catch (err) {
 			if (closedRef.current) return;
 			if (!openElsewhere.intercept(err, () => void start(target, true))) {
@@ -158,8 +204,10 @@ export function StartSessionSheet({
 		const key = ++runKey.current;
 		const run: BackgroundRun = {
 			key,
+			computerId: computer.id,
 			title: fromPrompt ?? folderLabel(current.cwd),
 			detail: [
+				computers.length > 1 ? computer.name : null,
 				fromPrompt === null ? null : folderLabel(current.cwd),
 				target.agent === undefined ? null : agentName(target.agent),
 				target.sandboxed ? "Sandboxed" : null,
@@ -175,6 +223,7 @@ export function StartSessionSheet({
 		setBranch(next.branch);
 		client.startSession(target.cwd, startOptions(target, { prompt: first || undefined })).then(
 			instanceId => {
+				saveLastComputer(computer.id);
 				if (!closedRef.current) setRuns(prev => prev.map(r => (r.key === key ? { ...r, instanceId } : r)));
 			},
 			(err: unknown) => {
@@ -187,9 +236,9 @@ export function StartSessionSheet({
 		);
 	};
 
-	const openRun = async (instanceId: string): Promise<void> => {
+	const openRun = async (runComputerId: string, instanceId: string): Promise<void> => {
 		try {
-			await onOpen(instanceId);
+			await onOpen(runComputerId, instanceId);
 		} catch (err) {
 			if (!closedRef.current) setError(err instanceof Error ? err.message : String(err));
 		}
@@ -204,7 +253,14 @@ export function StartSessionSheet({
 	};
 
 	if (group !== null)
-		return <FanoutCompareSheet client={client} groupId={group.id} onOpen={onOpen} onClose={onClose} />;
+		return (
+			<FanoutCompareSheet
+				client={group.client}
+				groupId={group.group.id}
+				onOpen={instanceId => onOpen(group.computerId, instanceId)}
+				onClose={onClose}
+			/>
+		);
 
 	const projectless = folder !== null && isProjectless(folder.cwd);
 
@@ -225,6 +281,9 @@ export function StartSessionSheet({
 			</div>
 			{openElsewhere.notice}
 			{error && <div className="sh-connect-error">{error}</div>}
+			{folder === null && starting === null && (
+				<ComputerPicker computers={computers} feature="start" value={computerId} onChange={setComputerId} />
+			)}
 			{starting === null && runs.length > 0 && (
 				<div className="sh-start-runs" role="status">
 					{runs.map(run => (
@@ -246,7 +305,7 @@ export function StartSessionSheet({
 								<button
 									type="button"
 									className="sh-btn sh-start-run-open"
-									onClick={() => void openRun(run.instanceId as string)}
+									onClick={() => void openRun(run.computerId, run.instanceId as string)}
 								>
 									Open
 								</button>
@@ -265,7 +324,7 @@ export function StartSessionSheet({
 					</div>
 					<div className="sh-field-hint">
 						This can take up to a minute while {agentName(starting.agent)} boots. You can close this; the session
-						appears in your computer's list when it is ready.
+						appears in {where === "your computer" ? "your computer's" : `${where}'s`} list when it is ready.
 					</div>
 				</div>
 			) : folder === null ? (
@@ -274,8 +333,8 @@ export function StartSessionSheet({
 				<div className="sh-start-form" onKeyDown={onFormKey}>
 					{folder.cwd === NO_PROJECT && (
 						<div className="sh-field-hint">
-							The session starts in a fresh folder of its own on your computer, with no git repository. The
-							folder is kept when the session ends.
+							The session starts in a fresh folder of its own on {where}, with no git repository. The folder is
+							kept when the session ends.
 						</div>
 					)}
 					{canForeign && !fan && (
@@ -370,7 +429,7 @@ export function StartSessionSheet({
 							prompt={prompt}
 							canSandbox={false}
 							sandboxed={sandboxed}
-							onStarted={setGroup}
+							onStarted={started => setGroup({ group: started, client, computerId: computer.id })}
 						/>
 					) : (
 						<>
@@ -436,7 +495,7 @@ export function StartSessionSheet({
 			)}
 			{managing && (
 				<AgentsSheet
-					client={client}
+					computers={computers}
 					onClose={() => {
 						setManaging(false);
 						reloadAgents();

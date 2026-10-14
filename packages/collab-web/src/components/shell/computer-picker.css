@@ -1,0 +1,7 @@
+.sh-computer-picker .sh-segment:disabled {
+	opacity: 0.55;
+}
+
+.sh-computer-picker .sh-segment:disabled .sh-dot {
+	background: var(--fg-faint);
+}

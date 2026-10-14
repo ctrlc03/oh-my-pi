@@ -18,8 +18,8 @@ const select = (title: string, ...options: (string | { label: string })[]): Coll
 
 describe("pending answer", () => {
 	function pend(question: string, option: string): void {
-		setOpenIntent("i", { answer: { question, option } });
-		applyOpenIntent("i", LINK_A);
+		setOpenIntent("c", "i", { answer: { question, option } });
+		applyOpenIntent("c", "i", LINK_A);
 	}
 
 	it("answers the ask it was meant for, using the ask's own spelling of the option", () => {
@@ -44,8 +44,8 @@ describe("pending answer", () => {
 	});
 
 	it("goes stale", () => {
-		setOpenIntent("i", { answer: { question: "Which database?", option: "Postgres" } });
-		applyOpenIntent("i", LINK_A, Date.now());
+		setOpenIntent("c", "i", { answer: { question: "Which database?", option: "Postgres" } });
+		applyOpenIntent("c", "i", LINK_A, Date.now());
 		expect(claimPendingAnswer(ROOM_A, select("Which database?", "Postgres"), Date.now() + 3 * 60_000)).toBeNull();
 	});
 
@@ -90,18 +90,26 @@ describe("open intent prompt", () => {
 	it("queues the prompt behind what the room already has queued, once", () => {
 		const queued = loadPromptQueue(ROOM_A);
 		expect(queued).toEqual([]);
-		setOpenIntent("i", { prompt: "first" });
-		applyOpenIntent("i", LINK_A);
-		setOpenIntent("i", { prompt: "second" });
-		applyOpenIntent("i", LINK_A);
-		applyOpenIntent("i", LINK_A);
+		setOpenIntent("c", "i", { prompt: "first" });
+		applyOpenIntent("c", "i", LINK_A);
+		setOpenIntent("c", "i", { prompt: "second" });
+		applyOpenIntent("c", "i", LINK_A);
+		applyOpenIntent("c", "i", LINK_A);
 		expect(loadPromptQueue(ROOM_A).map(p => p.text)).toEqual(["first", "second"]);
 		expect(loadPromptQueue(roomIdOf(LINK_B) ?? "")).toEqual([]);
 	});
 
 	it("ignores an intent whose open never happened until much later", () => {
-		setOpenIntent("i", { prompt: "stale" }, Date.now() - 11 * 60_000);
-		applyOpenIntent("i", LINK_A);
+		setOpenIntent("c", "i", { prompt: "stale" }, Date.now() - 11 * 60_000);
+		applyOpenIntent("c", "i", LINK_A);
 		expect(loadPromptQueue(ROOM_A)).toEqual([]);
+	});
+
+	it("keeps two computers' processes under the same instance id apart", () => {
+		setOpenIntent("laptop", "i", { prompt: "for the laptop's session" });
+		applyOpenIntent("moonstone", "i", LINK_B);
+		expect(loadPromptQueue(roomIdOf(LINK_B) ?? "")).toEqual([]);
+		applyOpenIntent("laptop", "i", LINK_A);
+		expect(loadPromptQueue(ROOM_A).map(p => p.text)).toEqual(["for the laptop's session"]);
 	});
 });

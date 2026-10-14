@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ConnectionPhase } from "./client";
 import { extractLink, roomIdOf } from "./rooms";
-import type { CompanionHandle } from "./use-companion";
+import type { ComputerHandle } from "./computers";
 
 /** A connection this long out of `live` asks the paired computer for the session's current room. */
 const STALL_MS = 8_000;
@@ -16,7 +16,7 @@ const SETTLE_MS = 10_000;
 export type HostRecovery = "listed" | "absent" | "unknown";
 
 /**
- * Rejoins a session through the paired computer when its room goes away under the guest.
+ * Rejoins a session through the computer that hosts it when its room goes away under the guest.
  *
  * The host replaces its room (new id and key) when its session switches, when a
  * view-only room is upgraded to control, and when it relaunches after losing the
@@ -28,15 +28,15 @@ export type HostRecovery = "listed" | "absent" | "unknown";
  * and on forgetting the room), `unknown` while the companion has not answered yet.
  */
 export function useHostRecovery(
-	companion: CompanionHandle | null,
+	computer: ComputerHandle | null,
 	instanceId: string | null,
 	phase: ConnectionPhase,
 	roomId: string | null,
 	onReplaced: (link: string) => void,
 ): HostRecovery {
-	const client = companion?.client ?? null;
-	const companionPhase = companion?.snap.phase ?? "offline";
-	const listed = instanceId !== null && companion?.snap.hosts.some(host => host.instanceId === instanceId) === true;
+	const client = computer?.client ?? null;
+	const computerPhase = computer?.snap.phase ?? "offline";
+	const listed = instanceId !== null && computer?.snap.hosts.some(host => host.instanceId === instanceId) === true;
 	// The computer confirmed the ended room as the session's current one: it stays ended.
 	const [confirmed, setConfirmed] = useState<string | null>(null);
 	if (phase !== "ended" && confirmed !== null) setConfirmed(null);
@@ -68,5 +68,5 @@ export function useHostRecovery(
 
 	if (instanceId === null || client === null || settled) return "absent";
 	if (listed) return "listed";
-	return companionPhase === "connecting" ? "unknown" : "absent";
+	return computerPhase === "connecting" ? "unknown" : "absent";
 }

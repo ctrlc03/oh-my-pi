@@ -1,15 +1,13 @@
 /**
  * The transcript view a session opens in, kept per device: chat (prompts and replies, tool runs folded) or the
- * full transcript. Without a choice, phones (≤640px) start in chat view and larger screens in the full transcript.
+ * full transcript. Without a choice, every screen starts in chat view.
  * A session's own toggle (⋯ → View, the `v` key) changes only that session until it is left.
  */
 
 import { useSyncExternalStore } from "react";
 import { readJson, writeJson } from "./storage";
-import { matchesMedia } from "./zoom";
 
 const CHAT_KEY = "omp.collab.chat";
-const PHONE_QUERY = "(max-width: 640px)";
 
 let stored: boolean | null | undefined;
 const listeners = new Set<() => void>();
@@ -20,7 +18,7 @@ export function defaultChat(): boolean {
 		const raw = readJson(CHAT_KEY);
 		stored = typeof raw === "boolean" ? raw : null;
 	}
-	return stored ?? matchesMedia(PHONE_QUERY);
+	return stored ?? true;
 }
 
 export function setDefaultChat(chat: boolean): void {
@@ -37,6 +35,6 @@ export function useDefaultChat(): boolean {
 			return () => listeners.delete(listener);
 		},
 		defaultChat,
-		() => false,
+		() => true,
 	);
 }

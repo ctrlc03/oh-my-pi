@@ -291,11 +291,13 @@ export function OrgRow(props: OrgRowProps): ReactNode {
 					type="button"
 					className="sh-recent-join"
 					onClick={() => props.onOpenRoom(item.room)}
-					disabled={joining !== null}
+					disabled={joining !== null || current}
+					aria-current={current || undefined}
 					aria-pressed={mode === "select" ? props.selected : undefined}
 				>
 					<span className="sh-recent-title">
 						<span className="sh-recent-name">{title}</span>
+						{current && <span className="sh-chip">here</span>}
 						{item.room.readOnly && <span className="sh-chip">read-only</span>}
 					</span>
 					<span className="sh-recent-meta">
@@ -357,7 +359,7 @@ export function OrgRow(props: OrgRowProps): ReactNode {
 							className="sh-btn sh-btn-icon"
 							data-org-nodrag=""
 							onClick={() => props.onOpenRoomBeside?.(item.room)}
-							disabled={joining !== null}
+							disabled={joining !== null || current}
 							aria-label={`Open ${title} beside`}
 						>
 							<PanelRight size={15} />

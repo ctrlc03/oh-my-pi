@@ -7,6 +7,7 @@ import {
 	applyOrg,
 	autoSettleIdle,
 	changedEntries,
+	matchRooms,
 	mergeOrg,
 	type OrgAction,
 	type OrgDoc,
@@ -163,9 +164,14 @@ export function useSessionOrgs(computers: readonly ComputerHandle[], rooms: read
 	useEffect(() => {
 		const owners = new Set<string>([DEVICE_ORG, ...computersRef.current.map(computer => computer.id)]);
 		for (const owner of owners) {
-			const idle = rooms
-				.filter(room => roomOwner(room, computersRef.current) === owner)
-				.map(room => ({ key: roomOrgKey(room.roomId), lastActive: room.lastSeen, working: false }));
+			// A room of a session the computer lists is that session's row (see `matchRooms`): the computer's own rules cover it.
+			const snap = computersRef.current.find(computer => computer.id === owner)?.snap;
+			const own = rooms.filter(room => roomOwner(room, computersRef.current) === owner);
+			const idle = (snap === undefined ? own : matchRooms(own, [...snap.hosts, ...snap.idle]).alone).map(room => ({
+				key: roomOrgKey(room.roomId),
+				lastActive: room.lastSeen,
+				working: false,
+			}));
 			change(owner, autoSettleIdle(docOf(owner), idle, now));
 		}
 	}, [rooms, now, idleDays, change, docOf]);

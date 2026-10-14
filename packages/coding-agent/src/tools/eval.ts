@@ -41,7 +41,7 @@ import { canSpawnAtDepth } from "../task/types";
 import { webpExclusionForModel } from "@oh-my-pi/pi-tui/chat/image-loading";
 import { formatDimensionNote, resizeImage } from "../utils/image-resize";
 import type { ToolSession } from ".";
-import { type ApprovalDetailsOptions, truncateApprovalDetail } from "./approval";
+import { truncateForPrompt } from "./approval";
 import { type EvalBackendsAllowance, resolveEvalBackends } from "./eval-backends";
 import { recordStatusEvent, type StatusEventLog } from "@oh-my-pi/pi-tui/tools/eval";
 import { formatOutputNotice } from "@oh-my-pi/pi-tui/tools/output-meta";
@@ -349,12 +349,12 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 	/** The eval kernels run outside the shell sandbox, so a sandboxed session asks first. */
 	readonly approval = (): ToolApprovalDecision =>
 		(this.session && sandboxUncoveredToolDecision(this.session.settings, "the eval kernel")) || "exec";
-	readonly formatApprovalDetails = (args: unknown, options?: ApprovalDetailsOptions): string[] => {
+	readonly formatApprovalDetails = (args: unknown): string[] => {
 		const params = isRecord(args) ? args : {};
 		const language =
 			typeof params.language === "string" ? formatEvalInputLanguage(params.language) : "javascript (default)";
 		const code = typeof params.code === "string" ? params.code : "";
-		return [`Language: ${language}`, `Code:\n${truncateApprovalDetail(code, options)}`];
+		return [`Language: ${language}`, `Code:\n${truncateForPrompt(code)}`];
 	};
 	get summary(): string {
 		return summarizeEvalLanguages(this.#enabledLanguages());

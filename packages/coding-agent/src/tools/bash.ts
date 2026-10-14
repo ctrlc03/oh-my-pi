@@ -36,7 +36,7 @@ import { DEFAULT_MAX_BYTES, enforceInlineByteCap } from "@oh-my-pi/pi-tui/tools/
 import { resolveCliEntryCmd } from "../subprocess/worker-client";
 import { TerminalGraphicsDecoder } from "../utils/terminal-graphics";
 import type { ToolSession } from ".";
-import { type ApprovalDetailsOptions, truncateApprovalDetail, truncateForPrompt } from "./approval";
+import { truncateForPrompt } from "./approval";
 import { type BashInteractiveResult, runInteractiveBashPty } from "./bash-interactive";
 import { checkBashInterception } from "./bash-interceptor";
 import { rewriteGitWorktreeAdd } from "./bash-worktree-rewrite";
@@ -613,10 +613,10 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 		const { escalate, justification } = args as Partial<BashToolInput>;
 		return sandboxEscalationDecision(this.session.settings, escalate, justification) ?? decision;
 	};
-	readonly formatApprovalDetails = (args: unknown, options?: ApprovalDetailsOptions): string[] => {
+	readonly formatApprovalDetails = (args: unknown): string[] => {
 		const rawCommand = (args as Partial<BashToolInput>).command;
 		const command = typeof rawCommand === "string" ? rawCommand : "(missing)";
-		const details = [`Command: ${truncateApprovalDetail(command, options)}`];
+		const details = [`Command: ${truncateForPrompt(command)}`];
 		const { escalate, justification } = args as Partial<BashToolInput>;
 		const escalation = parseEscalation(escalate);
 		if (escalation) {

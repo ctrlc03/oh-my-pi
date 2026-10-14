@@ -23,6 +23,7 @@ import {
 	placeKey,
 	roomOrgKey,
 	sectionize,
+	sessionOrgKey,
 	type SnoozeChoice,
 	statusOf,
 	wakeLabel,
@@ -40,14 +41,17 @@ type EndedItem = Extract<OrgItem, { kind: "ended" }>;
 export interface OrgSessionsProps {
 	hosts: readonly CompanionHost[];
 	idle: readonly CompanionIdleSession[];
-	/** Recent rooms other than the one on screen. */
+	/** Recent rooms no session above stands for, the one on screen too (see `matchRooms`). */
 	rooms: readonly RecentRoom[];
+	/** Listed session id → the rooms remembered for its process: those rooms are the session, not rows of their own. */
+	twins: ReadonlyMap<string, readonly RecentRoom[]>;
 	org: SessionOrgControl;
 	/** instanceId (or room) whose link is being fetched: disables every open. */
 	joining: string | null;
 	/** The computer is unreachable: its sessions cannot be opened. */
 	disabled: boolean;
 	currentSessionId: string | null;
+	currentRoomId: string | null;
 	/** When the open session's usage limit resets; offered as a snooze time for it. */
 	limitResetAt: number | null;
 	onJoinHost(host: CompanionHost): void;
@@ -123,7 +127,7 @@ function isTextTarget(target: EventTarget | null): boolean {
  * picked in select mode. Every change shows one Undo (⌘Z too).
  */
 export function OrgSessions(props: OrgSessionsProps): ReactNode {
-	const { hosts, idle, rooms, org, currentSessionId } = props;
+	const { hosts, idle, rooms, twins, org, currentSessionId, currentRoomId } = props;
 	const { doc, now } = org;
 	const [settledOpen, setSettledOpen] = useState(false);
 	const [menu, setMenu] = useState<string | null>(null);
@@ -136,8 +140,16 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 	const anchor = useRef<string | null>(null);
 
 	const items: OrgItem[] = [
-		...hosts.map((host): OrgItem => ({ kind: "host", key: host.sessionId, host })),
-		...idle.map((session): OrgItem => ({ kind: "idle", key: session.sessionId, session })),
+		...hosts.map((host): OrgItem => ({
+			kind: "host",
+			key: sessionOrgKey(doc, host.sessionId, twins.get(host.sessionId)),
+			host,
+		})),
+		...idle.map((session): OrgItem => ({
+			kind: "idle",
+			key: sessionOrgKey(doc, session.sessionId, twins.get(session.sessionId)),
+			session,
+		})),
 		...rooms.map((room): OrgItem => ({ kind: "room", key: roomOrgKey(room.roomId), room })),
 		...props.ended.map((session): OrgItem => ({ kind: "ended", key: session.sessionId, session })),
 	];
@@ -281,7 +293,13 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 			mode={mode}
 			wake={section === "snoozed" ? wakeLabel(doc.entries[item.key].until ?? now, now) : null}
 			settledBy={section === "settled" ? doc.entries[item.key].reason : undefined}
-			current={item.kind === "host" && item.host.sessionId === currentSessionId}
+			current={
+				item.kind === "host"
+					? item.host.sessionId === currentSessionId ||
+						(currentRoomId !== null &&
+							(twins.get(item.host.sessionId) ?? []).some(twin => twin.roomId === currentRoomId))
+					: item.kind === "room" && item.room.roomId === currentRoomId
+			}
 			joining={props.joining}
 			disabled={props.disabled}
 			selected={picked.has(item.key)}

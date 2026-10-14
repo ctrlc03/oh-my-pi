@@ -24,8 +24,9 @@ export interface TopBarButton {
 }
 
 /**
- * Every optional button. The first eight are today's bar, in today's order, and the default; the rest are
- * actions that otherwise live only in the ⋯ sheet, off until chosen.
+ * Every optional button. The first ten are the default bar, in order; the rest are actions that otherwise live
+ * only in the ⋯ sheet, off until chosen. Sparring and Bake-off stand after Agents so a phone's compact bar keeps
+ * Find, Editor, Code map and Agents.
  */
 export const TOP_BAR_BUTTONS = [
 	{ id: "settings", label: "Settings", on: true, phone: false },
@@ -35,6 +36,8 @@ export const TOP_BAR_BUTTONS = [
 	{ id: "quizzes", label: "Quizzes", on: true, phone: false },
 	{ id: "github", label: "GitHub", on: true, phone: false },
 	{ id: "agents", label: "Agents", on: true, phone: true },
+	{ id: "sparring", label: "Sparring", on: true, phone: true },
+	{ id: "bakeoff", label: "Bake-off", on: true, phone: true },
 	{ id: "leave", label: "Leave session", on: true, phone: false },
 	{ id: "changes", label: "Changes", on: false, phone: true },
 	{ id: "architecture", label: "Architecture", on: false, phone: true },
@@ -45,8 +48,6 @@ export const TOP_BAR_BUTTONS = [
 	{ id: "timeline", label: "Timeline", on: false, phone: true },
 	{ id: "usage", label: "Usage", on: false, phone: true },
 	{ id: "sessions", label: "All sessions", on: false, phone: true },
-	{ id: "sparring", label: "Sparring", on: false, phone: true },
-	{ id: "bakeoff", label: "Bake-off", on: false, phone: true },
 ] as const satisfies readonly TopBarButton[];
 
 export type TopBarId = (typeof TOP_BAR_BUTTONS)[number]["id"];

@@ -6,7 +6,7 @@ import type { CompanionHost, CompanionIdleSession, PairingLink, SessionOverview 
 import { withoutPersonal } from "../../lib/personal";
 import { DEVICE_ORG } from "../../lib/org-storage";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
-import { endedSettledKeys } from "../../lib/session-org";
+import { endedSettledKeys, matchRooms } from "../../lib/session-org";
 import { useEndedSettled } from "../../lib/use-ended-settled";
 import { roomOwner, type SessionOrgControl, type SessionOrgs } from "../../lib/use-session-org";
 import type { BesideControl } from "../../lib/use-split";
@@ -26,7 +26,7 @@ export interface SessionsSidebarProps {
 	rooms: readonly RecentRoom[];
 	/** Pin / snooze / settle state of every session, one document per computer. */
 	orgs: SessionOrgs;
-	/** Session on screen: its companion row is highlighted, its room hidden from recents. */
+	/** Session on screen: its row is highlighted wherever it sits (pinned or not), and stays in place. */
 	currentSessionId: string | null;
 	currentRoomId: string | null;
 	/** Fetch a link for a companion host of a computer and join it; rejects with a readable message. */
@@ -45,6 +45,9 @@ export interface SessionsSidebarProps {
 }
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** Rooms of the device's own group stand for no listed session. */
+const NO_TWINS: ReadonlyMap<string, readonly RecentRoom[]> = new Map();
 
 interface GroupHeadProps {
 	label: ReactNode;
@@ -77,10 +80,11 @@ interface ComputerGroupProps {
 	grouped: boolean;
 	open: boolean;
 	onToggle(): void;
-	/** Recent rooms of this computer other than the one on screen. */
+	/** Recent rooms of this computer, the one on screen too. */
 	rooms: readonly RecentRoom[];
 	org: SessionOrgControl;
 	currentSessionId: string | null;
+	currentRoomId: string | null;
 	limitResetAt: number | null;
 	beside: Pick<BesideControl, "openHost" | "openLink"> | null;
 	onOpenHost(computerId: string, instanceId: string): Promise<void>;
@@ -96,6 +100,7 @@ function ComputerGroup({
 	rooms,
 	org,
 	currentSessionId,
+	currentRoomId,
 	limitResetAt,
 	beside,
 	onOpenHost,
@@ -107,6 +112,8 @@ function ComputerGroup({
 	const { client, snap } = computer;
 	const live = snap.phase === "live";
 	const liveIds = new Set([...snap.hosts, ...snap.idle].map(session => session.sessionId));
+	// A room of a process the computer lists is that session's row, not a second one (the Personal session's included).
+	const { alone, twins } = matchRooms(rooms, [...snap.hosts, ...snap.idle]);
 	// Sessions that ended while settled (the computer ends them when they settle, if asked) stay under Settled.
 	const ended = useEndedSettled(client, live, endedSettledKeys(org.doc, liveIds));
 	const openElsewhere = useOpenElsewhere();
@@ -214,11 +221,13 @@ function ComputerGroup({
 			<OrgSessions
 				hosts={listed}
 				idle={snap.idle}
-				rooms={rooms}
+				rooms={alone}
+				twins={twins}
 				org={org}
 				joining={joining}
 				disabled={!live}
 				currentSessionId={currentSessionId}
+				currentRoomId={currentRoomId}
 				limitResetAt={limitResetAt}
 				onJoinHost={join}
 				onOpenHostBeside={beside === null ? undefined : joinBeside}
@@ -269,6 +278,7 @@ interface DeviceGroupProps {
 	rooms: readonly RecentRoom[];
 	org: SessionOrgControl;
 	currentSessionId: string | null;
+	currentRoomId: string | null;
 	limitResetAt: number | null;
 	beside: Pick<BesideControl, "openHost" | "openLink"> | null;
 	onOpenLink(link: string): void;
@@ -283,6 +293,7 @@ function DeviceGroup({
 	rooms,
 	org,
 	currentSessionId,
+	currentRoomId,
 	limitResetAt,
 	beside,
 	onOpenLink,
@@ -295,10 +306,12 @@ function DeviceGroup({
 				hosts={[]}
 				idle={[]}
 				rooms={rooms}
+				twins={NO_TWINS}
 				org={org}
 				joining={null}
 				disabled={false}
 				currentSessionId={currentSessionId}
+				currentRoomId={currentRoomId}
 				limitResetAt={limitResetAt}
 				onJoinHost={() => {}}
 				onShare={() => {}}
@@ -346,9 +359,8 @@ export function SessionsSidebar({
 	const [adding, setAdding] = useState(false);
 	/** Groups folded shut: a computer's id, or {@link DEVICE_ORG}. */
 	const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
-	const recents = rooms.filter(room => room.roomId !== currentRoomId);
 	const several = computers.length > 1;
-	const deviceRooms = recents.filter(room => roomOwner(room, computers) === DEVICE_ORG);
+	const deviceRooms = rooms.filter(room => roomOwner(room, computers) === DEVICE_ORG);
 	const anyLive = computers.some(computer => computer.snap.phase === "live");
 	const canStart = computers.some(computer => computer.snap.phase === "live" && computer.snap.canStart);
 	const currentComputer =
@@ -387,9 +399,10 @@ export function SessionsSidebar({
 						grouped={several}
 						open={!folded.has(computer.id)}
 						onToggle={() => toggle(computer.id)}
-						rooms={recents.filter(room => roomOwner(room, computers) === computer.id)}
+						rooms={rooms.filter(room => roomOwner(room, computers) === computer.id)}
 						org={orgs.of(computer.id)}
 						currentSessionId={currentSessionId}
+						currentRoomId={currentRoomId}
 						limitResetAt={limitResetAt}
 						beside={beside}
 						onOpenHost={onOpenHost}
@@ -405,12 +418,13 @@ export function SessionsSidebar({
 						rooms={deviceRooms}
 						org={orgs.of(DEVICE_ORG)}
 						currentSessionId={currentSessionId}
+						currentRoomId={currentRoomId}
 						limitResetAt={limitResetAt}
 						beside={beside}
 						onOpenLink={onOpenLink}
 					/>
 				)}
-				{computers.length === 0 && recents.length === 0 && (
+				{computers.length === 0 && rooms.length === 0 && (
 					<div className="sh-companion-empty">
 						No other sessions yet. Pair your computer from the start screen to list all of them here.
 					</div>

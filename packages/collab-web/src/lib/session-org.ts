@@ -14,6 +14,8 @@
  * rest intact.
  */
 
+import type { RecentRoom } from "./rooms";
+
 export type OrgStatus = "active" | "pinned" | "snoozed" | "settled";
 /** Who settled a session: the user, or an auto-settle rule. */
 export type SettleReason = "user" | "idle" | "pr";
@@ -72,6 +74,53 @@ export function emptyOrg(): OrgDoc {
 
 export function roomOrgKey(roomId: string): string {
 	return `room:${roomId}`;
+}
+
+/** The process a computer lists for a session: what a remembered room is matched against. */
+export interface ListedSession {
+	instanceId: string;
+	sessionId: string;
+}
+
+/** Recent rooms of one computer, split by whether a session it lists already stands for them. */
+export interface RoomMatch {
+	/** Rooms no listed session stands for: rows of their own, the one on screen included. */
+	alone: RecentRoom[];
+	/** Listed session id → the rooms remembered for its process, newest first (the same session, listed once: as the session). */
+	twins: Map<string, RecentRoom[]>;
+}
+
+/**
+ * Which rooms are rows of their own and which are a listed session seen through its room. A room remembered while
+ * its process was open carries the process's id, so a room and the session row of that process are one session:
+ * the room never shows beside it, whether or not it is the one on screen.
+ */
+export function matchRooms(rooms: readonly RecentRoom[], listed: readonly ListedSession[]): RoomMatch {
+	const byInstance = new Map(listed.map(session => [session.instanceId, session.sessionId]));
+	const alone: RecentRoom[] = [];
+	const twins = new Map<string, RecentRoom[]>();
+	for (const room of rooms) {
+		const sessionId = room.instanceId === undefined ? undefined : byInstance.get(room.instanceId);
+		if (sessionId === undefined) alone.push(room);
+		else twins.set(sessionId, [...(twins.get(sessionId) ?? []), room]);
+	}
+	return { alone, twins };
+}
+
+/**
+ * The key a listed session is organised under: its own id, unless it has no entry and one of its rooms has an entry
+ * the user made (pinned, snoozed, or settled by hand). That session was organised while it showed as the room, and
+ * the room no longer shows beside it, so the session row keeps the room's place instead of dropping it.
+ */
+export function sessionOrgKey(doc: OrgDoc, sessionId: string, twins: readonly RecentRoom[] = []): string {
+	if (Object.hasOwn(doc.entries, sessionId)) return sessionId;
+	for (const twin of twins) {
+		const key = roomOrgKey(twin.roomId);
+		if (!Object.hasOwn(doc.entries, key)) continue;
+		const { status, reason } = doc.entries[key];
+		if (status !== "active" && (reason === undefined || reason === "user")) return key;
+	}
+	return sessionId;
 }
 
 const isTime = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;

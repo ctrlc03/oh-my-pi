@@ -15,7 +15,7 @@ import {
 const ids = (items: readonly { id: string }[]): string[] => items.map(item => item.id);
 const shown = (items: readonly { id: string; shown: boolean }[]): string[] =>
 	items.filter(item => item.shown).map(item => item.id);
-const TODAYS = ["settings", "find", "editor", "codemap", "quizzes", "github", "agents", "leave"];
+const TODAYS = ["settings", "find", "editor", "codemap", "quizzes", "github", "agents", "sparring", "bakeoff", "leave"];
 const SHEET_ONLY = TOP_BAR_BUTTONS.map(button => button.id).filter(id => !TODAYS.includes(id));
 
 describe("parseTopBar", () => {
@@ -52,7 +52,7 @@ describe("parseTopBar", () => {
 	});
 
 	it("never turns on a button added after the choice was made", () => {
-		// A choice saved when the bar had only today's eight buttons, one of them hidden.
+		// A choice saved when the bar had only the default buttons, one of them hidden.
 		const before = { order: [...TODAYS].reverse(), hidden: ["quizzes"] };
 		const items = parseTopBar(before);
 		expect(shown(items)).toEqual(TODAYS.filter(id => id !== "quizzes").reverse());
@@ -92,7 +92,17 @@ describe("visibleTopBar", () => {
 
 	it("draws the shown buttons in order", () => {
 		const items = showTopBarItem(moveTopBarItem(DEFAULT_TOP_BAR, "agents", -1), "settings", false);
-		expect(visibleTopBar(items, all)).toEqual(["find", "editor", "codemap", "quizzes", "agents", "github", "leave"]);
+		expect(visibleTopBar(items, all)).toEqual([
+			"find",
+			"editor",
+			"codemap",
+			"quizzes",
+			"agents",
+			"github",
+			"sparring",
+			"bakeoff",
+			"leave",
+		]);
 	});
 
 	it("skips a button whose action is missing without forgetting the choice", () => {
@@ -104,6 +114,8 @@ describe("visibleTopBar", () => {
 			"editor",
 			"quizzes",
 			"agents",
+			"sparring",
+			"bakeoff",
 			"leave",
 		]);
 		expect(visibleTopBar(items, all).slice(0, 2)).toEqual(["github", "codemap"]);

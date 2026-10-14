@@ -236,11 +236,15 @@ jobs:
           app="check/omp collab.app"
           test -d "$app"
           codesign --verify --deep --strict --verbose=2 "$app"
-          codesign -dv "$app" 2>&1 | tee /dev/stderr | grep -q 'Signature=adhoc'
+          # Captured first: `grep -q` stops reading at the match, and a writer still in the pipe fails under pipefail.
+          signature="$(codesign -dv "$app" 2>&1)"
+          echo "$signature"
+          grep -q 'Signature=adhoc' <<< "$signature"
           plist="$app/Contents/Info.plist"
           test "$(plutil -extract CFBundleIdentifier raw "$plist")" = sh.omp.collab.desktop
           test "$(plutil -extract OmpBuildTag raw "$plist")" = "$OMP_BUILD_TAG"
-          lipo -archs "$app/Contents/MacOS/omp collab" | grep -qw "$([ "$ARCH" = x64 ] && echo x86_64 || echo arm64)"
+          archs="$(lipo -archs "$app/Contents/MacOS/omp collab")"
+          grep -qw "$([ "$ARCH" = x64 ] && echo x86_64 || echo arm64)" <<< "$archs"
           rm -rf check
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

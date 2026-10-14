@@ -80,6 +80,29 @@ describe("runUpdateCommand version source", () => {
 	});
 
 	it.skipIf(process.platform === "win32")(
+		"points a source checkout on PATH at git instead of replacing its script",
+		async () => {
+			const bin = await isolatePath();
+			const checkout = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "omp-update-checkout-")));
+			dirs.push(checkout);
+			await fs.mkdir(path.join(checkout, ".git"));
+			const cli = path.join(checkout, "packages", "coding-agent", "src", "cli.ts");
+			await fs.mkdir(path.dirname(cli), { recursive: true });
+			await Bun.write(cli, "#!/usr/bin/env bun\n");
+			await fs.chmod(cli, 0o755);
+			await fs.symlink(cli, path.join(bin, "omp"));
+			const { logs } = quiet();
+			const requests = stubFetch(() => Response.json({ version: "999.0.0" }));
+
+			await runUpdateCommand({ force: false, check: false });
+
+			expect(requests).toEqual([]);
+			expect(await Bun.file(cli).text()).toBe("#!/usr/bin/env bun\n");
+			expect(logs.join("\n")).toContain(`source checkout at ${checkout}`);
+		},
+	);
+
+	it.skipIf(process.platform === "win32")(
 		"updates a standalone binary from the build service without asking npm",
 		async () => {
 			const dir = await isolatePath();

@@ -50,6 +50,7 @@
 
 ### Fixed
 
+- `omp update` with an omp that runs from a source checkout (a `bun link` of `src/cli.ts`) now says to update the checkout with git (`git pull`, then `bun install`) and stops. Before, it compared against the upstream release and failed with *Refusing to replace …/src/cli.ts: the resolved foreign symlink target is a shebang script*, which is also what the app's *Update omp* button showed.
 - Collab guests now see every provider's models in the model picker. The host sent at most 200 models, sorted by provider name after the recently used ones, so a large catalog early in the alphabet (Amazon Bedrock lists over 200) pushed out every model from later providers that had not been used recently, such as Anthropic's Sonnet. The limit is now 1000, and providers are ordered by their most recently used model.
 - Extensions can observe and answer the interactive plan review, including refinement feedback and save-and-quit ([#14250](https://github.com/can1357/oh-my-pi/pull/14250) by [@rlfleming93](https://github.com/rlfleming93))
 - Added opt-in `omp gc --compress` (or `gc.compress`), which stores sessions idle for `gc.compressAfterDays` (default 7) with filesystem transparent compression (APFS, NTFS); they stay resumable and searchable ([#15600](https://github.com/can1357/oh-my-pi/pull/15600) by [@wolfiesch](https://github.com/wolfiesch))

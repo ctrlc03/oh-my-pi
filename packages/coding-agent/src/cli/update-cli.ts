@@ -391,6 +391,21 @@ export function isSourceCheckout(): boolean {
 }
 
 /**
+ * Root of the git checkout the PATH `omp` runs from, when it is a script in one (a `bun link` of
+ * `src/cli.ts`); undefined for a native binary, a package-manager install or a path outside git.
+ * Such an omp updates through git: replacing its script with a release binary would break the checkout.
+ */
+async function sourceCheckoutOf(ompPath: string): Promise<string | undefined> {
+	const real = tryRealpath(ompPath);
+	if (real === undefined || real.split(path.sep).includes("node_modules")) return undefined;
+	if (await isNativeExecutable(real)) return undefined;
+	for (let dir = path.dirname(real); ; dir = path.dirname(dir)) {
+		if (fs.existsSync(path.join(dir, ".git"))) return dir;
+		if (path.dirname(dir) === dir) return undefined;
+	}
+}
+
+/**
  * Name of the app that manages the omp at `binaryPath`, or undefined when none does.
  *
  * A manager (Tern) keeps `manager.json` (`{"manager": "tern", "name": "Tern"}`) two
@@ -2282,6 +2297,15 @@ export async function runUpdateCommand(opts: {
 	if (manager) {
 		console.log(
 			chalk.yellow(`${ompPath} is installed and kept up to date by ${manager}; update it from ${manager}.`),
+		);
+		return;
+	}
+	const checkout = ompPath ? await sourceCheckoutOf(ompPath) : undefined;
+	if (checkout) {
+		console.log(
+			chalk.yellow(
+				`${ompPath} runs from the source checkout at ${checkout}; update it with git there (git pull, then bun install).`,
+			),
 		);
 		return;
 	}

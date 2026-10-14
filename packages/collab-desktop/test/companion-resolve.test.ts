@@ -94,11 +94,13 @@ describe("resolveCompanion", () => {
 	const deps = (over: {
 		runnable?: string[];
 		companion?: string[];
+		sourceCheckout?: ResolveDeps["sourceCheckout"];
 		readInstallerState?: ResolveDeps["readInstallerState"];
 		checkout?: ResolveDeps["checkout"];
 	}): ResolveDeps => ({
 		runnable: async file => (over.runnable ?? []).includes(file),
 		hasCompanion: async file => (over.companion ?? []).includes(file),
+		sourceCheckout: over.sourceCheckout ?? (async () => null),
 		readInstallerState: over.readInstallerState ?? (async () => null),
 		checkout: over.checkout ?? (async () => null),
 	});
@@ -130,6 +132,19 @@ describe("resolveCompanion", () => {
 		);
 		expect(result).toEqual({ ok: true, command: checkout });
 		expect(checkout.argv).toEqual(["/bun", "/repo/packages/collab-web/scripts/companion.ts"]);
+	});
+
+	it("runs the checkout's companion for an omp linked to a source checkout, which has no companion command", async () => {
+		const checkout = checkoutCommand("/repo", "/h/.bun/bin/bun");
+		const result = await resolveCompanion(
+			input,
+			deps({
+				runnable: ["/h/.bun/bin/omp"],
+				companion: [],
+				sourceCheckout: async file => (file === "/h/.bun/bin/omp" ? checkout : null),
+			}),
+		);
+		expect(result).toEqual({ ok: true, command: checkout });
 	});
 
 	it("uses the installer's recorded path", async () => {

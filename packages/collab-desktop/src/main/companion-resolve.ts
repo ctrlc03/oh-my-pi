@@ -11,8 +11,9 @@
  *  4. `~/.local/bin`, then the PATH the app got, then Homebrew's and `~/.bun/bin`.
  *
  * A candidate must exist, be executable and answer `companion --help`: an `omp` without the companion (the
- * upstream build) is skipped, not started. A checkout (`bun scripts/companion.ts`) is used only by an unpackaged
- * app, which is how it is developed.
+ * upstream build) is skipped, not started. An `omp` that is a link to a source checkout's `src/cli.ts` (a `bun link`)
+ * has no `companion` command; the companion of that checkout runs instead (`bun scripts/companion.ts`), as it does
+ * for an unpackaged app, which is how it is developed.
  */
 import * as path from "node:path";
 
@@ -87,6 +88,13 @@ export function checkoutCommand(repoDir: string, bun: string): CompanionCommand 
 	return { kind: "checkout", argv: [bun, script], omp: null, label: `checkout (${script})` };
 }
 
+/** The checkout an `omp` runs from when its real path is a checkout's `packages/coding-agent/src/cli.ts`, else null. */
+export function checkoutRootOf(realOmp: string): string | null {
+	const tail = path.join("packages", "coding-agent", "src", "cli.ts");
+	if (!realOmp.endsWith(`${path.sep}${tail}`)) return null;
+	return realOmp.slice(0, -tail.length - 1);
+}
+
 export function ompCommand(omp: string): CompanionCommand {
 	return { kind: "omp", argv: [omp, "companion"], omp, label: `omp at ${omp}` };
 }
@@ -136,6 +144,8 @@ export interface ResolveDeps {
 	runnable(file: string): Promise<boolean>;
 	/** `<file> companion --help` succeeds: the build has the companion. */
 	hasCompanion(file: string): Promise<boolean>;
+	/** The companion of the checkout `file` runs from ({@link checkoutRootOf}) with the bun that runs it; else null. */
+	sourceCheckout(file: string): Promise<CompanionCommand | null>;
 	readInstallerState(): Promise<string | null>;
 	/** An unpackaged app's checkout and the bun that runs it; null when packaged or either is missing. */
 	checkout(): Promise<CompanionCommand | null>;
@@ -159,6 +169,8 @@ export async function resolveCompanion(
 	const tried: string[] = [];
 	for (const candidate of candidates) {
 		if (!(await deps.runnable(candidate.path))) continue;
+		const source = await deps.sourceCheckout(candidate.path);
+		if (source !== null) return { ok: true, command: source };
 		if (await deps.hasCompanion(candidate.path)) return { ok: true, command: ompCommand(candidate.path) };
 		tried.push(`${candidate.path} (no companion)`);
 	}

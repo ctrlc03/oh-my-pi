@@ -23,6 +23,7 @@ import {
 import { appUrl, configDirOf, endpointFile, findRunningEndpoint, stateFile } from "./companion-endpoint";
 import {
 	checkoutCommand,
+	checkoutRootOf,
 	type CompanionCommand,
 	installerStateFile,
 	type Resolution,
@@ -136,6 +137,16 @@ async function main(): Promise<void> {
 
 	// ── the companion ────────────────────────────────────────────────────────
 
+	/** `bun <repoDir>/packages/collab-web/scripts/companion.ts` when that file and a bun exist; else null. */
+	const checkoutAt = (repoDir: string): CompanionCommand | null => {
+		const bun = searchDirs(home, process.env.PATH, platform)
+			.map(dir => path.join(dir, "bun"))
+			.find(candidate => fs.existsSync(candidate));
+		return bun !== undefined && fs.existsSync(path.join(repoDir, "packages", "collab-web", "scripts", "companion.ts"))
+			? checkoutCommand(repoDir, bun)
+			: null;
+	};
+
 	const resolveNow = (): Promise<Resolution> =>
 		resolveCompanion(
 			{ env: baseEnv(), home, settingsPath: settings.value.ompPath, platform },
@@ -146,18 +157,12 @@ async function main(): Promise<void> {
 						...(baseEnv() as Record<string, string>),
 						PATH: searchDirs(home, process.env.PATH, platform).join(path.delimiter),
 					}),
-				readInstallerState: async () => readText(installerStateFile(home, process.env)),
-				checkout: async () => {
-					if (app.isPackaged) return null;
-					const bun = searchDirs(home, process.env.PATH, platform)
-						.map(dir => path.join(dir, "bun"))
-						.find(candidate => fs.existsSync(candidate));
-					const repoDir = path.resolve(appDir, "..", "..");
-					return bun !== undefined &&
-						fs.existsSync(path.join(repoDir, "packages", "collab-web", "scripts", "companion.ts"))
-						? checkoutCommand(repoDir, bun)
-						: null;
+				sourceCheckout: async file => {
+					const repoDir = checkoutRootOf(await fs.promises.realpath(file).catch(() => file));
+					return repoDir === null ? null : checkoutAt(repoDir);
 				},
+				readInstallerState: async () => readText(installerStateFile(home, process.env)),
+				checkout: async () => (app.isPackaged ? null : checkoutAt(path.resolve(appDir, "..", ".."))),
 			},
 		);
 

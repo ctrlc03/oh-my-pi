@@ -93,6 +93,7 @@ const fastWorkspacePackages = [
 	"packages/snapcompact",
 	"packages/agent",
 	"packages/mnemopi",
+	"packages/collab-desktop",
 ];
 
 // These suites cover the native package, TUI/browser-ish behavior, local servers,

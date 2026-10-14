@@ -26,6 +26,12 @@
 # release normally finds it and takes about 5-10 minutes. Without one the action compiles and
 # uploads it (about 40 minutes), as the first release after a natives change does.
 #
+# The release also carries the desktop app (packages/collab-desktop): an Electron shell around the same
+# web app that runs this computer's companion. The `desktop` job packages it on macOS runners (arm64 and
+# x64), signs it ad hoc, and checks the bundle; the assets are `collab-desktop-darwin-<arch>.zip` (what
+# the installer and the app's self-updater download) and `.dmg`. Their names must not start with `omp-`:
+# that prefix is how the binaries are counted, attested and checksummed apart from them.
+#
 # Guarded off for the upstream repository.
 name: collab release
 
@@ -183,6 +189,68 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The desktop app. It is not a binary of omp: it needs the `omp` the installer put on this computer (see
+  # packages/collab-desktop/README.md), so nothing here depends on the build/sign/smoke jobs. The bundle is
+  # signed ad hoc (no secrets, no notarization), so macOS only runs it when it did not come from a browser
+  # download: the installer fetches it with curl, which leaves no quarantine flag.
+  desktop:
+    name: Desktop app ${{ matrix.arch }}
+    needs: meta
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, runner: macos-14 }
+          - { arch: x64, runner: macos-15-intel }
+    permissions:
+      contents: read
+    env:
+      OMP_RELEASE_REPO: ${{ github.repository }}
+      OMP_BUILD_TAG: ${{ needs.meta.outputs.tag }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ env.RELEASE_REF }}
+      - uses: ./.github/actions/bun-install
+      - name: Test the app's logic
+        working-directory: packages/collab-desktop
+        run: bun test
+      - name: Package the app
+        working-directory: packages/collab-desktop
+        run: bun run dist --arch "$ARCH"
+      - name: Check the bundle
+        working-directory: packages/collab-desktop/release
+        run: |
+          set -euo pipefail
+          ls -l
+          zip="collab-desktop-darwin-$ARCH.zip"
+          test -s "$zip"
+          test -s "collab-desktop-darwin-$ARCH.dmg"
+          hdiutil verify "collab-desktop-darwin-$ARCH.dmg"
+          # Unpack the zip the way the installer and the updater do, then look at what they would install.
+          rm -rf check
+          ditto -x -k "$zip" check
+          app="check/omp collab.app"
+          test -d "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv "$app" 2>&1 | tee /dev/stderr | grep -q 'Signature=adhoc'
+          plist="$app/Contents/Info.plist"
+          test "$(plutil -extract CFBundleIdentifier raw "$plist")" = sh.omp.collab.desktop
+          test "$(plutil -extract OmpBuildTag raw "$plist")" = "$OMP_BUILD_TAG"
+          lipo -archs "$app/Contents/MacOS/omp collab" | grep -qw "$([ "$ARCH" = x64 ] && echo x86_64 || echo arm64)"
+          rm -rf check
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: collab-desktop-darwin-${{ matrix.arch }}
+          path: |
+            packages/collab-desktop/release/collab-desktop-darwin-${{ matrix.arch }}.zip
+            packages/collab-desktop/release/collab-desktop-darwin-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+          retention-days: 7
+
   # scripts/ci-macos-sign.sh runs on Linux (it fetches a pinned rcodesign): it replaces the
   # signature the macOS runner's codesign made, ad hoc without secrets, Developer ID plus
   # notarization with them.
@@ -274,7 +342,7 @@ jobs:
   # holds the OIDC token and attestation permission; it runs no repository code.
   attest:
     name: Attest the binaries
-    needs: [meta, smoke]
+    needs: [meta, smoke, desktop]
     # A dispatch with `publish` off stops after the smoke test.
     if: needs.meta.outputs.publish == 'true'
     runs-on: ubuntu-24.04
@@ -293,13 +361,20 @@ jobs:
           pattern: collab-binary-linux-*
           path: assets
           merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: collab-desktop-darwin-*
+          path: assets
+          merge-multiple: true
       - uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
         with:
-          subject-path: assets/omp-*
+          subject-path: |
+            assets/omp-*
+            assets/collab-desktop-*
 
   release:
     name: Publish the release
-    needs: [meta, smoke, attest]
+    needs: [meta, smoke, desktop, attest]
     if: needs.meta.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -321,13 +396,20 @@ jobs:
           pattern: collab-binary-linux-*
           path: assets
           merge-multiple: true
-      # SHA256SUMS.txt covers exactly the four binaries the installer downloads and verifies.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: collab-desktop-darwin-*
+          path: assets
+          merge-multiple: true
+      # SHA256SUMS.txt covers exactly the four binaries and the desktop app's zips and disk images that the installer
+      # and the app's updater download and verify. `omp-*` is still exactly the four binaries.
       - name: Generate checksums
         run: |
           set -euo pipefail
           ls -l assets
           test "$(find assets -type f -name 'omp-*' | wc -l)" -eq 4
-          bun scripts/ci-release-checksums.ts assets/SHA256SUMS.txt assets/omp-*
+          test "$(find assets -type f -name 'collab-desktop-darwin-*' | wc -l)" -eq 4
+          bun scripts/ci-release-checksums.ts assets/SHA256SUMS.txt assets/omp-* assets/collab-desktop-darwin-*
           cat assets/SHA256SUMS.txt
       # make_latest only for the highest collab-v* tag (the installer's default URL is
       # releases/latest); rebuilding an older tag never moves it. Existing assets of a tag
@@ -340,4 +422,5 @@ jobs:
           generate_release_notes: true
           files: |
             assets/omp-*
+            assets/collab-desktop-darwin-*
             assets/SHA256SUMS.txt

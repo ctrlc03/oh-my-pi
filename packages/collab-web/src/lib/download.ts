@@ -4,6 +4,7 @@
  */
 
 import type { FileChunk } from "./companion";
+import { getDesktop } from "./desktop";
 
 /** Cancelling a download is not a failure; callers tell the two apart by this class. */
 export class DownloadCancelled extends Error {
@@ -90,11 +91,19 @@ export function shouldShare(nav: ShareNavigator, file: File): boolean {
 	return isMobile(nav) && typeof nav.share === "function" && nav.canShare?.({ files: [file] }) === true;
 }
 
-/** How a blob reached the user; `cancelled` when they dismissed the share sheet. */
+/** How a blob reached the user; `cancelled` when they dismissed the share sheet or the save dialog. */
 export type SaveResult = "shared" | "saved" | "cancelled";
 
-/** Hand `blob` to the OS as `name`: the share sheet on mobile, an `<a download>` elsewhere. */
+/** Hand `blob` to the OS as `name`: the desktop app's save dialog, the share sheet on mobile, an `<a download>` elsewhere. */
 export async function saveBlob(blob: Blob, name: string): Promise<SaveResult> {
+	const desktop = getDesktop();
+	if (desktop !== null) {
+		try {
+			return await desktop.saveFile(name, new Uint8Array(await blob.arrayBuffer()));
+		} catch {
+			// The shell refused (a file too large to hand over): the browser's own download below still works.
+		}
+	}
 	const file = new File([blob], name, { type: blob.type });
 	if (shouldShare(navigator, file)) {
 		try {

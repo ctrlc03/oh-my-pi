@@ -1,6 +1,7 @@
 import { LoaderCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ComputerHandle } from "../../lib/computers";
+import { getDesktop } from "../../lib/desktop";
 import type { PushControl } from "../../lib/push";
 import { PrAlerts } from "../shell/PrAlerts";
 import { SpendAlerts } from "../shell/SpendAlerts";
@@ -18,6 +19,14 @@ const ON_OFF: readonly { value: boolean; label: string }[] = [
  */
 function PushRow({ push, computerName }: { push: PushControl; computerName?: string }): ReactNode {
 	if (push.status === "unsupported") {
+		if (getDesktop() !== null) {
+			return (
+				<p className="sh-field-hint">
+					The desktop app shows these notifications itself while it is running. Choose what they cover from its
+					menu.
+				</p>
+			);
+		}
 		return (
 			<p className="sh-field-hint">
 				This browser cannot receive push notifications. On an iPhone or iPad they work in the app installed to the

@@ -1316,8 +1316,9 @@ const OS_NAMES: [RegExp, string][] = [
 	[/Windows/, "Windows"],
 	[/Linux/, "Linux"],
 ];
-/** Ordered: Edge and Chrome user agents also say Safari, Edge also says Chrome. */
+/** Ordered: Edge and Chrome user agents also say Safari, Edge also says Chrome, and the desktop app (Electron) says Chrome and Safari too. */
 const BROWSER_NAMES: [RegExp, string][] = [
+	[/Electron\//, "desktop app"],
 	[/Edg\//, "Edge"],
 	[/Firefox\/|FxiOS/, "Firefox"],
 	[/Chrome\/|CriOS/, "Chrome"],

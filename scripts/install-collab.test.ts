@@ -389,6 +389,128 @@ describe("install-collab.sh", () => {
 		expect(await exists(path.join(box.prefix, "omp"))).toBe(true);
 	});
 
+	describe.skipIf(OS !== "darwin")("desktop app", () => {
+		const DESKTOP_ASSET = `collab-desktop-darwin-${ARCH}.zip`;
+
+		/** Publishes a real, ad-hoc signed bundle with the app's bundle id, zipped the way the release workflow does. */
+		async function publishDesktop(box: Sandbox): Promise<void> {
+			const app = path.join(box.home, "build", "omp collab.app");
+			await mkdir(path.join(app, "Contents", "MacOS"), { recursive: true });
+			await writeFile(
+				path.join(app, "Contents", "Info.plist"),
+				`<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>sh.omp.collab.desktop</string><key>CFBundleExecutable</key><string>omp collab</string><key>CFBundleName</key><string>omp collab</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>\n`,
+			);
+			await writeFile(path.join(app, "Contents", "MacOS", "omp collab"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+			expect(Bun.spawnSync(["codesign", "--force", "--sign", "-", app]).exitCode).toBe(0);
+			const zip = path.join(box.home, "build", DESKTOP_ASSET);
+			expect(Bun.spawnSync(["ditto", "-c", "-k", "--keepParent", app, zip]).exitCode).toBe(0);
+			const bytes = new Uint8Array(await readFile(zip));
+			const sum = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+			served.set(DESKTOP_ASSET, bytes);
+			served.set("SHA256SUMS.txt", `${served.get("SHA256SUMS.txt")}${sum}  ${DESKTOP_ASSET}\n`);
+		}
+
+		const appDir = (box: Sandbox) => path.join(box.home, "Applications", "omp collab.app");
+		const desktopEnv = (box: Sandbox) => ({ OMP_COLLAB_DESKTOP_DIR: path.join(box.home, "Applications") });
+		const stateOf = (box: Sandbox) => path.join(box.home, ".local", "share", "omp-collab", "install");
+
+		it("installs the app with --desktop, records it, and opens it instead of the browser", async () => {
+			const box = await sandbox();
+			await publish("1.0.0");
+			await publishDesktop(box);
+			const result = await run(box, ["--desktop", "--yes"], desktopEnv(box));
+
+			expect(result.code).toBe(0);
+			expect(result.stdout).toContain(`installed ${appDir(box)}`);
+			expect(await exists(path.join(appDir(box), "Contents", "Info.plist"))).toBe(true);
+			const state = await read(stateOf(box));
+			expect(state).toContain(`desktop_path=${appDir(box)}`);
+			expect(state).toMatch(/desktop_sha256=[0-9a-f]{64}/);
+			const opened = await read(path.join(box.home, "open.log"));
+			expect(opened).toContain(appDir(box));
+			expect(opened).not.toContain(LOCAL_URL);
+			expect(result.stdout).toContain("opened the omp collab desktop app");
+			expect(await exists(path.join(box.home, "Applications", ".omp-collab-update"))).toBe(false);
+		});
+
+		it("is idempotent, keeps the record across a --no-desktop re-run, and updates in place", async () => {
+			const box = await sandbox();
+			await publish("1.0.0");
+			await publishDesktop(box);
+			await run(box, ["--desktop", "--yes"], desktopEnv(box));
+			const again = await run(box, ["--desktop", "--yes"], desktopEnv(box));
+			expect(again.stdout).toContain("is already the latest release");
+			await run(box, ["--no-desktop", "--yes"], desktopEnv(box));
+			expect(await read(stateOf(box))).toContain(`desktop_path=${appDir(box)}`);
+		});
+
+		it("does not install it with --no-desktop", async () => {
+			const box = await sandbox();
+			await publish("1.0.0");
+			await publishDesktop(box);
+			const result = await run(box, ["--no-desktop", "--yes"], desktopEnv(box));
+			expect(result.code).toBe(0);
+			expect(await exists(appDir(box))).toBe(false);
+			expect(await read(stateOf(box))).not.toContain("desktop_path");
+		});
+
+		it("skips the app when the release has none, without failing the install", async () => {
+			const box = await sandbox();
+			await publish("1.0.0");
+			const result = await run(box, ["--desktop", "--yes"], desktopEnv(box));
+			expect(result.code).toBe(0);
+			expect(result.all).toContain("has no desktop app");
+			expect(await exists(appDir(box))).toBe(false);
+		});
+
+		it("refuses an app whose checksum does not match, keeps omp, and exits non-zero", async () => {
+			const box = await sandbox();
+			await publish("1.0.0");
+			await publishDesktop(box);
+			const sums = String(served.get("SHA256SUMS.txt")).replace(/[0-9a-f]{64}( {2}collab-desktop)/, `${"0".repeat(64)}$1`);
+			served.set("SHA256SUMS.txt", sums);
+			const result = await run(box, ["--desktop", "--yes"], desktopEnv(box));
+			expect(result.code).toBe(1);
+			expect(result.all).toContain("checksum mismatch for collab-desktop");
+			expect(await exists(appDir(box))).toBe(false);
+			expect((await stat(path.join(box.prefix, "omp"))).mode & 0o111).not.toBe(0);
+		});
+
+		it("refuses an app that is not signed correctly", async () => {
+			const box = await sandbox();
+			await publish("1.0.0");
+			await publishDesktop(box);
+			// Swap the zip for one holding the same bundle without a signature.
+			const app = path.join(box.home, "unsigned", "omp collab.app");
+			await mkdir(path.join(app, "Contents"), { recursive: true });
+			await writeFile(path.join(app, "Contents", "Info.plist"), (await readFile(path.join(box.home, "build", "omp collab.app", "Contents", "Info.plist"), "utf8")));
+			const zip = path.join(box.home, "unsigned", "x.zip");
+			Bun.spawnSync(["ditto", "-c", "-k", "--keepParent", app, zip]);
+			const bytes = new Uint8Array(await readFile(zip));
+			served.set(DESKTOP_ASSET, bytes);
+			const sum = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+			served.set("SHA256SUMS.txt", String(served.get("SHA256SUMS.txt")).replace(/[0-9a-f]{64}( {2}collab-desktop)/, `${sum}$1`));
+			const result = await run(box, ["--desktop", "--yes"], desktopEnv(box));
+			expect(result.code).toBe(1);
+			expect(result.all).toContain("signature does not verify");
+			expect(await exists(appDir(box))).toBe(false);
+		});
+
+		it("deletes the app on --uninstall --yes and keeps it without confirmation", async () => {
+			const box = await sandbox();
+			await publish("1.0.0");
+			await publishDesktop(box);
+			await run(box, ["--desktop", "--yes"], desktopEnv(box));
+			const kept = await run(box, ["--uninstall"], desktopEnv(box));
+			expect(kept.code).toBe(0);
+			expect(await exists(appDir(box))).toBe(true);
+			const removed = await run(box, ["--uninstall", "--yes"], desktopEnv(box));
+			expect(removed.code).toBe(0);
+			expect(await exists(appDir(box))).toBe(false);
+			expect(await exists(stateOf(box))).toBe(false);
+		});
+	});
+
 	it("rejects unknown options", async () => {
 		const box = await sandbox();
 		const result = await run(box, ["--bogus"]);

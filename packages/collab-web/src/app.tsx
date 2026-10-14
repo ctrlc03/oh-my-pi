@@ -38,6 +38,7 @@ import { PreviewSheet } from "./components/shell/PreviewSheet";
 import { RunSheet } from "./components/shell/RunSheet";
 import { ScreensSheet } from "./components/shell/ScreensSheet";
 import { SearchBar } from "./components/shell/SearchBar";
+import { DesktopBridge } from "./components/shell/DesktopBridge";
 import { SessionAlert } from "./components/shell/SessionAlert";
 import { SessionsSheet } from "./components/shell/SessionsSheet";
 import { SessionsSidebar } from "./components/shell/SessionsSidebar";
@@ -245,6 +246,11 @@ export function App(): ReactNode {
 		[computers, connect],
 	);
 
+	// The desktop shell's menu-bar icon or a native notification names a session: open it like a tapped push notification does.
+	const openDesktopSession = useCallback((computerId: string, instanceId: string): void => {
+		setPendingOpen({ instanceId, computerId, reply: null });
+	}, []);
+
 	const openLink = useCallback(
 		(next: string): void => {
 			resumedRef.current = false;
@@ -432,6 +438,7 @@ export function App(): ReactNode {
 				/>
 			)}
 			<PetHost client={client} hosts={allHosts} hostsLive={anyLive} />
+			<DesktopBridge computers={computers} onOpen={openDesktopSession} />
 			<SettingsHost env={settingsEnv} />
 			<ZoomHost />
 			<PersonalRoutes computers={computers} onOpenHost={openHost} />

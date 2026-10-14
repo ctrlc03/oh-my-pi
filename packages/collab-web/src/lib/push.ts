@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PushSubscriptionJson } from "./companion";
 import type { ComputerHandle } from "./computers";
+import { getDesktop } from "./desktop";
 import { decodeBase64Url, encodeBase64Url } from "./link";
 import { readJson, writeJson } from "./storage";
 
@@ -29,8 +30,9 @@ export interface PushControl {
 /** Computers whose notifications the user turned off on this device: a new subscription is never made for them unasked. */
 const OFF_KEY = "omp.collab.push-off";
 
+/** The desktop app has no push service to subscribe to; its shell shows notifications itself (see `./desktop`). */
 function supported(): boolean {
-	return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+	return getDesktop() === null && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 }
 
 function subscriptionJson(sub: PushSubscription): PushSubscriptionJson {

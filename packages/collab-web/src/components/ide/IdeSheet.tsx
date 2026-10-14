@@ -25,6 +25,7 @@ import type { CodemapNode, CompanionClient, FileTree } from "../../lib/companion
 import { FileChangedError } from "../../lib/companion";
 import { openDiagramFile } from "../../lib/diagram-store";
 import { diagramFileKind } from "../../lib/diagrams";
+import { importChunk } from "../../lib/stale-build";
 import { useRequest } from "../../lib/use-request";
 import { matchesMedia } from "../../lib/zoom";
 import { useMedia, WIDE_QUERY } from "../codemap/shared";
@@ -256,7 +257,7 @@ export function IdeSheet({
 			const entry = languageFor(request);
 			const [file, language] = await Promise.all([
 				client.requestFile(instanceId, request),
-				entry === null ? null : entry.load().catch(() => null),
+				entry === null ? null : importChunk(() => entry.load()).catch(() => null),
 			]);
 			if (file.text === null) {
 				notify(`${file.path} is a binary file`);

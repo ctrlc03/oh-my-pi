@@ -1,12 +1,14 @@
-import { LoaderCircle, RefreshCw } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { importChunk } from "../../lib/stale-build";
+import { LoadFailure } from "../shell/LoadFailure";
 
 let loaded: Promise<ComponentType> | undefined;
 
 /** The Personal agent's screens load the first time they are shown and are shared after that; a failed fetch is retried next time. */
 function fetchPersonalSettings(): Promise<ComponentType> {
-	loaded ??= import("../personal/PersonalSettings").then(
+	loaded ??= importChunk(() => import("../personal/PersonalSettings")).then(
 		module => module.default,
 		(error: unknown) => {
 			loaded = undefined;
@@ -20,7 +22,7 @@ function fetchPersonalSettings(): Promise<ComponentType> {
 export function PersonalSection(): ReactNode {
 	// Held in an object: a bare component function would be taken for a state updater.
 	const [ready, setReady] = useState<{ Screen: ComponentType } | null>(null);
-	const [error, setError] = useState<string | null>(null);
+	const [error, setError] = useState<Error | null>(null);
 	const [attempt, setAttempt] = useState(0);
 	useEffect(() => {
 		let stale = false;
@@ -30,7 +32,7 @@ export function PersonalSection(): ReactNode {
 				if (!stale) setReady({ Screen });
 			},
 			(err: unknown) => {
-				if (!stale) setError(err instanceof Error ? err.message : String(err));
+				if (!stale) setError(err instanceof Error ? err : new Error(String(err)));
 			},
 		);
 		return () => {
@@ -46,12 +48,5 @@ export function PersonalSection(): ReactNode {
 			</div>
 		);
 	}
-	return (
-		<div className="sh-tree-error">
-			<div className="sh-connect-error">Could not load Personal agent: {error}</div>
-			<button type="button" className="sh-btn" onClick={() => setAttempt(n => n + 1)}>
-				<RefreshCw size={14} /> Retry
-			</button>
-		</div>
-	);
+	return <LoadFailure what="Personal agent" error={error} onRetry={() => setAttempt(n => n + 1)} />;
 }

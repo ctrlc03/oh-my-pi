@@ -35,7 +35,7 @@ async function sampleBuild(): Promise<AppBuild> {
 }
 
 async function handlerFor(state?: AppState): Promise<(request: Request) => Promise<Response>> {
-	const resolved = state ?? { kind: "ready", build: await sampleBuild() };
+	const resolved = state ?? { kind: "ready", build: await sampleBuild(), older: [] };
 	return createLocalAppHandler(() => resolved);
 }
 
@@ -77,7 +77,9 @@ describe("serving the app", () => {
 				["fonts/abcd1234.js", asset("text/javascript; charset=utf-8", "x")],
 			]),
 		);
-		const response = await createLocalAppHandler(() => ({ kind: "ready", build: nested }))(get("/fonts/abcd1234.js"));
+		const response = await createLocalAppHandler(() => ({ kind: "ready", build: nested, older: [] }))(
+			get("/fonts/abcd1234.js"),
+		);
 		expect(response.headers.get("cache-control")).toBe("no-cache");
 	});
 
@@ -180,6 +182,56 @@ describe("serving the app", () => {
 		const page = await handle(get("/", NAVIGATE));
 		expect(page.status).toBe(503);
 		expect(await page.text()).not.toContain("http-equiv");
+	});
+
+	it("serves a content-hashed file the current build lacks from the older builds, newest first, never their HTML or worker", async () => {
+		const js = "text/javascript; charset=utf-8";
+		const older = (label: string, extra: [string, AppAsset][]): Promise<AppBuild> =>
+			buildOf(
+				new Map([
+					["index.html", asset("text/html; charset=utf-8", `<!doctype html>${label}`)],
+					["sw.js", asset(js, `// ${label} worker`)],
+					...extra,
+				]),
+			);
+		const newer = await older("newer", [["bbbbbbbb.js", asset(js, "newer chunk")]]);
+		const middle = await older("middle", [
+			["aaaaaaaa.js", asset(js, "middle chunk")],
+			["cccccccc.css", asset("text/css; charset=utf-8", "c{}")],
+		]);
+		const oldest = await older("oldest", [
+			["aaaaaaaa.js", asset(js, "oldest chunk")],
+			["dddddddd.js", asset(js, "oldest only")],
+			["eeeeeeee.html", asset("text/html; charset=utf-8", "old page")],
+		]);
+		const handle = createLocalAppHandler(() => ({ kind: "ready", build: newer, older: [middle, oldest] }));
+
+		// The current build's own file wins; an older one fills in what the current build lacks.
+		expect(await (await handle(get("/bbbbbbbb.js"))).text()).toBe("newer chunk");
+		const kept = await handle(get("/aaaaaaaa.js"));
+		expect(kept.status).toBe(200);
+		expect(await kept.text()).toBe("middle chunk");
+		// Same headers as a current file: the name is the content hash, so it may be cached for good.
+		expect(kept.headers.get("content-type")).toBe(js);
+		expect(kept.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+		expect(kept.headers.get("etag")).not.toBeNull();
+		expect(kept.headers.get("x-content-type-options")).toBe("nosniff");
+		expect(kept.headers.get("content-security-policy")).toContain("default-src 'none'");
+		expect(await (await handle(get("/cccccccc.css"))).text()).toBe("c{}");
+		expect(await (await handle(get("/dddddddd.js"))).text()).toBe("oldest only");
+		expect((await handle(get("/dddddddd.js", {}, "HEAD"))).status).toBe(200);
+		const etag = kept.headers.get("etag")!;
+		expect((await handle(get("/aaaaaaaa.js", { "if-none-match": etag }))).status).toBe(304);
+
+		// The HTML and the worker are the current build's, whatever older builds hold; an unknown name stays a 404.
+		expect(await (await handle(get("/"))).text()).toBe("<!doctype html>newer");
+		expect(await (await handle(get("/index.html"))).text()).toBe("<!doctype html>newer");
+		expect(await (await handle(get("/some/where", NAVIGATE))).text()).toBe("<!doctype html>newer");
+		expect(await (await handle(get("/sw.js"))).text()).toBe("// newer worker");
+		expect((await handle(get("/eeeeeeee.html"))).status).toBe(404);
+		expect((await handle(get("/ffffffff.js"))).status).toBe(404);
+		// Only root-level hashed names fall back.
+		expect((await handle(get("/fonts/aaaaaaaa.js"))).status).toBe(404);
 	});
 });
 

@@ -1,6 +1,8 @@
-import { LoaderCircle, RefreshCw, X } from "lucide-react";
+import { LoaderCircle, X } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { importChunk } from "../../lib/stale-build";
+import { LoadFailure } from "./LoadFailure";
 import { Sheet } from "./Sheet";
 
 /** What the stand-in sheet says while a sheet's code is fetched. */
@@ -23,7 +25,7 @@ export function createLazySheet<P extends { onClose(): void }>(
 ): ComponentType<P> {
 	let loaded: Promise<ComponentType<P>> | undefined;
 	const fetchSheet = (): Promise<ComponentType<P>> => {
-		loaded ??= load().catch((error: unknown) => {
+		loaded ??= importChunk(load).catch((error: unknown) => {
 			loaded = undefined;
 			throw error;
 		});
@@ -33,7 +35,7 @@ export function createLazySheet<P extends { onClose(): void }>(
 	return function LazySheet(props: P): ReactNode {
 		// Held in an object: a bare component function would be taken for a state updater.
 		const [ready, setReady] = useState<{ Sheet: ComponentType<P> } | null>(null);
-		const [error, setError] = useState<string | null>(null);
+		const [error, setError] = useState<Error | null>(null);
 		const [attempt, setAttempt] = useState(0);
 		useEffect(() => {
 			let stale = false;
@@ -43,7 +45,7 @@ export function createLazySheet<P extends { onClose(): void }>(
 					if (!stale) setReady({ Sheet: next });
 				},
 				(err: unknown) => {
-					if (!stale) setError(err instanceof Error ? err.message : String(err));
+					if (!stale) setError(err instanceof Error ? err : new Error(String(err)));
 				},
 			);
 			return () => {
@@ -65,14 +67,7 @@ export function createLazySheet<P extends { onClose(): void }>(
 						<LoaderCircle size={14} className="sh-spin" /> Loading {frame.noun}…
 					</div>
 				) : (
-					<div className="sh-tree-error">
-						<div className="sh-connect-error">
-							Could not load {frame.noun}: {error}
-						</div>
-						<button type="button" className="sh-btn" onClick={() => setAttempt(n => n + 1)}>
-							<RefreshCw size={14} /> Retry
-						</button>
-					</div>
+					<LoadFailure what={frame.noun} error={error} onRetry={() => setAttempt(n => n + 1)} />
 				)}
 			</Sheet>
 		);

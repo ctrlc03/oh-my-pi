@@ -1,4 +1,5 @@
 import type { HLJSApi } from "highlight.js";
+import { importChunk } from "./stale-build";
 
 /** Largest file (in characters) the viewer will highlight; bigger ones stay plain. */
 export const HIGHLIGHT_MAX_CHARS = 256 * 1024;
@@ -74,7 +75,7 @@ let loaded: Promise<HLJSApi> | undefined;
 /** The highlighter, fetched on first use and shared after that. A failed fetch is retried next time. */
 export function loadHighlighter(): Promise<HLJSApi> {
 	// highlight.js and its grammars are large and only the file viewer needs them: keep them out of the app bundle.
-	loaded ??= import("./highlight-core").then(
+	loaded ??= importChunk(() => import("./highlight-core")).then(
 		core => core.hljs,
 		(error: unknown) => {
 			loaded = undefined;

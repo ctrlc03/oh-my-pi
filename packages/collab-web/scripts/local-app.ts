@@ -13,6 +13,9 @@
  *   which gets `index.html` (the app routes in the URL fragment, but a reload or an installed launch may land anywhere).
  * - `index.html`, the service worker and everything not content-hashed revalidate (`no-cache` plus an ETag); a
  *   content-hashed bundle is `immutable`.
+ * - A content-hashed bundle the current build lacks is served from `AppState.older` (the builds kept before it,
+ *   newest first) when one has it, so a page open across a rebuild still loads its lazy chunks. Never the HTML or the
+ *   service worker: a navigation always gets the current build. The release binary embeds one build, so it has none.
  * - Every response carries `nosniff`, `Referrer-Policy: no-referrer`, a Content-Security-Policy and
  *   `Cross-Origin-Resource-Policy: same-origin`. There is no CORS: no `Access-Control-*` header is ever sent.
  * - The caller has already checked that the request is addressed to a loopback host name (DNS rebinding).
@@ -51,6 +54,11 @@ const COMPRESSIBLE: ReadonlySet<string> = new Set([
 /** Bun names bundles `[hash].[ext]`: eight lowercase base-36 characters at the root. Nothing else is immutable. */
 const HASHED_RE = /^[a-z0-9]{8}\.[a-z0-9]+$/;
 
+/** Whether `rel` is a content-hashed bundle (a chunk, a script or a stylesheet), which an older build may have named. */
+function isHashedAsset(rel: string): boolean {
+	return HASHED_RE.test(rel) && path.extname(rel) !== ".html";
+}
+
 /** One file of a build. */
 export interface AppAsset {
 	/** `Content-Type`. */
@@ -72,7 +80,10 @@ export interface AppBuild {
 }
 
 /** What {@link createLocalAppHandler} serves right now. */
-export type AppState = { kind: "ready"; build: AppBuild } | { kind: "building" } | { kind: "failed" };
+export type AppState =
+	| { kind: "ready"; build: AppBuild; older: readonly AppBuild[] }
+	| { kind: "building" }
+	| { kind: "failed" };
 
 export function contentTypeOf(rel: string): string | undefined {
 	const ext = path.extname(rel);
@@ -206,10 +217,10 @@ function page(status: number, html: string, extra: Record<string, string> = {}, 
 	});
 }
 
-async function serveAsset(request: Request, build: AppBuild, rel: string, asset: AppAsset): Promise<Response> {
-	const immutable = HASHED_RE.test(rel);
+async function serveAsset(request: Request, csp: string, rel: string, asset: AppAsset): Promise<Response> {
+	const immutable = isHashedAsset(rel);
 	const headers: Record<string, string> = {
-		...securityHeaders(build.csp),
+		...securityHeaders(csp),
 		"Content-Type": asset.type,
 		"Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
 		ETag: asset.etag,
@@ -269,12 +280,20 @@ export function createLocalAppHandler(state: () => AppState): (request: Request)
 					)
 				: plain(503, "the app is being built", retry);
 		}
-		const { build } = current;
+		const { build, older } = current;
 		const wanted = rel === "" ? "index.html" : rel;
 		const asset = build.assets.get(wanted);
-		if (asset !== undefined) return await serveAsset(request, build, wanted, asset);
+		if (asset !== undefined) return await serveAsset(request, build.csp, wanted, asset);
+		// A page loaded from an older build asks for the lazy chunks that build named. Content-hashed names are never
+		// reused for other bytes, so an older build's copy is the file the page wants; the HTML and the worker are not.
+		if (isHashedAsset(wanted)) {
+			for (const previous of older) {
+				const kept = previous.assets.get(wanted);
+				if (kept !== undefined) return await serveAsset(request, build.csp, wanted, kept);
+			}
+		}
 		if (isNavigation(request, rel))
-			return await serveAsset(request, build, "index.html", build.assets.get("index.html")!);
+			return await serveAsset(request, build.csp, "index.html", build.assets.get("index.html")!);
 		return plain(404, "not found");
 	};
 }

@@ -1,19 +1,77 @@
 import { BellRing, CircleCheck, Inbox, Laptop, LoaderCircle, RefreshCw, SendHorizontal, X } from "lucide-react";
-import type { FormEvent, ReactNode } from "react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import type { ComponentType, FormEvent, ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { InboxItem } from "../../lib/companion";
 import type { ComputerHandle } from "../../lib/computers";
 import { relTime, shortenPath } from "../../lib/format";
 import { hostKey, inboxKey, loadDismissed, type OpenIntent, saveDismissed, setOpenIntent } from "../../lib/inbox";
 import { mergeInbox, openCount, personalHostOf } from "../../lib/personal";
+import { importChunk } from "../../lib/stale-build";
 import { useComputerRequests } from "../../lib/use-computer-requests";
 import { usePersonal, usePersonalQuery } from "../../lib/use-personal";
+import type { PersonalInboxRowsProps } from "../personal/InboxRows";
 import { AgentChip } from "./AgentChip";
+import { LoadFailure } from "./LoadFailure";
 import { Sheet } from "./Sheet";
 import "./inbox.css";
 
-/** The Personal rows (proposal and digest views) load only once the inbox holds a Personal item. */
-const PersonalInboxRows = lazy(() => import("../personal/InboxRows"));
+type PersonalRowsComponent = ComponentType<PersonalInboxRowsProps>;
+
+let personalRows: Promise<PersonalRowsComponent> | undefined;
+
+/** The Personal rows (proposal and digest views) load only once the inbox holds a Personal item; a failed fetch is retried next time. */
+function fetchPersonalRows(): Promise<PersonalRowsComponent> {
+	personalRows ??= importChunk(() => import("../personal/InboxRows")).then(
+		module => module.default,
+		(error: unknown) => {
+			personalRows = undefined;
+			throw error;
+		},
+	);
+	return personalRows;
+}
+
+/**
+ * {@link PersonalInboxRows} once its chunk has loaded. A missing chunk must not unmount the app, which a rejected
+ * `React.lazy` would: the session rows stay and the failure shows in place of the Personal ones.
+ */
+function LazyPersonalInboxRows(props: PersonalInboxRowsProps): ReactNode {
+	// Held in an object: a bare component function would be taken for a state updater.
+	const [ready, setReady] = useState<{ Rows: PersonalRowsComponent } | null>(null);
+	const [error, setError] = useState<Error | null>(null);
+	const [attempt, setAttempt] = useState(0);
+	useEffect(() => {
+		let stale = false;
+		setError(null);
+		fetchPersonalRows().then(
+			Rows => {
+				if (!stale) setReady({ Rows });
+			},
+			(err: unknown) => {
+				if (!stale) setError(err instanceof Error ? err : new Error(String(err)));
+			},
+		);
+		return () => {
+			stale = true;
+		};
+	}, [attempt]);
+	if (ready !== null) return <ready.Rows {...props} />;
+	if (error === null) {
+		return (
+			<li className="sh-companion-empty sh-file-status">
+				<LoaderCircle size={14} className="sh-spin" /> Loading…
+			</li>
+		);
+	}
+	return (
+		<>
+			{props.items.map(entry => (entry.source === "session" ? props.renderSession(entry) : null))}
+			<li>
+				<LoadFailure what="the Personal items" error={error} onRetry={() => setAttempt(n => n + 1)} />
+			</li>
+		</>
+	);
+}
 
 export interface InboxSheetProps {
 	computers: readonly ComputerHandle[];
@@ -155,15 +213,7 @@ export function InboxSheet({ computers, onOpenHost, onClose }: InboxSheetProps):
 			{items.length > 0 && (
 				<ul className="sh-inbox-list">
 					{personalItems.length > 0 ? (
-						<Suspense
-							fallback={
-								<li className="sh-companion-empty sh-file-status">
-									<LoaderCircle size={14} className="sh-spin" /> Loading…
-								</li>
-							}
-						>
-							<PersonalInboxRows items={items} renderSession={sessionRow} onReload={personalInbox.reload} />
-						</Suspense>
+						<LazyPersonalInboxRows items={items} renderSession={sessionRow} onReload={personalInbox.reload} />
 					) : (
 						items.map(entry => (entry.source === "session" ? sessionRow(entry) : null))
 					)}

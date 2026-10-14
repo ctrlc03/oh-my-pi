@@ -12,9 +12,14 @@
  */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { type AppState, loadDirectoryBuild } from "./local-app";
+import { type AppBuild, type AppState, loadDirectoryBuild } from "./local-app";
 
-/** Builds kept after a new one is ready: it and the one before, which a page already open may still be loading from. */
+/**
+ * Builds kept after a new one is ready: it and the one before. A page already open may still be loading lazy chunks
+ * from the one before, so the handler serves its content-hashed files when the current build has no such file
+ * (`AppState.older`, `./local-app`). Chunks are fetched one by one as features open, so one older build covers a page
+ * across a restart; a page two rebuilds old gets the app's own "Reload" notice instead.
+ */
 const KEEP_BUILDS = 2;
 const HASH_RE = /^[0-9a-f]{16}$/;
 const TMP_RE = /^[0-9a-f]{16}\.tmp-(\d+)$/;
@@ -113,7 +118,20 @@ export function startSourceApp(options: SourceAppOptions): SourceApp {
 	let state: AppState = { kind: "building" };
 	let served: string | null = null;
 	const serve = async (hash: string): Promise<void> => {
-		state = { kind: "ready", build: await loadDirectoryBuild(path.join(options.cacheDir, hash)) };
+		const build = await loadDirectoryBuild(path.join(options.cacheDir, hash));
+		// The builds the cleanup below keeps, for the lazy chunks of a page that was loaded from one of them.
+		const kept = (await listBuilds(options.cacheDir)).filter(name => name !== hash).slice(0, KEEP_BUILDS - 1);
+		const older: AppBuild[] = [];
+		for (const name of kept) {
+			try {
+				older.push(await loadDirectoryBuild(path.join(options.cacheDir, name)));
+			} catch (err) {
+				options.log(
+					`local app: build ${name} is unusable as a fallback: ${err instanceof Error ? err.message : String(err)}`,
+				);
+			}
+		}
+		state = { kind: "ready", build, older };
 		served = hash;
 	};
 

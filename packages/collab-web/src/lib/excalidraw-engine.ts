@@ -8,6 +8,7 @@ import { convertToExcalidrawElements, restoreElements } from "@excalidraw/excali
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { BinaryFiles } from "@excalidraw/excalidraw/types";
 import type { Scene } from "./excalidraw-scene";
+import { importChunk } from "./stale-build";
 
 export {
 	convertToExcalidrawElements,
@@ -40,7 +41,7 @@ export function loadScene(scene: Scene): LoadedScene {
 /** Convert a Mermaid diagram to editable elements with `@excalidraw/mermaid-to-excalidraw`. */
 export async function mermaidToElements(source: string): Promise<LoadedScene> {
 	// Dynamic: the converter brings its own copy of the Mermaid parser, needed only to edit a Mermaid diagram.
-	const { parseMermaidToExcalidraw } = await import("@excalidraw/mermaid-to-excalidraw");
+	const { parseMermaidToExcalidraw } = await importChunk(() => import("@excalidraw/mermaid-to-excalidraw"));
 	const parsed = await parseMermaidToExcalidraw(source);
 	return {
 		elements: convertToExcalidrawElements(parsed.elements, { regenerateIds: false }),

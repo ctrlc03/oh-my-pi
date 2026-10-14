@@ -27,6 +27,15 @@ async function write(rel: string, text: string): Promise<void> {
 
 const INDEX = (name: string) => `<!doctype html><html><body>${name}<script>1</script></body></html>`;
 
+/** Make every build in `cacheDir` a minute older than it was: builds are told apart by the age of their `index.html`. */
+async function backdate(cacheDir: string): Promise<void> {
+	for (const name of await fs.readdir(cacheDir)) {
+		const index = path.join(cacheDir, name, "index.html");
+		const then = new Date((await fs.stat(index)).mtimeMs - 60_000);
+		await fs.utimes(index, then, then);
+	}
+}
+
 /** A build that writes `index.html` naming `label`, after `gate` (when given) resolves. */
 function fakeBuild(label: string, gate?: Promise<void>, calls: string[] = []): (outdir: string) => Promise<void> {
 	return async outdir => {
@@ -180,5 +189,55 @@ describe("the app built from source", () => {
 		await Bun.write(path.join(dead, "index.html"), "half");
 		await startSourceApp({ cacheDir, repoDir: root, build: fakeBuild("x"), log: () => {} }).settled;
 		expect(await Bun.file(path.join(dead, "index.html")).exists()).toBe(false);
+	});
+
+	it("serves the lazy chunks of the build kept before the current one, and nothing from builds older than that", async () => {
+		const cacheDir = path.join(root, "cache");
+		const build = (label: string, chunks: Record<string, string>) =>
+			startSourceApp({
+				cacheDir,
+				repoDir: root,
+				build: async outdir => {
+					await fakeBuild(label)(outdir);
+					for (const [name, text] of Object.entries(chunks)) await Bun.write(path.join(outdir, name), text);
+					await Bun.write(path.join(outdir, "sw.js"), `// ${label} worker`);
+				},
+				log: () => {},
+			});
+		const get = async (app: { state(): AppState }, pathname: string, headers: Record<string, string> = {}) => {
+			const response = await createLocalAppHandler(app.state)(
+				new Request(`http://127.0.0.1${pathname}`, { headers }),
+			);
+			return { status: response.status, text: await response.text(), cache: response.headers.get("cache-control") };
+		};
+
+		await build("v1", { "11111111.js": "v1 only", "22222222.js": "shared v1" }).settled;
+		await backdate(cacheDir);
+		await write("packages/collab-web/src/main.tsx", "export const v = 2;");
+		const second = build("v2", { "22222222.js": "shared v2", "33333333.js": "v2 only" });
+		await second.settled;
+
+		// A page loaded from v1 asks the companion, now on v2, for its chunks.
+		expect(await get(second, "/11111111.js")).toEqual({
+			status: 200,
+			text: "v1 only",
+			cache: "public, max-age=31536000, immutable",
+		});
+		expect((await get(second, "/22222222.js")).text).toBe("shared v2");
+		expect((await get(second, "/33333333.js")).text).toBe("v2 only");
+		// Never v1's page or worker; an unknown name is a 404.
+		expect((await get(second, "/")).text).toContain("v2");
+		expect((await get(second, "/some/where", { "sec-fetch-mode": "navigate" })).text).toContain("v2");
+		expect((await get(second, "/sw.js")).text).toBe("// v2 worker");
+		expect((await get(second, "/99999999.js")).status).toBe(404);
+		expect((await get(second, "/index.html")).text).not.toContain("v1");
+
+		// A third build keeps v2 and drops v1 with its files.
+		await backdate(cacheDir);
+		await write("packages/collab-web/src/main.tsx", "export const v = 3;");
+		const third = build("v3", {});
+		await third.settled;
+		expect((await get(third, "/33333333.js")).text).toBe("v2 only");
+		expect((await get(third, "/11111111.js")).status).toBe(404);
 	});
 });

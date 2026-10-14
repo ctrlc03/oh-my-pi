@@ -7,6 +7,7 @@
  */
 
 import type * as ExcalidrawModule from "./excalidraw-engine";
+import { importChunk } from "./stale-build";
 
 type ExcalidrawEngine = typeof ExcalidrawModule;
 
@@ -47,7 +48,7 @@ export function loadExcalidraw(): Promise<ExcalidrawEngine> {
 	// Fonts are looked up under this path first; the library falls back to a CDN only for a file missing here.
 	if (process.env.NODE_ENV === "production") window.EXCALIDRAW_ASSET_PATH = assetBase();
 	// Dynamic: Excalidraw is the largest dependency and must stay out of the entry bundle.
-	loaded ??= Promise.all([import("./excalidraw-engine"), loadStylesheet()]).then(
+	loaded ??= Promise.all([importChunk(() => import("./excalidraw-engine")), loadStylesheet()]).then(
 		([engine]) => engine,
 		(error: unknown) => {
 			loaded = undefined;

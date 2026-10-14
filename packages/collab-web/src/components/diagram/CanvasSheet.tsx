@@ -1,5 +1,5 @@
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { Download, FileImage, LoaderCircle, RefreshCw, Save, SendHorizontal } from "lucide-react";
+import { Download, FileImage, LoaderCircle, Save, SendHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CanvasSource } from "../../lib/diagram-store";
@@ -8,6 +8,7 @@ import { loadExcalidraw } from "../../lib/excalidraw-load";
 import { compactScene, parseScene, sceneNote } from "../../lib/excalidraw-scene";
 import { MAX_INLINE_BYTES } from "../../lib/files";
 import { useSystemTheme } from "../../lib/theme";
+import { LoadFailure } from "../shell/LoadFailure";
 import { Sheet } from "../shell/Sheet";
 import { buildCanvasInit, type CanvasInit, type ExcalidrawEngine } from "./canvas-data";
 import { DiagramHead } from "./DiagramHead";
@@ -38,7 +39,7 @@ export interface CanvasSheetProps {
 type Load =
 	| { status: "loading" }
 	| { status: "ready"; engine: ExcalidrawEngine; init: CanvasInit }
-	| { status: "error"; message: string };
+	| { status: "error"; error: Error };
 
 /** The Excalidraw canvas in a sheet: edit or sketch, then send to the agent, save to the file, or download. */
 export function CanvasSheet({ title, name, source, onAttach, save, onClose }: CanvasSheetProps): ReactNode {
@@ -72,7 +73,7 @@ export function CanvasSheet({ title, name, source, onAttach, save, onClose }: Ca
 				},
 				(error: unknown) => {
 					if (!stale)
-						setLoad({ status: "error", message: error instanceof Error ? error.message : String(error) });
+						setLoad({ status: "error", error: error instanceof Error ? error : new Error(String(error)) });
 				},
 			);
 		return () => {
@@ -216,12 +217,7 @@ export function CanvasSheet({ title, name, source, onAttach, save, onClose }: Ca
 				</div>
 			)}
 			{load.status === "error" && (
-				<div className="sh-tree-error">
-					<div className="sh-connect-error">Could not open the canvas: {load.message}</div>
-					<button type="button" className="sh-btn" onClick={() => setAttempt(n => n + 1)}>
-						<RefreshCw size={14} /> Retry
-					</button>
-				</div>
+				<LoadFailure what="the canvas" verb="open" error={load.error} onRetry={() => setAttempt(n => n + 1)} />
 			)}
 			{ready !== null && (
 				// Keys typed on the canvas are the canvas's: the app's single-key shortcuts must not see them.

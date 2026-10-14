@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { extractPairing } from "../../lib/companion";
 import { extractLink } from "../../lib/rooms";
+import { importChunk } from "../../lib/stale-build";
 
 /** Frames analysed per second: enough to feel instant without cooking the phone. */
 const SCAN_FPS = 8;
@@ -33,7 +34,7 @@ async function createDecoder(): Promise<Decoder> {
 	}
 	// Deliberately lazy: the decoder is only needed on browsers without a native QR
 	// detector, and only once the user opens the scanner. It ships as its own chunk.
-	const { default: jsQR } = await import("jsqr");
+	const { default: jsQR } = await importChunk(() => import("jsqr"));
 	const canvas = document.createElement("canvas");
 	const ctx = canvas.getContext("2d", { willReadFrequently: true });
 	if (!ctx) throw new Error("canvas unavailable");

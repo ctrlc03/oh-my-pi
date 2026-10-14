@@ -592,7 +592,8 @@ function startLocalApp(): () => AppState {
 		let state: AppState = { kind: "building" };
 		loadEmbeddedBuild(embeddedApp!).then(
 			build => {
-				state = { kind: "ready", build };
+				// One embedded build: nothing older survives an update of the binary (the page's Reload covers that).
+				state = { kind: "ready", build, older: [] };
 			},
 			err => {
 				state = { kind: "failed" };

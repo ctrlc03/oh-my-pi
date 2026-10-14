@@ -1,6 +1,8 @@
-import { LoaderCircle, RefreshCw, X } from "lucide-react";
+import { LoaderCircle, X } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { importChunk } from "../../lib/stale-build";
+import { LoadFailure } from "../shell/LoadFailure";
 import { Sheet } from "../shell/Sheet";
 import { DockPane } from "../shell/SplitPane";
 import type { IdeSheetProps } from "./IdeSheet";
@@ -12,7 +14,7 @@ let loaded: Promise<IdeSheetComponent> | undefined;
 /** The editor sheet, fetched on first use and shared after that. A failed fetch is retried next time. */
 function loadIdeSheet(): Promise<IdeSheetComponent> {
 	// CodeMirror is large and only needed once the editor opens: keep it out of the entry bundle.
-	loaded ??= import("./IdeSheet").then(
+	loaded ??= importChunk(() => import("./IdeSheet")).then(
 		module => module.IdeSheet,
 		(error: unknown) => {
 			loaded = undefined;
@@ -26,7 +28,7 @@ function loadIdeSheet(): Promise<IdeSheetComponent> {
 export function LazyIdeSheet(props: IdeSheetProps): ReactNode {
 	// Held in an object: a bare component function would be taken for a state updater.
 	const [loadedSheet, setLoadedSheet] = useState<{ Sheet: IdeSheetComponent } | null>(null);
-	const [error, setError] = useState<string | null>(null);
+	const [error, setError] = useState<Error | null>(null);
 	const [attempt, setAttempt] = useState(0);
 	useEffect(() => {
 		let stale = false;
@@ -36,7 +38,7 @@ export function LazyIdeSheet(props: IdeSheetProps): ReactNode {
 				if (!stale) setLoadedSheet({ Sheet: next });
 			},
 			(err: unknown) => {
-				if (!stale) setError(err instanceof Error ? err.message : String(err));
+				if (!stale) setError(err instanceof Error ? err : new Error(String(err)));
 			},
 		);
 		return () => {
@@ -58,12 +60,7 @@ export function LazyIdeSheet(props: IdeSheetProps): ReactNode {
 					<LoaderCircle size={14} className="sh-spin" /> Loading the editor…
 				</div>
 			) : (
-				<div className="sh-tree-error">
-					<div className="sh-connect-error">Could not load the editor: {error}</div>
-					<button type="button" className="sh-btn" onClick={() => setAttempt(n => n + 1)}>
-						<RefreshCw size={14} /> Retry
-					</button>
-				</div>
+				<LoadFailure what="the editor" error={error} onRetry={() => setAttempt(n => n + 1)} />
 			)}
 		</>
 	);

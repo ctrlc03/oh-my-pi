@@ -6,6 +6,7 @@
  */
 
 import type { DiagramKind } from "./diagrams";
+import { importChunk, isStaleBuildError } from "./stale-build";
 import { isSafeSvg } from "./svg";
 import type { SystemTheme } from "./theme";
 import { mermaidThemeVariables, readToken } from "./theme-tokens";
@@ -45,18 +46,20 @@ export function messageOf(error: unknown): string {
 
 async function renderMermaid(source: string, theme: SystemTheme): Promise<DiagramSvg> {
 	// Dynamic: Mermaid is several megabytes and must stay out of the entry bundle.
-	const engine = await import("./mermaid-engine");
+	const engine = await importChunk(() => import("./mermaid-engine"));
 	try {
-		const svg = await engine.renderMermaidSvg(source, mermaidThemeVariables(readToken, theme));
+		// Mermaid loads each diagram type's parser as a chunk of its own, so a render can hit a missing chunk too.
+		const svg = await importChunk(() => engine.renderMermaidSvg(source, mermaidThemeVariables(readToken, theme)));
 		return isSafeSvg(svg) ? { ok: true, svg } : { ok: false, error: "the diagram contained unsafe markup" };
 	} catch (error) {
+		if (isStaleBuildError(error)) throw error;
 		return { ok: false, error: messageOf(error) };
 	}
 }
 
 async function renderExcalidrawScene(source: string, theme: SystemTheme): Promise<DiagramSvg> {
 	// Dynamic: the scene validator and Excalidraw loader are only needed once a drawing is shown.
-	const { renderExcalidraw } = await import("./excalidraw-svg");
+	const { renderExcalidraw } = await importChunk(() => import("./excalidraw-svg"));
 	return renderExcalidraw(source, theme);
 }
 

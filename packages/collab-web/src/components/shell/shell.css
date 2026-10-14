@@ -1438,7 +1438,8 @@
 	position: fixed;
 	top: calc(12px + var(--safe-top));
 	left: 50%;
-	z-index: 70;
+	/* Above an open sheet and its backdrop (70, 71): the notice that a lazy chunk is gone shows inside a sheet. */
+	z-index: 72;
 	display: flex;
 	align-items: center;
 	gap: 10px;
@@ -1461,6 +1462,12 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
+}
+
+@media (any-pointer: coarse) {
+	.sh-update-reload {
+		height: 44px;
+	}
 }
 
 /* ---- connect screen ---- */

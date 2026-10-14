@@ -105,6 +105,7 @@ import { usePaneLayout } from "./lib/use-pane-layout";
 import { Splitter } from "./components/shell/Splitter";
 import { PersonalRoutes } from "./components/shell/PersonalRoutes";
 import { readJson, writeJson } from "./lib/storage";
+import { ignoreStaleBuild, importChunk } from "./lib/stale-build";
 import { openSettings } from "./lib/settings-ui";
 import { currentSubagents } from "./lib/subagents";
 import { currentTodos } from "./lib/todos";
@@ -566,10 +567,12 @@ function Session({
 	const canBakeoff = computers.some(candidate => candidate.client !== null && candidate.snap.canBakeoff);
 	const canBakeoffHere = companionClient !== null && hostId !== null && computer?.snap.canBakeoff === true;
 	const bakeoffSpar = useCallback((computerId: string, spar: Spar, run: SparRun) => {
-		void import("./components/bakeoff/bakeoff-spar").then(({ bakeoffFromSpar }) => {
-			setQuiz(null);
-			setBakeoff(bakeoffFromSpar(computerId, spar, run));
-		});
+		void importChunk(() => import("./components/bakeoff/bakeoff-spar"))
+			.then(({ bakeoffFromSpar }) => {
+				setQuiz(null);
+				setBakeoff(bakeoffFromSpar(computerId, spar, run));
+			})
+			.catch(ignoreStaleBuild);
 	}, []);
 	// The editor replaces the read-only file viewer once the paired computer can save files.
 	const canEdit = companionClient !== null && hostId !== null && computer?.snap.canEdit === true;
@@ -923,18 +926,20 @@ function Session({
 							setQuiz({ view: "spar-new", subject: { kind: "branch", name: entry.branch } });
 							return;
 						}
-						void import("./components/bakeoff/bakeoff-result-flow").then(({ designMarkdown }) => {
-							setBakeoff(null);
-							setQuiz({
-								view: "spar-new",
-								subject: { kind: "doc" },
-								doc: {
-									source: "paste",
-									name: `${source.title} (entry ${entry.label})`,
-									text: designMarkdown(source, entry),
-								},
-							});
-						});
+						void importChunk(() => import("./components/bakeoff/bakeoff-result-flow"))
+							.then(({ designMarkdown }) => {
+								setBakeoff(null);
+								setQuiz({
+									view: "spar-new",
+									subject: { kind: "doc" },
+									doc: {
+										source: "paste",
+										name: `${source.title} (entry ${entry.label})`,
+										text: designMarkdown(source, entry),
+									},
+								});
+							})
+							.catch(ignoreStaleBuild);
 					}
 				: undefined,
 		}),

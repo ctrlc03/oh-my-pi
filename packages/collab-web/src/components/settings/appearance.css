@@ -142,6 +142,78 @@
 	max-width: 100%;
 }
 
+/* ---- top bar: one row per optional button, with its show box and move arrows ---- */
+.sh-appr-bar {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 10px;
+	min-width: 0;
+	max-width: 100%;
+}
+
+/* The list is wide: its row's control takes the full width under the text. */
+.sh-set-row-control:has(> .sh-appr-bar) {
+	flex: 1 1 100%;
+}
+
+.sh-appr-bar-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	width: 100%;
+	max-width: 420px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-appr-bar-item {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 4px 2px 10px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-appr-bar-show {
+	display: flex;
+	flex: 1 1 auto;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	min-height: 32px;
+	font-size: 13.5px;
+}
+
+.sh-appr-bar-show input {
+	flex: none;
+	margin: 0;
+}
+
+.sh-appr-bar-show svg {
+	flex: none;
+	color: var(--fg-muted);
+}
+
+.sh-appr-bar-item .sh-btn-icon[aria-disabled="true"] {
+	opacity: 0.35;
+	cursor: default;
+}
+
+.sh-appr-bar-item .sh-btn-icon[aria-disabled="true"]:hover {
+	background: transparent;
+	color: var(--fg-muted);
+}
+
+@media (any-pointer: coarse) {
+	.sh-appr-bar-show {
+		min-height: 44px;
+	}
+}
+
 @media (any-pointer: coarse) {
 	.sh-appr-swatch {
 		width: 44px;

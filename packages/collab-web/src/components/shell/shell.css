@@ -2046,6 +2046,11 @@
 	font-size: 14px;
 }
 
+/* A one-line picker where a row of choices would wrap (the thinking levels). */
+.sh-sheet-select {
+	min-width: 160px;
+}
+
 .sh-sheet-mono {
 	font-family: var(--font-mono);
 	font-size: 13px;
@@ -2804,15 +2809,12 @@
 	.sh-header-right {
 		gap: 0;
 	}
-	/* The compact bar keeps title, agents and ⋯. Everything else lives in the sheet. */
+	/* The compact bar keeps the name, up to four optional buttons (HeaderBar picks them, see top-bar.ts) and ⋯. */
 	.sh-brand-slash,
 	.sh-status,
 	.sh-header .sh-chip,
 	.sh-header .sh-gauge,
 	.sh-header .sh-avatars,
-	.sh-header .sh-settings-toggle,
-	.sh-github-toggle,
-	.sh-leave,
 	.sh-btn-label {
 		display: none;
 	}
@@ -2957,7 +2959,8 @@
 	.sh-btn,
 	.sh-settings-toggle,
 	.sh-segment,
-	.sh-sheet-link {
+	.sh-sheet-link,
+	.sh-sheet-select {
 		min-height: 44px;
 	}
 	.sh-sheet-row-top dt {

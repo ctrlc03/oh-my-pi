@@ -546,7 +546,7 @@ export function createBlueprints(deps: BlueprintDeps): Blueprints {
 				ref ??= earlier.head.ref;
 				base ??= earlier.base === undefined ? undefined : (earlier.base.ref ?? "@default");
 			}
-			const target = await resolveTarget(info.root, { ref, base });
+			const target = await resolveTarget(info.root, { ref, base, checkout: info.checkout });
 			if (previous && previous.head.commit === target.head.commit && previous.base?.commit === target.base?.commit)
 				throw new Error("The map is already up to date with that commit.");
 			const id = store.newId();

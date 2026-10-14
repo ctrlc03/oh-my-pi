@@ -1,0 +1,50 @@
+/* The branch list of the branch / pull request picker (RefPicker.tsx), shared by the map and quiz forms. */
+.sh-input.sh-branches {
+	height: auto;
+	padding: 4px 6px;
+}
+
+/* The pull-request list of the branch / pull request picker (RefPicker.tsx), shared by the map and quiz forms. */
+.sh-prs {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	max-height: 240px;
+	margin: 0;
+	padding: 0;
+	overflow-y: auto;
+	list-style: none;
+}
+
+.sh-pr {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	width: 100%;
+	padding: 8px 10px;
+	text-align: left;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	overflow-wrap: anywhere;
+}
+
+.sh-pr-on {
+	background: var(--accent-soft);
+	border-color: var(--accent);
+}
+
+.sh-pr-title {
+	font-weight: 500;
+}
+
+.sh-pr-branches {
+	font: 400 11.5px / 1.3 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+@media (any-pointer: coarse) {
+	.sh-pr {
+		min-height: 44px;
+	}
+}

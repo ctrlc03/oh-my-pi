@@ -339,14 +339,3 @@
 		flex: 1 1 auto;
 	}
 }
-
-/* The ⋯ sheet's Settings row: on a phone, where the header has no gear. */
-.sh-sheet-row.sh-sheet-row-phone {
-	display: none;
-}
-
-@media (max-width: 640px) {
-	.sh-sheet-row.sh-sheet-row-phone {
-		display: grid;
-	}
-}

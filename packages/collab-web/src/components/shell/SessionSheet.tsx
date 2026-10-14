@@ -18,6 +18,7 @@ import {
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { ConnectionPhase, ContextItemsInfo } from "../../lib/client";
+import { shouldShare } from "../../lib/download";
 import { exportFilename } from "../../lib/export";
 import { TRIM_CHOICES } from "../../lib/trim";
 import { fmtPercent, fmtTokens } from "../../lib/format";
@@ -66,6 +67,13 @@ export interface SessionSheetProps {
 	/** Latest turns this device keeps showing (null: all); undefined until the session is known. */
 	keepTurns: number | null | undefined;
 	onKeepTurnsChange(keep: number | null): void;
+	/** Find bar open; the ⋯ sheet toggles it like the header's magnifier, which may be hidden from the bar. */
+	searchOpen: boolean;
+	onToggleSearch(): void;
+	/** Agents rail open and the number of active subagents; the header's button for it may be hidden from the bar. */
+	railOpen: boolean;
+	subCount: number;
+	onToggleRail(): void;
 	/** Files the agent changed this session. */
 	changeCount: number;
 	onOpenChanges(): void;
@@ -78,8 +86,8 @@ export interface SessionSheetProps {
 	onOpenArchitecture: (() => void) | null;
 	/** A changes map of this session's edits; null unless maps can be made and the session changed files. */
 	onMapChanges: (() => void) | null;
-	/** A quiz on this session's changes; null unless quizzes can be written and the session changed files. */
-	onQuizChanges: (() => void) | null;
+	/** This repository's quizzes, with *New quiz* on this session's changes; null unless this computer writes quizzes. */
+	onOpenQuizzes: (() => void) | null;
 	/** The session's terminal (tmux pane); null unless the paired computer hosts this session. */
 	onOpenPane: (() => void) | null;
 	/** Live screenshot of a dev server the session runs; null unless the paired computer can capture pages. */
@@ -133,6 +141,11 @@ export function SessionSheet({
 	onChatChange,
 	keepTurns,
 	onKeepTurnsChange,
+	searchOpen,
+	onToggleSearch,
+	railOpen,
+	subCount,
+	onToggleRail,
 	changeCount,
 	onOpenChanges,
 	onOpenUsage,
@@ -140,7 +153,7 @@ export function SessionSheet({
 	onOpenCodemap,
 	onOpenArchitecture,
 	onMapChanges,
-	onQuizChanges,
+	onOpenQuizzes,
 	onOpenPane,
 	onOpenPreview,
 	onOpenGithub,
@@ -181,15 +194,6 @@ export function SessionSheet({
 	};
 
 	const filename = exportFilename(title);
-	const shareExport = async (): Promise<void> => {
-		const text = exportMarkdown(title);
-		const file = new File([text], filename, { type: "text/markdown" });
-		try {
-			await navigator.share(navigator.canShare?.({ files: [file] }) ? { title, files: [file] } : { title, text });
-		} catch {
-			// Dismissing the share sheet is a choice, and a platform that refuses has Download and Copy.
-		}
-	};
 	const downloadExport = (): void => {
 		const url = URL.createObjectURL(new Blob([exportMarkdown(title)], { type: "text/markdown" }));
 		const link = document.createElement("a");
@@ -197,6 +201,19 @@ export function SessionSheet({
 		link.download = filename;
 		link.click();
 		URL.revokeObjectURL(url);
+	};
+	const shareExport = async (): Promise<void> => {
+		const text = exportMarkdown(title);
+		const file = new File([text], filename, { type: "text/markdown" });
+		try {
+			// The file only where the share sheet saves it (phones, tablets): Chrome on macOS says it can share a
+			// Markdown file, then refuses with NotAllowedError, so a desktop shares the text.
+			await navigator.share(shouldShare(navigator, file) ? { title, files: [file] } : { title, text });
+		} catch (err) {
+			if (err instanceof DOMException && err.name === "AbortError") return;
+			// Refused: the export still reaches the user, as a file.
+			downloadExport();
+		}
 	};
 	const copyExport = async (): Promise<void> => {
 		try {
@@ -280,6 +297,15 @@ export function SessionSheet({
 					</dd>
 				</div>
 				<div className="sh-sheet-row">
+					<dt>Find</dt>
+					<dd>
+						<button type="button" className="sh-sheet-link" onClick={onToggleSearch}>
+							{searchOpen ? "Close the search bar" : "Search this conversation"}
+							<ChevronRight size={14} />
+						</button>
+					</dd>
+				</div>
+				<div className="sh-sheet-row">
 					<dt>Connection</dt>
 					<dd>
 						<span className={`sh-dot sh-dot-${phase}`} />
@@ -336,22 +362,19 @@ export function SessionSheet({
 					<div className="sh-sheet-row">
 						<dt>Thinking</dt>
 						<dd>
-							<div className="sh-segmented sh-segmented-wrap" role="radiogroup" aria-label="Thinking level">
+							<select
+								className="sh-input sh-sheet-select"
+								aria-label="Thinking level"
+								value={state?.thinkingLevel ?? ""}
+								onChange={e => onSessionCommand("thinking", e.currentTarget.value)}
+							>
+								{!state?.thinkingLevel && <option value="">Choose a level</option>}
 								{levels.map(level => (
-									<button
-										key={level}
-										type="button"
-										role="radio"
-										aria-checked={state?.thinkingLevel === level}
-										className={state?.thinkingLevel === level ? "sh-segment sh-segment-on" : "sh-segment"}
-										onClick={() => {
-											if (state?.thinkingLevel !== level) onSessionCommand("thinking", level);
-										}}
-									>
+									<option key={level} value={level}>
 										{level}
-									</button>
+									</option>
 								))}
-							</div>
+							</select>
 						</dd>
 					</div>
 				)}
@@ -615,12 +638,12 @@ export function SessionSheet({
 						</dd>
 					</div>
 				)}
-				{onQuizChanges && (
+				{onOpenQuizzes && (
 					<div className="sh-sheet-row">
-						<dt>Quiz</dt>
+						<dt>Quizzes</dt>
 						<dd>
-							<button type="button" className="sh-sheet-link" onClick={onQuizChanges}>
-								Quiz me on these changes
+							<button type="button" className="sh-sheet-link" onClick={onOpenQuizzes}>
+								This repository's quizzes
 								<ChevronRight size={14} />
 							</button>
 						</dd>
@@ -671,6 +694,19 @@ export function SessionSheet({
 					</div>
 				)}
 				<div className="sh-sheet-row">
+					<dt>Agents</dt>
+					<dd>
+						<button type="button" className="sh-sheet-link" onClick={onToggleRail}>
+							{railOpen
+								? "Hide the agents panel"
+								: subCount > 0
+									? `${subCount} active`
+									: "Show the agents panel"}
+							<ChevronRight size={14} />
+						</button>
+					</dd>
+				</div>
+				<div className="sh-sheet-row">
 					<dt>Screens</dt>
 					<dd>
 						<button type="button" className="sh-sheet-link" onClick={onOpenScreens}>
@@ -717,7 +753,7 @@ export function SessionSheet({
 						</dd>
 					</div>
 				)}
-				<div className="sh-sheet-row sh-sheet-row-phone">
+				<div className="sh-sheet-row">
 					<dt>Settings</dt>
 					<dd>
 						<button

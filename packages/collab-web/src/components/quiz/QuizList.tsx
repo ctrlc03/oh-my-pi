@@ -166,8 +166,8 @@ export function QuizList({
 								</button>
 							) : (
 								<p className="qz-muted">
-									Start one from a session (⋯ → Quiz me on these changes) or from a pull request in the GitHub
-									sheet.
+									Start one from a session (the graduation-cap button at the top, or ⋯ → Quizzes on a phone,
+									then New quiz) or from a pull request in the GitHub sheet.
 								</p>
 							)}
 						</div>

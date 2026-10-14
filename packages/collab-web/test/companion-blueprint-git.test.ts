@@ -107,6 +107,31 @@ describe("resolveTarget", () => {
 		await fs.rm(path.join(repo, "untracked.ts"));
 	});
 
+	it("maps a linked worktree's own branch and files, not the primary checkout's", async () => {
+		const linked = path.join(tmp, "session-tree");
+		await run(repo, "worktree", "add", "-q", "-b", "session-branch", linked, "main");
+		try {
+			await commit(linked, { "session.ts": "committed\n" }, "session work");
+			await fs.writeFile(path.join(linked, "session-wip.ts"), "wip\n");
+			await fs.writeFile(path.join(repo, "primary-wip.ts"), "not this\n");
+			const info = await repoInfo(linked);
+			expect(info.root).toBe(repo);
+			const target = await resolveTarget(info.root, { ref: "@worktree", base: "@default", checkout: info.checkout });
+			expect(target.label).toBe("session-branch (working tree)");
+			const changed = await changedFiles(repo, target.base!.commit, target.head.commit);
+			expect(changed.map(file => `${file.change}:${file.path}`).sort()).toEqual([
+				"added:session-wip.ts",
+				"added:session.ts",
+			]);
+			const head = await resolveTarget(info.root, { checkout: info.checkout });
+			expect(head.head.commit).toBe(await run(linked, "rev-parse", "HEAD"));
+		} finally {
+			await fs.rm(path.join(repo, "primary-wip.ts"), { force: true });
+			await run(repo, "worktree", "remove", "--force", linked);
+			await run(repo, "branch", "-D", "session-branch");
+		}
+	});
+
 	it("fetches a pull request head into a private ref and bases it on the default branch", async () => {
 		const target = await resolveTarget(repo, { ref: "pr/5" });
 		expect(target.label).toBe("PR #5");

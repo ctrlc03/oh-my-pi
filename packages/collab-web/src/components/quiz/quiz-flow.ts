@@ -291,8 +291,11 @@ export function stackLabel(stack: readonly QuizStackPr[]): string {
 	return stack.length === 1 ? `#${first.number}` : `#${first.number}–#${last.number}`;
 }
 
-/** What the new-quiz form is about: the session's changes, or one pull request (with its stack, when it has one). */
-export type QuizSubject = { kind: "changes" } | { kind: "pr"; number: number; title: string };
+/** What the new-quiz form is about: the session's changes, a branch against the default branch, or one pull request (with its stack, when it has one). */
+export type QuizSubject =
+	| { kind: "changes" }
+	| { kind: "branch"; name: string }
+	| { kind: "pr"; number: number; title: string };
 
 /** The subject to offer for another quiz like `quiz`: its pull request (any one of a stack finds the rest), else the changes. */
 export function subjectOf(quiz: Quiz): QuizSubject {
@@ -336,12 +339,30 @@ export function buildCreate(values: QuizFormValues): { request: QuizCreate } | {
 		request.ref = "@worktree";
 		request.base = "@default";
 		if (values.useConversation && values.sessionId !== null) request.sessionId = values.sessionId;
+	} else if (values.subject.kind === "branch") {
+		const name = values.subject.name.trim();
+		if (name === "") return { error: "Pick a branch." };
+		request.ref = name;
+		request.base = "@default";
 	} else if (values.scope === "stack" && values.stack.length > 1) {
 		request.stack = values.stack.map(pr => pr.number);
 	} else {
 		request.pr = values.subject.number;
 	}
 	return { request };
+}
+
+/** A pull request number as typed (`482` or `#482`); null for anything else. */
+export function parsePrNumber(text: string): number | null {
+	const match = /^#?(\d+)$/.exec(text.trim());
+	const value = match === null ? 0 : Number(match[1]);
+	return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/** The branches with the checked-out one first, the rest in the order given. */
+export function currentFirst(branches: readonly string[], current: string | undefined): string[] {
+	if (current === undefined || !branches.includes(current)) return [...branches];
+	return [current, ...branches.filter(name => name !== current)];
 }
 
 /** The stack the form offers: more than one pull request, with the one asked about in it. */

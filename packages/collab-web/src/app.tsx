@@ -860,6 +860,7 @@ function Session({
 		setChangesOpen(false);
 		setQuiz({ view: "new", subject: { kind: "changes" } });
 	}, []);
+	const openQuizzes = useCallback(() => setQuiz({ view: "home" }), []);
 	// The per-request timeline asks the host to read its session, so it is for writers on a live host that advertises it.
 	const canTimeline = Object.hasOwn(snap.features, "inspect") && !snap.readOnly && live;
 	const [timelineOpen, setTimelineOpen] = useState(false);
@@ -1112,6 +1113,7 @@ function Session({
 			openArchitecture: canArchitecture ? openArchitecture : null,
 			mapChanges: canMapHere && changes.length > 0 ? mapChanges : null,
 			quizChanges: canQuizHere && changes.length > 0 ? quizChanges : null,
+			openQuizzes: canQuizHere ? openQuizzes : null,
 			openPane: canPane ? openPane : null,
 			openPreview: canPreview ? openPreview : null,
 			openGithub: canGithub ? openGithub : null,
@@ -1143,6 +1145,7 @@ function Session({
 			openCodemap,
 			mapChanges,
 			quizChanges,
+			openQuizzes,
 			openArchitecture,
 			openEditor,
 			openGithub,
@@ -1215,7 +1218,7 @@ function Session({
 				onOpenCodemap={canCodemap ? openCodemap : null}
 				onOpenArchitecture={canArchitecture ? openArchitecture : null}
 				onMapChanges={canMapHere && changes.length > 0 ? mapChanges : null}
-				onQuizChanges={canQuizHere && changes.length > 0 ? quizChanges : null}
+				onOpenQuizzes={canQuizHere ? openQuizzes : null}
 				onOpenPane={canPane ? openPane : null}
 				onOpenPreview={canPreview ? openPreview : null}
 				onOpenGithub={canGithub ? openGithub : null}

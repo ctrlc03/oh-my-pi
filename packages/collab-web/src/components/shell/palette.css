@@ -47,6 +47,11 @@
 	outline: none;
 }
 
+/* The field's frame shows focus (`:focus-within` above); the global ring would draw a second box inside it. */
+.sh-palette-field:focus-visible {
+	outline: none;
+}
+
 .sh-palette-field::placeholder {
 	color: var(--fg-faint);
 }

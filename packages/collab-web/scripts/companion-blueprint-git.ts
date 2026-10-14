@@ -83,12 +83,15 @@ export function githubSlug(url: string): string | undefined {
 }
 
 export interface RepoInfo {
+	/** The primary checkout: where maps and quizzes are filed and commits are held. */
 	root: string;
+	/** The checkout that holds `cwd` (a linked worktree's own folder, else `root`): its HEAD and files are `cwd`'s. */
+	checkout: string;
 	name: string;
 	github?: string;
 }
 
-/** The repository containing `cwd`: its primary checkout (a linked worktree resolves to the main one). */
+/** The repository containing `cwd`: its primary checkout (a linked worktree resolves to the main one) and `cwd`'s own. */
 export async function repoInfo(cwd: string): Promise<RepoInfo> {
 	const top = await repoRoot(cwd);
 	if (top === null) throw new Error("not a git repository");
@@ -96,7 +99,7 @@ export async function repoInfo(cwd: string): Promise<RepoInfo> {
 	const common = await gitMaybe(top, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
 	const root = common !== null && path.basename(common) === ".git" ? await fs.realpath(path.dirname(common)) : top;
 	const remote = await gitMaybe(root, ["remote", "get-url", "origin"]);
-	return { root, name: path.basename(root), github: remote ? githubSlug(remote) : undefined };
+	return { root, checkout: top, name: path.basename(root), github: remote ? githubSlug(remote) : undefined };
 }
 
 async function currentBranch(root: string): Promise<string | undefined> {
@@ -219,6 +222,11 @@ export interface ResolvedTarget {
 export interface TargetRequest {
 	ref?: string;
 	base?: string;
+	/**
+	 * The checkout whose HEAD an omitted `ref` and whose files `@worktree` mean: a linked worktree of `root` shares its
+	 * commits but not its HEAD, index or files. Defaults to `root`.
+	 */
+	checkout?: string;
 }
 
 /** Fetch `refs/pull/<n>/head` (and its base branch, when named) into private refs; resolves the PR head and, if fetched, base commit. */
@@ -266,16 +274,18 @@ export async function resolveTarget(root: string, request: TargetRequest): Promi
 	let label: string;
 	let prBase: { name?: string; rev?: string } = {};
 	const pr = requested === undefined ? null : PR_REF_RE.exec(requested);
+	const checkout = request.checkout ?? root;
 	if (requested === undefined) {
-		const commit = await resolveCommit(root, "HEAD");
+		const commit = await resolveCommit(checkout, "HEAD");
 		if (commit === null) throw new Error("This repository has no commits yet.");
-		const branch = await currentBranch(root);
+		const branch = await currentBranch(checkout);
 		head = { commit, ref: branch, subject: await commitSubject(root, commit) };
 		label = branch ?? commit.slice(0, 8);
 	} else if (requested === "@worktree") {
-		const commit = await snapshotWorkingTree(root);
+		const commit = await snapshotWorkingTree(checkout);
 		head = { commit, ref: "@worktree", subject: "Working tree" };
-		label = "worktree";
+		const branch = await currentBranch(checkout);
+		label = branch === undefined ? "worktree" : `${branch} (working tree)`;
 	} else if (pr) {
 		const number = Number(pr[1]);
 		const info = await pullRequestInfo(root, number);
@@ -528,7 +538,7 @@ export async function diffHunks(root: string, base: string, head: string): Promi
 
 /** Branches (local and remote), the current one, and open pull requests, for the app's picker. */
 export async function listRefs(cwd: string, query: string | undefined): Promise<BlueprintRefsAnswer> {
-	const { root } = await repoInfo(cwd);
+	const { root, checkout } = await repoInfo(cwd);
 	const q = query?.trim().toLowerCase() ?? "";
 	const out = await gitOut(
 		root,
@@ -545,7 +555,7 @@ export async function listRefs(cwd: string, query: string | undefined): Promise<
 		branches.push(name);
 		if (branches.length >= MAX_BRANCHES) break;
 	}
-	const answer: BlueprintRefsAnswer = { branches, current: await currentBranch(root) };
+	const answer: BlueprintRefsAnswer = { branches, current: await currentBranch(checkout) };
 	try {
 		if (await canCreatePr()) {
 			const result = await gh(

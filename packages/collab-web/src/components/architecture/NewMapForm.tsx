@@ -1,4 +1,4 @@
-import type { BlueprintCreate, BlueprintRefsAnswer } from "@oh-my-pi/pi-wire/blueprint";
+import type { BlueprintCreate } from "@oh-my-pi/pi-wire/blueprint";
 import { ChevronLeft, LoaderCircle, Play, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -6,8 +6,9 @@ import { computerById, type ComputerHandle, saveLastComputer } from "../../lib/c
 import type { RecentFolder } from "../../lib/companion";
 import { shortenPath } from "../../lib/format";
 import { useRequest } from "../../lib/use-request";
+import { BranchSelect, PrList, RefFilter, RefsLoading, useRepoRefs, withGivenPr } from "../shell/RefPicker";
 import { ComputerPicker, useStartComputer } from "../shell/ComputerPicker";
-import { createBlueprint, getBlueprintRefs } from "./blueprint-api";
+import { createBlueprint } from "./blueprint-api";
 
 export type MapMode = "branch" | "pr" | "worktree";
 
@@ -42,8 +43,6 @@ const MODES: { value: MapMode; label: string }[] = [
 ];
 
 const DEFAULT_LIMIT_USD = "2";
-const FILTER_DEBOUNCE_MS = 250;
-const NO_REFS: BlueprintRefsAnswer = { branches: [] };
 
 /** The form that starts a map: which computer and repository, what to map, what to compare with, and how much to spend. */
 export function NewMapForm({
@@ -67,15 +66,8 @@ export function NewMapForm({
 	const [pr, setPr] = useState<number | null>(preset?.pr?.number ?? null);
 	const [compare, setCompare] = useState(preset?.base ?? (preset?.mode === "worktree" ? "@default" : ""));
 	const [limit, setLimit] = useState(DEFAULT_LIMIT_USD);
-	const [filter, setFilter] = useState("");
-	const [query, setQuery] = useState("");
 	const [starting, setStarting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-
-	useEffect(() => {
-		const timer = setTimeout(() => setQuery(filter.trim()), FILTER_DEBOUNCE_MS);
-		return () => clearTimeout(timer);
-	}, [filter]);
 
 	const folders = useRequest(
 		useCallback(
@@ -97,22 +89,12 @@ export function NewMapForm({
 		if (repo === "" && repos.length > 0) setRepo(repos[0]!);
 	}, [repo, repos]);
 
-	const load = useCallback(
-		(): Promise<BlueprintRefsAnswer> =>
-			repo === "" || client === null ? Promise.resolve(NO_REFS) : getBlueprintRefs(client, repo, query || undefined),
-		[client, repo, query],
-	);
-	const refs = useRequest(load);
-	const answer = refs.state.status === "ready" ? refs.state.value : NO_REFS;
-	const refsLoading = refs.state.status === "loading";
+	const refs = useRepoRefs(client, repo);
+	const answer = refs.answer;
+	const refsLoading = refs.status === "loading";
 	// The picked branch defaults to the checked-out one once the list is known.
 	const effectiveBranch = branch ?? answer.current ?? null;
-	const prs = useMemo(() => {
-		const list = answer.prs ?? [];
-		const given = preset?.pr;
-		if (given === undefined || list.some(item => item.number === given.number)) return list;
-		return [{ number: given.number, title: given.title, head: "", base: "" }, ...list];
-	}, [answer.prs, preset?.pr]);
+	const prs = useMemo(() => withGivenPr(answer.prs ?? [], preset?.pr), [answer.prs, preset?.pr]);
 
 	const compareChoices = useMemo(
 		() => answer.branches.filter(name => name !== effectiveBranch),
@@ -127,7 +109,7 @@ export function NewMapForm({
 		setBranch(null);
 		setPr(null);
 		setCompare(mode === "worktree" ? "@default" : "");
-		setFilter("");
+		refs.setFilter("");
 		setError(null);
 	};
 
@@ -210,77 +192,33 @@ export function NewMapForm({
 						))}
 					</div>
 				</div>
-				{mode !== "worktree" && (
-					<div className="sh-field">
-						<input
-							className="sh-input"
-							type="search"
-							placeholder={mode === "branch" ? "Filter branches" : "Filter pull requests"}
-							aria-label={mode === "branch" ? "Filter branches" : "Filter pull requests"}
-							value={filter}
-							onChange={e => setFilter(e.target.value)}
-						/>
-					</div>
-				)}
+				{mode !== "worktree" && <RefFilter kind={mode} value={refs.filter} onChange={refs.setFilter} />}
 				{mode === "branch" && (
 					<div className="sh-field">
 						<span className="sh-field-label">Branch</span>
-						{refs.state.status === "error" ? (
-							<div className="sh-connect-error">{refs.state.message}</div>
+						{refs.status === "error" ? (
+							<div className="sh-connect-error">{refs.message}</div>
 						) : (
-							<select
-								className="sh-input"
-								size={Math.min(8, Math.max(3, answer.branches.length))}
+							<BranchSelect
+								branches={answer.branches}
+								current={answer.current}
 								value={effectiveBranch ?? ""}
-								onChange={e => setBranch(e.target.value)}
-								aria-label="Branch"
+								onChange={setBranch}
 								disabled={repo === ""}
-							>
-								{answer.branches.map(name => (
-									<option key={name} value={name}>
-										{name}
-										{name === answer.current ? " (checked out)" : ""}
-									</option>
-								))}
-							</select>
+							/>
 						)}
-						{refsLoading && (
-							<span className="sh-field-hint">
-								<LoaderCircle size={12} className="sh-spin" /> Reading the repository…
-							</span>
-						)}
+						{refsLoading && <RefsLoading />}
 					</div>
 				)}
 				{mode === "pr" && (
 					<div className="sh-field">
 						<span className="sh-field-label">Pull request</span>
-						{refs.state.status === "error" ? (
-							<div className="sh-connect-error">{refs.state.message}</div>
+						{refs.status === "error" ? (
+							<div className="sh-connect-error">{refs.message}</div>
 						) : prs.length === 0 && !refsLoading ? (
 							<span className="sh-field-hint">No open pull requests found for this repository.</span>
 						) : (
-							<ul className="ar-prs" role="radiogroup" aria-label="Pull request">
-								{prs.map(item => (
-									<li key={item.number}>
-										<button
-											type="button"
-											role="radio"
-											aria-checked={pr === item.number}
-											className={pr === item.number ? "ar-pr ar-pr-on" : "ar-pr"}
-											onClick={() => setPr(item.number)}
-										>
-											<span className="ar-pr-title">
-												#{item.number} {item.title}
-											</span>
-											{item.head !== "" && (
-												<span className="ar-pr-branches">
-													{item.head} → {item.base}
-												</span>
-											)}
-										</button>
-									</li>
-								))}
-							</ul>
+							<PrList prs={prs} value={pr} onChange={setPr} />
 						)}
 					</div>
 				)}

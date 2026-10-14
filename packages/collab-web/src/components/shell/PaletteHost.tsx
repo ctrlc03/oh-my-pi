@@ -81,6 +81,7 @@ export interface PaletteActions {
 	openArchitecture: (() => void) | null;
 	mapChanges: (() => void) | null;
 	quizChanges: (() => void) | null;
+	openQuizzes: (() => void) | null;
 	openPane: (() => void) | null;
 	openPreview: (() => void) | null;
 	openGithub: (() => void) | null;
@@ -321,6 +322,14 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 				["quiz", "test", "understand", "questions", "learn", "what changed"],
 				GraduationCap,
 				actions.quizChanges,
+			],
+			[
+				"app:quizzes",
+				"Quizzes of this repository",
+				"Review",
+				["quiz", "test", "understand", "questions", "learn"],
+				GraduationCap,
+				actions.openQuizzes,
 			],
 			["app:pane", "Watch the terminal", "Computer", ["tmux", "screen", "pane"], SquareTerminal, actions.openPane],
 			["app:preview", "Preview the running app", "Computer", ["screenshot", "dev server"], Eye, actions.openPreview],

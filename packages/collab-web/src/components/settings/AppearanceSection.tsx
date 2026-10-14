@@ -21,6 +21,7 @@ import { PetPanel } from "../pet/PetPanel";
 import { AccentSwatches, FontPicker, type FontOption } from "./AppearanceControls";
 import { AppearancePreview } from "./AppearancePreview";
 import { Choice, SettingsGroup, SettingsRow } from "./SettingsRows";
+import { TopBarControls } from "./TopBarControls";
 import "./appearance.css";
 
 const THEMES: readonly { value: ThemePreference; label: string; icon: ReactNode }[] = [
@@ -96,7 +97,7 @@ export function AppearanceSection(): ReactNode {
 				</SettingsRow>
 				<SettingsRow
 					label="Defaults"
-					hint="Theme, accent, zoom, text size, fonts and line spacing back to their defaults. Pane sizes and the pet stay."
+					hint="Theme, accent, zoom, text size, fonts and line spacing back to their defaults. Pane sizes, the top bar and the pet stay."
 				>
 					<button
 						type="button"
@@ -176,6 +177,14 @@ export function AppearanceSection(): ReactNode {
 					<button type="button" className="sh-btn" disabled={!hasPaneSizes} onClick={resetPaneSizes}>
 						<RotateCcw size={14} /> Reset pane sizes
 					</button>
+				</SettingsRow>
+			</SettingsGroup>
+			<SettingsGroup title="Top bar">
+				<SettingsRow
+					label="Buttons"
+					hint="Hidden buttons stay in the ⋯ menu and the command palette. A phone's bar has room for four: the first four of yours, not counting the ones marked Not on phones."
+				>
+					<TopBarControls />
 				</SettingsRow>
 			</SettingsGroup>
 			<SettingsGroup title="Pet">

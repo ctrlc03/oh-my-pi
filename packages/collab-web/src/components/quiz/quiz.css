@@ -339,6 +339,11 @@
 	overflow-y: auto;
 }
 
+/* A tall list scrolls the form; it does not squeeze the fields. */
+.qz-form-body > * {
+	flex: none;
+}
+
 .qz-form-actions {
 	display: flex;
 	flex: none;
@@ -1100,6 +1105,10 @@ label.qz-choice:hover {
 /* ---- finger-sized targets ---- */
 @media (any-pointer: coarse) {
 	.qz-code-toggle {
+		min-height: 44px;
+	}
+
+	.qz-form-body .sh-input {
 		min-height: 44px;
 	}
 

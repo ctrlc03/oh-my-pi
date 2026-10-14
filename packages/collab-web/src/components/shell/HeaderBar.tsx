@@ -1,27 +1,18 @@
 import type { AgentRef, SessionCommand, SessionHeader, SessionState, WireModel } from "@oh-my-pi/pi-wire";
-import {
-	Ellipsis,
-	GitPullRequest,
-	LogOut,
-	PanelLeft,
-	PanelRight,
-	Search,
-	Settings,
-	ShieldAlert,
-	ShieldCheck,
-	SquareCode,
-	Waypoints,
-} from "lucide-react";
+import { Ellipsis, PanelLeft, ShieldAlert, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import type { ConnectionPhase, ContextItemsInfo } from "../../lib/client";
 import { fmtPercent, shortenPath } from "../../lib/format";
 import { openSettings } from "../../lib/settings-ui";
 import { shortcutKeys, useOverrides } from "../../lib/shortcuts";
+import { phoneTopBar, type TopBarId, useTopBar, visibleTopBar } from "../../lib/top-bar";
 import type { SessionUsage } from "../../lib/usage";
 import { AgentChip } from "./AgentChip";
 import { OmpMark } from "./OmpMark";
 import { SessionSheet } from "./SessionSheet";
+import { TOP_BAR_ICONS } from "./top-bar-icons";
+import { PHONE_QUERY, useMedia } from "../codemap/shared";
 import type { TurnUndoControl } from "./TurnUndo";
 
 const PHASE_LABEL: Record<ConnectionPhase, string> = {
@@ -73,8 +64,8 @@ export interface HeaderBarProps {
 	onOpenArchitecture: (() => void) | null;
 	/** A changes map of this session's edits; null unless maps can be made and files changed. */
 	onMapChanges: (() => void) | null;
-	/** A quiz on this session's changes; null unless quizzes can be written and files changed. */
-	onQuizChanges: (() => void) | null;
+	/** This repository's quizzes, with *New quiz* on this session's changes; null unless this computer writes quizzes. */
+	onOpenQuizzes: (() => void) | null;
 	/** The session's terminal (tmux pane); null unless the paired computer hosts this session. */
 	onOpenPane: (() => void) | null;
 	/** Live screenshot of a dev server the session runs; null unless the paired computer can capture pages. */
@@ -138,7 +129,7 @@ export const HeaderBar = memo(function HeaderBar({
 	onOpenCodemap,
 	onOpenArchitecture,
 	onMapChanges,
-	onQuizChanges,
+	onOpenQuizzes,
 	onOpenPane,
 	onOpenPreview,
 	onOpenGithub,
@@ -157,6 +148,33 @@ export const HeaderBar = memo(function HeaderBar({
 	exportMarkdown,
 }: HeaderBarProps): ReactNode {
 	useOverrides();
+	const topBar = useTopBar();
+	const phone = useMedia(PHONE_QUERY);
+	// Each optional button: its name and its action, null where this session cannot do it (the button is then not drawn).
+	const bar: Record<TopBarId, { aria: string; run: (() => void) | null }> = {
+		settings: { aria: "Open settings", run: () => openSettings() },
+		find: { aria: "Find in session", run: onToggleSearch },
+		editor: { aria: "Editor", run: onOpenEditor },
+		codemap: { aria: "Code map", run: onOpenCodemap },
+		quizzes: { aria: "Open quizzes", run: onOpenQuizzes },
+		github: { aria: "Open issues and pull requests", run: onOpenGithub },
+		agents: {
+			aria: `${railOpen ? "Hide" : "Show"} agents${subCount > 0 ? `, ${subCount} active` : ""}`,
+			run: onToggleRail,
+		},
+		leave: { aria: "Leave session", run: onLeave },
+		changes: { aria: "Open changes", run: changeCount > 0 || workingTree ? onOpenChanges : null },
+		architecture: { aria: "Open architecture maps", run: onOpenArchitecture },
+		mapchanges: { aria: "Map what changed", run: onMapChanges },
+		terminal: { aria: "Open terminal", run: onOpenPane },
+		preview: { aria: "Open preview", run: onOpenPreview },
+		run: { aria: "Open scripts and build targets", run: onOpenRun },
+		timeline: { aria: "Open request timeline", run: onOpenTimeline },
+		usage: { aria: "Open usage", run: onOpenUsage },
+		sessions: { aria: "Open all sessions", run: onOpenSessions },
+	};
+	const visible = visibleTopBar(topBar, id => bar[id].run !== null);
+	const drawn = phone ? phoneTopBar(visible) : visible;
 	// The live name first: `header.title` is the session file's title as of joining.
 	const title = state?.sessionName ?? header?.title ?? "session";
 	const closeSheet = useCallback(() => setSheetOpen(false), [setSheetOpen]);
@@ -279,82 +297,32 @@ export const HeaderBar = memo(function HeaderBar({
 						))}
 					</span>
 				)}
+				{drawn.map(id => {
+					const Icon = TOP_BAR_ICONS[id];
+					const { aria, run } = bar[id];
+					const lit = (id === "find" && searchOpen) || (id === "agents" && railOpen);
+					let className = lit ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon";
+					if (id === "settings") className = "sh-settings-toggle";
+					return (
+						<button
+							key={id}
+							type="button"
+							className={className}
+							onClick={run ?? undefined}
+							data-shortcut={id === "settings" || id === "find" ? shortcutKeys(id) : undefined}
+							aria-label={aria}
+							aria-pressed={id === "find" ? searchOpen : undefined}
+						>
+							<Icon size={16} />
+							{id === "agents" && subCount > 0 && <span className="sh-badge">{subCount}</span>}
+						</button>
+					);
+				})}
 				<button
 					type="button"
-					className="sh-settings-toggle"
-					onClick={() => openSettings()}
-					data-shortcut={shortcutKeys("settings")}
-					aria-label="Open settings"
-				>
-					<Settings size={16} />
-				</button>
-				<button
-					type="button"
-					className={searchOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
-					onClick={onToggleSearch}
-					title="Find in session"
-					data-shortcut={shortcutKeys("find")}
-					aria-label="Find in session"
-					aria-pressed={searchOpen}
-				>
-					<Search size={16} />
-				</button>
-				{onOpenEditor && (
-					<button
-						type="button"
-						className="sh-btn sh-btn-icon"
-						onClick={onOpenEditor}
-						title="Editor"
-						aria-label="Editor"
-					>
-						<SquareCode size={16} />
-					</button>
-				)}
-				{onOpenCodemap && (
-					<button
-						type="button"
-						className="sh-btn sh-btn-icon sh-codemap-toggle"
-						onClick={onOpenCodemap}
-						title="Code map"
-						aria-label="Code map"
-					>
-						<Waypoints size={16} />
-					</button>
-				)}
-				{onOpenGithub && (
-					<button
-						type="button"
-						className="sh-btn sh-btn-icon sh-github-toggle"
-						onClick={onOpenGithub}
-						aria-label="Open issues and pull requests"
-					>
-						<GitPullRequest size={16} />
-					</button>
-				)}
-				<button
-					type="button"
-					className={railOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
-					onClick={onToggleRail}
-					title={railOpen ? "Hide agents" : "Show agents"}
-					aria-label={`${railOpen ? "Hide" : "Show"} agents${subCount > 0 ? `, ${subCount} active` : ""}`}
-				>
-					<PanelRight size={16} />
-					{subCount > 0 && <span className="sh-badge">{subCount}</span>}
-				</button>
-				<button
-					type="button"
-					className="sh-btn sh-btn-icon sh-leave"
-					onClick={onLeave}
-					title="Leave session"
-					aria-label="Leave session"
-				>
-					<LogOut size={16} />
-				</button>
-				<button
-					type="button"
-					className="sh-btn sh-btn-icon sh-mobile-only"
+					className="sh-btn sh-btn-icon"
 					onClick={() => setSheetOpen(true)}
-					aria-label="Session details"
+					aria-label="Open all options"
 				>
 					<Ellipsis size={18} />
 				</button>
@@ -374,6 +342,17 @@ export const HeaderBar = memo(function HeaderBar({
 					onChatChange={onChatChange}
 					keepTurns={keepTurns}
 					onKeepTurnsChange={onKeepTurnsChange}
+					searchOpen={searchOpen}
+					onToggleSearch={() => {
+						setSheetOpen(false);
+						onToggleSearch();
+					}}
+					railOpen={railOpen}
+					subCount={subCount}
+					onToggleRail={() => {
+						setSheetOpen(false);
+						onToggleRail();
+					}}
 					changeCount={changeCount}
 					onOpenChanges={() => {
 						setSheetOpen(false);
@@ -414,11 +393,11 @@ export const HeaderBar = memo(function HeaderBar({
 							onMapChanges();
 						})
 					}
-					onQuizChanges={
-						onQuizChanges &&
+					onOpenQuizzes={
+						onOpenQuizzes &&
 						(() => {
 							setSheetOpen(false);
-							onQuizChanges();
+							onOpenQuizzes();
 						})
 					}
 					onOpenPane={

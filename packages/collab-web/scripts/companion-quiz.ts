@@ -632,7 +632,11 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 				subject = prRange(prs);
 				title = `${info.name} · ${subject}`;
 			} else {
-				const resolved = await resolveTarget(info.root, { ref: parsed.ref, base: parsed.base ?? "@default" });
+				const resolved = await resolveTarget(info.root, {
+					ref: parsed.ref,
+					base: parsed.base ?? "@default",
+					checkout: info.checkout,
+				});
 				target = resolved;
 				const baseName = resolved.base?.ref ?? resolved.base?.commit.slice(0, 8) ?? "the base";
 				subject = `${resolved.label} vs ${baseName}`;

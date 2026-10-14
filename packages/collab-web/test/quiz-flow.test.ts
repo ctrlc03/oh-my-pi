@@ -6,12 +6,14 @@ import {
 	attemptQuestions,
 	buildCreate,
 	canSubmit,
+	currentFirst,
 	firstUnanswered,
 	groupByRepo,
 	landingOf,
 	nextQuestion,
 	offeredStack,
 	parseLimit,
+	parsePrNumber,
 	partTitle,
 	positionOf,
 	progressOf,
@@ -255,6 +257,22 @@ describe("the new-quiz form", () => {
 			request: { cwd: "/work/repo", maxCostUsd: 1, pr: 2 },
 		});
 		expect(buildCreate({ ...base, subject })).toEqual({ request: { cwd: "/work/repo", maxCostUsd: 1, pr: 2 } });
+	});
+
+	it("quizzes a branch against the default branch, without the session's conversation", () => {
+		expect(buildCreate({ ...base, subject: { kind: "branch", name: " feature/x " } })).toEqual({
+			request: { cwd: "/work/repo", maxCostUsd: 1, ref: "feature/x", base: "@default" },
+		});
+		expect(buildCreate({ ...base, subject: { kind: "branch", name: " " } })).toHaveProperty("error");
+	});
+
+	it("reads a typed pull request number and lists the checked-out branch first", () => {
+		expect(parsePrNumber(" #482 ")).toBe(482);
+		expect(parsePrNumber("482")).toBe(482);
+		for (const text of ["", "0", "-3", "4a", "1.5", "#"]) expect(parsePrNumber(text)).toBeNull();
+		expect(currentFirst(["a", "b", "c"], "b")).toEqual(["b", "a", "c"]);
+		expect(currentFirst(["a", "b"], "z")).toEqual(["a", "b"]);
+		expect(currentFirst(["a", "b"], undefined)).toEqual(["a", "b"]);
 	});
 
 	it("refuses a missing repository and a limit that is not an amount", () => {

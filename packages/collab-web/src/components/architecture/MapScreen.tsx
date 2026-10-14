@@ -3,10 +3,10 @@ import { ChevronLeft, LoaderCircle, RefreshCw, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CompanionClient } from "../../lib/companion";
-import { HIGHLIGHT_MAX_CHARS, languageOf, loadHighlighter } from "../../lib/highlight";
 import { useRequest } from "../../lib/use-request";
 import type { EditorAccess, MapSource } from "./DetailPanel";
 import { ExportMenu } from "./ExportMenu";
+import { highlightExcerpt } from "./highlight-excerpt";
 import { MapViewer } from "./MapViewer";
 import { EXCERPT_BATCH, getBlueprint, getExcerpts } from "./blueprint-api";
 import type { MapLocation } from "./blueprint-model";
@@ -28,15 +28,6 @@ const lastLocation = new Map<string, MapLocation>();
 
 function locationKey(client: CompanionClient, mapId: string): string {
 	return `${client.computerId}:${mapId}`;
-}
-
-/** The app's highlighter over an excerpt's lines; undefined where the file type has no grammar. */
-async function highlightExcerpt(excerpt: { path: string; lines: string[] }): Promise<string | undefined> {
-	const language = languageOf(excerpt.path);
-	const text = excerpt.lines.join("\n");
-	if (language === undefined || text.length > HIGHLIGHT_MAX_CHARS) return undefined;
-	const hljs = await loadHighlighter();
-	return hljs.highlight(text, { language, ignoreIllegals: true }).value;
 }
 
 /**

@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	AGENT_WORK_DIRS,
 	COMPANION_RUN_DIR,
 	SANDBOX_EXEC,
 	type SandboxPaths,
@@ -102,6 +103,14 @@ describe("sandboxProfile", () => {
 		expect(() => sandboxProfile({ ...paths, folder: paths.home })).toThrow();
 		expect(() => sandboxProfile({ ...paths, folder: path.dirname(paths.home) })).toThrow();
 		expect(() => sandboxProfile({ ...paths, folder: path.join(paths.configDir, "agent") })).toThrow();
+	});
+
+	it("covers the checkouts of an architecture map's or a quiz's run, not their work folders themselves", () => {
+		for (const dir of AGENT_WORK_DIRS) {
+			const root = path.join(paths.configDir, dir);
+			expect(() => sandboxProfile({ ...paths, folder: path.join(root, "id", "head") })).not.toThrow();
+			expect(() => sandboxProfile({ ...paths, folder: root })).toThrow();
+		}
 	});
 
 	it("refuses paths a profile string cannot hold", () => {

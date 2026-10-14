@@ -6,9 +6,10 @@ import type {
 	BlueprintRef,
 } from "@oh-my-pi/pi-wire/blueprint";
 import { ArrowRight, ExternalLink, Layers, LoaderCircle, X } from "lucide-react";
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRequest } from "../../lib/use-request";
+import { CodeBlock } from "./CodeBlock";
 import type { ExportedExcerpt } from "./blueprint-model";
 import { childOf, edgeEnds, edgeKind, nodeKind, refKey, refLabel, shortCommit } from "./blueprint-model";
 
@@ -220,54 +221,8 @@ function RefBlock({
 			{excerpt === null ? (
 				<p className="ar-panel-note">{source.absent ?? "The code is not available at that commit."}</p>
 			) : (
-				<CodeBlock excerpt={excerpt} source={source} />
+				<CodeBlock excerpt={excerpt} highlight={source.highlight} />
 			)}
 		</section>
-	);
-}
-
-/** Lines of one excerpt with a gutter, the cited line banded, and the syntax colours when the source can make them. */
-function CodeBlock({ excerpt, source }: { excerpt: ExportedExcerpt; source: MapSource }): ReactNode {
-	const [html, setHtml] = useState<{ lines: string; html: string } | null>(
-		excerpt.html === undefined ? null : { lines: excerpt.lines.join("\n"), html: excerpt.html },
-	);
-	const text = useMemo(() => excerpt.lines.join("\n"), [excerpt.lines]);
-	useEffect(() => {
-		if (excerpt.html !== undefined) {
-			setHtml({ lines: text, html: excerpt.html });
-			return;
-		}
-		const highlight = source.highlight;
-		if (highlight === undefined) return;
-		let live = true;
-		highlight(excerpt).then(
-			markup => {
-				if (live && markup !== undefined) setHtml({ lines: text, html: markup });
-			},
-			// Offline or chunk missing: the code simply stays plain.
-			() => {},
-		);
-		return () => {
-			live = false;
-		};
-	}, [excerpt, source, text]);
-	const gutter = useMemo(() => excerpt.lines.map((_, i) => excerpt.start + i).join("\n"), [excerpt]);
-	const hit = excerpt.line - excerpt.start + 1;
-	return (
-		<div className="ar-code" role="figure" aria-label={`Code around line ${excerpt.line} of ${excerpt.path}`}>
-			<pre className="ar-code-gutter" aria-hidden>
-				{gutter}
-			</pre>
-			<pre className="ar-code-text">
-				{hit >= 1 && hit <= excerpt.lines.length && (
-					<span className="ar-code-hit" style={{ "--hit-line": hit } as CSSProperties} aria-hidden />
-				)}
-				{html !== null && html.lines === text ? (
-					<code className="ar-code-body" dangerouslySetInnerHTML={{ __html: html.html }} />
-				) : (
-					<code className="ar-code-body">{text}</code>
-				)}
-			</pre>
-		</div>
 	);
 }

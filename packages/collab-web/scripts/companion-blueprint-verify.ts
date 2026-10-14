@@ -18,6 +18,16 @@ import {
 	MAX_BLUEPRINT_DIAGRAMS,
 } from "@oh-my-pi/pi-wire/blueprint";
 import { isRecord } from "../src/tool-render/util";
+import {
+	type CitationStats,
+	checkCitations,
+	normalizeRepoPath,
+	parseRefs,
+	readCitedFiles,
+	type Side,
+	str,
+	Warnings,
+} from "./companion-citations";
 
 /** Prefix of every diagram generated from the code index; the agent may not use it for its own. */
 export const INDEX_DIAGRAM_PREFIX = "index:";
@@ -28,17 +38,8 @@ const MAX_ID_CHARS = 200;
 const MAX_LABEL_CHARS = 120;
 const MAX_SUMMARY_CHARS = 600;
 const MAX_KIND_CHARS = 40;
-const MAX_TOKEN_CHARS = 200;
-const MAX_PATH_CHARS = 1024;
-const MAX_REFS_PER_ITEM = 6;
 const MAX_NODES_PER_DIAGRAM = 80;
 const MAX_EDGES_PER_DIAGRAM = 200;
-/** A citation whose line is wrong moves to the one place its token appears within this many lines of it. */
-const NEAR_LINES = 20;
-/** Warnings of one kind listed before the rest are only counted. */
-const WARNINGS_PER_KIND = 12;
-
-export type Side = "head" | "base";
 
 /** How verification reads the repository at the map's commits. */
 export interface VerifyIo {
@@ -59,93 +60,7 @@ export interface VerifyStats {
 	diagramsDropped: number;
 }
 
-/** Collects warnings in plain words, listing a few per kind and counting the rest. */
-class Warnings {
-	readonly #kinds = new Map<string, { shown: string[]; more: number; summary: (more: number) => string }>();
-
-	add(kind: string, message: string, summary: (more: number) => string): void {
-		let entry = this.#kinds.get(kind);
-		if (!entry) {
-			entry = { shown: [], more: 0, summary };
-			this.#kinds.set(kind, entry);
-		}
-		if (entry.shown.length < WARNINGS_PER_KIND) entry.shown.push(message);
-		else entry.more++;
-	}
-
-	list(): string[] {
-		return [...this.#kinds.values()].flatMap(entry => [
-			...entry.shown,
-			...(entry.more > 0 ? [entry.summary(entry.more)] : []),
-		]);
-	}
-}
-
 // ── parsing what the agent wrote ─────────────────────────────────────────────
-
-function str(value: unknown, max: number): string | undefined {
-	if (typeof value !== "string") return undefined;
-	const trimmed = value.trim();
-	if (trimmed === "") return undefined;
-	return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
-}
-
-/** A repository-relative path with "/" separators; undefined for an absolute path, one that leaves the repository, or the root itself. */
-export function normalizeRepoPath(value: unknown): string | undefined {
-	if (typeof value !== "string" || value.length > MAX_PATH_CHARS || value.includes("\0")) return undefined;
-	const segments: string[] = [];
-	for (const segment of value.replaceAll("\\", "/").split("/")) {
-		if (segment === "" || segment === ".") continue;
-		if (segment === "..") return undefined;
-		segments.push(segment);
-	}
-	if (value.startsWith("/") || segments.length === 0) return undefined;
-	return segments.join("/");
-}
-
-/**
- * `path@line@token`, or `base:path@line@token` for the base commit of a diff map: the path ends at the first
- * `@<digits>@`; the token is the rest (it may contain `@`, as a decorator does).
- */
-export function parseRefText(text: string): BlueprintRef | undefined {
-	const trimmed = text.trim();
-	const side = trimmed.startsWith("base:") ? "base" : undefined;
-	const match = /^(.+?)@(\d+)@(.+)$/s.exec(side ? trimmed.slice("base:".length) : trimmed);
-	if (!match) return undefined;
-	const path = normalizeRepoPath(match[1]);
-	const token = match[3]!.trim();
-	const line = Number(match[2]);
-	if (path === undefined || token === "" || token.length > MAX_TOKEN_CHARS || !Number.isSafeInteger(line) || line < 1)
-		return undefined;
-	return { path, line, token, ...(side ? { side } : {}) };
-}
-
-function parseRef(value: unknown): BlueprintRef | undefined {
-	if (typeof value === "string") return parseRefText(value);
-	if (!isRecord(value)) return undefined;
-	const path = normalizeRepoPath(value.path);
-	const token = typeof value.token === "string" ? value.token.trim() : "";
-	const line = typeof value.line === "number" ? value.line : Number(value.line);
-	if (path === undefined || token === "" || token.length > MAX_TOKEN_CHARS || token.includes("\n")) return undefined;
-	if (!Number.isSafeInteger(line) || line < 1) return undefined;
-	return { path, line, token, ...(value.side === "base" ? { side: "base" as const } : {}) };
-}
-
-function parseRefs(value: unknown): BlueprintRef[] {
-	if (!Array.isArray(value)) return [];
-	const refs: BlueprintRef[] = [];
-	const seen = new Set<string>();
-	for (const raw of value) {
-		const ref = parseRef(raw);
-		if (!ref) continue;
-		const key = `${ref.side ?? "head"}\0${ref.path}\0${ref.line}\0${ref.token}`;
-		if (seen.has(key)) continue;
-		seen.add(key);
-		refs.push(ref);
-		if (refs.length >= MAX_REFS_PER_ITEM) break;
-	}
-	return refs;
-}
 
 function parseChange(value: unknown): BlueprintChange | undefined {
 	return value === "added" || value === "modified" || value === "removed" ? value : undefined;
@@ -259,15 +174,6 @@ export function parseAgentOutput(raw: unknown, warnings: string[]): AgentOutput 
 
 // ── verifying a map ──────────────────────────────────────────────────────────
 
-/** Run `work` over `items` with at most `limit` in flight. */
-async function pool<T>(items: readonly T[], limit: number, work: (item: T) => Promise<void>): Promise<void> {
-	let next = 0;
-	const worker = async (): Promise<void> => {
-		while (next < items.length) await work(items[next++]!);
-	};
-	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-}
-
 /**
  * Verify and repair a draft map. Reads each cited file once.
  * @param draft the map with diagrams of both origins; its `warnings` are kept and extended.
@@ -301,64 +207,21 @@ export async function verifyBlueprint(
 	if (!Object.hasOwn(diagrams, draft.root)) throw new Error("The map has no root diagram.");
 
 	// Read every cited file once, a few at a time.
-	const wanted = new Map<string, { side: Side; path: string }>();
 	const sideOf = (ref: BlueprintRef, change: BlueprintChange | undefined): Side =>
 		ref.side ?? (isDiff && change === "removed" ? "base" : "head");
-	for (const diagram of Object.values(diagrams)) {
-		for (const item of [...diagram.nodes, ...diagram.edges])
-			for (const ref of item.refs ?? []) {
-				const side = sideOf(ref, item.change);
-				wanted.set(`${side}\0${ref.path}`, { side, path: ref.path });
-			}
-	}
-	const files = new Map<string, string[] | null>();
-	await pool([...wanted.entries()], options.readConcurrency ?? 8, async ([key, { side, path }]) => {
-		files.set(key, await io.lines(side, path));
-	});
+	const files = await readCitedFiles(
+		Object.values(diagrams).flatMap(diagram =>
+			[...diagram.nodes, ...diagram.edges].flatMap(item =>
+				(item.refs ?? []).map(ref => ({ side: sideOf(ref, item.change), path: ref.path })),
+			),
+		),
+		io.lines,
+		options.readConcurrency,
+	);
 
-	const checkRefs = (where: string, item: BlueprintNode | BlueprintEdge): BlueprintRef[] => {
-		const kept: BlueprintRef[] = [];
-		const seen = new Set<string>();
-		for (const ref of item.refs ?? []) {
-			const side = sideOf(ref, item.change);
-			const lines = files.get(`${side}\0${ref.path}`);
-			const cite = `${ref.path}@${ref.line}@${ref.token}`;
-			const dropped = (why: string): void => {
-				stats.refsDropped++;
-				log.add("ref", `Dropped citation ${cite} (${where}): ${why}.`, n => `${n} more citations were dropped.`);
-			};
-			if (!lines) {
-				dropped("the file is not readable at that commit");
-				continue;
-			}
-			let line = ref.line;
-			if (lines[line - 1]?.includes(ref.token)) {
-				stats.refsVerified++;
-			} else {
-				const hits: number[] = [];
-				for (let i = 0; i < lines.length; i++) if (lines[i]!.includes(ref.token)) hits.push(i + 1);
-				const near = hits.filter(hit => Math.abs(hit - line) <= NEAR_LINES);
-				const target = hits.length === 1 ? hits[0] : near.length === 1 ? near[0] : undefined;
-				if (target !== undefined) {
-					line = target;
-					stats.refsMoved++;
-				} else {
-					dropped(
-						hits.length === 0
-							? "the token is not in the file"
-							: `the token is not on that line and appears on ${hits.length} lines, none clearly the one meant`,
-					);
-					continue;
-				}
-			}
-			const fixed: BlueprintRef = { path: ref.path, line, token: ref.token, ...(side === "base" ? { side } : {}) };
-			const key = `${side}\0${ref.path}\0${line}\0${ref.token}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-			kept.push(fixed);
-		}
-		return kept;
-	};
+	const cites: CitationStats = { verified: 0, moved: 0, dropped: 0 };
+	const checkRefs = (where: string, item: BlueprintNode | BlueprintEdge): BlueprintRef[] =>
+		checkCitations(item.refs ?? [], where, ref => sideOf(ref, item.change), files, cites, log);
 
 	for (const diagram of Object.values(diagrams)) {
 		const where = `diagram "${diagram.title}"`;
@@ -482,6 +345,9 @@ export async function verifyBlueprint(
 	if (Object.keys(result).length > MAX_BLUEPRINT_DIAGRAMS)
 		throw new Error(`The map has more than ${MAX_BLUEPRINT_DIAGRAMS} diagrams.`);
 
+	stats.refsVerified = cites.verified;
+	stats.refsMoved = cites.moved;
+	stats.refsDropped = cites.dropped;
 	const warnings = [...draft.warnings, ...log.list()];
 	if (stats.refsMoved > 0 || stats.refsDropped > 0)
 		warnings.push(

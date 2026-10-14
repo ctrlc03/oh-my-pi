@@ -28,6 +28,7 @@ import {
 	Smartphone,
 	Boxes,
 	GitCompare,
+	GraduationCap,
 	Sun,
 	TextCursorInput,
 	Undo2,
@@ -79,6 +80,7 @@ export interface PaletteActions {
 	openCodemap: (() => void) | null;
 	openArchitecture: (() => void) | null;
 	mapChanges: (() => void) | null;
+	quizChanges: (() => void) | null;
 	openPane: (() => void) | null;
 	openPreview: (() => void) | null;
 	openGithub: (() => void) | null;
@@ -311,6 +313,14 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 				["diagram", "diff", "architecture", "what changed"],
 				GitCompare,
 				actions.mapChanges,
+			],
+			[
+				"app:quiz-changes",
+				"Quiz me on this session's changes",
+				"Review",
+				["quiz", "test", "understand", "questions", "learn", "what changed"],
+				GraduationCap,
+				actions.quizChanges,
 			],
 			["app:pane", "Watch the terminal", "Computer", ["tmux", "screen", "pane"], SquareTerminal, actions.openPane],
 			["app:preview", "Preview the running app", "Computer", ["screenshot", "dev server"], Eye, actions.openPreview],

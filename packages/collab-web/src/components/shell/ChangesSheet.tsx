@@ -1,4 +1,4 @@
-import { ChevronRight, X } from "lucide-react";
+import { ChevronRight, GraduationCap, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import type { FileChange } from "../../lib/changes";
@@ -40,6 +40,8 @@ export interface ChangesSheetProps {
 	sessionId: string | null;
 	/** Puts the review prompt into the composer. null (read-only viewer): no commenting. */
 	onSendToAgent: ((text: string) => void) | null;
+	/** Start a quiz on this session's changes; null unless the paired computer can write quizzes. */
+	onQuiz?: (() => void) | null;
 	onClose(): void;
 	/** Open on the branch review (commit, push, pull request), e.g. after keeping a model comparison's winner. */
 	initialTab?: "branch";
@@ -57,6 +59,7 @@ export function ChangesSheet({
 	tree,
 	sessionId,
 	onSendToAgent,
+	onQuiz,
 	onClose,
 	initialTab,
 }: ChangesSheetProps): ReactNode {
@@ -96,9 +99,16 @@ export function ChangesSheet({
 								? "Working tree"
 								: "Branch review"}
 				</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
-					<X size={16} />
-				</button>
+				<span className="sh-sheet-head-actions">
+					{onQuiz && (
+						<button type="button" className="sh-btn" onClick={onQuiz}>
+							<GraduationCap size={14} /> Quiz me
+						</button>
+					)}
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
+						<X size={16} />
+					</button>
+				</span>
 			</div>
 			{tree !== null && (
 				<div className="sh-tabs" role="tablist" aria-label="Changes view">

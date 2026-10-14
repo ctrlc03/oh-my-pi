@@ -22,6 +22,15 @@ import type {
 	BlueprintRequest,
 	BlueprintSummary,
 } from "@oh-my-pi/pi-wire/blueprint";
+import type {
+	QuizAttempt,
+	QuizGetAnswer,
+	QuizRequest,
+	QuizStackPr,
+	QuizStackSource,
+	QuizSummary,
+	QuizVerdict,
+} from "@oh-my-pi/pi-wire/quiz";
 import type { Schedule, ScheduleInput } from "@oh-my-pi/pi-wire/schedule";
 import { CAN_INFLATE, importRoomKey } from "./codec";
 import { recordEvent } from "./diag-log";
@@ -1084,7 +1093,9 @@ export type CompanionRequest =
 	/** One chunk of a file of the session's repository from `offset`, at most 4 MB raw (needs `canDownload`). */
 	| { t: "file-download"; reqId: number; instanceId: string; path: string; offset: number }
 	/** Architecture maps (needs `canBlueprint`); see `@oh-my-pi/pi-wire/blueprint`. */
-	| BlueprintRequest;
+	| BlueprintRequest
+	/** Quizzes on code changes (needs `canQuiz`); see `@oh-my-pi/pi-wire/quiz`. */
+	| QuizRequest;
 
 export type CompanionReply =
 	/**
@@ -1106,6 +1117,8 @@ export type CompanionReply =
 			canCodemap?: boolean;
 			/** The companion can build, store and serve architecture maps (`blueprint-*` requests). */
 			canBlueprint?: boolean;
+			/** The companion can write, grade and store quizzes on code changes (`quiz-*` requests). */
+			canQuiz?: boolean;
 			/** The companion can list and edit files of a session's repository. */
 			canEdit?: boolean;
 			/** The companion can screenshot local pages (it found Chrome or another Chromium browser). */
@@ -1224,12 +1237,28 @@ export type CompanionReply =
 	| { t: "blueprint-delete"; reqId: number }
 	| ({ t: "blueprint-refs"; reqId: number } & BlueprintRefsAnswer)
 	/** Pushed to every authenticated device when a map's summary changes (progress, done, failed); carries no `reqId`. */
-	| { t: "blueprint-changed"; id: string };
+	| { t: "blueprint-changed"; id: string }
+	| { t: "quiz-list"; reqId: number; quizzes: QuizSummary[] }
+	| { t: "quiz-create"; reqId: number; id: string }
+	| ({ t: "quiz-get"; reqId: number } & QuizGetAnswer)
+	| { t: "quiz-answer"; reqId: number; verdict: QuizVerdict; attempt: QuizAttempt }
+	| { t: "quiz-retry"; reqId: number; attempt: QuizAttempt }
+	/** In the order of the request's refs; null for a ref the commit does not have. */
+	| { t: "quiz-excerpt"; reqId: number; excerpts: (BlueprintExcerpt | null)[] }
+	| { t: "quiz-delete"; reqId: number }
+	| { t: "quiz-stack"; reqId: number; stack: QuizStackPr[]; source: QuizStackSource }
+	/** Pushed to every authenticated device when a quiz's summary changes (progress, done, failed, answered); carries no `reqId`. */
+	| { t: "quiz-changed"; id: string };
 
 /** Any `blueprint-*` request without its `reqId`. */
 export type BlueprintCall = BlueprintRequest extends infer R ? (R extends unknown ? Omit<R, "reqId"> : never) : never;
 /** The reply to the `blueprint-*` request of type `T`. */
 export type BlueprintAnswer<T extends BlueprintRequest["t"]> = Extract<CompanionReply, { t: T }>;
+
+/** Any `quiz-*` request without its `reqId`. */
+export type QuizCall = QuizRequest extends infer R ? (R extends unknown ? Omit<R, "reqId"> : never) : never;
+/** The reply to the `quiz-*` request of type `T`. */
+export type QuizAnswerOf<T extends QuizRequest["t"]> = Extract<CompanionReply, { t: T }>;
 
 /** Credentials the companion issued to a paired device. */
 export interface DeviceCreds {
@@ -1329,6 +1358,8 @@ export interface CompanionSnapshot {
 	canCodemap: boolean;
 	/** The companion can build and serve architecture maps. */
 	canBlueprint: boolean;
+	/** The companion can write, grade and store quizzes on code changes. */
+	canQuiz: boolean;
 	/** The companion can list and edit files of a session's repository. */
 	canEdit: boolean;
 	/** The companion can screenshot local pages. */
@@ -1380,7 +1411,10 @@ export interface CompanionSnapshot {
 }
 
 /** A reply that answers one request (everything but the `hosts` broadcast). */
-type CompanionAnswer = Exclude<CompanionReply, { t: "hosts" | "authed" | "auth-failed" | "blueprint-changed" }>;
+type CompanionAnswer = Exclude<
+	CompanionReply,
+	{ t: "hosts" | "authed" | "auth-failed" | "blueprint-changed" | "quiz-changed" }
+>;
 type AnsweredRequest = Extract<CompanionRequest, { reqId: number }>;
 /** A request that expects an answer, before its `reqId` is assigned. */
 type CompanionCall = {
@@ -1405,6 +1439,7 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	canSandbox: false,
 	canPr: false,
 	canBlueprint: false,
+	canQuiz: false,
 	canCodemap: false,
 	canEdit: false,
 	canPreview: false,
@@ -1436,6 +1471,7 @@ export class CompanionClient {
 	readonly #socket: CollabSocket<CompanionRequest, CompanionReply>;
 	readonly #listeners = new Set<() => void>();
 	readonly #blueprintListeners = new Set<(id: string) => void>();
+	readonly #quizListeners = new Set<(id: string) => void>();
 	readonly #pending = new Map<number, Pending>();
 	#reqSeq = 0;
 	#presence: Extract<CompanionRequest, { t: "presence" }> | null = null;
@@ -1533,6 +1569,22 @@ export class CompanionClient {
 		return () => {
 			this.#blueprintListeners.delete(listener);
 		};
+	}
+
+	/** Called with a quiz's id when the companion pushes that its summary changed (progress, done, failed, answered). */
+	onQuizChanged(listener: (id: string) => void): () => void {
+		this.#quizListeners.add(listener);
+		return () => {
+			this.#quizListeners.delete(listener);
+		};
+	}
+
+	/**
+	 * One quiz request and its answer (needs `canQuiz`). The typed calls over it are in
+	 * components/quiz/quiz-api.ts, which loads with the quiz rather than with the app.
+	 */
+	requestQuiz<C extends QuizCall>(call: C, timeoutMs: number): Promise<QuizAnswerOf<C["t"]>> {
+		return this.#call(call as CompanionCall, call.t, timeoutMs) as Promise<QuizAnswerOf<C["t"]>>;
 	}
 
 	/**
@@ -2053,6 +2105,7 @@ export class CompanionClient {
 				canSandbox: frame.canSandbox ?? false,
 				canPr: frame.canPr ?? false,
 				canBlueprint: frame.canBlueprint ?? false,
+				canQuiz: frame.canQuiz ?? false,
 				canCodemap: frame.canCodemap ?? false,
 				canEdit: frame.canEdit ?? false,
 				canPreview: frame.canPreview ?? false,
@@ -2082,6 +2135,10 @@ export class CompanionClient {
 		}
 		if (frame.t === "blueprint-changed") {
 			for (const listener of this.#blueprintListeners) listener(frame.id);
+			return;
+		}
+		if (frame.t === "quiz-changed") {
+			for (const listener of this.#quizListeners) listener(frame.id);
 			return;
 		}
 		const pending = this.#pending.get(frame.reqId);

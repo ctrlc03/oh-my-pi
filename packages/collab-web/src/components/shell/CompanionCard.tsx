@@ -26,6 +26,7 @@ import {
 	type PairingLink,
 } from "../../lib/companion";
 import { ArchitectureEntry } from "../architecture/ArchitectureEntry";
+import { QuizEntry } from "../quiz/QuizEntry";
 import { type ComputerHandle, stateWord } from "../../lib/computers";
 import { relTime, shortenPath } from "../../lib/format";
 import { applyOpenIntent } from "../../lib/inbox";
@@ -231,6 +232,7 @@ export function CompanionCard({
 									<SchedulesEntry computers={only} onOpenHost={open} variant="card" />
 									<AgentsEntry computers={only} variant="card" />
 									{snap.canBlueprint && <ArchitectureEntry computers={only} onOpenHost={open} />}
+									{snap.canQuiz && <QuizEntry computers={only} onOpenHost={open} />}
 								</>
 							)}
 						</div>

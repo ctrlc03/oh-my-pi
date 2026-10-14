@@ -3,12 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { BlueprintSummary } from "@oh-my-pi/pi-wire/blueprint";
-import {
-	BLUEPRINT_TOOLS,
-	blueprintOverlayYaml,
-	buildBrief,
-	sessionFolderName,
-} from "../scripts/companion-blueprint-agent";
+import { buildBrief } from "../scripts/companion-blueprint-agent";
 import { createBlueprintStore } from "../scripts/companion-blueprint-store";
 
 const INDEX = {
@@ -28,30 +23,6 @@ const INDEX = {
 };
 
 describe("the agent's launch", () => {
-	it("lets the session write its one file, matching wildcard characters in the path literally", () => {
-		const yaml = blueprintOverlayYaml("/home/me/my [cfg]/cache/out/bp-0123456789ab.json");
-		expect(yaml).toContain('glob: "/home/me/my [[]cfg[]]/cache/out/bp-0123456789ab.json"');
-		expect(yaml).toContain("bash: deny");
-		expect(yaml.indexOf("action: allow")).toBeLessThan(yaml.indexOf("action: deny\n"));
-		expect(() => blueprintOverlayYaml("C:\\cfg\\out\\bp-0123456789ab.json")).toThrow(/backslash/);
-	});
-
-	it("turns on the tools omp keeps off by default, or omp refuses to start with them in --tools", () => {
-		// `--tools ast_grep,trace,flow` without `astGrep.enabled` / `codemap.enabled` ends in "Built-in tools unavailable in this session".
-		const settings = Bun.YAML.parse(blueprintOverlayYaml("/out/bp-0123456789ab.json")) as {
-			astGrep?: { enabled?: boolean };
-			codemap?: { enabled?: boolean };
-		};
-		expect(BLUEPRINT_TOOLS).toEqual(expect.arrayContaining(["ast_grep", "trace", "flow"]));
-		expect(settings.astGrep?.enabled).toBe(true);
-		expect(settings.codemap?.enabled).toBe(true);
-	});
-
-	it("names the checkout folder after the map, without characters a sandbox profile refuses", () => {
-		expect(sessionFolderName("repo", "feat/x")).toBe("Architecture · repo @ feat-x");
-		expect(sessionFolderName('re"po', "a\\b\nc")).toBe("Architecture · re-po @ a-b-c");
-	});
-
 	it("fills every placeholder of the brief, for a plain, a diff and a refresh map", () => {
 		const common = {
 			repo: "demo",
@@ -131,7 +102,7 @@ describe("the map store", () => {
 
 	it("refuses ids that are not maps' own", async () => {
 		const store = createBlueprintStore(path.join(tmp, "other"));
-		await expect(store.readMap("../index")).rejects.toThrow(/invalid map id/);
+		await expect(store.readDoc("../index")).rejects.toThrow(/invalid map id/);
 		await expect(store.remove("bp-../../x")).rejects.toThrow(/invalid map id/);
 	});
 });

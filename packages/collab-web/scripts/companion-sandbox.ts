@@ -49,8 +49,8 @@ const PROTECTED_NAMES = [".git", ".omp", ".claude", ".vscode", ".envrc", ".mcp.j
 /** Under the config dir: a folder only the companion reaches (start prompts wait here for their shell), denied to every sandbox, whose `run/` is otherwise writable. */
 export const COMPANION_RUN_DIR = "run/collab-companion";
 
-/** Under the config dir: where architecture map runs check the code out; a sandboxed agent works in one of these folders. */
-export const BLUEPRINT_WORK_DIR = "cache/blueprints/work";
+/** Under the config dir: where architecture map and quiz runs check the code out; a sandboxed agent works in one of these folders. */
+export const AGENT_WORK_DIRS: readonly string[] = ["cache/blueprints/work", "cache/quizzes/work"];
 
 /** Credential stores under the home directory a sandboxed session may not read. */
 const SECRET_DIRS = [".ssh", ".aws", ".azure", ".gnupg", ".kube", ".docker", ".config/gh", ".config/gcloud"];
@@ -105,14 +105,16 @@ function regexEscape(value: string): string {
  *
  * @throws Error when the folder contains the home or config dir (or lies in
  * the config dir, except in a scratch folder under it (the project folder of a session
- * without a project) or a checkout of an architecture map's run), or a path has characters a profile string cannot hold.
+ * without a project) or a checkout of an architecture map's or a quiz's run), or a path has characters a profile string cannot hold.
  */
 export function sandboxProfile(paths: SandboxPaths): string {
 	const { folder, home, configDir, tmpDir } = paths;
 	const scratchRoot = path.join(configDir, SCRATCH_DIR);
 	const inScratch = folder !== scratchRoot && within(folder, scratchRoot);
-	const workRoot = path.join(configDir, BLUEPRINT_WORK_DIR);
-	const inWork = folder !== workRoot && within(folder, workRoot);
+	const inWork = AGENT_WORK_DIRS.some(dir => {
+		const workRoot = path.join(configDir, dir);
+		return folder !== workRoot && within(folder, workRoot);
+	});
 	if (within(home, folder) || within(configDir, folder) || (within(folder, configDir) && !inScratch && !inWork)) {
 		throw new Error("pick a project folder: a sandbox cannot cover your home or omp config folder");
 	}

@@ -4,6 +4,7 @@
 
 ### Added
 
+- `@oh-my-pi/pi-wire/quiz`: the "Quiz me" format (`Quiz`, `QuizQuestion` with verified `path@line@token` citations, `QuizVerdict`, `QuizAttempt`, `QuizScore`, `scoreAttempt`), the companion requests `quiz-list`, `-create`, `-get`, `-answer`, `-retry`, `-excerpt`, `-delete` and `-stack`, the `quiz-changed` push and the `canQuiz` capability.
 - `@oh-my-pi/pi-wire/blueprint`: the architecture map format (`Blueprint`: layered diagrams of nodes and edges, each citing code as `path@line@token`, with added/modified/removed marks for diff maps), the companion requests `blueprint-list`, `-create`, `-get`, `-excerpt`, `-delete` and `-refs`, the `blueprint-changed` push and the `canBlueprint` capability.
 - The `permission-mode` feature (`session-cmd` `permission` with `supervised` or `full`, reported as `SessionState.permission`) and `welcome.agent` (`AgentRef`, `{ id, name }`), set by hosts that run another vendor's coding agent (protocol version unchanged).
 - The `queue-edit` and `mentions` features: `SessionCommand` `queue-edit`, `queue-move` and `queue-steer` (with `session-cmd` `id`, `index`, `mentions`), `SessionState.followUpIds`, and `PromptMention` (`{ kind: "pr", number, title, url }` | `{ kind: "session", id, title }`) on `prompt.mentions`.

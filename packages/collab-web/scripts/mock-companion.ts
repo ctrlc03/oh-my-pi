@@ -5,11 +5,13 @@
  * browser — two tabs pair with it and see each other's changes.
  *
  *   bun scripts/mock-companion.ts [--port 7468] [--web http://localhost:3000/] [--dir /tmp/mock-companion] [--session-link <room link>]
- *                                 [--machine <name>] [--hosts 1,2,3]
+ *                                 [--machine <name>] [--hosts 1,2,3] [--session-id <id>]
  *
  * `--machine` names the computer and gives its sessions ids of their own (the way two real computers never share a session id,
  * though their processes may share an instance id: `inst-1` here and there); `--hosts` lists only those fixture sessions
- * (without it, all of them and the vendor agents' too). The room and its key are kept in `<--dir>/room.json`, so a restarted
+ * (without it, all of them and the vendor agents' too). `--session-id` is the id the `--session-link` room reports (`mock-collab-session`
+ * for `mock-host`): the `api-pagination` fixture session lists under it, so the session opened from the list is hosted by this computer and
+ * its working-tree features (changes, quizzes, architecture maps of its changes) are offered. The room and its key are kept in `<--dir>/room.json`, so a restarted
  * mock is the same computer to the devices paired with it.
  *
  * Prints a pairing link (`#pair:…`); open it in as many browsers or tabs as you like (each
@@ -20,7 +22,9 @@
  * `scripts/mock-host.ts`; `--agent <id>` makes it a vendor agent's session). Vendor agents (./mock-foreign) are canned: some
  * installed, some needing sign-in or an install, a custom one; installing and saving custom ones works, and sessions can be
  * started with them, listed and resumed. The worktree settings and the settle cleanup (./mock-settle) run the real code over a
- * throw-away repository too. Every other request is refused. Ctrl+C stops it.
+ * throw-away repository too. Quizzes (./mock-quiz) are canned: a finished quiz of a two-pull-request stack, one half
+ * answered, a failed one; new ones from the form tick to ready, and `quiz-stack` finds a three-pull-request stack for
+ * #2243, #2244 and #2245 (any other number is alone). Every other request is refused. Ctrl+C stops it.
  */
 
 import * as fs from "node:fs/promises";
@@ -43,6 +47,7 @@ import { startLocalRelay } from "./local-relay";
 import { createMockBlueprint } from "./mock-blueprint";
 import { createMockFanout } from "./mock-fanout";
 import { createMockForeign, mockForeignHosts } from "./mock-foreign";
+import { createMockQuiz, mockStackPrs } from "./mock-quiz";
 import { createMockSearch } from "./mock-search";
 import { createMockStart } from "./mock-start";
 import { createMockSettle } from "./mock-settle";
@@ -58,6 +63,7 @@ const dir = flag("--dir", await fs.mkdtemp(path.join(os.tmpdir(), "mock-companio
 await fs.mkdir(dir, { recursive: true });
 const webUrl = flag("--web", "http://localhost:3000/");
 const machine = flag("--machine", "");
+const joinedSessionId = flag("--session-id", "");
 const only = flag("--hosts", "")
 	.split(",")
 	.filter(n => n !== "")
@@ -92,7 +98,7 @@ const hosts: CompanionHost[] = [
 	host(3, "docs-pass", { inputRequired: true, busy: false }),
 	host(4, "merged-feature"),
 	host(5, "spike-wasm", { busy: true }),
-	host(7, "api-pagination"),
+	host(7, "api-pagination", joinedSessionId === "" ? {} : { sessionId: joinedSessionId }),
 	host(8, "release-notes"),
 	host(9, "perf-profiling"),
 	host(10, "i18n-strings"),
@@ -169,6 +175,14 @@ const starts = createMockStart({
 /** Open pull requests `#` in the composer can mention; only the list is answered, a pull request's detail is not. */
 const MOCK_PRS: GithubItem[] = (
 	[
+		...mockStackPrs().map(pr => ({
+			number: pr.number,
+			title: pr.title,
+			labels: ["refactor"],
+			draft: false,
+			review: "required" as const,
+			checks: "pass" as const,
+		})),
 		{
 			number: 482,
 			title: "Refresh tokens rotate on every use",
@@ -235,6 +249,15 @@ const blueprint = createMockBlueprint({
 	},
 });
 
+/** Quizzes on code changes: a finished stack quiz, one half answered, a failed one; new ones tick to ready. `--quiz-stage-ms` slows the ticks. */
+const quiz = createMockQuiz({
+	instanceId: "inst-7",
+	stageMs: Number(flag("--quiz-stage-ms", "1200")),
+	onChanged: id => {
+		for (const peer of peers) socket.send({ t: "quiz-changed", id }, peer);
+	},
+});
+
 function hostsFrame(): CompanionReply {
 	return {
 		t: "hosts",
@@ -244,6 +267,7 @@ function hostsFrame(): CompanionReply {
 		...starts.capabilities,
 		...search.capabilities,
 		...blueprint.capabilities,
+		...quiz.capabilities,
 		...foreign.capabilities,
 		...settle.capabilities,
 		canGithub: true,
@@ -322,7 +346,16 @@ socket.onFrame = (frame, fromPeer) => {
 				fromPeer,
 			);
 		}
-	} else if (settle.handles(frame))
+	} else if (quiz.handles(frame))
+		void quiz.answer(frame).then(
+			reply => socket.send(reply, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
+	else if (settle.handles(frame))
 		void settle.answer(frame).then(
 			reply => socket.send(reply, fromPeer),
 			(err: unknown) =>
@@ -358,6 +391,7 @@ const timer = setInterval(() => {
 
 process.on("SIGINT", () => {
 	clearInterval(timer);
+	quiz.stop();
 	socket.close();
 	relay.stop();
 	process.exit(0);

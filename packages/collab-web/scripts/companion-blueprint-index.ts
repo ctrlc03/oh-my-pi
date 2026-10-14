@@ -21,7 +21,8 @@ import type {
 	BlueprintNode,
 	BlueprintRef,
 } from "@oh-my-pi/pi-wire/blueprint";
-import { INDEX_REPO_DIAGRAM, type Side } from "./companion-blueprint-verify";
+import type { Side } from "./companion-citations";
+import { INDEX_REPO_DIAGRAM } from "./companion-blueprint-verify";
 
 export interface IndexFile {
 	/** Repository-relative path, "/" separators. */

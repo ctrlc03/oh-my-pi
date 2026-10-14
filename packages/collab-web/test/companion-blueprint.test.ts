@@ -2,8 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { type AgentWatch, type AgentWatchOptions, waitForAgent } from "../scripts/companion-blueprint-agent";
-import { createBlueprints, excerptOf, parseAgentJson } from "../scripts/companion-blueprint";
+import { createBlueprints } from "../scripts/companion-blueprint";
 import {
 	buildIndexDiagrams,
 	findImportRef,
@@ -117,90 +116,6 @@ describe("buildIndexDiagrams", () => {
 		expect(findImportRef(lines, "packages/lib/src/index.ts", ["helper"])).toMatchObject({ line: 3 });
 		expect(findImportRef(lines, "src/other.ts", [])).toMatchObject({ line: 2, token: "other" });
 		expect(findImportRef(lines, "src/unrelated.ts", [])).toBeUndefined();
-	});
-});
-
-// ── waiting for the agent ────────────────────────────────────────────────────
-
-const WATCH: AgentWatchOptions = { pollMs: 1_000, settleMs: 3_000, idleMs: 20_000, goneMs: 5_000, timeoutMs: 100_000 };
-
-function fakeWatch(
-	script: (t: number) => { host: { busy: boolean | null } | null; output: string | null },
-	cancelAt = Infinity,
-) {
-	let t = 0;
-	const watch: AgentWatch = {
-		host: async () => script(t).host,
-		output: async () => {
-			const text = script(t).output;
-			return text === null ? null : { text, signature: text };
-		},
-		now: () => t,
-		sleep: async ms => {
-			t += ms;
-		},
-		cancelled: () => t >= cancelAt,
-	};
-	return watch;
-}
-
-describe("waitForAgent", () => {
-	it("takes the file once it stops changing and the session is idle, not while the agent is still working", async () => {
-		const watch = fakeWatch(t => ({
-			host: { busy: t < 10_000 },
-			output: t < 2_000 ? null : t < 6_000 ? "draft" : "final",
-		}));
-		expect(await waitForAgent(watch, WATCH)).toEqual({ kind: "done", text: "final" });
-	});
-
-	it("takes the file when the session exited right after writing it", async () => {
-		const watch = fakeWatch(t => ({ host: t < 3_000 ? { busy: true } : null, output: t >= 2_000 ? "out" : null }));
-		expect(await waitForAgent(watch, WATCH)).toEqual({ kind: "done", text: "out" });
-	});
-
-	it("reports a session that vanished or sat idle without a file, and a timeout", async () => {
-		expect(
-			await waitForAgent(
-				fakeWatch(t => ({ host: t < 2_000 ? { busy: true } : null, output: null })),
-				WATCH,
-			),
-		).toEqual({ kind: "ended" });
-		expect(
-			await waitForAgent(
-				fakeWatch(t => ({ host: { busy: t < 2_000 }, output: null })),
-				WATCH,
-			),
-		).toEqual({ kind: "stalled" });
-		expect(
-			await waitForAgent(
-				fakeWatch(() => ({ host: { busy: true }, output: null })),
-				WATCH,
-			),
-		).toEqual({ kind: "timeout" });
-		expect(
-			await waitForAgent(
-				fakeWatch(() => ({ host: { busy: true }, output: null }), 4_000),
-				WATCH,
-			),
-		).toEqual({ kind: "cancelled" });
-	});
-});
-
-describe("agent output text", () => {
-	it("reads JSON with or without a markdown fence", () => {
-		expect(parseAgentJson('{"a":1}')).toEqual({ a: 1 });
-		expect(parseAgentJson('```json\n{"a":1}\n```\n')).toEqual({ a: 1 });
-		expect(() => parseAgentJson("not json")).toThrow(SyntaxError);
-	});
-
-	it("cuts an excerpt around the cited line, shortens long lines, and refuses a line outside the file", () => {
-		const lines = Array.from({ length: 100 }, (_, i) => (i === 49 ? "x".repeat(1_000) : `line ${i + 1}`));
-		const hit = excerptOf(lines, { path: "a.ts", line: 50 }, "head", "c".repeat(40))!;
-		expect(hit.lines).toContain("line 49");
-		expect(hit.lines.at(hit.line - hit.start)!.length).toBeLessThan(500);
-		expect(excerptOf(lines, { path: "a.ts", line: 101 }, "head", "c")).toBeNull();
-		expect(excerptOf(lines, { path: "a.ts", line: 0 }, "head", "c")).toBeNull();
-		expect(excerptOf(lines, { path: "a.ts", line: 1 }, "head", "c")!.start).toBe(1);
 	});
 });
 

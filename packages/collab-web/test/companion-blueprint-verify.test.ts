@@ -1,13 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import type { Blueprint, BlueprintDiagram } from "@oh-my-pi/pi-wire/blueprint";
 import { BLUEPRINT_VERSION } from "@oh-my-pi/pi-wire/blueprint";
-import {
-	parseAgentOutput,
-	parseRefText,
-	type Side,
-	verifyBlueprint,
-	type VerifyIo,
-} from "../scripts/companion-blueprint-verify";
+import { parseAgentOutput, verifyBlueprint, type VerifyIo } from "../scripts/companion-blueprint-verify";
+import { parseRefText, type Side } from "../scripts/companion-citations";
 
 const HEAD_FILES: Record<string, string> = {
 	"src/a.ts": ["import { b } from './b';", "", "export function run() {", "\treturn b();", "}"].join("\n"),

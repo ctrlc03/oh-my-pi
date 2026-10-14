@@ -18,6 +18,7 @@ import * as path from "node:path";
 import type { GitText } from "../src/lib/companion";
 import { git } from "./companion-git";
 import { branchState, requireRoot } from "./companion-gitflow";
+import { headlessOmpArgs, headlessRunner, type RunOmp } from "./companion-headless";
 
 /** Characters of diff handed to the model per section (uncommitted changes, whole branch). */
 export const DIFF_CHARS = 14_000;
@@ -27,7 +28,7 @@ const MAX_UNTRACKED = 40;
 const GIT_DIFF_BYTES = 400 * 1024;
 const TEMPLATE_CHARS = 3_000;
 const RUN_TIMEOUT_MS = 90_000;
-const MAX_COST_USD = "0.25";
+const MAX_COST_USD = 0.25;
 /** What the model is asked to stay within; the answer is clipped to these as well. */
 const MAX_SUBJECT_CHARS = 100;
 const MAX_COMMIT_CHARS = 2_000;
@@ -66,61 +67,18 @@ export interface ChangeSet {
 	untracked: string[];
 }
 
-export interface RunResult {
-	code: number;
-	out: string;
-	err: string;
-}
-
-/** Runs `argv` with `stdin` as input in `cwd`; rejects when the program cannot start or times out. */
-export type RunOmp = (argv: string[], stdin: string, cwd: string) => Promise<RunResult>;
-
 const decoder = new TextDecoder();
 
 /** Headless omp: cheap model, no session file, tools, extensions, skills, rules or LSP, and a hard spend cap. */
 export function ompArgs(ompBin: string, model: string): string[] {
-	return [
-		ompBin,
-		"-p",
-		"--no-session",
-		"--no-tools",
-		"--no-extensions",
-		"--no-skills",
-		"--no-rules",
-		"--no-lsp",
-		"--no-title",
-		"--thinking",
-		"off",
-		"--max-cost",
-		MAX_COST_USD,
-		"--model",
-		model,
-		"--system-prompt",
-		SYSTEM_PROMPT,
-	];
+	return headlessOmpArgs({ ompBin, model, systemPrompt: SYSTEM_PROMPT, maxCostUsd: MAX_COST_USD });
 }
 
 const SYSTEM_PROMPT =
 	"You write git commit messages and pull request descriptions from the changes you are given. " +
 	"Reply with one JSON object and nothing else: no code fences, no commentary. Never invent changes the diff does not show.";
 
-const defaultRun: RunOmp = async (argv, stdin, cwd) => {
-	const proc = Bun.spawn(argv, {
-		cwd,
-		stdin: new Blob([stdin]),
-		stdout: "pipe",
-		stderr: "pipe",
-		timeout: RUN_TIMEOUT_MS,
-		killSignal: "SIGKILL",
-	});
-	const [out, err, code] = await Promise.all([
-		new Response(proc.stdout).text(),
-		new Response(proc.stderr).text(),
-		proc.exited,
-	]);
-	if (proc.signalCode !== null) throw new Error(`timed out after ${RUN_TIMEOUT_MS / 1000}s`);
-	return { code, out, err };
-};
+const defaultRun = headlessRunner(RUN_TIMEOUT_MS);
 
 // ── context ──────────────────────────────────────────────────────────────────
 

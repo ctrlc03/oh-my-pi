@@ -3,11 +3,13 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	costOfSessionText,
 	findSessionFile,
 	foreignTranscriptsDir,
 	lastAssistantSummary,
 	pendingQuestion,
 	recentFolders,
+	sessionFileCost,
 } from "../scripts/companion-sessions";
 
 const ask = (id: string, ...questions: string[]) => ({
@@ -107,6 +109,39 @@ describe("vendor agent transcripts", () => {
 			expect(await findSessionFile(sessionsDir, "codex-fedcba9876543210")).toBe(flat);
 			expect(await findSessionFile(sessionsDir, "codex-0000000000000000")).toBeNull();
 			expect(await findSessionFile(sessionsDir, "../../codex-fedcba9876543210")).toBeNull();
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("session cost from the file", () => {
+	const costed = (total: number) => ({
+		type: "message",
+		message: { role: "assistant", content: [], usage: { input: 1, cost: { input: total, total } } },
+	});
+	const lines = (...entries: unknown[]) => entries.map(entry => JSON.stringify(entry)).join("\n");
+
+	it("adds up what the assistant messages report", () => {
+		expect(costOfSessionText(lines(user, costed(0.09), reply("hi"), costed(0.04)))).toBeCloseTo(0.13, 6);
+	});
+
+	it("is undefined without any cost, and skips garbled lines and non-finite totals", () => {
+		expect(costOfSessionText(lines(user, reply("hi")))).toBeUndefined();
+		expect(costOfSessionText(`{"cost": broken\n${lines(costed(Number.NaN), costed(0.5))}`)).toBe(0.5);
+	});
+
+	it("reads a session the stats database has not seen yet", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "cost-"));
+		try {
+			const dir = path.join(root, "-work-x");
+			await fs.mkdir(dir, { recursive: true });
+			await Bun.write(
+				path.join(dir, "2026-10-14T11-30-07-271Z_cost-session-1.jsonl"),
+				lines(user, costed(0.09), costed(0.04)),
+			);
+			expect(await sessionFileCost(root, "cost-session-1")).toBeCloseTo(0.13, 6);
+			expect(await sessionFileCost(root, "missing-session")).toBeUndefined();
 		} finally {
 			await fs.rm(root, { recursive: true, force: true });
 		}

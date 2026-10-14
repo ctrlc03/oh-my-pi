@@ -78,6 +78,8 @@ export interface SessionSheetProps {
 	onOpenArchitecture: (() => void) | null;
 	/** A changes map of this session's edits; null unless maps can be made and the session changed files. */
 	onMapChanges: (() => void) | null;
+	/** A quiz on this session's changes; null unless quizzes can be written and the session changed files. */
+	onQuizChanges: (() => void) | null;
 	/** The session's terminal (tmux pane); null unless the paired computer hosts this session. */
 	onOpenPane: (() => void) | null;
 	/** Live screenshot of a dev server the session runs; null unless the paired computer can capture pages. */
@@ -138,6 +140,7 @@ export function SessionSheet({
 	onOpenCodemap,
 	onOpenArchitecture,
 	onMapChanges,
+	onQuizChanges,
 	onOpenPane,
 	onOpenPreview,
 	onOpenGithub,
@@ -607,6 +610,17 @@ export function SessionSheet({
 						<dd>
 							<button type="button" className="sh-sheet-link" onClick={onMapChanges}>
 								Map what changed
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
+				{onQuizChanges && (
+					<div className="sh-sheet-row">
+						<dt>Quiz</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onQuizChanges}>
+								Quiz me on these changes
 								<ChevronRight size={14} />
 							</button>
 						</dd>

@@ -6,6 +6,8 @@ import { AgentDrawer } from "./components/agents/AgentDrawer";
 import { AgentsPanel, isInactive } from "./components/agents/AgentsPanel";
 import { LazyArchitectureSheet } from "./components/architecture/LazyArchitectureSheet";
 import type { ArchitectureStart } from "./components/architecture/ArchitectureSheet";
+import { LazyQuizSheet } from "./components/quiz/LazyQuizSheet";
+import type { QuizStart } from "./components/quiz/QuizSheet";
 import { LazyCodemapSheet } from "./components/codemap/LazyCodemapSheet";
 import { DiagramHost } from "./components/diagram/DiagramHost";
 import { LazyIdeSheet } from "./components/ide/LazyIdeSheet";
@@ -530,6 +532,14 @@ function Session({
 		setGithubOpen(false);
 		setArchitecture({ view: "new", preset: { mode: "pr", pr } });
 	}, []);
+	const [quiz, setQuiz] = useState<QuizStart | null>(null);
+	// Quizzes are listed across the computers; quizzing this session's changes needs the computer that runs it.
+	const canQuiz = computers.some(candidate => candidate.client !== null && candidate.snap.canQuiz);
+	const canQuizHere = companionClient !== null && hostId !== null && computer?.snap.canQuiz === true;
+	const quizPr = useCallback((pr: { number: number; title: string }) => {
+		setGithubOpen(false);
+		setQuiz({ view: "new", subject: { kind: "pr", ...pr } });
+	}, []);
 	// The editor replaces the read-only file viewer once the paired computer can save files.
 	const canEdit = companionClient !== null && hostId !== null && computer?.snap.canEdit === true;
 	const [editor, setEditor] = useState<{ target: { path: string; line?: number } | null } | null>(null);
@@ -846,6 +856,10 @@ function Session({
 		setChangesTab("branch");
 		setChangesOpen(true);
 	}, [computerId, hostId]);
+	const quizChanges = useCallback(() => {
+		setChangesOpen(false);
+		setQuiz({ view: "new", subject: { kind: "changes" } });
+	}, []);
 	// The per-request timeline asks the host to read its session, so it is for writers on a live host that advertises it.
 	const canTimeline = Object.hasOwn(snap.features, "inspect") && !snap.readOnly && live;
 	const [timelineOpen, setTimelineOpen] = useState(false);
@@ -1097,6 +1111,7 @@ function Session({
 			openCodemap: canCodemap ? openCodemap : null,
 			openArchitecture: canArchitecture ? openArchitecture : null,
 			mapChanges: canMapHere && changes.length > 0 ? mapChanges : null,
+			quizChanges: canQuizHere && changes.length > 0 ? quizChanges : null,
 			openPane: canPane ? openPane : null,
 			openPreview: canPreview ? openPreview : null,
 			openGithub: canGithub ? openGithub : null,
@@ -1109,6 +1124,7 @@ function Session({
 			canCodemap,
 			canArchitecture,
 			canMapHere,
+			canQuizHere,
 			canEdit,
 			canGithub,
 			canPane,
@@ -1126,6 +1142,7 @@ function Session({
 			openChanges,
 			openCodemap,
 			mapChanges,
+			quizChanges,
 			openArchitecture,
 			openEditor,
 			openGithub,
@@ -1198,6 +1215,7 @@ function Session({
 				onOpenCodemap={canCodemap ? openCodemap : null}
 				onOpenArchitecture={canArchitecture ? openArchitecture : null}
 				onMapChanges={canMapHere && changes.length > 0 ? mapChanges : null}
+				onQuizChanges={canQuizHere && changes.length > 0 ? quizChanges : null}
 				onOpenPane={canPane ? openPane : null}
 				onOpenPreview={canPreview ? openPreview : null}
 				onOpenGithub={canGithub ? openGithub : null}
@@ -1419,6 +1437,7 @@ function Session({
 					}
 					sessionId={sessionId}
 					onSendToAgent={snap.readOnly ? null : sendReviewToAgent}
+					onQuiz={canQuizHere ? quizChanges : null}
 					onClose={() => setChangesOpen(false)}
 					initialTab={changesTab}
 				/>
@@ -1459,6 +1478,19 @@ function Session({
 					onClose={() => setArchitecture(null)}
 				/>
 			)}
+			{quiz !== null && canQuiz && (
+				<LazyQuizSheet
+					computers={computers}
+					computerId={computer?.id ?? null}
+					cwd={hostId !== null ? cwd : null}
+					instanceId={hostId}
+					sessionId={hostId !== null ? sessionId : null}
+					start={quiz}
+					onOpenHost={onOpenHost}
+					onOpenFile={canEdit ? openFile : undefined}
+					onClose={() => setQuiz(null)}
+				/>
+			)}
 			{paneOpen && canPane && companionClient !== null && hostId !== null && (
 				<PaneSheet client={companionClient} instanceId={hostId} onClose={() => setPaneOpen(false)} />
 			)}
@@ -1489,6 +1521,7 @@ function Session({
 					sandboxed={computer?.snap.hosts.some(host => host.instanceId === hostId && host.sandboxed) ?? false}
 					canFixIt={computer?.snap.canFixIt === true}
 					onMapPr={canMapHere ? mapPr : null}
+					onQuizPr={canQuizHere ? quizPr : null}
 					onClose={() => setGithubOpen(false)}
 				/>
 			)}

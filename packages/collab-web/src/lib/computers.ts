@@ -289,6 +289,7 @@ export const FEATURES = {
 	schedule: { can: "canSchedule", lacks: "doesn't run schedules" },
 	fanout: { can: "canFanout", lacks: "can't compare models" },
 	blueprint: { can: "canBlueprint", lacks: "can't build architecture maps" },
+	quiz: { can: "canQuiz", lacks: "can't write quizzes" },
 	foreign: { can: "canForeign", lacks: "can't run other agents" },
 } as const;
 

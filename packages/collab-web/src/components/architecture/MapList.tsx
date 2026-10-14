@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CompanionClient } from "../../lib/companion";
 import { type ComputerHandle, unavailableReason } from "../../lib/computers";
 import { fmtCost, relTime } from "../../lib/format";
+import { type ClientTarget, featureTargets, useStableTargets } from "../../lib/stable-targets";
 import { useRequest } from "../../lib/use-request";
 import { createBlueprint, deleteBlueprint, listBlueprints } from "./blueprint-api";
 import { refLabel, shortCommit } from "./blueprint-model";
@@ -23,32 +24,15 @@ export interface MapListProps {
 	onOpenHost(computerId: string, instanceId: string): Promise<void>;
 }
 
-/** A computer whose maps are listed. */
-interface Target {
-	id: string;
-	name: string;
-	client: CompanionClient;
-}
-
 /** A map and the computer that holds it. */
 interface MapEntry {
-	target: Target;
+	target: ClientTarget;
 	map: BlueprintSummary;
 }
 
 interface Listing {
 	entries: MapEntry[];
-	failures: { target: Target; message: string }[];
-}
-
-/** `targets`, the same array while the same computers stay connected (a snapshot change on another field is not a new list). */
-function useStableTargets(next: Target[]): Target[] {
-	const kept = useRef(next);
-	const same =
-		kept.current.length === next.length &&
-		next.every((target, at) => target.id === kept.current[at]!.id && target.client === kept.current[at]!.client);
-	if (!same) kept.current = next;
-	return kept.current;
+	failures: { target: ClientTarget; message: string }[];
 }
 
 /** `/a/b/repo` → `repo`. */
@@ -77,13 +61,7 @@ export function MapList({
 	onOpenHost,
 }: MapListProps): ReactNode {
 	const several = computers.length > 1;
-	const targets = useStableTargets(
-		computers.flatMap(computer =>
-			computer.client !== null && unavailableReason(computer, "blueprint") === null
-				? [{ id: computer.id, name: computer.name, client: computer.client }]
-				: [],
-		),
-	);
+	const targets = useStableTargets(featureTargets(computers, "blueprint"));
 	const away = computers.flatMap(computer => {
 		const reason = unavailableReason(computer, "blueprint");
 		return reason === null ? [] : [{ computer, reason }];

@@ -11,8 +11,8 @@ import {
 	generateGitText,
 	ompArgs,
 	parseAnswer,
-	type RunOmp,
 } from "../scripts/companion-gitmsg";
+import type { RunOmp } from "../scripts/companion-headless";
 
 let tmp: string;
 let repo: string;

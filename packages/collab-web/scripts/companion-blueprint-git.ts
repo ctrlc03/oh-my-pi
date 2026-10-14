@@ -131,6 +131,24 @@ async function mergeBase(root: string, a: string, b: string): Promise<string | n
 }
 
 /**
+ * What a pull request stacked on another changes: its head against the merge base with the head of the one below, so
+ * the part shows only its own changes even when the branch below has moved on since.
+ * @throws Error when the two share no history or the head adds nothing to `below`.
+ */
+export async function stackBase(root: string, head: string, below: BlueprintCommit): Promise<BlueprintCommit> {
+	const common = await mergeBase(root, head, below.commit);
+	if (common === null)
+		throw new Error(
+			`There is nothing to compare: ${head.slice(0, 8)} shares no history with ${below.commit.slice(0, 8)}.`,
+		);
+	if (common === head)
+		throw new Error(
+			`There is nothing to compare: ${head.slice(0, 8)} has no changes beyond ${below.ref ?? below.commit.slice(0, 8)}.`,
+		);
+	return { commit: common, ref: below.ref, subject: await commitSubject(root, common) };
+}
+
+/**
  * Snapshot the working tree (tracked changes and untracked, unignored files) as a commit on top of HEAD,
  * without changing the checkout, the index or any ref: the files are staged into a copy of the index, the tree
  * written, and a commit object created that nothing points to. HEAD itself when nothing differs.

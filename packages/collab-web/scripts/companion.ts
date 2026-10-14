@@ -120,7 +120,9 @@ import {
 	parseCollabLink,
 } from "../src/lib/link";
 import { parseOrg } from "../src/lib/session-org";
+import { type AgentRunner } from "./companion-agent";
 import { createBlueprints } from "./companion-blueprint";
+import { createQuizzes } from "./companion-quiz";
 import {
 	checkFlow,
 	checkFocus,
@@ -174,6 +176,7 @@ import {
 	readSessionTail,
 	recentFolders,
 	SAFE_ID_RE,
+	sessionFileCost,
 } from "./companion-sessions";
 import { COMPANION_RUN_DIR } from "./companion-sandbox";
 import { createSettleCleanup, loadSettleState, saveSettleState } from "./companion-settle";
@@ -1055,6 +1058,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canPr: extras.canPr,
 		canCodemap: codemapReady,
 		canBlueprint: codemapReady,
+		canQuiz: extras.canStart,
 		canEdit: true,
 		canPreview: previewChrome !== null,
 		// Reading issues and pull requests needs the same signed-in gh as opening one.
@@ -1395,6 +1399,38 @@ async function stopSession(instanceId: string): Promise<void> {
 	await killTmuxSession(target.tmux, target.name);
 }
 
+/** Read-only sessions the companion starts for architecture maps and quizzes. */
+const agentRunner: AgentRunner = {
+	start: launch =>
+		startSession(
+			launch.cwd,
+			undefined,
+			sandboxAvailable,
+			undefined,
+			undefined,
+			launch.prompt,
+			launch.maxCostUsd,
+			launch.model,
+			undefined,
+			{ overlayPath: launch.overlayPath, overlayYaml: launch.overlayYaml, tools: launch.tools },
+		),
+	hosts: async () =>
+		(await loadSessions()).hosts.map(host => ({
+			instanceId: host.instanceId,
+			sessionId: host.sessionId,
+			model: host.model,
+			busy: host.busy,
+		})),
+	stop: async instanceId => {
+		// A fresh list: the pid of a session started moments ago may not be known yet.
+		await loadSessions();
+		await stopSession(instanceId);
+	},
+	cost: async sessionId =>
+		(await sessionFileCost(sessionsDir, sessionId)) ??
+		(await allOverviews({ limit: 100 })).find(session => session.sessionId === sessionId)?.cost,
+};
+
 /** Architecture maps: stored under the config folder, the agent part run as a read-only session the companion starts. */
 const blueprints = createBlueprints({
 	storeDir: path.join(configDir, "agent", "blueprints"),
@@ -1404,35 +1440,21 @@ const blueprints = createBlueprints({
 		for (const peer of peers) room.send({ t: "blueprint-changed", id }, peer, zipPeers.has(peer));
 	},
 	openIndex: openThrowawayIndex,
-	agent: {
-		start: launch =>
-			startSession(
-				launch.cwd,
-				undefined,
-				sandboxAvailable,
-				undefined,
-				undefined,
-				launch.prompt,
-				launch.maxCostUsd,
-				launch.model,
-				undefined,
-				{ overlayPath: launch.overlayPath, overlayYaml: launch.overlayYaml, tools: launch.tools },
-			),
-		hosts: async () =>
-			(await loadSessions()).hosts.map(host => ({
-				instanceId: host.instanceId,
-				sessionId: host.sessionId,
-				model: host.model,
-				busy: host.busy,
-			})),
-		stop: async instanceId => {
-			// A fresh list: the pid of a session started moments ago may not be known yet.
-			await loadSessions();
-			await stopSession(instanceId);
-		},
-		cost: async sessionId =>
-			(await allOverviews({ limit: 100 })).find(session => session.sessionId === sessionId)?.cost,
+	agent: agentRunner,
+	log: message => console.log(`companion: ${message}`),
+});
+
+/** Quizzes on code changes: stored beside the maps; the questions are written by a read-only session, open answers graded by a small headless omp run. */
+const quizzes = createQuizzes({
+	storeDir: path.join(configDir, "agent", "quizzes"),
+	cacheDir: path.join(configDir, "cache", "quizzes"),
+	sessionsDir,
+	now: Date.now,
+	changed: id => {
+		for (const peer of peers) room.send({ t: "quiz-changed", id }, peer, zipPeers.has(peer));
 	},
+	agent: agentRunner,
+	ompBin,
 	log: message => console.log(`companion: ${message}`),
 });
 
@@ -2079,6 +2101,53 @@ room.onFrame = (frame, fromPeer) => {
 				return { t: "blueprint-refs", reqId: frame.reqId, ...(await blueprints.refs(frame.cwd, frame.q)) };
 			});
 			return;
+		case "quiz-list":
+			respond(frame.reqId, async () => {
+				if (frame.cwd !== undefined && typeof frame.cwd !== "string") throw new Error("invalid folder");
+				return { t: "quiz-list", reqId: frame.reqId, quizzes: await quizzes.list(frame.cwd) };
+			});
+			return;
+		case "quiz-create":
+			respond(frame.reqId, async () => {
+				const { t: _t, reqId: _reqId, ...request } = frame;
+				return { t: "quiz-create", reqId: frame.reqId, ...(await quizzes.create(request)) };
+			});
+			return;
+		case "quiz-get":
+			respond(frame.reqId, async () => ({ t: "quiz-get", reqId: frame.reqId, ...(await quizzes.get(frame.id)) }));
+			return;
+		case "quiz-answer":
+			respond(frame.reqId, async () => ({
+				t: "quiz-answer",
+				reqId: frame.reqId,
+				...(await quizzes.answer(frame)),
+			}));
+			return;
+		case "quiz-retry":
+			respond(frame.reqId, async () => ({ t: "quiz-retry", reqId: frame.reqId, ...(await quizzes.retry(frame)) }));
+			return;
+		case "quiz-excerpt":
+			respond(frame.reqId, async () => {
+				if (!Array.isArray(frame.refs) || typeof frame.part !== "number") throw new Error("invalid references");
+				return {
+					t: "quiz-excerpt",
+					reqId: frame.reqId,
+					excerpts: await quizzes.excerpt(frame.id, frame.part, frame.refs),
+				};
+			});
+			return;
+		case "quiz-delete":
+			respond(frame.reqId, async () => {
+				await quizzes.remove(frame.id);
+				return { t: "quiz-delete", reqId: frame.reqId };
+			});
+			return;
+		case "quiz-stack":
+			respond(frame.reqId, async () => {
+				if (typeof frame.cwd !== "string") throw new Error("invalid folder");
+				return { t: "quiz-stack", reqId: frame.reqId, ...(await quizzes.stack(frame.cwd, frame.pr)) };
+			});
+			return;
 		case "preview":
 			respond(frame.reqId, async () => {
 				if (previewChrome === null) throw new Error("No Chrome or other Chromium browser found on this computer");
@@ -2366,6 +2435,7 @@ void findChrome().then(found => {
 });
 // Maps a previous run left half done are marked interrupted, their checkouts removed, and their agent sessions ended.
 void blueprints.init().catch(err => console.error(`companion: starting architecture maps failed: ${errorText(err)}`));
+void quizzes.init().catch(err => console.error(`companion: starting quizzes failed: ${errorText(err)}`));
 
 function shutdown(): void {
 	// Runs are detached process groups: they would outlive the companion.
@@ -2380,6 +2450,7 @@ function shutdown(): void {
 		voice.close(),
 		scheduleIpc.stop(),
 		blueprints.shutdown(),
+		quizzes.shutdown(),
 		removeLocalEndpoint(localEndpointFile(configDir), process.pid),
 	]).then(() => process.exit(0));
 }

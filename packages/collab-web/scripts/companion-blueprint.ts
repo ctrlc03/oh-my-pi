@@ -19,7 +19,6 @@ import * as path from "node:path";
 import type { Codemap } from "@oh-my-pi/pi-coding-agent/codemap/index";
 import {
 	type Blueprint,
-	BLUEPRINT_EXCERPT_CONTEXT,
 	BLUEPRINT_VERSION,
 	type BlueprintCreate,
 	type BlueprintDiagram,
@@ -28,22 +27,23 @@ import {
 	type BlueprintRefsAnswer,
 	type BlueprintSummary,
 } from "@oh-my-pi/pi-wire/blueprint";
-import { MODEL_SELECTOR_RE } from "../src/lib/fanout";
 import {
+	type AgentRunner,
 	type AgentWatchOptions,
-	agentOutputFile,
-	BLUEPRINT_TOOLS,
-	blueprintOverlayYaml,
-	buildBrief,
-	DEFAULT_MAX_COST_USD,
-	DEFAULT_WATCH,
-	sessionFolderName,
-	waitForAgent,
-} from "./companion-blueprint-agent";
+	agentFailureReason,
+	agentFolderName,
+	checkRunRequest,
+	parseAgentJson,
+	prepareOutputFile,
+	READONLY_AGENT_TOOLS,
+	restrictedOverlayYaml,
+	type RunRequest,
+	runAgentToFile,
+} from "./companion-agent";
+import { buildBrief, DEFAULT_MAX_COST_USD } from "./companion-blueprint-agent";
 import {
 	addWorktree,
 	changedFiles,
-	checkRefName,
 	diffHunks,
 	diffStat,
 	holdCommit,
@@ -60,47 +60,15 @@ import {
 } from "./companion-blueprint-git";
 import { buildIndexDiagrams, type IndexResult, isManifest } from "./companion-blueprint-index";
 import { createIndexSource, type DiffInput } from "./companion-blueprint-source";
-import { checkBlueprintId, createBlueprintStore, newBlueprintId } from "./companion-blueprint-store";
-import {
-	type AgentOutput,
-	normalizeRepoPath,
-	parseAgentOutput,
-	type Side,
-	verifyBlueprint,
-	type VerifyIo,
-} from "./companion-blueprint-verify";
+import { createBlueprintStore } from "./companion-blueprint-store";
+import { type AgentOutput, parseAgentOutput, verifyBlueprint, type VerifyIo } from "./companion-blueprint-verify";
+import { readExcerpts, splitLines } from "./companion-excerpt";
 
 /** Maps generated at once; the rest wait their turn (indexing a large repository is heavy). */
 const MAX_CONCURRENT_RUNS = 2;
-/** References one excerpt request may carry (the HTML export asks for every ref of a map at once). */
-const MAX_EXCERPT_REFS = 20_000;
-const EXCERPT_CONCURRENCY = 8;
-const MAX_EXCERPT_LINE_CHARS = 400;
-const MAX_COST_LIMIT_USD = 100;
+const STALE_CHECK_CONCURRENCY = 8;
 /** Changed files whose symbols are listed in the agent's brief. */
 const MAX_BRIEF_FILES = 80;
-
-/** What the agent session is started with; the companion starts it like any other session, read-only. */
-export interface AgentLaunch {
-	/** The head checkout. */
-	cwd: string;
-	prompt: string;
-	maxCostUsd: number;
-	model?: string;
-	outFile: string;
-	/** Overlay file this launch writes (the manager removes it). */
-	overlayPath: string;
-	overlayYaml: string;
-	tools: readonly string[];
-}
-
-/** A listed omp session, as far as a run needs to know. */
-export interface AgentSession {
-	instanceId: string;
-	sessionId: string;
-	model: string | null;
-	busy: boolean | null;
-}
 
 export interface BlueprintDeps {
 	/** `<agent dir>/blueprints`: the index and the maps. */
@@ -113,13 +81,7 @@ export interface BlueprintDeps {
 	/** Opens an index of a checkout; the caller closes it and deletes its `dbPath`. */
 	openIndex(root: string): Promise<Codemap>;
 	/** The session running the agent part; null when this computer cannot run one (no tmux), and the map then has index levels only. */
-	agent: {
-		start(launch: AgentLaunch): Promise<string>;
-		hosts(): Promise<AgentSession[]>;
-		stop(instanceId: string): Promise<void>;
-		/** Spend of a session so far, USD. */
-		cost(sessionId: string): Promise<number | undefined>;
-	} | null;
+	agent: AgentRunner | null;
 	/** Timing of the wait for the agent; tests shorten it. */
 	watch?: Partial<AgentWatchOptions>;
 	log?(message: string): void;
@@ -154,75 +116,6 @@ function errorText(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
 }
 
-const LANGUAGE_BY_EXTENSION: Record<string, string> = {
-	ts: "ts",
-	tsx: "tsx",
-	mts: "ts",
-	cts: "ts",
-	js: "js",
-	jsx: "jsx",
-	mjs: "js",
-	cjs: "js",
-	rs: "rs",
-	sol: "sol",
-	nr: "noir",
-	py: "py",
-	go: "go",
-	java: "java",
-	kt: "kt",
-	swift: "swift",
-	rb: "rb",
-	php: "php",
-	c: "c",
-	h: "c",
-	cc: "cpp",
-	cpp: "cpp",
-	hpp: "cpp",
-	cs: "cs",
-	json: "json",
-	yml: "yaml",
-	yaml: "yaml",
-	toml: "toml",
-	md: "md",
-	html: "html",
-	css: "css",
-	sh: "sh",
-	sql: "sql",
-};
-
-/** Language of a path for highlighting, from its extension. */
-export function languageOf(file: string): string | undefined {
-	const ext = path.posix.extname(file).slice(1).toLowerCase();
-	return Object.hasOwn(LANGUAGE_BY_EXTENSION, ext) ? LANGUAGE_BY_EXTENSION[ext] : undefined;
-}
-
-/** Lines around a cited line, as {@link BlueprintExcerpt}; null when the line is not in the file. */
-export function excerptOf(
-	lines: readonly string[],
-	ref: { path: string; line: number },
-	side: Side,
-	commit: string,
-): BlueprintExcerpt | null {
-	if (ref.line < 1 || ref.line > lines.length) return null;
-	const start = Math.max(1, ref.line - BLUEPRINT_EXCERPT_CONTEXT);
-	const end = Math.min(lines.length, ref.line + BLUEPRINT_EXCERPT_CONTEXT);
-	return {
-		path: ref.path,
-		start,
-		lines: lines
-			.slice(start - 1, end)
-			.map(line => (line.length > MAX_EXCERPT_LINE_CHARS ? `${line.slice(0, MAX_EXCERPT_LINE_CHARS - 1)}…` : line)),
-		line: ref.line,
-		side,
-		commit,
-		language: languageOf(ref.path),
-	};
-}
-
-function splitLines(text: string): string[] {
-	return text.split(/\r?\n/);
-}
-
 /** Files and every folder above them, for "does this path exist at the commit". */
 function pathSet(files: readonly string[]): Set<string> {
 	const set = new Set<string>();
@@ -234,44 +127,9 @@ function pathSet(files: readonly string[]): Set<string> {
 	return set;
 }
 
-/** The JSON in the agent's file, tolerating a markdown fence around it. */
-export function parseAgentJson(text: string): unknown {
-	const trimmed = text.trim();
-	const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/.exec(trimmed);
-	return JSON.parse(fenced ? fenced[1]! : trimmed);
-}
-
-function parseCreate(request: BlueprintCreate): {
-	cwd: string;
-	ref?: string;
-	base?: string;
-	refresh?: string;
-	maxCostUsd: number;
-	model?: string;
-} {
-	if (typeof request.cwd !== "string" || !path.isAbsolute(request.cwd) || request.cwd.includes("\0"))
-		throw new Error("invalid folder");
-	if (request.ref !== undefined) checkRefName(request.ref, "ref");
-	if (request.base !== undefined) checkRefName(request.base, "base");
-	if (request.refresh !== undefined) checkBlueprintId(request.refresh);
-	const maxCostUsd = request.maxCostUsd ?? DEFAULT_MAX_COST_USD;
-	if (
-		typeof maxCostUsd !== "number" ||
-		!Number.isFinite(maxCostUsd) ||
-		maxCostUsd <= 0 ||
-		maxCostUsd > MAX_COST_LIMIT_USD
-	)
-		throw new Error("invalid spending limit");
-	if (request.model !== undefined && (typeof request.model !== "string" || !MODEL_SELECTOR_RE.test(request.model)))
-		throw new Error("invalid model");
-	return {
-		cwd: request.cwd,
-		ref: request.ref,
-		base: request.base,
-		refresh: request.refresh,
-		maxCostUsd,
-		model: request.model,
-	};
+function parseCreate(request: BlueprintCreate, checkId: (value: unknown) => string): RunRequest & { refresh?: string } {
+	if (request.refresh !== undefined) checkId(request.refresh);
+	return { ...checkRunRequest(request, DEFAULT_MAX_COST_USD), refresh: request.refresh };
 }
 
 function titleOf(repo: string, target: ResolvedTarget): string {
@@ -416,11 +274,8 @@ export function createBlueprints(deps: BlueprintDeps): Blueprints {
 			);
 			return { warnings };
 		}
-		await fs.mkdir(outDir, { recursive: true, mode: 0o700 });
-		// The session's write rule names this file; omp judges a path by its real location too, so the rule needs the real one.
-		const outFile = agentOutputFile(await fs.realpath(outDir), job.id);
+		const outFile = await prepareOutputFile(outDir, job.id);
 		const overlayPath = path.join(overlayDir, `${job.id}.yml`);
-		await fs.rm(outFile, { force: true });
 		let previousFile: string | undefined;
 		if (job.previous) {
 			previousFile = path.join(outDir, `${job.id}.previous.json`);
@@ -465,56 +320,38 @@ export function createBlueprints(deps: BlueprintDeps): Blueprints {
 						}
 					: undefined,
 		});
-		let instanceId: string | undefined;
-		let lastHost: AgentSession | undefined;
 		try {
 			await progress(run, "Starting the agent");
-			instanceId = await agent.start({
-				cwd: job.headDir,
-				prompt,
-				maxCostUsd: job.maxCostUsd,
-				model: job.model,
-				outFile,
-				overlayPath,
-				overlayYaml: blueprintOverlayYaml(outFile),
-				tools: BLUEPRINT_TOOLS,
-			});
-			run.instanceId = instanceId;
-			await update(run, { instanceId, progress: "The agent is reading the code and drawing the system diagram" });
-			const outcome = await waitForAgent(
-				{
-					host: async () => {
-						const host = (await agent.hosts()).find(h => h.instanceId === instanceId) ?? null;
-						if (host) lastHost = host;
-						return host;
-					},
-					output: async () => {
-						try {
-							const [text, stat] = await Promise.all([fs.readFile(outFile, "utf8"), fs.stat(outFile)]);
-							return { text, signature: `${stat.size}:${stat.mtimeMs}` };
-						} catch {
-							return null;
-						}
-					},
-					now: deps.now,
-					sleep: ms => Bun.sleep(ms),
-					cancelled: () => run.cancelled,
+			const ran = await runAgentToFile({
+				agent,
+				launch: {
+					cwd: job.headDir,
+					prompt,
+					maxCostUsd: job.maxCostUsd,
+					model: job.model,
+					outFile,
+					overlayPath,
+					overlayYaml: restrictedOverlayYaml(outFile, READONLY_AGENT_TOOLS),
+					tools: READONLY_AGENT_TOOLS,
 				},
-				{ ...DEFAULT_WATCH, ...deps.watch },
-			);
+				watch: deps.watch,
+				now: deps.now,
+				cancelled: () => run.cancelled,
+				started: async instanceId => {
+					run.instanceId = instanceId;
+					await update(run, {
+						instanceId,
+						progress: "The agent is reading the code and drawing the system diagram",
+					});
+				},
+				log,
+			});
+			const { outcome, model, costUsd } = ran;
 			if (outcome.kind === "cancelled") throw new Cancelled();
-			const costUsd = lastHost ? await agent.cost(lastHost.sessionId).catch(() => undefined) : undefined;
-			const model = lastHost?.model ?? undefined;
 			if (outcome.kind !== "done") {
-				const why =
-					outcome.kind === "ended"
-						? costUsd !== undefined && costUsd >= job.maxCostUsd * 0.98
-							? "it reached its spending limit before writing the diagrams"
-							: "its session ended before it wrote the diagrams"
-						: outcome.kind === "stalled"
-							? "it stopped without writing the diagrams"
-							: "it ran out of time";
-				warnings.push(`The agent diagrams are missing: ${why}. The map shows the code-index levels only.`);
+				warnings.push(
+					`The agent diagrams are missing: ${agentFailureReason(outcome, costUsd, job.maxCostUsd, "the diagrams")}. The map shows the code-index levels only.`,
+				);
 				return { model, costUsd, warnings };
 			}
 			let output: AgentOutput;
@@ -548,13 +385,7 @@ export function createBlueprints(deps: BlueprintDeps): Blueprints {
 			);
 			return { warnings };
 		} finally {
-			if (instanceId !== undefined)
-				await agent.stop(instanceId).catch(err => log(`stopping the agent session failed: ${errorText(err)}`));
-			await Promise.all([
-				fs.rm(outFile, { force: true }),
-				fs.rm(overlayPath, { force: true }),
-				previousFile ? fs.rm(previousFile, { force: true }) : undefined,
-			]);
+			if (previousFile) await fs.rm(previousFile, { force: true });
 		}
 	}
 
@@ -571,7 +402,7 @@ export function createBlueprints(deps: BlueprintDeps): Blueprints {
 	): Promise<void> {
 		const { info, target } = job;
 		const runDir = path.join(workDir, run.id);
-		const folder = sessionFolderName(info.name, target.label);
+		const folder = agentFolderName("Architecture", info.name, target.label);
 		const headDir = path.join(runDir, "head", folder);
 		const baseDir = target.base ? path.join(runDir, "base", `${info.name} before the change`) : undefined;
 		await acquire();
@@ -631,7 +462,7 @@ export function createBlueprints(deps: BlueprintDeps): Blueprints {
 			);
 			await progress(run, "Saving the map");
 			if (run.cancelled) throw new Cancelled();
-			await store.writeMap(map);
+			await store.writeDoc(map);
 			await update(run, {
 				status: "ready",
 				progress: undefined,
@@ -689,7 +520,7 @@ export function createBlueprints(deps: BlueprintDeps): Blueprints {
 			const checks = maps.filter(map => map.status === "ready");
 			let next = 0;
 			await Promise.all(
-				Array.from({ length: Math.min(EXCERPT_CONCURRENCY, checks.length) }, async () => {
+				Array.from({ length: Math.min(STALE_CHECK_CONCURRENCY, checks.length) }, async () => {
 					while (next < checks.length) {
 						const map = checks[next++]!;
 						if (await isStale(map.repoRoot, map.head).catch(() => false)) stale.add(map.id);
@@ -702,13 +533,13 @@ export function createBlueprints(deps: BlueprintDeps): Blueprints {
 		},
 
 		async create(request) {
-			const parsed = parseCreate(request);
+			const parsed = parseCreate(request, store.checkId);
 			const info = await repoInfo(parsed.cwd);
 			let previous: Blueprint | undefined;
 			let ref = parsed.ref;
 			let base = parsed.base;
 			if (parsed.refresh !== undefined) {
-				const earlier = await store.readMap(parsed.refresh);
+				const earlier = await store.readDoc(parsed.refresh);
 				if (!earlier) throw new Error("There is no finished map to refresh.");
 				if (earlier.repo.root !== info.root) throw new Error("That map belongs to a different repository.");
 				previous = earlier;
@@ -718,7 +549,7 @@ export function createBlueprints(deps: BlueprintDeps): Blueprints {
 			const target = await resolveTarget(info.root, { ref, base });
 			if (previous && previous.head.commit === target.head.commit && previous.base?.commit === target.base?.commit)
 				throw new Error("The map is already up to date with that commit.");
-			const id = newBlueprintId();
+			const id = store.newId();
 			await holdCommit(info.root, id, "head", target.head.commit);
 			if (target.base) await holdCommit(info.root, id, "base", target.base.commit);
 			await store.put({
@@ -750,58 +581,23 @@ export function createBlueprints(deps: BlueprintDeps): Blueprints {
 		},
 
 		async get(id) {
-			const summary = store.get(checkBlueprintId(id));
+			const summary = store.get(store.checkId(id));
 			if (!summary) throw new Error("There is no such map.");
 			if (summary.status === "running") throw new Error("The map is still being made.");
 			if (summary.status === "failed") throw new Error(`The map failed: ${summary.error ?? "unknown error"}`);
-			const map = await store.readMap(id);
+			const map = await store.readDoc(id);
 			if (!map) throw new Error("The map file is missing.");
 			return map;
 		},
 
 		async excerpt(id, refs) {
-			if (refs.length > MAX_EXCERPT_REFS) throw new Error("too many references");
-			const map = await store.readMap(checkBlueprintId(id));
+			const map = await store.readDoc(store.checkId(id));
 			if (!map) throw new Error("There is no such map.");
-			const files = new Map<string, Promise<string[] | null>>();
-			const read = (commit: string, file: string): Promise<string[] | null> => {
-				const key = `${commit}\0${file}`;
-				let cached = files.get(key);
-				if (!cached) {
-					cached = readBlob(map.repo.root, commit, file).then(text => (text === null ? null : splitLines(text)));
-					files.set(key, cached);
-				}
-				return cached;
-			};
-			const wanted = refs.map(ref => {
-				const file = normalizeRepoPath(ref?.path);
-				const side: Side = ref?.side === "base" ? "base" : "head";
-				const commit = side === "base" ? map.base?.commit : map.head.commit;
-				const line = typeof ref?.line === "number" && Number.isSafeInteger(ref.line) ? ref.line : 0;
-				return file === undefined || commit === undefined ? null : { file, side, commit, line };
-			});
-			// Warm the cache a few files at a time; the answers below then only slice.
-			const unique = [...new Map(wanted.flatMap(w => (w ? [[`${w.commit}\0${w.file}`, w] as const] : []))).values()];
-			let next = 0;
-			await Promise.all(
-				Array.from({ length: Math.min(EXCERPT_CONCURRENCY, unique.length) }, async () => {
-					while (next < unique.length) {
-						const item = unique[next++]!;
-						await read(item.commit, item.file);
-					}
-				}),
-			);
-			return await Promise.all(
-				wanted.map(async w => {
-					if (w === null) return null;
-					const lines = await read(w.commit, w.file);
-					return lines === null ? null : excerptOf(lines, { path: w.file, line: w.line }, w.side, w.commit);
-				}),
-			);
+			return await readExcerpts(map.repo.root, { head: map.head.commit, base: map.base?.commit }, refs);
 		},
 
 		async remove(id) {
-			checkBlueprintId(id);
+			store.checkId(id);
 			const summary = store.get(id);
 			if (!summary) throw new Error("There is no such map.");
 			const run = runs.get(id);

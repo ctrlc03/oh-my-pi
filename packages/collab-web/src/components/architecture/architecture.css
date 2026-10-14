@@ -1044,6 +1044,11 @@
 	border-radius: var(--radius);
 }
 
+/* A few lines: the cited line and its neighbours, on a screen too narrow for the code beside the question. */
+.ar-code.ar-code-compact {
+	max-height: calc(8 * 1.5em + 16px);
+}
+
 .ar-code-gutter {
 	position: sticky;
 	left: 0;

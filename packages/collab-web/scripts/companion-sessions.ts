@@ -208,6 +208,42 @@ export async function readSessionTail(sessionsDir: string, sessionId: string): P
 	}
 }
 
+/** The cost in USD the assistant messages of a session file report (`message.usage.cost.total`), or undefined without any. */
+export function costOfSessionText(text: string): number | undefined {
+	let total = 0;
+	let seen = false;
+	for (const line of text.split("\n")) {
+		if (!line.includes('"cost"')) continue;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		const message = isRecord(parsed) ? messageOf(parsed) : null;
+		const cost =
+			message && isRecord(message.usage) && isRecord(message.usage.cost) ? message.usage.cost.total : undefined;
+		if (typeof cost === "number" && Number.isFinite(cost)) {
+			total += cost;
+			seen = true;
+		}
+	}
+	return seen ? total : undefined;
+}
+
+/**
+ * What a session has cost so far, read from its file. The stats database that session overviews read lags a new
+ * session by up to a minute, so a read-only agent's cost is taken from the file it just wrote.
+ */
+export async function sessionFileCost(sessionsDir: string, sessionId: string): Promise<number | undefined> {
+	try {
+		const file = await findSessionFile(sessionsDir, sessionId);
+		return file ? costOfSessionText(await Bun.file(file).text()) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export interface SessionHead {
 	id: string;
 	cwd: string;

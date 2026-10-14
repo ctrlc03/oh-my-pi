@@ -10,7 +10,7 @@ import type { Codemap, FlowNode } from "@oh-my-pi/pi-coding-agent/codemap/index"
 import type { BlueprintChange } from "@oh-my-pi/pi-wire/blueprint";
 import type { ChangedFile, FileHunks } from "./companion-blueprint-git";
 import type { IndexCall, IndexEdge, IndexFile, IndexSource, IndexSymbol, SymbolRef } from "./companion-blueprint-index";
-import type { Side } from "./companion-blueprint-verify";
+import type { Side } from "./companion-citations";
 
 /** Largest source file read for citations. */
 const MAX_FILE_BYTES = 2 * 1024 * 1024;

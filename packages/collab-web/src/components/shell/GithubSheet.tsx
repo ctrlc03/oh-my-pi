@@ -8,6 +8,7 @@ import {
 	ExternalLink,
 	GitMerge,
 	GitPullRequest,
+	GraduationCap,
 	GitPullRequestClosed,
 	GitPullRequestDraft,
 	LoaderCircle,
@@ -51,6 +52,8 @@ export interface GithubSheetProps {
 	canFixIt?: boolean;
 	/** Start an architecture map of a pull request; null unless the paired computer can make maps. */
 	onMapPr?: ((pr: { number: number; title: string }) => void) | null;
+	/** Start a quiz on a pull request; null unless the paired computer can write quizzes. */
+	onQuizPr?: ((pr: { number: number; title: string }) => void) | null;
 	onClose(): void;
 }
 
@@ -93,6 +96,7 @@ export function GithubSheet({
 	sandboxed,
 	canFixIt,
 	onMapPr,
+	onQuizPr,
 	onClose,
 }: GithubSheetProps): ReactNode {
 	const [kind, setKind] = useState<GithubKind>("issue");
@@ -131,6 +135,7 @@ export function GithubSheet({
 					sandboxed={sandboxed === true}
 					canFixIt={canFixIt === true}
 					onMapPr={onMapPr ?? null}
+					onQuizPr={onQuizPr ?? null}
 					onClose={onClose}
 				/>
 			)}
@@ -254,6 +259,7 @@ interface ItemDetailProps {
 	sandboxed: boolean;
 	canFixIt: boolean;
 	onMapPr: ((pr: { number: number; title: string }) => void) | null;
+	onQuizPr: ((pr: { number: number; title: string }) => void) | null;
 	onClose(): void;
 }
 
@@ -267,6 +273,7 @@ function ItemDetail({
 	sandboxed,
 	canFixIt,
 	onMapPr,
+	onQuizPr,
 	onClose,
 }: ItemDetailProps): ReactNode {
 	const load = useCallback(
@@ -357,6 +364,15 @@ function ItemDetail({
 							onClick={() => onMapPr({ number: head.number, title: head.title })}
 						>
 							<Boxes size={14} /> Map this PR
+						</button>
+					)}
+					{item.kind === "pr" && onQuizPr !== null && (
+						<button
+							type="button"
+							className="sh-btn"
+							onClick={() => onQuizPr({ number: head.number, title: head.title })}
+						>
+							<GraduationCap size={14} /> Quiz me
 						</button>
 					)}
 					{head.url && (

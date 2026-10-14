@@ -15,6 +15,7 @@
  *
  * A writer's prompt `approve [command]` raises a tool-approval ask with the always-allow choices (feature
  * `approval-grants`, see mock-approvals.ts); `MOCK_GUESTS_SAVE_APPROVALS=1` lets guests save project rules.
+ * The prompt `ask` raises a multi-select question with described choices and a last "Next →" choice.
  *
  * `--agent <id>` (`claude`, `codex`, `cursor`, `grok`, `opencode`, `custom:<slug>`) presents the session as a vendor
  * agent's, as a foreign host does: the welcome names the agent and offers the permission mode (feature `permission-mode`,
@@ -948,6 +949,54 @@ function isReplaying(): boolean {
 	return replayTimer !== null || replayQueue.length > 0;
 }
 
+/** The multi-select question a writer's prompt `ask` raises, shaped like omp's `ask` tool: long described choices, then "Next →". */
+const MOCK_ASK_OPTIONS = [
+	{ label: "Commit", description: "Commit in the clone and fast-forward the main checkout." },
+	{ label: "Push the branch", description: "Pages redeploys with the new screens once the push lands." },
+	{
+		label: "Restart the companion",
+		description: "This computer's companion picks up the change; the app reconnects.",
+	},
+	{ label: "Release", description: "Colleagues get it through `omp update` once the release workflow finishes." },
+	{ label: "Clean up", description: "Remove the clone and the screenshots folder after shipping." },
+];
+const MOCK_ASK_NEXT = "Next →";
+let mockAsk: { reqId: number; checked: Set<number> } | undefined;
+
+function sendMockAsk(): void {
+	if (!mockAsk) return;
+	room.sendWriters({
+		t: "ui-request",
+		request: {
+			kind: "select",
+			reqId: mockAsk.reqId,
+			title: "The feature is ready and tested on this computer with a stand-in model. Which of these should happen next? Pick any, then Next.",
+			options: [...MOCK_ASK_OPTIONS, MOCK_ASK_NEXT],
+			selectionMarker: "checkbox",
+			checkedIndices: [...mockAsk.checked],
+		},
+	});
+}
+
+/** Toggles a choice of the `ask` question, or ends it on "Next →"; false when `reqId` is not that question. */
+function answerMockAsk(reqId: number, value: string | undefined): boolean {
+	if (mockAsk?.reqId !== reqId) return false;
+	const index = MOCK_ASK_OPTIONS.findIndex(option => option.label === value);
+	if (index === -1) {
+		const picked = [...mockAsk.checked].map(i => MOCK_ASK_OPTIONS[i]!.label);
+		room.sendWriters({ t: "ui-request-end", reqId });
+		mockAsk = undefined;
+		notice(
+			"info",
+			value === MOCK_ASK_NEXT ? `mock: picked ${picked.join(", ") || "nothing"}` : "mock: ask cancelled",
+		);
+		return true;
+	}
+	if (!mockAsk.checked.delete(index)) mockAsk.checked.add(index);
+	sendMockAsk();
+	return true;
+}
+
 function handlePrompt(
 	text: string,
 	images: ImageContent[] | undefined,
@@ -959,6 +1008,11 @@ function handlePrompt(
 ): void {
 	if (refuseReadOnly(fromPeer)) return;
 	if (mockApprovals.prompt(text)) return;
+	if (text.trim().toLowerCase() === "ask") {
+		mockAsk = { reqId: 9500, checked: new Set() };
+		sendMockAsk();
+		return;
+	}
 	const limitedNow = mockLimits.limited();
 	if (limitedNow !== undefined) {
 		notice("error", `usage limit reached on ${limitedNow.provider}: switch model or wait for the reset`);
@@ -1051,7 +1105,8 @@ function handleFrame(frame: Exclude<GuestFrame, HelloFrame>, peer: RoomPeer): vo
 			handlePrompt(frame.text, frame.images, frame.deliver, fromPeer, frame.model, frame.thinking, frame.mentions);
 			break;
 		case "ui-response":
-			if (!refuseReadOnly(fromPeer)) mockApprovals.answer(frame.reqId, frame.value);
+			if (!refuseReadOnly(fromPeer) && !answerMockAsk(frame.reqId, frame.value))
+				mockApprovals.answer(frame.reqId, frame.value);
 			break;
 		case "abort":
 			handleAbort(fromPeer);

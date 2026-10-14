@@ -1122,11 +1122,27 @@
 	}
 }
 
+/* The question and its choices scroll inside the panel: a long ask (descriptions, a "Next →" or "Done selecting"
+ * choice last) must not push its last choices or the actions past the bottom of a phone screen. */
 .sh-composer-ask {
-	display: grid;
+	display: flex;
+	flex-direction: column;
 	gap: 10px;
+	max-height: calc((var(--viewport-height, var(--view-h)) - var(--topbar-h) - var(--safe-top)) * 0.8);
 	padding-top: 12px;
 	border-top: 1px solid var(--border);
+}
+
+.sh-ask-body {
+	display: grid;
+	gap: 10px;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.sh-composer-ask > :not(.sh-ask-body) {
+	flex: none;
 }
 
 .sh-ask-title {

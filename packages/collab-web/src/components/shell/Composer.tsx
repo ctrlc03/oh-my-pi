@@ -567,44 +567,52 @@ export const Composer = memo(function Composer({
 		return (
 			<div className="sh-composer sh-composer-ask">
 				{handsFree.status}
-				<AskTitle title={uiRequest.title} />
-				{uiRequest.kind === "select" && approvalGrants && uiRequest.approval ? (
-					<ApprovalChoices
-						approval={uiRequest.approval}
-						onChoose={label => client.sendUiResponse(uiRequest.reqId, label)}
-					/>
-				) : uiRequest.kind === "select" ? (
-					<div className="sh-ask-options">
-						{uiRequest.options.map((option, index) => {
-							const label = typeof option === "string" ? option : option.label;
-							const checked = uiRequest.checkedIndices?.includes(index) ?? false;
-							return (
-								<button
-									key={`${uiRequest.reqId}-${index}-${label}`}
-									type="button"
-									className={`sh-ask-option${checked ? " sh-ask-option-checked" : ""}`}
-									onClick={() => client.sendUiResponse(uiRequest.reqId, label)}
-								>
-									<span className="sh-ask-option-marker">
-										{uiRequest.selectionMarker === "checkbox" ? (checked ? "☑" : "☐") : checked ? "◉" : "○"}
-									</span>
-									<span className="sh-ask-option-copy">
-										<span className="sh-ask-option-label">{label}</span>
-										{typeof option !== "string" && option.description && (
-											<span className="sh-ask-option-description">{option.description}</span>
-										)}
-									</span>
-								</button>
-							);
-						})}
-					</div>
-				) : (
-					<AskEditor
-						key={uiRequest.reqId}
-						prefill={uiRequest.prefill}
-						onSubmit={value => client.sendUiResponse(uiRequest.reqId, value)}
-					/>
-				)}
+				<div className="sh-ask-body">
+					<AskTitle title={uiRequest.title} />
+					{uiRequest.kind === "select" && approvalGrants && uiRequest.approval ? (
+						<ApprovalChoices
+							approval={uiRequest.approval}
+							onChoose={label => client.sendUiResponse(uiRequest.reqId, label)}
+						/>
+					) : uiRequest.kind === "select" ? (
+						<div className="sh-ask-options">
+							{uiRequest.options.map((option, index) => {
+								const label = typeof option === "string" ? option : option.label;
+								const checked = uiRequest.checkedIndices?.includes(index) ?? false;
+								return (
+									<button
+										key={`${uiRequest.reqId}-${index}-${label}`}
+										type="button"
+										className={`sh-ask-option${checked ? " sh-ask-option-checked" : ""}`}
+										onClick={() => client.sendUiResponse(uiRequest.reqId, label)}
+									>
+										<span className="sh-ask-option-marker">
+											{uiRequest.selectionMarker === "checkbox"
+												? checked
+													? "☑"
+													: "☐"
+												: checked
+													? "◉"
+													: "○"}
+										</span>
+										<span className="sh-ask-option-copy">
+											<span className="sh-ask-option-label">{label}</span>
+											{typeof option !== "string" && option.description && (
+												<span className="sh-ask-option-description">{option.description}</span>
+											)}
+										</span>
+									</button>
+								);
+							})}
+						</div>
+					) : (
+						<AskEditor
+							key={uiRequest.reqId}
+							prefill={uiRequest.prefill}
+							onSubmit={value => client.sendUiResponse(uiRequest.reqId, value)}
+						/>
+					)}
+				</div>
 				<div className="sh-composer-actions sh-ask-actions">
 					<button type="button" className="sh-btn" onClick={() => client.sendUiResponse(uiRequest.reqId)}>
 						Cancel

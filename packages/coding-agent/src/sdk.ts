@@ -2390,6 +2390,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			setWorkPoolYieldItems: items => session.setWorkPoolYieldItems(items),
 			getCheckpointState: () => session.getCheckpointState(),
 			getPrWatch: () => session.prWatch,
+			getPersonal: () => session?.personal,
 			setCheckpointState: state => session.setCheckpointState(state ?? undefined),
 			getLastCompletedRewind: () => session.getLastCompletedRewind(),
 			getToolChoiceQueue: () => session.toolChoiceQueue,

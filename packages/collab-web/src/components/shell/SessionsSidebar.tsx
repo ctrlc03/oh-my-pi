@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useId, useState } from "react";
 import { type ComputerHandle, stateWord } from "../../lib/computers";
 import type { CompanionHost, CompanionIdleSession, PairingLink, SessionOverview } from "../../lib/companion";
+import { withoutPersonal } from "../../lib/personal";
 import { DEVICE_ORG } from "../../lib/org-storage";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
 import { endedSettledKeys } from "../../lib/session-org";
@@ -17,6 +18,7 @@ import { useOpenElsewhere } from "./OpenElsewhere";
 import { OrgSessions } from "./OrgSessions";
 import { SchedulesEntry } from "./SchedulesSheet";
 import { StartSessionSheet } from "./StartSessionSheet";
+import { PersonalSlot } from "./PersonalEntry";
 
 export interface SessionsSidebarProps {
 	/** Every paired computer, live or not. */
@@ -181,10 +183,12 @@ function ComputerGroup({
 			{state !== null && <span className="sh-group-state">{state}</span>}
 		</>
 	);
+	// The Personal agent's live session is pinned above the sessions (PersonalSlot), not listed among them.
+	const listed = withoutPersonal(snap.hosts);
 	const status = (
 		<>
 			{live && <PowerNote power={snap.power} />}
-			{snap.hosts.length === 0 && snap.idle.length === 0 && (
+			{listed.length === 0 && snap.idle.length === 0 && (
 				<div className="sh-companion-empty">
 					{snap.phase === "unpaired"
 						? snap.error
@@ -200,11 +204,15 @@ function ComputerGroup({
 	const shown = error ?? computer.error;
 	const sessions = (
 		<>
-			{client && live && (
-				<FanoutGroups hosts={snap.hosts} client={client} onOpen={id => onOpenHost(computer.id, id)} />
-			)}
+			<PersonalSlot
+				computer={computer}
+				grouped={grouped}
+				currentSessionId={currentSessionId}
+				onOpenHost={onOpenHost}
+			/>
+			{client && live && <FanoutGroups hosts={listed} client={client} onOpen={id => onOpenHost(computer.id, id)} />}
 			<OrgSessions
-				hosts={snap.hosts}
+				hosts={listed}
 				idle={snap.idle}
 				rooms={rooms}
 				org={org}

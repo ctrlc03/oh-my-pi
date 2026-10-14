@@ -175,6 +175,11 @@ export interface SessionOrgOptions {
 	 */
 	endSession(session: OrgSession, stillWanted: () => boolean): Promise<boolean>;
 	onError(err: unknown): void;
+	/**
+	 * Sessions the organiser leaves alone: never auto-settled, settled from a device, ended on settle, or tracked. The
+	 * Personal agent's live session (the companion ends it only through its own control). Absent: none.
+	 */
+	exempt?(sessionId: string): boolean;
 }
 
 /** A session that went into settled: `at` is the time of the settled entry. */
@@ -206,8 +211,17 @@ export function createSessionOrg(options: SessionOrgOptions): SessionOrg {
 		return saving;
 	};
 
+	/** `doc` without the entries of exempt sessions: the Personal agent's session is never pinned, snoozed or settled. */
+	const withoutExempt = (doc: OrgDoc): OrgDoc => {
+		const skip = options.exempt;
+		if (skip === undefined) return doc;
+		const kept = Object.entries(doc.entries).filter(([sessionId]) => !skip(sessionId));
+		return kept.length === Object.keys(doc.entries).length ? doc : { ...doc, entries: Object.fromEntries(kept) };
+	};
+
 	/** Replace the document; a real change bumps the revision and is persisted, then new settles are reported (or, with the option on, queued to be ended first). */
-	const adopt = async (doc: OrgDoc): Promise<boolean> => {
+	const adopt = async (incoming: OrgDoc): Promise<boolean> => {
+		const doc = withoutExempt(incoming);
 		if (sameOrg(doc, file.doc)) return false;
 		const { handled, events } = settleTransitions(doc, file.settled);
 		const queue = doc.settings.endOnSettle === true;
@@ -240,6 +254,10 @@ export function createSessionOrg(options: SessionOrgOptions): SessionOrg {
 		try {
 			const reported: SettledSession[] = [];
 			for (const [sessionId, at] of Object.entries(file.ending)) {
+				if (options.exempt?.(sessionId) === true) {
+					await release(sessionId, at);
+					continue;
+				}
 				const entry = Object.hasOwn(file.doc.entries, sessionId) ? file.doc.entries[sessionId] : undefined;
 				if (entry?.status !== "settled" || entry.at !== at) {
 					await release(sessionId, at);
@@ -328,7 +346,8 @@ export function createSessionOrg(options: SessionOrgOptions): SessionOrg {
 			await adopt(pruneOrg(mergeOrg(file.doc, remote), now));
 			return { doc: file.doc, rev: file.rev };
 		},
-		async tick(sessions) {
+		async tick(listed) {
+			const sessions = listed.filter(s => options.exempt?.(s.sessionId) !== true);
 			const now = options.now();
 			const activityChanged = observe(sessions, now);
 			const idle = sessions.map(s => ({

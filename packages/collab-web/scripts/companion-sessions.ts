@@ -163,6 +163,29 @@ export function lastAssistantSummary(entries: Entry[]): string | null {
 	return lastAssistantTurn(entries)?.summary ?? null;
 }
 
+/** Longest handoff note read back from a session. */
+const MAX_REPLY_CHARS = 8_000;
+
+/**
+ * The full text of the latest assistant reply written at or after `since` (ms), or null when there is none yet. For a
+ * reply that has to be read whole (the Personal agent's handoff note), where {@link lastAssistantSummary} cuts it short.
+ */
+export function assistantReplySince(entries: Entry[], since: number): string | null {
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const message = messageOf(entries[i]!);
+		if (message?.role !== "assistant") continue;
+		const at = timeOf(entries[i]!);
+		if (at === null || at < since) return null;
+		const text = blocksOf(message)
+			.filter(b => b.type === "text" && typeof b.text === "string")
+			.map(b => b.text as string)
+			.join("\n")
+			.trim();
+		if (text !== "") return text.slice(0, MAX_REPLY_CHARS);
+	}
+	return null;
+}
+
 /**
  * Where vendor agent sessions keep their transcripts, beside omp's `sessionsDir` (`<config>/agent/sessions`): one flat file per
  * session, `<sessionId>.jsonl`, in omp's entry schema. Never under `sessionsDir`, so omp's own resume does not list them.
@@ -174,23 +197,32 @@ export function foreignTranscriptsDir(sessionsDir: string): string {
 /** Session file path per session id; stable once a session exists. */
 const sessionFiles = new Map<string, string>();
 
-/** The file of an omp session, or of a vendor agent session (see {@link foreignTranscriptsDir}). */
-export async function findSessionFile(sessionsDir: string, sessionId: string): Promise<string | null> {
+/**
+ * The file of an omp session, or of a vendor agent session (see {@link foreignTranscriptsDir}). `sessionsDir` may be a
+ * list (the Personal profile keeps its sessions in a folder of its own): the first folder that holds the session wins.
+ */
+export async function findSessionFile(
+	sessionsDir: string | readonly string[],
+	sessionId: string,
+): Promise<string | null> {
 	if (!SAFE_ID_RE.test(sessionId)) return null;
 	const cached = sessionFiles.get(sessionId);
 	if (cached && (await Bun.file(cached).exists())) return cached;
 	sessionFiles.delete(sessionId);
-	const glob = new Bun.Glob(`*/*_${sessionId}.jsonl`);
-	try {
-		for await (const file of glob.scan({ cwd: sessionsDir, absolute: true })) {
-			sessionFiles.set(sessionId, file);
-			return file;
+	const dirs = typeof sessionsDir === "string" ? [sessionsDir] : sessionsDir;
+	for (const dir of dirs) {
+		const glob = new Bun.Glob(`*/*_${sessionId}.jsonl`);
+		try {
+			for await (const file of glob.scan({ cwd: dir, absolute: true })) {
+				sessionFiles.set(sessionId, file);
+				return file;
+			}
+		} catch (err) {
+			// No sessions folder yet: omp never ran here, but vendor agent sessions may exist.
+			if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
 		}
-	} catch (err) {
-		// No sessions folder yet: omp never ran here, but vendor agent sessions may exist.
-		if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
 	}
-	const foreign = path.join(foreignTranscriptsDir(sessionsDir), `${sessionId}.jsonl`);
+	const foreign = path.join(foreignTranscriptsDir(dirs[0]!), `${sessionId}.jsonl`);
 	if (await Bun.file(foreign).exists()) {
 		sessionFiles.set(sessionId, foreign);
 		return foreign;
@@ -199,7 +231,7 @@ export async function findSessionFile(sessionsDir: string, sessionId: string): P
 }
 
 /** Entries from the tail of a session's file, or [] when it cannot be found or read. */
-export async function readSessionTail(sessionsDir: string, sessionId: string): Promise<Entry[]> {
+export async function readSessionTail(sessionsDir: string | readonly string[], sessionId: string): Promise<Entry[]> {
 	try {
 		const file = await findSessionFile(sessionsDir, sessionId);
 		return file ? await readTail(file) : [];

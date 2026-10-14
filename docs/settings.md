@@ -662,8 +662,30 @@ A prefixed wildcard such as `openrouter/google/*` can be used as a chain key or 
 | -------------------- | ------ | ------- | ----------- |
 | `session.maxCostUsd` | number | `0`     | Hard per-session cost cap in USD; `0` means no cap. |
 | `session.maxTokens`  | number | `0`     | Hard per-session token cap; `0` means no cap. Counts input, output, and cache-write tokens (cache reads excluded, as in `/goal` budgets). |
+| `session.spendLimits.dayUsd` | number | `0` | Rolling spend limit in USD over the local calendar day (midnight to midnight), counted across every session of the profile, not one session; `0` means no limit. Active when set above `0` or when `personal.enabled`. |
+| `session.spendLimits.monthUsd` | number | `0` | As `session.spendLimits.dayUsd`, over the local calendar month. |
 
 Both are off by default and have no settings-panel entry. Spend is the session's cumulative usage across every entry in the session — all branches, compacted history, and `task` subagents (advisor and compaction side calls are not counted) — so it never drops on compaction, `/undo`, `/tree`, or resume. When either limit is reached the current turn ends at the next safe point — the turn that crossed the cap finishes its tool calls, and no further model call starts — and the session then refuses new prompts with a clear message. The TUI warns at 80% and shows a notice at the cap. Headless `-p` runs print the notice on stderr and exit with status `3` (`1` stays "failed", `2` "usage"). `--max-cost <usd>` and `--max-tokens <n>` (accepts `200k`, `1.5m`) override these for one run, and `/budget [<usd>|off]` / `/budget tokens <n|off>` raise or clear the cap for the current session without persisting; `/budget` alone shows spend against the cap. `/budget` is separate from `/goal budget`, which bounds one goal's tokens. Subagent sessions do not enforce the cap themselves; their spend counts toward the parent once the `task` call returns. Collab hosts advertise feature `spend-cap` and include `state.spend` while a cap is set.
+
+### Rolling spend limits
+
+`session.spendLimits.dayUsd` and `.monthUsd` count spend across every session of the profile: each session appends what a turn cost, one JSON line, to `<agent dir>/spend-ledger.jsonl`, and the day and month windows are summed from that file on every check, so concurrent sessions and the companion's headless runs all count. At a limit the session ends its run at the next safe point (as for `session.maxCostUsd`), refuses new prompts with a message that names the window and when it ends, and, in a Personal session, leaves queued events in the inbox; the cap lifts by itself when the window rolls over. The windows are local time. With neither limit set and `personal.enabled` off, nothing is read or written. A headless `-p` run exits with status `3`, as for the per-session cap.
+
+### Personal agent
+
+Declared by the Personal agent (see [Personal agent](./personal-agent.md)); registered, hidden from the settings panel (the app is the editing surface), and written to the personal profile's `config.yml` by the companion. With `personal.enabled` off (the default) none of them has any effect.
+
+| Setting | Type | Default | Description |
+| ------- | ---- | ------- | ----------- |
+| `personal.enabled` | boolean | `false` | The session is a Personal session: `notify_owner`, the event inbox and heartbeat, the per-origin trust rules, the refusal of `/collab` share links and the ledger for the rolling spend limits are on. |
+| `personal.runKind` | enum | `live` | `live` is the long-lived session; `review` is the nightly headless run (no inbox, no heartbeat; `notify_owner` may write the day's digest). Set per launch. |
+| `personal.notifyOwner.maxPerHour` | number | `6` | `notify_owner` `info` and `question` calls per rolling hour; `0` means unlimited. |
+| `personal.notifyOwner.maxOpenQuestions` | number | `5` | Questions the session may have unanswered at once; `0` means unlimited. |
+| `personal.events.maxPerSourcePerHour` | number | `4` | Turns one event source may start per rolling hour (answers, About-you updates, rollovers and controls do not count); `0` means unlimited. An event over a limit is dropped with a `rate-limited` receipt. |
+| `personal.events.maxPerHour` | number | `12` | Turns all event sources together may start per rolling hour; `0` means unlimited. |
+| `personal.events.pollSeconds` | number | `5` | Seconds between looks at the event inbox while idle (it is also read when a turn ends); minimum `1`. |
+| `personal.externalTurns.policy` | enum | `always-ask` | What a turn started by outside content may do: `always-ask` asks the owner for everything that is not a plain read and refuses `memory_edit` and `schedule`; `read-only` also refuses every call above the read tier; `none` adds no restriction. |
+| `personal.allowShareLinks` | boolean | `false` | Whether `/collab` may create share links, and whether the registry publishes a view link, for this session. |
 
 ### Tools and approvals
 
@@ -896,6 +918,12 @@ memory:
 | `compaction.keepRecentTokens` | number  | `20000`                                  | Recent-history token budget for summary compaction.                                                                                                                                                                                                           |
 | `compaction.autoContinue`     | boolean | `true`                                   | Continue automatically after compaction.                                                                                                                                                                                                  |
 | `memory.backend`              | enum    | `off`                                    | `off`, `local`, `hindsight`, `mnemopi`. Each backend has its own `hindsight.*` / `mnemopi.*` / `memories.*` tuning keys.                                                                                                                  |
+| `mnemopi.retention` | enum | `default` | `default` trims working memory and degrades old episodic rows; `permanent` never deletes: `forget` becomes `invalidate`, `/memory clear` is refused. |
+| `mnemopi.provenance` | boolean | `false` | Stamp rows with who wrote them (owner `TRUSTED`, agent `DERIVED`, external `UNTRUSTED`), drop guest turns, keep `UNTRUSTED` rows out of automatic recall, retain collab owner prompts. |
+| `mnemopi.recallEveryTurn` | boolean | `false` | Recall before every prompt after the first and deliver it as a hidden message (the system prompt stays unchanged); pinned memories ride along. |
+| `mnemopi.recallEveryTurnTokenLimit` | number | `1500` | Token budget of one per-turn recall delivery. |
+| `mnemopi.pinnedTokenLimit` | number | `800` | Token budget of owner-pinned memories delivered each turn, oldest pin first; `0` disables. |
+| `mnemopi.consolidateIntervalMinutes` | number | `0` | Minutes between consolidation runs while a session lives; `0` = only at session end. |
 | `autolearn.enabled`           | boolean | `false`       | Experimental: enable standing lesson-capture guidance and `manage_skill` (plus `learn` when a memory backend is active). Managed skills live under `<agent dir>/managed-skills`. |
 | `autolearn.autoContinue`      | boolean | `false`       | After an eligible primary stop, run a private capture turn (uses extra tokens). Off keeps only standing guidance; no hidden reminder is inserted into the next turn. Aborted, plan-mode, and goal-loop turns are skipped.                                                                                                           |
 | `autolearn.minToolCalls`      | number  | `5`           | Minimum completed tool calls in a primary turn before automatic capture is eligible.                                                                                                                                                                               |

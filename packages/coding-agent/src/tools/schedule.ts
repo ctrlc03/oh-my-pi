@@ -26,6 +26,7 @@ import {
 	type CompanionSchedules,
 	companionSchedules,
 } from "../schedule/companion-client";
+import { cfgPersonalEnabled } from "../personal/settings";
 import { cfgScheduleEnabled } from "../schedule/settings";
 import type { ToolSession } from ".";
 import { truncateForPrompt } from "./approval";
@@ -64,6 +65,10 @@ export interface ScheduleToolDetails {
 	schedule?: Schedule;
 	meta?: OutputMeta;
 }
+
+/** Added to the tool description in a Personal session, where a schedule comes back to the live session instead of starting a process. */
+const PERSONAL_SCHEDULE_NOTE =
+	"In this session a schedule does not start a new run: when it is due, your prompt comes back to you in this live session as an event from an agent-made schedule, which counts as outside content (its turn is restricted). Use it for reminders and checks, not for work that needs your full trust.";
 
 const NEXT_RUNS_SHOWN = 3;
 const LOCAL_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -108,6 +113,7 @@ function buildSchedule(params: Partial<ScheduleParams>, session: ToolSession): B
 			when,
 			catchUp: params.catch_up,
 			enabled: true,
+			...(cfgPersonalEnabled.get(session.settings) ? { deliverTo: "personal" as const } : {}),
 		},
 	};
 }
@@ -163,8 +169,14 @@ export class ScheduleTool implements AgentTool<typeof scheduleSchema, ScheduleTo
 		}
 		lines.push(`Next runs: ${runTimes(input.when, nextRuns(input.when, Date.now(), NEXT_RUNS_SHOWN))}`);
 		lines.push(`Clock: ${zoneOf(input.when)}`);
-		lines.push(`Folder: ${truncateForPrompt(input.cwd)}`);
-		lines.push(input.mode === "resume" ? "Session: continues this one" : "Session: a new one each run");
+		if (input.deliverTo === "personal") {
+			lines.push(
+				"Delivered to: the Personal agent's session, as an event from an agent-made schedule (treated as outside content)",
+			);
+		} else {
+			lines.push(`Folder: ${truncateForPrompt(input.cwd)}`);
+			lines.push(input.mode === "resume" ? "Session: continues this one" : "Session: a new one each run");
+		}
 		lines.push(`If missed: ${input.catchUp === "run-once" ? "run once when back" : "skip"}`);
 		if (input.maxCostUsd !== undefined) lines.push(`Spend limit per run: $${input.maxCostUsd}`);
 		lines.push(`Prompt: ${truncateForPrompt(input.prompt)}`);
@@ -182,6 +194,7 @@ export class ScheduleTool implements AgentTool<typeof scheduleSchema, ScheduleTo
 		private readonly companion: CompanionSchedules = companionSchedules(session.settings.getAgentDir()),
 	) {
 		this.description = prompt.render(scheduleDescription);
+		if (cfgPersonalEnabled.get(session.settings)) this.description += `\n\n${PERSONAL_SCHEDULE_NOTE}`;
 	}
 
 	/** Create the tool for top-level sessions when `schedule.enabled` is on. */

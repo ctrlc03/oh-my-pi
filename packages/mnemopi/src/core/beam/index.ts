@@ -27,6 +27,7 @@ import {
 	forgetWorking,
 	get,
 	getContext,
+	getPinned,
 	getGlobalWorkingStats,
 	getWorkingStats,
 	importFromDict,
@@ -93,6 +94,8 @@ function normalizeConfig(options: BeamMemoryOptions): BeamConfig {
 		// is consulted at recall time; the env vars still win over both.
 		polyphonicRecall: options.polyphonicRecall ?? configured.polyphonicRecall,
 		enhancedRecall: options.enhancedRecall ?? configured.enhancedRecall,
+		degradeEpisodic: configured.degradeEpisodic,
+		provenance: configured.provenance,
 	};
 }
 function autoMigrateAnnotations(db: Database, dbPath: string | undefined): void {
@@ -223,6 +226,11 @@ export class BeamMemory implements BeamMemoryState {
 
 	getContext(limit = 10): unknown[] {
 		return getContext(this, limit);
+	}
+
+	/** Valid memories the owner pinned, oldest pin first. */
+	getPinned(): unknown[] {
+		return getPinned(this);
 	}
 
 	invalidate(memoryId: string, replacementId: string | null = null): boolean {

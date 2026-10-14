@@ -1,6 +1,8 @@
 import { type } from "@oh-my-pi/omptype";
 import { prompt } from "@oh-my-pi/pi-utils";
 import type { AgentTool, AgentToolResult } from "@oh-my-pi/pi-agent-core";
+import type { MnemopiMemoryEditResult } from "../mnemopi/state";
+import { cfgMnemopiProvenance, cfgMnemopiRetention } from "../mnemopi/settings";
 import memoryEditDescription from "../prompts/tools/memory-edit.md" with { type: "text" };
 import { sessionMemoryToolRefs } from "../memory-backend/tool-names";
 import type { ToolSession } from ".";
@@ -24,6 +26,8 @@ export class MemoryEditTool implements AgentTool<typeof memoryEditSchema> {
 	get description(): string {
 		return prompt.render(memoryEditDescription, {
 			toolRefs: sessionMemoryToolRefs(this.session),
+			permanentRetention: cfgMnemopiRetention.get(this.session.settings) === "permanent",
+			provenanceRules: cfgMnemopiProvenance.get(this.session.settings),
 		});
 	}
 	readonly parameters = memoryEditSchema;
@@ -55,15 +59,31 @@ export class MemoryEditTool implements AgentTool<typeof memoryEditSchema> {
 			replacementId: params.replacement_id,
 		});
 		const location = result.bank ? ` in bank ${result.bank}${result.store ? ` (${result.store})` : ""}` : "";
-		const text =
-			result.status === "not_found"
-				? `Memory ${params.id} was not found${location}.`
-				: result.status === "not_editable"
-					? `Memory ${params.id} is a read-only fact${location}; it cannot be edited. Read it with memory://${params.id}.`
-					: `Memory ${params.id} ${result.status}${location}.`;
+		const text = editResultText(params, result, location);
 		return {
 			content: [{ type: "text", text }],
 			details: result,
 		};
+	}
+}
+
+/** What the agent is told about an edit: the outcome, or why the row was left as it is. */
+function editResultText(params: MemoryEditParams, result: MnemopiMemoryEditResult, location: string): string {
+	const id = params.id;
+	switch (result.status) {
+		case "not_found":
+			return `Memory ${id} was not found${location}.`;
+		case "not_editable":
+			return `Memory ${id} is a read-only fact${location}; it cannot be edited. Read it with memory://${id}.`;
+		case "protected":
+			return result.reason === "origin"
+				? `Memory ${id} was not written by you${location}: it holds the owner's words or text from outside, so it cannot be rewritten. Invalidate it and retain a corrected memory instead.`
+				: result.reason === "pinned"
+					? `Memory ${id} is pinned by the owner${location}; it stays exactly as it is. Tell the owner if it looks wrong, and leave it to them to unpin it.`
+					: `Memory ${id} was retracted by the owner${location}; leave it as it is.`;
+		default:
+			return result.kept
+				? `Memory ${id} forgotten${location}: it is retired from recall, and the row is kept (retention is permanent).`
+				: `Memory ${id} ${result.status}${location}.`;
 	}
 }

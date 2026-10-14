@@ -371,6 +371,27 @@ One device pairs with as many computers as it needs, each running its own compan
 - **Storage** (`localStorage`): `omp.collab.computers` holds the list; per-computer data (recent rooms, dismissed inbox items, the session organisation `omp.collab.session-org.<computer id>`) is keyed by computer. A device paired before there could be several moves its one pairing into the list on first launch, with its rooms, dismissed items and organisation document.
 - **The app served by the companion** adds the computers the same way. Its loopback relay serves only that computer's room; the others are reached through their own relays as before.
 
+## Personal agent
+
+An opt-in, always-on agent that remembers and acts for its owner, run by the companion on one home computer under its own `personal` profile. It is off until you set it up from Settings → *Personal agent* ([Turning it on](./personal-agent.md#turning-it-on)); with Personal never set up, the companion writes nothing for it and starts no timer.
+
+- **Capability.** The `hosts` frame carries `canPersonal` (tmux is available, so the app can offer *Set up*) and, while Personal is on, `personalRev` (the status revision); the Personal session's host row carries `personal: true`. The companion keeps that session alive on its host poll, which then runs without a device connected: it starts it when missing (resuming the profile's session), rolls it over to a fresh session daily with a handoff note, and never lists it for settling, auto-settle or end-on-settle.
+- **Requests** (`personal-*`, answered by `reqId`; writes need a paired device): `personal-status`, `-setup`, `-enable`, `-disable`, `-control` (`start`/`stop`/`restart`), `-events` (the event log, newest first, `before`/`limit`), and the settings, memory, About-you, proposal, digest, inbox and answer requests listed in [Contracts](./personal-agent.md#contracts). A write before setup answers `Set up the Personal agent first`. Every change broadcasts `personal-changed` `{ what, rev }`.
+- **Schedules.** A schedule with `deliverTo: "personal"` starts no process: when due, its prompt reaches the live session as an event (owner trust when made in the app, external when the agent made it). The companion refuses one while Personal is off.
+- **`POST /event`.** On the companion's loopback server, with the token in the profile's `collab-companion-personal-ipc.json` (a separate token from the schedule channel, 404 until Personal is on, no `Origin`, 64 KB, 30 events a minute per source): local scripts hand the agent news as an external event. `POST /personal` is the session's own channel for `notify_owner`, its hello and delivery receipts.
+- **Origin.** The host of a Personal session (`personal.enabled`) stamps `origin: "owner"` in the `details` of the `collab-prompt` messages it injects (`CollabPromptDetails.origin`, also for the resume-at-reset `continue`): only the owner's paired devices hold a write link, so every writer is the owner. A host that does not stamp it (every session without Personal) leaves `origin` out, and readers treat a missing one as `owner`. A Personal session also publishes no read-only link through the registry and `/collab` refuses to start, view or print a link (`personal.allowShareLinks` lifts this); `/collab status` omits the link, and `list` and `stop` still work.
+- **Files.** Everything is under `<config root>/profiles/personal/` (config, About you, sessions, memory, backups) and `<config root>/run/personal/` (the event file channel and the session's heartbeat). Turning it off keeps all of it.
+
+### Personal agent in the app
+
+The app offers Personal only to a computer whose `hosts` frame says `canPersonal`, and renders nothing for it (no request, no sidebar row, no Settings section) until a computer can host it or one already does. The home computer is the first one whose `personal-status` says it is set up, preferring one that is on; a second set-up computer is listed as a warning, and *Set up* is refused on another computer while a home exists. The pick is remembered on the device (`omp.collab.personal-home`) so a home that is offline shows *Home computer is offline* instead of vanishing.
+
+- **Sidebar.** On the home computer's group, above the sessions, a pinned *Personal* entry shows its run state, a badge for what waits for the owner (questions, pending proposals, unread digests), *Start* while no session is up, and a button for Settings. It opens the live Personal session's thread (the host row carrying `personal: true`), and a row with that mark is left out of the session lists, the fan-out groups and the start screen's lists, so it is never listed twice and has no settle, end, archive or drag. Other computers' groups, once there are two, say where Personal lives. Turned off, the entry is hidden.
+- **Settings → *Personal agent*.** A lazily loaded section (its code stays out of the app's first load): a setup screen (pick the home computer, an optional first About-you draft), then *Agent* (login checklist with `omp --profile personal login`, run state, start/stop/restart, spend meters, backups, nightly review, turn off/on), *Memory* (search, origin filters, retract, pin, earlier versions, export), *About you* (edit, history with diffs), *Activity* (proposals, digests, events) and *Settings* (limits, review, rollover, backups folder, sources).
+- **Inbox.** The sheet merges Personal items with the sessions that wait: open questions and pending proposals first, then newest first. A question is answered with its option chips or free text, a proposal is accepted, edited or rejected in place, a digest is read, an alert or note is dismissed. The Personal session's own "needs input" is not listed as a session; the same question arrives as a Personal item. The Inbox button's badge adds the Personal count.
+- **Routes.** Personal's push routes (`personal`, `personal/inbox`, `personal/memory`, `personal/about`, `personal/settings`) have no `:`; the service worker and the app's route parser accept them besides the usual `kind:id` form.
+- **Mock.** `scripts/mock-companion.ts --personal fresh|enabled --personal-login ready|missing` serves every `personal-*` request from memory (`scripts/mock-personal.ts`).
+
 ## Diagrams
 
 The web client draws diagrams client-side; nothing about them crosses the wire.
@@ -450,6 +471,7 @@ The relay is a small content-blind Go service. It keeps no state beyond live con
 - [`src/collab/registry.ts`](../packages/coding-agent/src/collab/registry.ts) — private local host discovery
 - [`src/collab/settings.ts`](../packages/coding-agent/src/collab/settings.ts) — `collab.*` defaults
 - [`packages/collab-web`](../packages/collab-web/) — browser guest and local development relay
+- [`packages/collab-web/scripts/companion-personal.ts`](../packages/collab-web/scripts/companion-personal.ts) — the Personal agent's runtime in the companion (keep-alive, rollover, requests), with `companion-personal-{store,profile,events,run,backup,memory,review,inbox,spend,settings,sources}.ts` beside it
 
 ## Architecture notes
 

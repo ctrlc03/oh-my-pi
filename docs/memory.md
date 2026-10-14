@@ -161,3 +161,5 @@ Recall is injected as background context, not instructions, and recalled memory 
 - `packages/coding-agent/src/memories/storage.ts` — SQLite-backed job queue and thread registry
 - `packages/coding-agent/src/prompts/memories/` — memory prompt templates
 - `packages/coding-agent/src/internal-urls/memory-protocol.ts` — `memory://` URL handler
+
+The Mnemopi backend has opt-in options for an always-on personal agent (permanent retention, per-write provenance, per-turn recall with pinned memories, periodic consolidation). They are described in `docs/mnemosyne-memory-backend.md` ("Personal-agent options") and `docs/personal-agent.md`.

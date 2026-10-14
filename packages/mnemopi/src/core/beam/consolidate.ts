@@ -28,6 +28,10 @@ type ConsolidateOptions = {
 	validUntil?: string | null;
 	scope?: string;
 	veracity?: string | null;
+	/** Provenance banks: the author and trust tier the summary keeps (default: the writer's, `STATED`). */
+	authorId?: string | null;
+	authorType?: string | null;
+	trustTier?: string | null;
 };
 
 const CONTAMINATED_VERACITY: Record<string, true> = {
@@ -500,8 +504,8 @@ export function consolidateToEpisodic(
 	beam.db.run(
 		`INSERT INTO episodic_memory
 		 (id, content, source, timestamp, session_id, importance, metadata_json, summary_of,
-		  valid_until, scope, author_id, author_type, channel_id, memory_type, veracity, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		  valid_until, scope, author_id, author_type, channel_id, memory_type, veracity, created_at, trust_tier)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			memoryId,
 			summary,
@@ -513,12 +517,13 @@ export function consolidateToEpisodic(
 			sourceWmIds.join(","),
 			options.validUntil ?? null,
 			scope,
-			beam.authorId,
-			beam.authorType,
+			options.authorId === undefined ? beam.authorId : options.authorId,
+			options.authorType === undefined ? beam.authorType : options.authorType,
 			beam.channelId,
 			"unknown",
 			veracity,
 			timestamp,
+			options.trustTier ?? "STATED",
 		],
 	);
 	extractAndStoreFacts(beam, summary, 0, memoryId);
@@ -949,6 +954,8 @@ function invalidateEpisodicVectors(beam: BeamMemoryState, memoryId: string): voi
 }
 
 export function degradeEpisodic(beam: BeamMemoryState, dryRun = false): Record<string, JsonValue> {
+	// `mnemopi.retention: permanent` opens the bank with `degradeEpisodic: false`: nothing is ever shortened.
+	if (beam.config?.degradeEpisodic === false) return { status: "skipped", tier1_to_tier2: 0, tier2_to_tier3: 0 };
 	const now = isoNow();
 	const tier2Cutoff = cutoffIso(TIER2_DAYS, 24 * 60 * 60 * 1000);
 	const tier3Cutoff = cutoffIso(TIER3_DAYS, 24 * 60 * 60 * 1000);
@@ -1076,7 +1083,7 @@ function eligibleWorkingRows(beam: BeamMemoryState, sessionId: string): Row[] {
 	return asRows(
 		beam.db
 			.query(
-				`SELECT id, COALESCE(embed_text, content) AS content, source, timestamp, importance, metadata_json, scope, valid_until, veracity
+				`SELECT id, COALESCE(embed_text, content) AS content, source, timestamp, importance, metadata_json, scope, valid_until, veracity, author_id, author_type, trust_tier
 		 FROM working_memory
 		 WHERE COALESCE(session_id, 'default') = ? AND timestamp < ? AND consolidated_at IS NULL
 		 ORDER BY timestamp ASC LIMIT ?`,
@@ -1113,17 +1120,31 @@ export function sleep(beam: BeamMemoryState, dryRun = false): SleepResult {
 		rows = rows.filter(row => claimed.has(rowValue(row, "id")));
 	}
 
+	// A provenance bank never merges rows of different authors into one summary: the summary keeps the group's
+	// author and trust tier, so an external row's text does not come back out of consolidation as the agent's own.
+	const provenance = beam.config?.provenance === true;
 	const grouped = new Map<string, Row[]>();
 	for (const row of rows) {
 		const source = rowValue(row, "source") ?? "unknown";
-		const group = grouped.get(source);
+		const key = provenance
+			? [source, rowValue(row, "author_id"), rowValue(row, "author_type"), rowValue(row, "trust_tier")].join("\0")
+			: source;
+		const group = grouped.get(key);
 		if (group) group.push(row);
-		else grouped.set(source, [row]);
+		else grouped.set(key, [row]);
 	}
 
 	const consolidatedIds: string[] = [];
 	let summariesCreated = 0;
-	for (const [source, items] of grouped) {
+	for (const items of grouped.values()) {
+		const source = rowValue(items[0], "source") ?? "unknown";
+		const author: ConsolidateOptions = provenance
+			? {
+					authorId: rowValue(items[0], "author_id"),
+					authorType: rowValue(items[0], "author_type"),
+					trustTier: rowValue(items[0], "trust_tier"),
+				}
+			: {};
 		for (const chunk of splitSleepItems(beam, source, items)) {
 			const ids = chunk.items.map(item => rowValue(item, "id")).filter((id): id is string => id !== null);
 			let scope = "session";
@@ -1143,6 +1164,7 @@ export function sleep(beam: BeamMemoryState, dryRun = false): SleepResult {
 			const summary = sleepSummary.summary;
 			if (!dryRun) {
 				consolidateToEpisodic(beam, summary, ids, "sleep_consolidation", 0.6, {
+					...author,
 					scope,
 					validUntil,
 					veracity: aggregateEpisodicVeracity(chunk.items.map(item => rowValue(item, "veracity") ?? "unknown")),

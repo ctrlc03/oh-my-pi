@@ -184,6 +184,11 @@ export const COLLAB_PROMPT_MESSAGE_TYPE = "collab-prompt";
 /** `details` shape of `custom_message` entries with `customType === "collab-prompt"`. */
 export interface CollabPromptDetails {
 	from?: string;
+	/**
+	 * Who the prompting peer is, stamped by a host that tells them apart (a Personal session stamps `owner`:
+	 * only the owner's paired devices hold a write link). Absent from hosts that do not; readers treat absent as `owner`.
+	 */
+	origin?: "owner" | "guest";
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -232,6 +232,8 @@ function matchPassage(passage: Passage, terms: readonly string[]): string | null
 export interface SessionSearchOptions {
 	/** `<config>/agent/sessions`; the transcripts of vendor agent sessions beside it (see `foreignTranscriptsDir`) are searched too. */
 	sessionsDir: string;
+	/** Further session folders searched alongside (the Personal profile's, once it exists). */
+	extraSessionsDirs?(): readonly string[];
 	budgetMs?: number;
 	maxFiles?: number;
 	maxChars?: number;
@@ -291,6 +293,11 @@ export function createSessionSearch(options: SessionSearchOptions): SessionSearc
 			const files = [
 				...(await recentSessionFiles(options.sessionsDir, MAX_LISTED_FILES)),
 				...(await sessionFilesOf(foreignTranscriptsDir(options.sessionsDir))),
+				...(
+					await Promise.all(
+						(options.extraSessionsDirs?.() ?? []).map(dir => recentSessionFiles(dir, MAX_LISTED_FILES)),
+					)
+				).flat(),
 			]
 				.sort((a, b) => b.mtime - a.mtime)
 				.slice(0, MAX_LISTED_FILES);

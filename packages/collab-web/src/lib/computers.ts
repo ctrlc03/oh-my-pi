@@ -291,6 +291,7 @@ export const FEATURES = {
 	blueprint: { can: "canBlueprint", lacks: "can't build architecture maps" },
 	quiz: { can: "canQuiz", lacks: "can't write quizzes" },
 	foreign: { can: "canForeign", lacks: "can't run other agents" },
+	personal: { can: "canPersonal", lacks: "can't host the Personal agent" },
 } as const;
 
 export type Feature = keyof typeof FEATURES;

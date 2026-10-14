@@ -16,6 +16,7 @@ const LABELS = {
 	keyboard: "Keyboard",
 	computers: "Computers",
 	devices: "Devices",
+	personal: "Personal agent",
 	about: "About & maintenance",
 } as const;
 
@@ -40,12 +41,18 @@ const NEEDS_COMPUTER: Record<SettingsSection, boolean> = {
 	keyboard: false,
 	computers: false,
 	devices: true,
+	personal: true,
 	about: false,
 };
 
-/** The sections to list: the ones that need a paired computer only while at least one is paired. */
-export function visibleSettingsSections(computer: boolean): readonly SettingsSection[] {
-	return SETTINGS_SECTIONS.filter(section => computer || !NEEDS_COMPUTER[section]);
+/**
+ * The sections to list: the ones that need a paired computer only while at least one is paired. Personal agent is opt-in:
+ * it is listed only while a computer can host it (`personal`), so an app with none of that is as it always was.
+ */
+export function visibleSettingsSections(computer: boolean, personal = false): readonly SettingsSection[] {
+	return SETTINGS_SECTIONS.filter(section =>
+		section === "personal" ? personal : computer || !NEEDS_COMPUTER[section],
+	);
 }
 
 const SECTION_KEY = "omp.collab.settings-section";

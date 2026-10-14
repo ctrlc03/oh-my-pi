@@ -52,6 +52,8 @@ import { type CheckpointState, CheckpointTool, type CompletedRewindState, Rewind
 import { ContextNotesTool, NewContextTool } from "./context-notes";
 import { DebugTool } from "./debug";
 import { cfgIdaAvailable } from "../ida/install";
+import { cfgPersonalEnabled } from "../personal/settings";
+import type { PersonalRuntime } from "../personal/runtime";
 import { cfgScheduleEnabled } from "../schedule/settings";
 import { EvalTool } from "./eval";
 import { resolveEvalBackends } from "./eval-backends";
@@ -59,6 +61,7 @@ import { GithubTool } from "./gh";
 import { GlobTool } from "./glob";
 import { GrepTool } from "./grep";
 import { IdaTool } from "./ida";
+import { NotifyOwnerTool } from "./notify-owner";
 import { ScheduleTool } from "./schedule";
 import { isIrcEnabled } from "../irc/messaging";
 import { FindTool, isFindEnabled } from "./jfind";
@@ -153,6 +156,7 @@ export * from "./memory-edit";
 export * from "./memory-recall";
 export * from "./memory-reflect";
 export * from "./memory-retain";
+export * from "./notify-owner";
 export * from "./read";
 export * from "./report-tool-issue";
 export * from "./resolve";
@@ -515,6 +519,8 @@ export interface ToolSession {
 	getCheckpointState?: () => CheckpointState | undefined;
 	/** The session's pull request watcher (`watch_pr`); absent where PR watching is not offered. */
 	getPrWatch?: () => PrWatchManager;
+	/** The session's Personal agent runtime (`notify_owner`, event inbox, turn origin); absent unless `personal.enabled`. */
+	getPersonal?: () => PersonalRuntime | undefined;
 	/** Set or clear active checkpoint state. */
 	setCheckpointState?: (state: CheckpointState | null) => void;
 	/** Get the most recent completed rewind, if this session just rewound a checkpoint. */
@@ -574,6 +580,7 @@ export const BUILTIN_TOOLS: Record<BuiltinToolName, ToolFactory> = {
 	debug: DebugTool.createIf,
 	ida: IdaTool.createIf,
 	schedule: ScheduleTool.createIf,
+	notify_owner: NotifyOwnerTool.createIf,
 	eval: s => new EvalTool(s),
 	github: GithubTool.createIf,
 	glob: s => new GlobTool(s, { rootPathAlias: true }),
@@ -761,6 +768,7 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 		if (name === "debug") return cfgDebugEnabled.get(session.settings);
 		if (name === "ida") return cfgIdaAvailable.get(session.settings);
 		if (name === "schedule") return cfgScheduleEnabled.get(session.settings) && (session.taskDepth ?? 0) === 0;
+		if (name === "notify_owner") return cfgPersonalEnabled.get(session.settings) && (session.taskDepth ?? 0) === 0;
 		if (name === "todo")
 			return (!includeYield || session.prewalkArmed === true) && cfgTodoEnabled.get(session.settings);
 		if (name === "glob") return cfgGlobEnabled.get(session.settings);

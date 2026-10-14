@@ -43,8 +43,22 @@ function optionalFlag(value: unknown, name: string): true | undefined {
 
 /** The fields every schedule carries, checked for shape only (not against the disk, the clock or the platform). */
 function parseFields(raw: unknown): ScheduleInput {
-	const input = raw as Partial<Record<keyof ScheduleInput, unknown>> | null;
-	if (typeof input !== "object" || input === null) throw new Error("invalid schedule");
+	const given = raw as Partial<Record<keyof ScheduleInput, unknown>> | null;
+	if (typeof given !== "object" || given === null) throw new Error("invalid schedule");
+	if (given.deliverTo !== undefined && given.deliverTo !== "personal") throw new Error("invalid delivery");
+	// A schedule for the Personal agent starts no process: where, how and at what cost are not part of it.
+	const input: Partial<Record<keyof ScheduleInput, unknown>> =
+		given.deliverTo === "personal"
+			? {
+					...given,
+					cwd: path.sep,
+					mode: "new",
+					sessionId: undefined,
+					worktree: undefined,
+					sandboxed: undefined,
+					maxCostUsd: undefined,
+				}
+			: given;
 	if (input.id !== undefined && (typeof input.id !== "string" || !SAFE_ID_RE.test(input.id)))
 		throw new Error("invalid schedule id");
 	if (typeof input.prompt !== "string" || input.prompt.includes("\0")) throw new Error("invalid prompt");
@@ -100,6 +114,7 @@ function parseFields(raw: unknown): ScheduleInput {
 		when: parseScheduleWhen(input.when),
 		catchUp: input.catchUp === "run-once" ? "run-once" : undefined,
 		createdBy: input.createdBy,
+		deliverTo: given.deliverTo === "personal" ? "personal" : undefined,
 		enabled: input.enabled !== false,
 	};
 }
@@ -122,15 +137,21 @@ export interface ValidateDeps {
 	now(): number;
 	sandboxAvailable: boolean;
 	checkDirectory(dir: string): Promise<void>;
+	/** The Personal agent is set up and on, on this computer: only then is a schedule for it accepted. Absent: never. */
+	personalEnabled?(): boolean;
 }
 
 /** @throws Error with a message fit for the app when `raw` is not a schedule the companion can run. */
 export async function parseScheduleInput(raw: unknown, deps: ValidateDeps): Promise<ScheduleInput> {
 	const input = parseFields(raw);
-	if (input.sandboxed && !deps.sandboxAvailable) throw new Error("sandboxed sessions need macOS sandbox-exec");
+	if (input.deliverTo === "personal") {
+		if (deps.personalEnabled?.() !== true) throw new Error("the Personal agent is not turned on on this computer");
+	} else if (input.sandboxed && !deps.sandboxAvailable) {
+		throw new Error("sandboxed sessions need macOS sandbox-exec");
+	}
 	if (input.enabled && input.when.kind === "once" && input.when.at <= deps.now())
 		throw new Error("that date and time has already passed");
-	await deps.checkDirectory(input.cwd);
+	if (input.deliverTo !== "personal") await deps.checkDirectory(input.cwd);
 	return input;
 }
 
@@ -198,7 +219,7 @@ export interface SchedulerOptions {
 	initial: Schedule[];
 	save(schedules: Schedule[]): Promise<void>;
 	/** Launch the session and resolve with its instance id once it hosts; rejects with a readable message. */
-	start(schedule: Schedule): Promise<string>;
+	start(schedule: Schedule): Promise<string | undefined>;
 	/** Whether today's spend has reached the daily limit the user set (false when none is set). Rejects when it cannot tell. */
 	spendLimitReached(): Promise<boolean>;
 	/** Re-read the session list, which is stale while no device watches; awaited before `isWorking` is asked. */
@@ -258,6 +279,8 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
 	};
 
 	const skipReason = async (schedule: Schedule): Promise<string | null> => {
+		// Delivered to the Personal agent, a firing is an event that waits for the session to be idle, and its own limits apply to it.
+		if (schedule.deliverTo === "personal") return null;
 		if (schedule.lastRun?.instanceId !== undefined) {
 			try {
 				await options.refreshSessions();
@@ -304,12 +327,13 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
 			}
 			try {
 				const instanceId = await options.start(claimed);
-				options.notify({
-					title: `Scheduled: ${claimed.title} ${caughtUp === undefined ? "started" : "started (caught up)"}`,
-					body: `Working in ${path.basename(claimed.cwd) || claimed.cwd}`,
-					instanceId,
-					tag: `schedule:${id}`,
-				});
+				if (claimed.deliverTo !== "personal")
+					options.notify({
+						title: `Scheduled: ${claimed.title} ${caughtUp === undefined ? "started" : "started (caught up)"}`,
+						body: `Working in ${path.basename(claimed.cwd) || claimed.cwd}`,
+						instanceId,
+						tag: `schedule:${id}`,
+					});
 				return (await record(id, { at: now, instanceId, missedAt: caughtUp })) ?? claimed;
 			} catch (err) {
 				const message = errorText(err);

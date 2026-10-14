@@ -14,7 +14,10 @@
 		right: auto;
 		left: calc(50% - min(430px, calc(calc(var(--view-w) * 0.5) - 12px)));
 		width: min(860px, calc(var(--view-w) - 24px));
-		height: min(680px, calc(var(--viewport-height, var(--view-h)) - max(var(--topbar-h), calc(var(--view-h) * 0.06)) - 24px));
+		height: min(
+			680px,
+			calc(var(--viewport-height, var(--view-h)) - max(var(--topbar-h), calc(var(--view-h) * 0.06)) - 24px)
+		);
 	}
 }
 

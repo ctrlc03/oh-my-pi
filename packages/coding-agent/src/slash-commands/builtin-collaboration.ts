@@ -6,6 +6,7 @@ import { CollabGuestLink } from "../collab/guest";
 import type { CollabHost } from "../collab/host";
 import { type CollabHostSnapshot, listCollabHosts } from "../collab/registry";
 import { settings } from "../config/settings";
+import { cfgPersonalAllowShareLinks, cfgPersonalEnabled } from "../personal/settings";
 import { parseExportArgs } from "../export/html/args";
 import { shareSession } from "../export/share";
 import { theme } from "@oh-my-pi/pi-tui/theme";
@@ -341,6 +342,8 @@ export const BUILTIN_COLLABORATION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpe
 			clearSubmittedText(runtime);
 			const args = command.args.trim();
 			const { verb, rest } = parseSubcommand(args);
+			// A Personal session is reachable only by the owner's paired devices: no share links from here.
+			const personalNoShare = cfgPersonalEnabled.get(ctx.settings) && !cfgPersonalAllowShareLinks.get(ctx.settings);
 			if (verb === "stop") {
 				await ctx.collabController.stop("host stopped");
 				ctx.showStatus("Collab stopped");
@@ -353,7 +356,11 @@ export const BUILTIN_COLLABORATION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpe
 						p.role === "host" ? `${p.name} (host)` : p.readOnly ? `${p.name} (view-only)` : p.name,
 					);
 					const link = host.access === "view" ? host.webViewLink : host.webLink;
-					ctx.showStatus(`Collab: ${names.join(", ")} — ${collabBrowserLink(link)}`);
+					ctx.showStatus(
+						personalNoShare
+							? `Collab: ${names.join(", ")}`
+							: `Collab: ${names.join(", ")} — ${collabBrowserLink(link)}`,
+					);
 				} else if (ctx.collabGuest) {
 					ctx.showStatus(
 						ctx.collabGuest.readOnly
@@ -422,6 +429,12 @@ export const BUILTIN_COLLABORATION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpe
 					);
 				}
 				ctx.showStatus(lines.join("\n"), { dim: false });
+				return;
+			}
+			if (personalNoShare) {
+				ctx.showError(
+					"This is a Personal session: it is not shared with guests, so /collab creates no links. Pair your devices through the companion app (set personal.allowShareLinks to change this).",
+				);
 				return;
 			}
 			if (ctx.collabGuest) {

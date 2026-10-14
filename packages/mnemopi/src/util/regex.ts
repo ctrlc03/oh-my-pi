@@ -178,6 +178,10 @@ export function ftsQueryTerms(query: string): string[] {
 	return terms;
 }
 
+export function buildFtsQuery(query: string): string {
+	return ftsQueryTerms(query).join(" OR ");
+}
+
 function isAsciiDigits(value: string): boolean {
 	for (let i = 0; i < value.length; i++) {
 		const code = value.charCodeAt(i);

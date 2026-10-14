@@ -406,7 +406,11 @@ function factsHaveScopeColumn(beam: BeamMemoryState): boolean {
 	return rows.some(row => asString(row.name) === "scope");
 }
 
-function factVisibilityWhere(beam: BeamMemoryState, tableAlias: string): { where: string; params: DbValue[] } {
+function factVisibilityWhere(
+	beam: BeamMemoryState,
+	tableAlias: string,
+	excludeAuthorTypes: readonly string[] = [],
+): { where: string; params: DbValue[] } {
 	const prefix = tableAlias.length === 0 ? "" : `${tableAlias}.`;
 	const scope = factsHaveScopeColumn(beam)
 		? `(${prefix}session_id = ? OR ${prefix}scope = 'global')`
@@ -418,7 +422,17 @@ function factVisibilityWhere(beam: BeamMemoryState, tableAlias: string): { where
 	// fts_episodes visibility predicates). Facts whose source row no longer exists stay
 	// visible: nothing contradicts them.
 	const sourceSuperseded = `NOT EXISTS (SELECT 1 FROM working_memory w WHERE w.id = ${prefix}source_msg_id AND (w.superseded_by IS NOT NULL OR (w.valid_until IS NOT NULL AND w.valid_until <= ?)))`;
-	return { where: `${scope} AND ${sourceSuperseded}`, params: [beam.sessionId, nowIso()] };
+	const params: DbValue[] = [beam.sessionId, nowIso()];
+	let where = `${scope} AND ${sourceSuperseded}`;
+	if (excludeAuthorTypes.length > 0) {
+		// A fact inherits the author of the row (or consolidated summary) it came from.
+		const marks = excludeAuthorTypes.map(() => "?").join(", ");
+		for (const table of ["working_memory", "episodic_memory"]) {
+			where += ` AND NOT EXISTS (SELECT 1 FROM ${table} x WHERE x.id = ${prefix}source_msg_id AND x.author_type IN (${marks}))`;
+			params.push(...excludeAuthorTypes);
+		}
+	}
+	return { where, params };
 }
 
 function buildWhere(
@@ -474,6 +488,13 @@ function buildWhere(
 	if (authorType !== null) {
 		clauses.push(`${prefix}author_type = ?`);
 		params.push(authorType);
+	}
+	const excluded = options.excludeAuthorTypes ?? [];
+	if (excluded.length > 0) {
+		clauses.push(
+			`(${prefix}author_type IS NULL OR ${prefix}author_type NOT IN (${excluded.map(() => "?").join(", ")}))`,
+		);
+		params.push(...excluded);
 	}
 	return { where: clauses.join(" AND "), params };
 }
@@ -1096,7 +1117,7 @@ async function linearRecallEnhanced(
 	});
 	return withLoopPhase("mnemopi.recall", () => {
 		if (options.includeFacts === true) {
-			const facts = factRecall(beam, query, factRecallLimit(topK));
+			const facts = factRecall(beam, query, factRecallLimit(topK), options.excludeAuthorTypes);
 			results.push(...facts);
 		}
 		results.sort((left, right) => (right.score ?? 0) - (left.score ?? 0));
@@ -1159,6 +1180,7 @@ async function polyphonicRecallEnhanced(
 function matchesRecallFilters(result: OrchestratedRecallResult, options: RecallOptionsInternal): boolean {
 	if (result.tier_label === "fact") return true;
 	if (options.includeWorking === false && result.tier_label === "working") return false;
+	if (options.excludeAuthorTypes?.includes(result.author_type ?? "")) return false;
 	const timestamp = result.timestamp ?? "";
 	if (options.fromDate && timestamp < `${options.fromDate}T00:00:00`) return false;
 	if (options.toDate && timestamp > `${options.toDate}T23:59:59`) return false;
@@ -1297,12 +1319,17 @@ export function formatContext(beam: BeamMemoryState, results: readonly RecallRes
 	return lines.join("\n");
 }
 
-export function factRecall(beam: BeamMemoryState, query: string, topK = 30): FactRecallResult[] {
+export function factRecall(
+	beam: BeamMemoryState,
+	query: string,
+	topK = 30,
+	excludeAuthorTypes: readonly string[] = [],
+): FactRecallResult[] {
 	if (topK <= 0 || !tableExists(beam, "facts")) return [];
 	let matched: Row[] = [];
 	if (tableExists(beam, "fts_facts")) {
 		try {
-			const visibility = factVisibilityWhere(beam, "facts");
+			const visibility = factVisibilityWhere(beam, "facts", excludeAuthorTypes);
 			matched = queryAll(
 				beam,
 				`SELECT fts_facts.rowid, fts_facts.rank
@@ -1320,7 +1347,7 @@ export function factRecall(beam: BeamMemoryState, query: string, topK = 30): Fac
 	if (matched.length === 0) {
 		const seen = new Set<number>();
 		for (const token of expandedTokens(query).slice(0, 6)) {
-			const visibility = factVisibilityWhere(beam, "");
+			const visibility = factVisibilityWhere(beam, "", excludeAuthorTypes);
 			const rows = queryAll(
 				beam,
 				`SELECT rowid
@@ -1341,7 +1368,7 @@ export function factRecall(beam: BeamMemoryState, query: string, topK = 30): Fac
 	if (matched.length === 0) return [];
 	const rowids = matched.map(row => asNumber(row.rowid)).filter(rowid => rowid > 0);
 	if (rowids.length === 0) return [];
-	const visibility = factVisibilityWhere(beam, "");
+	const visibility = factVisibilityWhere(beam, "", excludeAuthorTypes);
 	const ranks = normalizeRanks(matched, "rowid");
 	const rows = queryAll(
 		beam,

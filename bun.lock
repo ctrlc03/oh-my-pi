@@ -143,6 +143,7 @@
         "@lezer/highlight": "catalog:",
         "@oh-my-pi/omp-stats": "catalog:",
         "@oh-my-pi/pi-coding-agent": "catalog:",
+        "@oh-my-pi/pi-mnemopi": "catalog:",
         "@oh-my-pi/pi-utils": "catalog:",
         "@oh-my-pi/pi-wire": "catalog:",
         "d3-force": "catalog:",

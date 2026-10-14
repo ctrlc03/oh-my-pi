@@ -12,6 +12,7 @@
 
 import type { AssistantMessage } from "@oh-my-pi/pi-ai";
 import type { SessionEntry } from "../session/session-entries";
+import { entryTurnOrigin, type TurnOrigin } from "../mnemopi/origin";
 import { type HindsightMessage, hasSubstantiveContent } from "./content";
 
 export interface ReadonlySessionManagerLike {
@@ -59,6 +60,65 @@ export function countUserTurns(sessionManager: ReadonlySessionManagerLike): numb
 	for (const entry of sessionManager.getEntries()) {
 		if (entry.type !== "message" || entry.message.role !== "user") continue;
 		if (hasSubstantiveContent(extractUserText(entry.message))) count++;
+	}
+	return count;
+}
+
+/** A retained message tagged with the turn it belongs to; see {@link extractTurnMessages}. */
+export interface TurnMessage extends HindsightMessage {
+	/** Index of the turn: each turn-starting entry begins a new one. */
+	turn: number;
+	turnOrigin: TurnOrigin;
+}
+
+/**
+ * Text of a turn-starting entry: a user message, or a stamped `collab-prompt` / `personal-event` custom message
+ * (hidden follow-ups that {@link extractMessages} skips). Undefined for every entry that starts no turn.
+ */
+function turnStartText(entry: SessionEntry): { text: string; origin: TurnOrigin } | undefined {
+	const origin = entryTurnOrigin(entry);
+	if (!origin) return undefined;
+	if (entry.type === "message" && entry.message.role === "user")
+		return { text: extractUserText(entry.message), origin };
+	if (entry.type === "custom_message") return { text: extractUserText(entry), origin };
+	return undefined;
+}
+
+/**
+ * {@link extractMessages} for a Personal session: the same user/assistant text, plus the prompts and events that
+ * reach the session as custom messages, each message tagged with the turn it belongs to and that turn's origin.
+ * An assistant message belongs to the turn started by the nearest earlier turn-starting entry (the owner's, before
+ * any), so a retained transcript can be split per turn and stored under the right author.
+ */
+export function extractTurnMessages(sessionManager: ReadonlySessionManagerLike): TurnMessage[] {
+	const messages: TurnMessage[] = [];
+	let turn = 0;
+	let turnOrigin: TurnOrigin = { origin: "owner" };
+	for (const entry of sessionManager.getEntries()) {
+		const start = turnStartText(entry);
+		if (start) {
+			turn++;
+			turnOrigin = start.origin;
+			if (hasSubstantiveContent(start.text)) {
+				messages.push({ role: "user", content: start.text, timestamp: entry.timestamp, turn, turnOrigin });
+			}
+			continue;
+		}
+		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+		const text = extractAssistantText(entry.message as AssistantMessage);
+		if (hasSubstantiveContent(text)) {
+			messages.push({ role: "assistant", content: text, timestamp: entry.timestamp, turn, turnOrigin });
+		}
+	}
+	return messages;
+}
+
+/** {@link countUserTurns} over the entries {@link extractTurnMessages} sees. */
+export function countTurnStarts(sessionManager: ReadonlySessionManagerLike): number {
+	let count = 0;
+	for (const entry of sessionManager.getEntries()) {
+		const start = turnStartText(entry);
+		if (start && hasSubstantiveContent(start.text)) count++;
 	}
 	return count;
 }

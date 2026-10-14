@@ -23,6 +23,14 @@ import type {
 	BlueprintSummary,
 } from "@oh-my-pi/pi-wire/blueprint";
 import type {
+	PersonalAnswer,
+	PersonalCall,
+	PersonalChanged,
+	PersonalHostMark,
+	PersonalReply,
+	PersonalRequest,
+} from "@oh-my-pi/pi-wire/personal";
+import type {
 	QuizAttempt,
 	QuizGetAnswer,
 	QuizRequest,
@@ -165,6 +173,8 @@ export interface CompanionHost {
 	fanout?: HostFanout;
 	/** The vendor agent behind a foreign session; absent for an omp session. */
 	agent?: AgentRef;
+	/** The live session of the Personal agent (the one thread the app pins above the sessions); absent for every other session. */
+	personal?: PersonalHostMark["personal"];
 }
 
 /** An interactive omp process on the computer that is not hosting collab; `share` starts it hosting. */
@@ -1095,7 +1105,9 @@ export type CompanionRequest =
 	/** Architecture maps (needs `canBlueprint`); see `@oh-my-pi/pi-wire/blueprint`. */
 	| BlueprintRequest
 	/** Quizzes on code changes (needs `canQuiz`); see `@oh-my-pi/pi-wire/quiz`. */
-	| QuizRequest;
+	| QuizRequest
+	/** The Personal agent (needs `canPersonal`); see `@oh-my-pi/pi-wire/personal`. */
+	| PersonalRequest;
 
 export type CompanionReply =
 	/**
@@ -1151,6 +1163,10 @@ export type CompanionReply =
 			canBackgroundStart?: boolean;
 			/** The companion can run vendor agents beside omp (`agents`, `start` with `agent`). */
 			canForeign?: boolean;
+			/** The companion serves the `personal-*` requests (the Personal agent); see `@oh-my-pi/pi-wire/personal`. */
+			canPersonal?: boolean;
+			/** `PersonalStatus.rev`, present while the Personal agent is enabled on this computer. */
+			personalRev?: number;
 			/** Revision of the computer's session organisation (pin, snooze, settle); present when it keeps one. A new number means fetch it again. */
 			sessionOrgRev?: number;
 			/** The companion's session organisation keeps the active order (`rank`) and the per-session auto-settle opt-out. */
@@ -1248,7 +1264,9 @@ export type CompanionReply =
 	| { t: "quiz-delete"; reqId: number }
 	| { t: "quiz-stack"; reqId: number; stack: QuizStackPr[]; source: QuizStackSource }
 	/** Pushed to every authenticated device when a quiz's summary changes (progress, done, failed, answered); carries no `reqId`. */
-	| { t: "quiz-changed"; id: string };
+	| { t: "quiz-changed"; id: string }
+	/** The Personal agent's answers and its `personal-changed` push (no `reqId`); see `@oh-my-pi/pi-wire/personal`. */
+	| PersonalReply;
 
 /** Any `blueprint-*` request without its `reqId`. */
 export type BlueprintCall = BlueprintRequest extends infer R ? (R extends unknown ? Omit<R, "reqId"> : never) : never;
@@ -1392,6 +1410,10 @@ export interface CompanionSnapshot {
 	canBackgroundStart: boolean;
 	/** The companion can run vendor agents beside omp: `start` takes `agent`, and the `agents` requests work. */
 	canForeign: boolean;
+	/** The companion serves the `personal-*` requests (the Personal agent). */
+	canPersonal: boolean;
+	/** `PersonalStatus.rev` while the Personal agent is enabled on this computer (a new number means refetch); null otherwise. */
+	personalRev: number | null;
 	/** Revision of the computer's session organisation document; null when the companion keeps none. */
 	sessionOrgRev: number | null;
 	/** The computer's session organisation keeps the active order and the per-session auto-settle opt-out; older ones drop both. */
@@ -1413,7 +1435,7 @@ export interface CompanionSnapshot {
 /** A reply that answers one request (everything but the `hosts` broadcast). */
 type CompanionAnswer = Exclude<
 	CompanionReply,
-	{ t: "hosts" | "authed" | "auth-failed" | "blueprint-changed" | "quiz-changed" }
+	{ t: "hosts" | "authed" | "auth-failed" | "blueprint-changed" | "quiz-changed" | "personal-changed" }
 >;
 type AnsweredRequest = Extract<CompanionRequest, { reqId: number }>;
 /** A request that expects an answer, before its `reqId` is assigned. */
@@ -1457,6 +1479,8 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	canScratch: false,
 	canBackgroundStart: false,
 	canForeign: false,
+	canPersonal: false,
+	personalRev: null,
 	sessionOrgRev: null,
 	canOrderSessions: false,
 	canEndOnSettle: false,
@@ -1472,6 +1496,7 @@ export class CompanionClient {
 	readonly #listeners = new Set<() => void>();
 	readonly #blueprintListeners = new Set<(id: string) => void>();
 	readonly #quizListeners = new Set<(id: string) => void>();
+	readonly #personalListeners = new Set<(frame: PersonalChanged) => void>();
 	readonly #pending = new Map<number, Pending>();
 	#reqSeq = 0;
 	#presence: Extract<CompanionRequest, { t: "presence" }> | null = null;
@@ -1593,6 +1618,22 @@ export class CompanionClient {
 	 */
 	requestBlueprint<C extends BlueprintCall>(call: C, timeoutMs: number): Promise<BlueprintAnswer<C["t"]>> {
 		return this.#call(call as CompanionCall, call.t, timeoutMs) as Promise<BlueprintAnswer<C["t"]>>;
+	}
+
+	/** Called when the companion pushes `personal-changed` (something about the Personal agent moved; `what` names what to refetch). */
+	onPersonalChanged(listener: (frame: PersonalChanged) => void): () => void {
+		this.#personalListeners.add(listener);
+		return () => {
+			this.#personalListeners.delete(listener);
+		};
+	}
+
+	/**
+	 * One Personal-agent request and its answer (needs `canPersonal`). The typed calls over it are in
+	 * lib/use-personal.ts and components/personal/, which load with the Personal screens rather than with the app.
+	 */
+	requestPersonal<C extends PersonalCall>(call: C, timeoutMs: number): Promise<PersonalAnswer<C["t"]>> {
+		return this.#call(call as CompanionCall, call.t, timeoutMs) as Promise<PersonalAnswer<C["t"]>>;
 	}
 
 	/** A fresh control link for one host, resolved by the companion via `omp collab link`. */
@@ -2123,6 +2164,8 @@ export class CompanionClient {
 				canScratch: frame.canScratch ?? false,
 				canBackgroundStart: frame.canBackgroundStart ?? false,
 				canForeign: frame.canForeign ?? false,
+				canPersonal: frame.canPersonal ?? false,
+				personalRev: frame.personalRev ?? null,
 				sessionOrgRev: frame.sessionOrgRev ?? null,
 				canOrderSessions: frame.canOrderSessions ?? false,
 				canEndOnSettle: frame.canEndOnSettle ?? false,
@@ -2139,6 +2182,10 @@ export class CompanionClient {
 		}
 		if (frame.t === "quiz-changed") {
 			for (const listener of this.#quizListeners) listener(frame.id);
+			return;
+		}
+		if (frame.t === "personal-changed") {
+			for (const listener of this.#personalListeners) listener(frame);
 			return;
 		}
 		const pending = this.#pending.get(frame.reqId);

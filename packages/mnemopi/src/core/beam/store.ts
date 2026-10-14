@@ -61,6 +61,8 @@ const TRUST_TIERS: Record<string, true> = {
 	DERIVED: true,
 	EXTERNAL_WRITE: true,
 	IMPORTED: true,
+	TRUSTED: true,
+	UNTRUSTED: true,
 };
 const SCRATCHPAD_MAX_ITEMS = Number.parseInt(process.env.MNEMOPI_SP_MAX ?? "1000", 10);
 
@@ -152,11 +154,36 @@ function invalidateCaches(beam: BeamMemoryState): void {
 	beam.caches.queryCache?.invalidate();
 }
 
-function findDuplicate(beam: BeamMemoryState, content: string): string | null {
+/**
+ * The row a repeated text refreshes. In a provenance bank only a row by the same kind of author qualifies, so
+ * external text can never relabel an owner's row (or the other way round) just by repeating it.
+ */
+function findDuplicate(beam: BeamMemoryState, content: string, authorType: string | null): string | null {
+	if (beam.config.provenance === true) {
+		using scoped = beam.db.prepare(
+			"SELECT id FROM working_memory WHERE content = ? AND session_id = ? AND COALESCE(author_type, '') = ? LIMIT 1",
+		);
+		const match = scoped.get(content, beam.sessionId, authorType ?? "") as { id: string } | null;
+		return match?.id ?? null;
+	}
 	using statement = beam.db.prepare("SELECT id FROM working_memory WHERE content = ? AND session_id = ? LIMIT 1");
 	const row = statement.get(content, beam.sessionId) as { id: string } | null;
 	return row?.id ?? null;
 }
+
+/**
+ * Rows the owner pinned or retracted (`metadata.pinned`, `metadata.retracted_by = "owner"`, written by the
+ * owner-side admin API) are not changed by anything running inside a session, whatever the retention mode.
+ */
+const OWNER_PROTECTED_SQL = `AND CASE WHEN json_valid(metadata_json)
+	THEN COALESCE(json_extract(metadata_json, '$.retracted_by'), '') != 'owner' AND COALESCE(json_extract(metadata_json, '$.pinned'), 0) != 1
+	ELSE 1 END`;
+
+/** `invalidate` also records who did it when the bank tracks provenance; the owner's own retraction is `retracted_by`. */
+const RECORD_INVALID_BY_SQL = `, metadata_json = CASE
+	WHEN metadata_json IS NULL THEN '{"invalid_by":"agent"}'
+	WHEN json_valid(metadata_json) AND json_type(metadata_json) = 'object' THEN json_set(metadata_json, '$.invalid_by', 'agent')
+	ELSE metadata_json END`;
 
 function tableExists(db: BeamMemoryState["db"], table: string): boolean {
 	using statement = db.prepare(
@@ -446,7 +473,7 @@ export function remember(beam: BeamMemoryState, content: string, options: StoreR
 	const metadata = options.metadata ?? null;
 	const embedText = embeddingText(content, options);
 
-	const existingId = findDuplicate(beam, content);
+	const existingId = findDuplicate(beam, content, authorType);
 	if (existingId !== null) {
 		beam.db.run(
 			`
@@ -641,11 +668,12 @@ export function getContext(beam: BeamMemoryState, limit = 10): Row[] {
 
 export function invalidate(beam: BeamMemoryState, memoryId: string, replacementId: string | null = null): boolean {
 	const now = toUtcIso();
+	const recordBy = beam.config.provenance === true ? RECORD_INVALID_BY_SQL : "";
 	const working = beam.db.run(
 		`
 			UPDATE working_memory
-			SET valid_until = ?, superseded_by = ?
-			WHERE id = ? AND (session_id = ? OR scope = 'global')
+			SET valid_until = ?, superseded_by = ?${recordBy}
+			WHERE id = ? AND (session_id = ? OR scope = 'global') ${OWNER_PROTECTED_SQL}
 		`,
 		[now, replacementId, memoryId, beam.sessionId],
 	);
@@ -662,8 +690,8 @@ export function invalidate(beam: BeamMemoryState, memoryId: string, replacementI
 	const episodic = beam.db.run(
 		`
 			UPDATE episodic_memory
-			SET valid_until = ?, superseded_by = ?
-			WHERE id = ? AND (session_id = ? OR scope = 'global')
+			SET valid_until = ?, superseded_by = ?${recordBy}
+			WHERE id = ? AND (session_id = ? OR scope = 'global') ${OWNER_PROTECTED_SQL}
 		`,
 		[now, replacementId, memoryId, beam.sessionId],
 	);
@@ -729,7 +757,7 @@ export function updateWorking(
 	if (assignments.length === 0) return false;
 	params.push(memoryId, beam.sessionId);
 	const result = beam.db.run(
-		`UPDATE working_memory SET ${assignments.join(", ")} WHERE id = ? AND session_id = ?`,
+		`UPDATE working_memory SET ${assignments.join(", ")} WHERE id = ? AND session_id = ? ${OWNER_PROTECTED_SQL}`,
 		params,
 	);
 	if (result.changes > 0) {
@@ -742,7 +770,7 @@ export function updateWorking(
 export function get(beam: BeamMemoryState, memoryId: string): Row | null {
 	using workingStatement = beam.db.prepare(`
 		SELECT id, content, source, timestamp, session_id,
-			   importance, metadata_json, veracity, created_at, valid_until, superseded_by
+			   importance, metadata_json, veracity, created_at, valid_until, superseded_by, author_id, author_type, trust_tier
 		FROM working_memory
 		WHERE id = ?
 	`);
@@ -751,7 +779,7 @@ export function get(beam: BeamMemoryState, memoryId: string): Row | null {
 
 	using episodicStatement = beam.db.prepare(`
 		SELECT id, content, source, timestamp, session_id,
-			   importance, metadata_json, veracity, created_at, valid_until, superseded_by
+			   importance, metadata_json, veracity, created_at, valid_until, superseded_by, author_id, author_type, trust_tier
 		FROM episodic_memory
 		WHERE id = ? AND (session_id = ? OR scope = 'global')
 	`);
@@ -759,6 +787,38 @@ export function get(beam: BeamMemoryState, memoryId: string): Row | null {
 	if (episodic != null) return { ...episodic, metadata: episodic.metadata_json, memory_store: "episodic" };
 
 	return getFact(beam, memoryId);
+}
+
+/**
+ * Valid memories the owner pinned (`metadata.pinned`, set by the owner-side admin API), oldest pin first, from both
+ * stores of this bank. A session injects them with every turn (`mnemopi.pinnedTokenLimit`).
+ */
+export function getPinned(beam: BeamMemoryState): Row[] {
+	const now = toUtcIso();
+	const rows: Row[] = [];
+	for (const table of ["working_memory", "episodic_memory"]) {
+		using statement = beam.db.prepare(`
+			SELECT id, content, importance, timestamp, metadata_json, author_type
+			FROM ${table}
+			WHERE (session_id = ? OR scope = 'global')
+			  AND CASE WHEN json_valid(metadata_json) THEN COALESCE(json_extract(metadata_json, '$.pinned'), 0) = 1 ELSE 0 END
+			  AND (valid_until IS NULL OR valid_until > ?)
+			  AND superseded_by IS NULL
+		`);
+		rows.push(...(statement.all(beam.sessionId, now) as Row[]).map(rowToDict));
+	}
+	const pinnedAt = (row: Row): string => {
+		try {
+			const metadata: unknown = JSON.parse(String(row.metadata_json ?? "{}"));
+			if (typeof metadata === "object" && metadata !== null && "pinned_at" in metadata) {
+				if (typeof metadata.pinned_at === "string") return metadata.pinned_at;
+			}
+		} catch {
+			// Unparseable metadata: fall back to the row's own time.
+		}
+		return String(row.timestamp ?? "");
+	};
+	return rows.sort((left, right) => pinnedAt(left).localeCompare(pinnedAt(right)));
 }
 
 /**
@@ -802,7 +862,7 @@ function getFact(beam: BeamMemoryState, memoryId: string): Row | null {
 export function forgetWorking(beam: BeamMemoryState, memoryId: string): boolean {
 	let deleted = 0;
 	transaction(beam.db, () => {
-		const result = beam.db.run("DELETE FROM working_memory WHERE id = ? AND session_id = ?", [
+		const result = beam.db.run(`DELETE FROM working_memory WHERE id = ? AND session_id = ? ${OWNER_PROTECTED_SQL}`, [
 			memoryId,
 			beam.sessionId,
 		]);

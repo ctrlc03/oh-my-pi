@@ -8,6 +8,7 @@ export const BUILTIN_TOOL_NAMES = [
 	"debug",
 	"ida",
 	"schedule",
+	"notify_owner",
 	"eval",
 	"github",
 	"glob",

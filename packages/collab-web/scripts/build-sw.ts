@@ -218,7 +218,7 @@ self.addEventListener("push", event => {
 			instanceId,
 			computer,
 			url: typeof data.url === "string" && /^https:\\/\\//.test(data.url) ? data.url : null,
-			open: typeof data.open === "string" && /^[a-z][a-z0-9-]*:./.test(data.open) ? data.open : null,
+			open: typeof data.open === "string" && /^([a-z][a-z0-9-]*:.|personal(\\/[a-z]+)?$)/.test(data.open) ? data.open : null,
 		},
 	};
 	// An inline text reply where the platform supports it (Chrome on Android and desktop);

@@ -99,6 +99,7 @@ import {
 import { PANE_IDS } from "./lib/pane-size";
 import { usePaneLayout } from "./lib/use-pane-layout";
 import { Splitter } from "./components/shell/Splitter";
+import { PersonalRoutes } from "./components/shell/PersonalRoutes";
 import { readJson, writeJson } from "./lib/storage";
 import { openSettings } from "./lib/settings-ui";
 import { currentSubagents } from "./lib/subagents";
@@ -107,6 +108,7 @@ import { loadTrim, saveTrim, trimEntries } from "./lib/trim";
 import { sumUsage } from "./lib/usage";
 import { limitedUntil } from "./lib/usage-limits";
 import { useComputers } from "./lib/use-computers";
+import { PersonalContext, usePersonalProvider } from "./lib/use-personal";
 import { useHostRecovery } from "./lib/use-host-recovery";
 import { useGuestSnapshot } from "./lib/use-guest";
 import { DEVICE_ORG } from "./lib/org-storage";
@@ -166,6 +168,7 @@ export function App(): ReactNode {
 	/** The current session was reopened from storage, not chosen by the user this launch. */
 	const resumedRef = useRef(false);
 	const { computers, pair: pairComputer, remove } = useComputers();
+	const personal = usePersonalProvider(computers);
 	const pushes = usePush(computers);
 	usePresence(computers, pushes);
 	const orgs = useSessionOrgs(computers, rooms);
@@ -390,7 +393,7 @@ export function App(): ReactNode {
 	}, [client]);
 
 	return (
-		<>
+		<PersonalContext.Provider value={personal}>
 			<UpdateBar />
 			<Tooltip />
 			<FixItHost computers={computers} onOpenHost={openHost} onOpenLink={openLink} />
@@ -431,7 +434,8 @@ export function App(): ReactNode {
 			<PetHost client={client} hosts={allHosts} hostsLive={anyLive} />
 			<SettingsHost env={settingsEnv} />
 			<ZoomHost />
-		</>
+			<PersonalRoutes computers={computers} onOpenHost={openHost} />
+		</PersonalContext.Provider>
 	);
 }
 

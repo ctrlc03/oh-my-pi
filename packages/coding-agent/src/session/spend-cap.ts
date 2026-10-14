@@ -2,9 +2,11 @@
  * Hard per-session spend cap (`session.maxCostUsd` / `session.maxTokens`, `--max-cost` / `--max-tokens`,
  * `/budget`). Limits live in settings so a runtime override (CLI flag, `/budget`) takes effect on the next
  * check; `0` means no cap. Spend is the session's cumulative usage accounting, see
- * {@link SessionStatsTracker.getSpendUsage}.
+ * {@link SessionStatsTracker.getSpendUsage}. Profile-wide day/month limits for the Personal agent plug in
+ * from `rolling-spend.ts`.
  */
 import type { Settings } from "../config/settings";
+import type { RollingSpendController } from "./rolling-spend";
 import { cfgSessionMaxCostUsd, cfgSessionMaxTokens } from "./settings";
 
 /** `AgentSessionEvent` `notice` source of every spend-cap notice. */
@@ -66,8 +68,8 @@ export function formatSpendCapReached(status: SpendCapStatus): string {
 export class SpendCapExceededError extends Error {
 	readonly status: SpendCapStatus;
 
-	constructor(status: SpendCapStatus) {
-		super(formatSpendCapReached(status));
+	constructor(status: SpendCapStatus, message: string = formatSpendCapReached(status)) {
+		super(message);
 		this.name = "SpendCapExceededError";
 		this.status = status;
 	}
@@ -95,9 +97,18 @@ export class SpendCapController {
 	readonly #enforced: boolean;
 	#level: SpendCapLevel = "off";
 
-	constructor(host: SpendCapHost, enforced: boolean) {
+	/** The profile-wide day and month limits (Personal sessions, `session.spendLimits.*`); undefined where none exist. */
+	readonly #rolling: RollingSpendController | undefined;
+
+	constructor(host: SpendCapHost, enforced: boolean, rolling?: RollingSpendController) {
 		this.#host = host;
 		this.#enforced = enforced;
+		this.#rolling = enforced ? rolling : undefined;
+	}
+
+	/** The rolling window at its limit, for the Personal heartbeat. */
+	rollingCapped(): "day" | "month" | undefined {
+		return this.#rolling?.capped();
 	}
 
 	limits(): SpendCapLimits {
@@ -115,18 +126,20 @@ export class SpendCapController {
 
 	/** The agent loop's boundary stop predicate: true from the first check at or past a limit. */
 	shouldStop(): boolean {
-		return this.status().level === "capped";
+		return this.status().level === "capped" || this.#rolling?.shouldStop() === true;
 	}
 
 	/** @throws SpendCapExceededError when the session is at its cap. */
 	assertCanPrompt(): void {
 		const status = this.status();
 		if (status.level === "capped") throw new SpendCapExceededError(status);
+		this.#rolling?.assertCanPrompt();
 	}
 
 	/** Announces the 80% warning and the cap once per crossing; call after each completed turn. */
 	onTurnEnd(): void {
 		this.#announce(this.status());
+		this.#rolling?.onTurnEnd();
 	}
 
 	/**

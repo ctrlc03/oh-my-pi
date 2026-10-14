@@ -176,6 +176,8 @@ export async function editsFile(
 
 export interface FileSessionsOptions {
 	sessionsDir: string;
+	/** Further session folders searched alongside (the Personal profile's, once it exists). */
+	extraSessionsDirs?: readonly string[];
 	/** Working directory of the session the request names; its repository is searched. */
 	cwd: string;
 	/** Absolute, or relative to the repository root. */
@@ -193,6 +195,9 @@ export async function findFileSessions(options: FileSessionsOptions): Promise<Fo
 	const files = [
 		...(await recentSessionFiles(options.sessionsDir, HEADER_SCAN_FILES)),
 		...(await sessionFilesOf(foreignTranscriptsDir(options.sessionsDir))),
+		...(
+			await Promise.all((options.extraSessionsDirs ?? []).map(dir => recentSessionFiles(dir, HEADER_SCAN_FILES)))
+		).flat(),
 	]
 		.sort((a, b) => b.mtime - a.mtime)
 		.slice(0, HEADER_SCAN_FILES);

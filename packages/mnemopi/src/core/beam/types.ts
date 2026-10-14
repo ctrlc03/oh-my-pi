@@ -67,6 +67,17 @@ export interface BeamConfig {
 	polyphonicRecall?: boolean;
 	/** Per-instance enhanced recall (query cache) gate; `undefined` defers to the process-wide default. */
 	enhancedRecall?: boolean;
+	/**
+	 * `false` = never shorten consolidated episodic rows (`mnemopi.retention: permanent`). Unset or `true` keeps
+	 * the default tiering; the timing env vars (`MNEMOPI_TIER2_DAYS`/`MNEMOPI_TIER3_DAYS`) are not consulted for this.
+	 */
+	degradeEpisodic?: boolean;
+	/**
+	 * Origin-aware bank (`mnemopi.provenance`): an identical text from another author type is a new row rather than
+	 * a refresh of the existing one, `invalidate` records `invalid_by`, and consolidation keeps each group's author
+	 * and trust tier on its summary instead of stamping the writer's.
+	 */
+	provenance?: boolean;
 }
 
 export interface BeamMemoryOptions {
@@ -134,6 +145,9 @@ export interface RememberOptions {
 	source?: string;
 	importance?: number;
 	metadata?: Metadata | null;
+	/** Overrides the instance's `authorId`/`authorType` for this row. */
+	authorId?: string | null;
+	authorType?: string | null;
 	extract?: boolean;
 	extractEntities?: boolean;
 	/**
@@ -175,6 +189,11 @@ export interface RecallOptions {
 	toDate?: string | null;
 	authorId?: string | null;
 	authorType?: string | null;
+	/**
+	 * Rows by these author types (and facts extracted from them) are left out of the results. A provenance bank's
+	 * automatic recall passes `["external"]` so untrusted text never reaches the model unasked.
+	 */
+	excludeAuthorTypes?: readonly string[];
 	channelId?: string | null;
 	includeWorking?: boolean;
 	queryTime?: string | Date | null;

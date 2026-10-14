@@ -306,3 +306,65 @@ export const cfgMnemopiInjectionTokenLimit = register({
 });
 
 export const cfgMnemopiDebug = register({ id: "mnemopi.debug", type: "boolean", default: false });
+
+function validateNonNegativeInteger(raw: unknown): void {
+	if (raw !== undefined && (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0)) {
+		throw new Error(`Expected an integer ≥ 0, got ${Bun.inspect(raw)}`);
+	}
+}
+
+/**
+ * `permanent`: nothing the bank holds is ever deleted or demoted. Working memory is not trimmed (`workingMemoryLimit`
+ * is unbounded), episodic rows are not degraded to summaries, `memory_edit` `forget` invalidates instead of deleting
+ * (the row stays, struck through), and `/memory clear` is refused. `default`: Mnemopi's usual bounded working
+ * memory and tiered degradation. The Personal profile sets `permanent`.
+ */
+export const cfgMnemopiRetention = register({
+	id: "mnemopi.retention",
+	type: "enum",
+	values: ["default", "permanent"] as const,
+	default: "default",
+});
+
+/**
+ * Stamp every retained row with who wrote it (`author_type`/`author_id`/`trust_tier`: owner `TRUSTED`, agent
+ * `DERIVED`, external `UNTRUSTED`, from `personalEntryOrigin`), keep collab-guest turns out of memory entirely,
+ * and leave `UNTRUSTED` rows out of automatic recall (the `recall` tool returns them on request, fenced as untrusted).
+ * Also retains owner prompts sent from collab, which are `custom_message` entries that retention otherwise skips.
+ */
+export const cfgMnemopiProvenance = register({ id: "mnemopi.provenance", type: "boolean", default: false });
+
+/**
+ * Recall before every turn, not only the first: the memories relevant to the new prompt are delivered with it
+ * as a hidden message (the system prompt stays unchanged, so the prompt cache holds). Off: the first-turn
+ * recall in the system prompt only.
+ */
+export const cfgMnemopiRecallEveryTurn = register({ id: "mnemopi.recallEveryTurn", type: "boolean", default: false });
+
+/** Token budget of one per-turn recall delivery (`mnemopi.recallEveryTurn`). */
+export const cfgMnemopiRecallEveryTurnTokenLimit = register({
+	id: "mnemopi.recallEveryTurnTokenLimit",
+	type: "number",
+	default: 1500,
+	validate: validateNonNegativeInteger,
+});
+
+/** Token budget of the pinned memories injected with every turn; pins are added oldest-pinned first until it is full (the app warns when pins exceed it). 0 = no pinned injection. */
+export const cfgMnemopiPinnedTokenLimit = register({
+	id: "mnemopi.pinnedTokenLimit",
+	type: "number",
+	default: 800,
+	validate: validateNonNegativeInteger,
+});
+
+/**
+ * Minutes between consolidation runs while a session lives (promote working memory to episodic, summarise, link),
+ * on top of the run at session end. 0 = only at session end. The Personal profile sets 60, so a session that is
+ * killed instead of exited loses at most an hour of consolidation.
+ */
+export const cfgMnemopiConsolidateIntervalMinutes = register({
+	id: "mnemopi.consolidateIntervalMinutes",
+	type: "number",
+	default: 0,
+	validate: validateNonNegativeInteger,
+});

@@ -69,6 +69,14 @@ export interface Schedule {
 	catchUp?: CatchUpPolicy;
 	/** Created by an agent through omp's `schedule` tool rather than in the app. */
 	createdBy?: "agent";
+	/**
+	 * `personal`: when due, the prompt is handed to the Personal agent's live session as an event
+	 * (`PersonalEvent` kind `schedule`) instead of starting a process; `cwd`, `mode`, `worktree`, `sandboxed` and
+	 * `maxCostUsd` are ignored. A schedule the owner made is an `owner`-trust event; one with `createdBy: "agent"`
+	 * is `external` (the agent wrote its text, possibly while reading outside content). Only the home computer's
+	 * companion accepts it, and only while the Personal agent is enabled.
+	 */
+	deliverTo?: "personal";
 	enabled: boolean;
 	lastRun?: ScheduleRun;
 	/** Next trigger (ms since epoch); null once nothing more will run. */

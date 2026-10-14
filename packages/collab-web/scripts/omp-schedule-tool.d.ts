@@ -1,15 +1,22 @@
 /**
- * Types for omp's `schedule` tool, which the schedule channel test drives (tsconfig `paths` maps
- * `@oh-my-pi/pi-coding-agent/tools/schedule` here). This project type-checks with the browser's DOM lib,
+ * Types for omp's `schedule` tool and the `Settings` store it reads, which the schedule channel test
+ * drives (tsconfig `paths` maps `@oh-my-pi/pi-coding-agent/tools/schedule` and `.../config/settings` here). This project type-checks with the browser's DOM lib,
  * and the real module graph only type-checks against the workspace's non-DOM lib. bun still resolves the
  * real module at runtime. Keep in sync with packages/coding-agent/src/tools/schedule.ts.
  */
 import type { CompanionSchedules } from "@oh-my-pi/pi-coding-agent/schedule/companion-client";
 
+/** omp's settings store, reduced to what the tool session needs. */
+export class Settings {
+	static isolated(overrides?: Record<string, unknown>): Settings;
+	getAgentDir(): string;
+}
+
 /** The part of omp's tool session the tool reads when it is given its companion. */
 export interface ScheduleToolSession {
 	cwd: string;
 	getSessionId?: () => string | null;
+	settings: Settings;
 }
 
 export interface ScheduleToolParams {

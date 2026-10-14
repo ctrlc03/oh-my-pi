@@ -6,6 +6,7 @@
  *
  *   bun scripts/mock-companion.ts [--port 7468] [--web http://localhost:3000/] [--dir /tmp/mock-companion] [--session-link <room link>]
  *                                 [--machine <name>] [--hosts 1,2,3] [--session-id <id>]
+ *                                 [--personal fresh|enabled] [--personal-login ready|missing]
  *
  * `--machine` names the computer and gives its sessions ids of their own (the way two real computers never share a session id,
  * though their processes may share an instance id: `inst-1` here and there); `--hosts` lists only those fixture sessions
@@ -25,6 +26,13 @@
  * throw-away repository too. Quizzes (./mock-quiz) are canned: a finished quiz of a two-pull-request stack, one half
  * answered, a failed one; new ones from the form tick to ready, and `quiz-stack` finds a three-pull-request stack for
  * #2243, #2244 and #2245 (any other number is alone). Every other request is refused. Ctrl+C stops it.
+ *
+ * `--personal fresh|enabled` (default `off`: nothing is advertised or answered, as before) adds the Personal agent (./mock-personal): `fresh`
+ * is advertised and not set up (Settings → Personal agent → Set up), `enabled` is set up with sample memories, About you, proposals,
+ * digests, an inbox and events and a Personal session in the sidebar. `--personal-login ready|missing` (default `ready`) is the
+ * Personal profile's login; with `missing` the agent stays stopped until the file `<--dir>/personal-login-ready` exists
+ * (`touch` it, which stands for running `omp --profile personal login`). While the file `<--dir>/personal-failed` exists the
+ * enabled agent's run is `failed` (the entry's Failed state); remove it and the session starts again.
  */
 
 import * as fs from "node:fs/promises";
@@ -37,6 +45,7 @@ import type {
 	CompanionReply,
 	CompanionRequest,
 	GithubItem,
+	InboxItem,
 } from "../src/lib/companion";
 import { formatPairingUrl } from "../src/lib/companion";
 import { encodeBase64Url, formatCollabLink, generateRoomId, parseCollabLink } from "../src/lib/link";
@@ -47,6 +56,7 @@ import { startLocalRelay } from "./local-relay";
 import { createMockBlueprint } from "./mock-blueprint";
 import { createMockFanout } from "./mock-fanout";
 import { createMockForeign, mockForeignHosts } from "./mock-foreign";
+import { createMockPersonal } from "./mock-personal";
 import { createMockQuiz, mockStackPrs } from "./mock-quiz";
 import { createMockSearch } from "./mock-search";
 import { createMockStart } from "./mock-start";
@@ -258,6 +268,37 @@ const quiz = createMockQuiz({
 	},
 });
 
+/**
+ * The Personal agent (./mock-personal), only with `--personal fresh|enabled`; without it nothing is advertised or answered.
+ * Its host row joins `hosts` while the session runs; `--personal-login missing` waits for `<--dir>/personal-login-ready` to exist.
+ */
+const personalMode = flag("--personal", "off");
+if (personalMode !== "off" && personalMode !== "fresh" && personalMode !== "enabled")
+	throw new Error("--personal takes off, fresh or enabled");
+const personalLogin = flag("--personal-login", "ready");
+if (personalLogin !== "ready" && personalLogin !== "missing")
+	throw new Error("--personal-login takes ready or missing");
+const personalLoginFile = path.join(dir, "personal-login-ready");
+const personalFailFile = path.join(dir, "personal-failed");
+if (personalMode !== "off")
+	await Promise.all([personalLoginFile, personalFailFile].map(file => fs.rm(file, { force: true })));
+const personal =
+	personalMode === "off"
+		? undefined
+		: createMockPersonal({
+				hosts,
+				machine: machine || "mock-computer",
+				computerId: `mock-${room.roomId}`,
+				login: personalLogin,
+				setUp: personalMode === "enabled",
+				loginFile: personalLoginFile,
+				failFile: personalFailFile,
+				broadcastFrame: frame => {
+					for (const peer of peers) socket.send(frame, peer);
+				},
+				onHostsChanged: () => broadcast(),
+			});
+
 function hostsFrame(): CompanionReply {
 	return {
 		t: "hosts",
@@ -270,6 +311,7 @@ function hostsFrame(): CompanionReply {
 		...quiz.capabilities,
 		...foreign.capabilities,
 		...settle.capabilities,
+		...personal?.capabilities(),
 		canGithub: true,
 		idle,
 		vapidKey: "",
@@ -364,7 +406,30 @@ socket.onFrame = (frame, fromPeer) => {
 					fromPeer,
 				),
 		);
-	else if (frame.t === "github")
+	else if (personal?.handles(frame)) {
+		try {
+			socket.send(personal.answer(frame), fromPeer);
+		} catch (err) {
+			socket.send(
+				{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+				fromPeer,
+			);
+		}
+	} else if (personal && frame.t === "inbox") {
+		// With Personal on, the Inbox sheet shows it merged with the sessions that wait: these are the fixture ones that need input.
+		const items = hosts
+			.filter(candidate => candidate.inputRequired === true && candidate.personal !== true)
+			.map((candidate, at): InboxItem => ({
+				instanceId: candidate.instanceId,
+				title: candidate.sessionName ?? candidate.cwd,
+				cwd: candidate.cwd,
+				kind: "input",
+				text: "Which of the two migrations should run first?",
+				options: ["The schema change", "The backfill"],
+				at: candidate.startedAt - at * 60_000,
+			}));
+		socket.send({ t: "inbox", reqId: frame.reqId, items }, fromPeer);
+	} else if (frame.t === "github")
 		socket.send({ t: "github", reqId: frame.reqId, repo: "example/app", items: MOCK_PRS }, fromPeer);
 	else
 		socket.send(

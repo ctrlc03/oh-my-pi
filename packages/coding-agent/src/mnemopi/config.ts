@@ -29,6 +29,12 @@ import {
 	cfgMnemopiRecallMaxQueryChars,
 	cfgMnemopiRetainEveryNTurns,
 	cfgMnemopiScoping,
+	cfgMnemopiConsolidateIntervalMinutes,
+	cfgMnemopiPinnedTokenLimit,
+	cfgMnemopiProvenance,
+	cfgMnemopiRecallEveryTurn,
+	cfgMnemopiRecallEveryTurnTokenLimit,
+	cfgMnemopiRetention,
 } from "./settings";
 
 export type MnemopiLlmMode = "none" | "smol" | "remote";
@@ -64,6 +70,16 @@ export interface MnemopiBackendConfig {
 	llmBaseUrl?: string;
 	llmApiKey?: string;
 	llmModel?: string;
+	/** `permanent`: never trim, degrade or delete (`mnemopi.retention`). Unset = `default`. */
+	retention?: "default" | "permanent";
+	/** Stamp rows with their origin, drop guest turns, keep `UNTRUSTED` rows out of automatic recall (`mnemopi.provenance`). */
+	provenance?: boolean;
+	/** Recall before every prompt after the first (`mnemopi.recallEveryTurn`). */
+	recallEveryTurn?: boolean;
+	recallEveryTurnTokenLimit?: number;
+	pinnedTokenLimit?: number;
+	/** Minutes between consolidation runs while the session lives; 0 = only at session end. */
+	consolidateIntervalMinutes?: number;
 }
 
 export function loadMnemopiConfig(settings: Settings, agentDir: string): MnemopiBackendConfig {
@@ -103,6 +119,12 @@ export function loadMnemopiConfig(settings: Settings, agentDir: string): Mnemopi
 		recallContextTurns: Math.max(1, Math.floor(cfgMnemopiRecallContextTurns.get(settings))),
 		recallMaxQueryChars: Math.max(256, Math.floor(cfgMnemopiRecallMaxQueryChars.get(settings))),
 		injectionTokenLimit: Math.max(256, Math.floor(cfgMnemopiInjectionTokenLimit.get(settings))),
+		retention: cfgMnemopiRetention.get(settings),
+		provenance: cfgMnemopiProvenance.get(settings),
+		recallEveryTurn: cfgMnemopiRecallEveryTurn.get(settings),
+		recallEveryTurnTokenLimit: Math.max(0, Math.floor(cfgMnemopiRecallEveryTurnTokenLimit.get(settings))),
+		pinnedTokenLimit: Math.max(0, Math.floor(cfgMnemopiPinnedTokenLimit.get(settings))),
+		consolidateIntervalMinutes: Math.max(0, Math.floor(cfgMnemopiConsolidateIntervalMinutes.get(settings))),
 		debug: cfgMnemopiDebug.get(settings),
 		providerOptions: {
 			noEmbeddings: cfgMnemopiNoEmbeddings.get(settings),

@@ -22,6 +22,8 @@ The mock host supports the message box features: it advertises `queue-edit` and 
 
 To try several computers offline, start two mock companions on different ports and pair with both: `bun scripts/mock-companion.ts --port 7471 --machine laptop --dir /tmp/laptop` and `bun scripts/mock-companion.ts --port 7472 --machine moonstone --hosts 1,2,3 --dir /tmp/moonstone` (each with `--session-link` of its own `mock-host`). `--machine` names the computer and gives its sessions ids of their own (their processes still share instance ids, as two real computers can), `--hosts` lists only those fixture sessions, and the room is kept in `<dir>/room.json` so a restarted mock is the same computer. Stop one to see its group go offline while the other keeps working. See [Collab → Several computers](../../docs/collab.md#several-computers).
 
+To try the Personal agent offline, add `--personal fresh` (advertised, not set up: Settings → Personal agent → *Set up*) or `--personal enabled` (set up, with sample memories, About you, proposals, digests, an inbox and events, and a Personal session in the sidebar) to `bun scripts/mock-companion.ts`; without it the mock advertises and answers nothing of the Personal agent. `--personal-login missing` (default `ready`) leaves the profile without a login: the agent stays stopped and Settings shows the sign-in command until you `touch <dir>/personal-login-ready`, which stands for running `omp --profile personal login`. The agent is canned (`scripts/mock-personal.ts`, in memory): answering a question makes it "work" for three seconds and reply with an inbox item two seconds in, and every change is pushed to every paired device.
+
 ## Build & deploy
 
 ```sh

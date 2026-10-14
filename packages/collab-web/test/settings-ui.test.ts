@@ -20,6 +20,7 @@ describe("settings sections", () => {
 			"keyboard",
 			"computers",
 			"devices",
+			"personal",
 			"about",
 		]);
 		for (const section of SETTINGS_SECTIONS) expect(settingsLabel(section).length).toBeGreaterThan(0);
@@ -34,7 +35,9 @@ describe("settings sections", () => {
 			"computers",
 			"about",
 		]);
-		expect(visibleSettingsSections(true)).toEqual(SETTINGS_SECTIONS);
+		expect(visibleSettingsSections(true)).toEqual(SETTINGS_SECTIONS.filter(section => section !== "personal"));
+		expect(visibleSettingsSections(true, true)).toEqual(SETTINGS_SECTIONS);
+		expect(visibleSettingsSections(false, true)).toContain("personal");
 	});
 
 	it("recognises section names and nothing inherited", () => {

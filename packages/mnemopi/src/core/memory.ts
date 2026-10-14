@@ -64,6 +64,15 @@ export interface MnemopiOptions {
 	 * would exit before completing. Defaults to `true`.
 	 */
 	readonly reconcile?: boolean;
+	/**
+	 * Cap on unconsolidated working rows per session. `Infinity` turns the trim off (`mnemopi.retention: permanent`).
+	 * Unset keeps the beam default (1000 rows, 24 hours).
+	 */
+	readonly workingMemoryLimit?: number;
+	/** `false` never shortens consolidated episodic rows. Unset keeps the default tiering. */
+	readonly degradeEpisodic?: boolean;
+	/** Origin-aware bank, see `BeamConfig.provenance`. */
+	readonly provenance?: boolean;
 }
 
 export interface RememberInput extends MemoryInput {
@@ -76,6 +85,8 @@ export interface RememberInput extends MemoryInput {
 	readonly embed_text?: string | null;
 	readonly trustTier?: string | null;
 	readonly trust_tier?: string | null;
+	readonly authorId?: string | null;
+	readonly authorType?: string | null;
 	readonly memoryType?: string | null;
 	readonly memory_type?: string | null;
 }
@@ -104,6 +115,9 @@ export interface RememberFacadeOptions {
 	readonly embed_text?: string | null;
 	readonly trustTier?: string | null;
 	readonly trust_tier?: string | null;
+	/** Overrides the instance's author for this row (`owner`, `external`, …). */
+	readonly authorId?: string | null;
+	readonly authorType?: string | null;
 	readonly timestamp?: string | Date | null;
 	readonly veracity?: string | null;
 	readonly memoryType?: string | null;
@@ -171,6 +185,8 @@ type FacadeRememberOptions = {
 	extractText: string | undefined;
 	embedText: string | undefined;
 	trustTier: string | undefined;
+	authorId: string | undefined;
+	authorType: string | undefined;
 	veracity: string | undefined;
 	memoryType: string | undefined;
 	timestamp?: string;
@@ -309,6 +325,8 @@ function toRememberOptions(input: string | RememberInput, options: RememberFacad
 		extractText: extractText ?? undefined,
 		embedText: embedText ?? undefined,
 		trustTier: options.trustTier ?? options.trust_tier ?? memory?.trustTier ?? memory?.trust_tier ?? undefined,
+		authorId: options.authorId ?? memory?.authorId ?? undefined,
+		authorType: options.authorType ?? memory?.authorType ?? undefined,
 		veracity: options.veracity ?? memory?.veracity ?? undefined,
 		memoryType: options.memoryType ?? options.memory_type ?? memory?.memoryType ?? memory?.memory_type ?? undefined,
 	};
@@ -322,6 +340,7 @@ function toRecallOptions(options: RecallFacadeOptions): BeamRecallFacadeOptions 
 		toDate: options.toDate ?? options.to_date ?? null,
 		authorId: options.authorId ?? null,
 		authorType: options.authorType ?? null,
+		excludeAuthorTypes: options.excludeAuthorTypes,
 		channelId: options.channelId ?? null,
 		includeWorking: options.includeWorking,
 		queryTime: options.queryTime ?? options.query_time ?? null,
@@ -427,6 +446,11 @@ export class Mnemopi {
 				proactiveLinking: options.proactiveLinking,
 				polyphonicRecall: options.polyphonicRecall,
 				enhancedRecall: options.enhancedRecall,
+				config: {
+					...(options.workingMemoryLimit === undefined ? {} : { workingMemoryLimit: options.workingMemoryLimit }),
+					...(options.degradeEpisodic === undefined ? {} : { degradeEpisodic: options.degradeEpisodic }),
+					...(options.provenance === undefined ? {} : { provenance: options.provenance }),
+				},
 			});
 			this.#ownsDb = options.db === undefined;
 			if (options.db !== undefined) {
@@ -496,6 +520,11 @@ export class Mnemopi {
 
 	getContext(limit = 10): unknown[] {
 		return this.#withRuntimeOptions("mnemopi.read", () => this.beam.getContext(limit));
+	}
+
+	/** Valid memories the owner pinned (`mnemopi.pinnedTokenLimit` budgets them), oldest pin first. */
+	getPinned(): unknown[] {
+		return this.#withRuntimeOptions("mnemopi.read", () => this.beam.getPinned());
 	}
 
 	getStats(

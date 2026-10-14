@@ -19,6 +19,7 @@ import type {
 	MemoryBackendStatus,
 	MemoryPromptPreparation,
 } from "../memory-backend/types";
+import { MemoryClearRefusedError } from "../memory-backend/clear-refused";
 import { memoryToolRefs } from "../memory-backend/tool-names";
 import memoryConsolidationPrompt from "../prompts/system/memory-consolidation-system.md" with { type: "text" };
 import memoryExtractionPrompt from "../prompts/system/memory-extraction-system.md" with { type: "text" };
@@ -45,7 +46,7 @@ import {
 } from "./state";
 
 import { cfgMemoryBackend } from "../memory-backend/settings";
-import { cfgMnemopiInjectionTokenLimit } from "./settings";
+import { cfgMnemopiInjectionTokenLimit, cfgMnemopiRetention } from "./settings";
 
 // `/diagnose` is the only user of this subpath; load it lazily alongside the
 // loaders in ./state to keep mnemopi off the CLI startup module graph.
@@ -162,6 +163,11 @@ export const mnemopiBackend: MemoryBackend = {
 	},
 
 	async clear(agentDir, _cwd, session): Promise<void> {
+		if (session && cfgMnemopiRetention.get(session.settings) === "permanent") {
+			throw new MemoryClearRefusedError(
+				"Memory is permanent (mnemopi.retention), so nothing is cleared. Retract or forget single memories instead; deleting the database by hand is the only way to wipe it.",
+			);
+		}
 		const previous = session ? setMnemopiSessionState(session, undefined) : undefined;
 		await previous?.dispose({ consolidate: false });
 		const config = previous?.config ?? (session ? loadMnemopiConfig(session.settings, agentDir) : undefined);

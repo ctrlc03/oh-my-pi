@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `@oh-my-pi/pi-mnemopi/admin` (`openMemoryAdmin`): owner-side search, get, retract, pin, deterministic export, `recordForDay` and hot `snapshot` over the default bank without loading the embedder.
+- Added `replacesCount` to the admin memory row: how many memories name it in `superseded_by` (absent when none), so an owner-side list can tell which rows replaced something without asking for each.
+- Added permanent retention: `workingMemoryLimit: Infinity` and `degradeEpisodic: false` keep every row, and invalidation is recorded with `invalid_by`.
+- Added provenance: `provenance`, `authorId` / `authorType` on writes, `excludeAuthorTypes` on recall (facts derived from excluded rows are excluded too), duplicate merging and consolidation per author, and `TRUSTED` / `UNTRUSTED` trust tiers.
+- Rows pinned (`metadata.pinned`) or retracted by the owner can no longer be invalidated, updated or forgotten; added `getPinned()`, and `get()` now returns `author_id`, `author_type` and `trust_tier`.
+
 ## [18.9.0] - 2026-10-11
 
 ### Added

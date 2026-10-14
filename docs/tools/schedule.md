@@ -57,3 +57,6 @@ Cron is evaluated in the schedule's zone. A time inside the spring-forward gap (
 
 ## Channel
 The companion publishes `{ port, token, pid }` in `collab-companion-ipc.json` in its agent directory (mode `0600`) and listens on `127.0.0.1:<port>`; the tool sends `POST /schedule` with `Authorization: Bearer <token>` and a JSON body `{ op: "list" | "create" | "delete", … }`. Requests with an `Origin` header and bodies over 256 KB are refused. A file whose `pid` is gone is treated as "no companion". Agent-created schedules are forced `enabled` and `createdBy: "agent"`, and cannot replace an existing schedule.
+
+## In a Personal session
+With `personal.enabled`, a schedule the tool creates has `deliverTo: "personal"`: it starts no process and has no folder or session of its own; when due, its prompt comes back to the live Personal session as a `personal-event` from an agent-made schedule, which counts as outside content (the turn it starts is restricted by `personal.externalTurns.policy`, and `schedule` itself is refused in such a turn). The approval prompt says so instead of showing a folder. The tool needs the companion's schedule channel, which the companion also publishes in the Personal profile's agent directory.

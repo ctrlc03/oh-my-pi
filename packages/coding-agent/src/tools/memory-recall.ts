@@ -3,28 +3,49 @@ import type { AgentTool, AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { logger, prompt, untilAborted } from "@oh-my-pi/pi-utils";
 import { isHindsightConfigured, loadHindsightConfig } from "../hindsight/config";
 import { formatCurrentTime, formatMemories } from "../hindsight/content";
+import { cfgMnemopiProvenance } from "../mnemopi/settings";
+import { fenceUntrusted, untrustedPreamble } from "../personal/fence";
 import recallDescription from "../prompts/tools/recall.md" with { type: "text" };
 import { sessionMemoryToolRefs } from "../memory-backend/tool-names";
 import type { ToolSession } from ".";
 
 import { cfgMemoryBackend } from "../memory-backend/settings";
 
-const memoryRecallSchema = type({
+const memoryRecallSchemaBase = type({
 	query: type("string").describe("natural language search query"),
 });
 
-export type MemoryRecallParams = typeof memoryRecallSchema.infer;
+/** Offered only under `mnemopi.provenance`, where memories from outside content exist and stay out of plain recall. */
+const memoryRecallSchemaWithExternal = type({
+	query: type("string").describe("natural language search query"),
+	"include_external?": type("boolean").describe(
+		"also return memories that came from outside content (web pages, email, events); they arrive fenced as untrusted data",
+	),
+});
 
-export class MemoryRecallTool implements AgentTool<typeof memoryRecallSchema> {
+type MemoryRecallSchema = typeof memoryRecallSchemaBase | typeof memoryRecallSchemaWithExternal;
+
+export type MemoryRecallParams = typeof memoryRecallSchemaWithExternal.infer;
+
+export class MemoryRecallTool implements AgentTool<MemoryRecallSchema> {
 	readonly name = "recall";
 	readonly approval = "read" as const;
 	readonly label = "Recall";
+	/** Memories from outside content exist only under `mnemopi.provenance`; the tool offers them only there. */
+	get #offersExternal(): boolean {
+		return (
+			cfgMemoryBackend.get(this.session.settings) === "mnemopi" && cfgMnemopiProvenance.get(this.session.settings)
+		);
+	}
 	get description(): string {
 		return prompt.render(recallDescription, {
 			toolRefs: sessionMemoryToolRefs(this.session),
+			externalMemory: this.#offersExternal,
 		});
 	}
-	readonly parameters = memoryRecallSchema;
+	get parameters(): MemoryRecallSchema {
+		return this.#offersExternal ? memoryRecallSchemaWithExternal : memoryRecallSchemaBase;
+	}
 	readonly strict = true;
 	readonly loadMode = "discoverable";
 	readonly summary = "Search memory for relevant prior context";
@@ -48,21 +69,33 @@ export class MemoryRecallTool implements AgentTool<typeof memoryRecallSchema> {
 				}
 				try {
 					const results = await state.recallResultsScoped(params.query);
-					if (results.length === 0) {
+					const external = params.include_external
+						? await state.recallResultsScoped(params.query, { externalOnly: true })
+						: [];
+					if (results.length === 0 && external.length === 0) {
 						return {
 							content: [{ type: "text", text: "No relevant memories found." }],
 							details: {},
 							useless: true,
 						};
 					}
-					const formatted = state.formatScopedRecallWithIds(results);
+					const sections: string[] = [];
+					if (results.length > 0) {
+						sections.push(
+							`Found ${results.length} relevant ${results.length === 1 ? "memory" : "memories"} (as of ${formatCurrentTime()} UTC):\n\n${state.formatScopedRecallWithIds(results)}`,
+						);
+					}
+					if (external.length > 0) {
+						const fenced = fenceUntrusted(
+							"memory from outside content",
+							state.formatScopedRecallWithIds(external),
+						);
+						sections.push(
+							`${external.length} ${external.length === 1 ? "memory" : "memories"} came from outside content, not from the owner or you:\n${untrustedPreamble(fenced.nonce)}\n${fenced.block}`,
+						);
+					}
 					return {
-						content: [
-							{
-								type: "text",
-								text: `Found ${results.length} relevant ${results.length === 1 ? "memory" : "memories"} (as of ${formatCurrentTime()} UTC):\n\n${formatted}`,
-							},
-						],
+						content: [{ type: "text", text: sections.join("\n\n") }],
 						details: {},
 					};
 				} catch (err) {

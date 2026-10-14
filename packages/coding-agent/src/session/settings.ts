@@ -864,6 +864,26 @@ export const cfgSessionMaxTokens = register({
 	normalize: value => (typeof value === "number" ? Math.floor(value) : value),
 });
 
+/**
+ * Rolling spend limit in USD over the local calendar day (midnight to midnight), counted across every session of
+ * this profile, not one session; `0` = no limit. At the limit the session refuses new prompts and queued events
+ * stay queued until the window passes (`RollingSpendController`). Active only when `personal.enabled` or a limit is above 0.
+ */
+export const cfgSessionSpendLimitsDayUsd = register({
+	id: "session.spendLimits.dayUsd",
+	type: "number",
+	default: 0,
+	validate: validateNonNegativeNumber,
+});
+
+/** As `session.spendLimits.dayUsd`, over the local calendar month. */
+export const cfgSessionSpendLimitsMonthUsd = register({
+	id: "session.spendLimits.monthUsd",
+	type: "number",
+	default: 0,
+	validate: validateNonNegativeNumber,
+});
+
 export const cfgProvidersAnthropicServerSideFallback = register({
 	id: "providers.anthropic.serverSideFallback",
 	type: "boolean",

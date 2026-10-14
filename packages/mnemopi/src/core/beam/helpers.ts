@@ -1,7 +1,15 @@
 import type { Database } from "bun:sqlite";
 import { logger, withLoopPhase } from "@oh-my-pi/pi-utils";
 import { generateId as generateTimedId, sha256Hex16, stableMemoryId } from "../../util/ids";
-import { cjkFtsTerms, containsSpacelessCjk, ftsQueryTerms, hasCjk, isCjkChar, recallTokens } from "../../util/regex";
+import {
+	buildFtsQuery,
+	cjkFtsTerms,
+	containsSpacelessCjk,
+	ftsQueryTerms,
+	hasCjk,
+	isCjkChar,
+	recallTokens,
+} from "../../util/regex";
 import { currentEmbeddingModel, embed } from "../embeddings";
 import { getMnemopiRuntimeOptions, mnemopiDebugEnabled, withMnemopiRuntimeOptions } from "../runtime-options";
 import { buildExactVectorIndex, searchExactVectorIndex } from "../vector-index";
@@ -174,10 +182,6 @@ export function temporalBoost(
 	if (halflife === 0) return effectiveTs.getTime() === query.getTime() ? 1 : 0;
 	const hoursDelta = (query.getTime() - effectiveTs.getTime()) / 3_600_000;
 	return Math.exp(-hoursDelta / halflife);
-}
-
-export function buildFtsQuery(query: string): string {
-	return ftsQueryTerms(query).join(" OR ");
 }
 
 function cjkCharsForSearch(query: string): string[] {
@@ -715,7 +719,7 @@ export {
 	maximallyInformativeBinarization,
 	quantizeInt8,
 } from "../binary-vectors";
-export { cjkFtsTerms, containsSpacelessCjk, ftsQueryTerms, recallTokens, sha256Hex16 };
+export { buildFtsQuery, cjkFtsTerms, containsSpacelessCjk, ftsQueryTerms, recallTokens, sha256Hex16 };
 
 /** Identifies one freshly stored memory whose embedding still needs to be derived. */
 export interface EmbedItem {

@@ -86,6 +86,14 @@
       "types": "./src/core/beam/index.ts",
       "import": "./src/core/beam/index.ts"
     },
+    "./admin": {
+      "types": "./src/admin.ts",
+      "import": "./src/admin.ts"
+    },
+    "./admin-types": {
+      "types": "./src/admin-types.ts",
+      "import": "./src/admin-types.ts"
+    },
     "./diagnose": {
       "types": "./src/diagnose.ts",
       "import": "./src/diagnose.ts"

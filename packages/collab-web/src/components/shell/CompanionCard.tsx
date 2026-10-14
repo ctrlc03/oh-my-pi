@@ -30,11 +30,13 @@ import { QuizEntry } from "../quiz/QuizEntry";
 import { type ComputerHandle, stateWord } from "../../lib/computers";
 import { relTime, shortenPath } from "../../lib/format";
 import { applyOpenIntent } from "../../lib/inbox";
+import { withoutPersonal } from "../../lib/personal";
 import { extractLink } from "../../lib/rooms";
 import { AgentChip } from "./AgentChip";
 import { AgentsEntry } from "./AgentsSheet";
 import { FanoutChip, FanoutGroups } from "./FanoutSheet";
 import { InboxEntry } from "./InboxSheet";
+import { PersonalSlot } from "./PersonalEntry";
 import { QrScanner } from "./QrScanner";
 import { SchedulesEntry } from "./SchedulesSheet";
 import { SessionsSheet } from "./SessionsSheet";
@@ -144,9 +146,11 @@ export function CompanionCard({
 	};
 
 	const name = showName ? computer.name : (snap.machine ?? "Your computer");
+	// The Personal agent's live session is pinned above the sessions (PersonalSlot), not listed among them.
+	const listed = useMemo(() => withoutPersonal(snap.hosts), [snap.hosts]);
 	const rows = useMemo(
-		() => capRows(snap.hosts, snap.idle, showName && !expanded ? CARD_ROWS : Infinity),
-		[snap.hosts, snap.idle, showName, expanded],
+		() => capRows(listed, snap.idle, showName && !expanded ? CARD_ROWS : Infinity),
+		[listed, snap.idle, showName, expanded],
 	);
 	const shown = computer.error ?? error;
 	return (
@@ -188,12 +192,13 @@ export function CompanionCard({
 							<RefreshCw size={14} /> Retry
 						</button>
 					</div>
-				) : snap.phase === "connecting" && snap.hosts.length === 0 ? (
+				) : snap.phase === "connecting" && listed.length === 0 ? (
 					<div className="sh-companion-empty">Connecting…</div>
 				) : (
 					<>
-						{live && <FanoutGroups hosts={snap.hosts} client={client} onOpen={id => open(computer.id, id)} />}
-						{snap.hosts.length === 0 ? (
+						<PersonalSlot computer={computer} grouped={showName} currentSessionId={null} onOpenHost={open} />
+						{live && <FanoutGroups hosts={listed} client={client} onOpen={id => open(computer.id, id)} />}
+						{listed.length === 0 ? (
 							<div className="sh-companion-empty">
 								No session is sharing. Run <code>/collab</code> in omp.
 							</div>
@@ -203,7 +208,7 @@ export function CompanionCard({
 						<IdleList idle={rows.idle} joining={joining} disabled={!live} onShare={share} />
 						{rows.hidden > 0 && (
 							<button type="button" className="sh-btn sh-card-more" onClick={() => setExpanded(true)}>
-								Show all {snap.hosts.length + snap.idle.length}
+								Show all {listed.length + snap.idle.length}
 							</button>
 						)}
 						<div className="sh-card-actions">

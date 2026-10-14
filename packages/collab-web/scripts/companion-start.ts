@@ -46,9 +46,9 @@ export async function canSandbox(): Promise<boolean> {
 	return process.platform === "darwin" && (await Bun.file(SANDBOX_EXEC).exists());
 }
 
-async function writeOverlay(overlayPath: string, localRelayUrl?: string): Promise<void> {
+async function writeOverlay(overlayPath: string, localRelayUrl?: string, yaml?: string): Promise<void> {
 	await fs.mkdir(path.dirname(overlayPath), { recursive: true });
-	await fs.writeFile(overlayPath, overlayYaml(localRelayUrl), { mode: 0o600 });
+	await fs.writeFile(overlayPath, yaml ?? overlayYaml(localRelayUrl), { mode: 0o600 });
 	await fs.chmod(overlayPath, 0o600);
 }
 
@@ -113,6 +113,12 @@ export interface TmuxLaunch {
 	 * {@link launchEnded} and ends the session ({@link releaseLaunch} or {@link killTmuxSession}). Off: the session ends with its process.
 	 */
 	keepEnded?: boolean;
+	/**
+	 * Run omp under a named profile (`omp --profile <name>`, before `--config`; `PI_CONFIG_DIR` is passed on like for every
+	 * launch) with this overlay instead of the default one: a profile does not inherit the default config, so the overlay
+	 * carries what the companion would otherwise supply (the Personal agent's session).
+	 */
+	profile?: { name: string; overlayYaml: string };
 }
 
 /** How the detached host of a foreign agent session is started; see `scripts/foreign/host-main.ts`. */
@@ -193,7 +199,7 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 			);
 		throw new Error("folder does not exist on this computer");
 	}
-	if (!foreign) await writeOverlay(launch.overlayPath, launch.localRelayUrl);
+	if (!foreign) await writeOverlay(launch.overlayPath, launch.localRelayUrl, launch.profile?.overlayYaml);
 	const sandbox = !foreign && launch.sandbox ? await prepareSandbox({ ...launch.sandbox, folder: cwd }) : null;
 	const restrict = !foreign && launch.restrict ? await prepareRestriction(launch.restrict) : null;
 
@@ -220,6 +226,7 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 		: [
 				...(sandbox?.prefix ?? []),
 				launch.ompBin,
+				...(launch.profile ? ["--profile", launch.profile.name] : []),
 				"--config",
 				launch.overlayPath,
 				...(restrict?.ompArgs ?? sandbox?.ompArgs ?? []),

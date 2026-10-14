@@ -11,6 +11,7 @@ import {
 	visibleSettingsSections,
 } from "../../lib/settings-ui";
 import { IS_MAC, shortcutFires } from "../../lib/shortcuts";
+import { usePersonal } from "../../lib/use-personal";
 import type { SettingsEnv } from "./env";
 import { SECTION_ICONS, SettingsSheet } from "./SettingsSheet";
 
@@ -21,6 +22,8 @@ import { SECTION_ICONS, SettingsSheet } from "./SettingsSheet";
 export function SettingsHost({ env }: { env: SettingsEnv }): ReactNode {
 	const request = useSettingsRequest();
 	const computer = env.computers.length > 0;
+	const personal = usePersonal();
+	const personalAvailable = personal.hostable.length > 0 || personal.home.computer !== null;
 
 	const entries = useMemo<readonly PaletteEntry[]>(
 		() => [
@@ -33,7 +36,7 @@ export function SettingsHost({ env }: { env: SettingsEnv }): ReactNode {
 				shortcut: "settings",
 				run: () => openSettings(),
 			},
-			...visibleSettingsSections(computer).map((section): PaletteEntry => ({
+			...visibleSettingsSections(computer, personalAvailable).map((section): PaletteEntry => ({
 				id: `settings:${section}`,
 				title: `Settings: ${settingsLabel(section)}`,
 				section: "Settings",
@@ -42,7 +45,7 @@ export function SettingsHost({ env }: { env: SettingsEnv }): ReactNode {
 				run: () => openSettings(section),
 			})),
 		],
-		[computer],
+		[computer, personalAvailable],
 	);
 	usePaletteEntries(entries);
 

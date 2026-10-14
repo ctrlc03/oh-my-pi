@@ -32,6 +32,7 @@ import type {
 	SessionEntry as WireSessionEntry,
 } from "@oh-my-pi/pi-wire";
 import { buildSkillCommandPrompt } from "../modes/skill-command";
+import { cfgPersonalAllowShareLinks, cfgPersonalEnabled } from "../personal/settings";
 import type { InteractiveModeContext } from "../modes/types";
 import { cfgPlanEnabled } from "../plan-mode/settings";
 import { AgentLifecycleManager } from "../registry/agent-lifecycle";
@@ -447,8 +448,15 @@ export class CollabHost {
 	 * local relay appended when one is configured, so a viewer on this computer can skip the public relay.
 	 */
 	registryLink(access: CollabAccess): string {
+		// A Personal session is reachable by the owner's paired devices (control links) and nobody else.
+		if (access === "view" && this.#personalSession && !cfgPersonalAllowShareLinks.get(this.#ctx.settings)) return "";
 		if (access === "view") return this.#localWebViewLink || this.#webViewLink;
 		return this.#localWebLink || this.#webLink;
+	}
+
+	/** The session is a Personal agent: its write peers are the owner's devices, and the prompts they send are stamped so. */
+	get #personalSession(): boolean {
+		return cfgPersonalEnabled.get(this.#ctx.settings);
 	}
 
 	get participants(): CollabParticipant[] {
@@ -1604,7 +1612,7 @@ export class CollabHost {
 		name: string,
 		modelOverride?: PromptModelOverride,
 	): void {
-		const details: CollabPromptDetails = { from: name };
+		const details: CollabPromptDetails = this.#personalSession ? { from: name, origin: "owner" } : { from: name };
 		if (this.#ctx.session.isStreaming) {
 			this.#ctx.updatePendingMessagesDisplay();
 			this.#ctx.ui.requestRender();
@@ -1963,7 +1971,9 @@ export class CollabHost {
 	/** The `continue` a resume-at-reset timer sends once the usage limit has reset. */
 	async #sendResumeContinue(): Promise<void> {
 		if (this.ending || !this.#sessionStillCurrent()) return;
-		const details: CollabPromptDetails = { from: RESUME_AUTHOR };
+		const details: CollabPromptDetails = this.#personalSession
+			? { from: RESUME_AUTHOR, origin: "owner" }
+			: { from: RESUME_AUTHOR };
 		const dispatched = await this.#ctx.session.promptCustomMessage(
 			{
 				customType: COLLAB_PROMPT_MESSAGE_TYPE,

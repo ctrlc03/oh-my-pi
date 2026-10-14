@@ -16,8 +16,8 @@ import { parseCollabLink } from "./link";
 export const OPEN_PREFIX = "open:";
 const REPLY_MARK = "&reply=";
 const COMPUTER_MARK = "&computer=";
-/** `name:` followed by something; the name is lowercase words, as in the routes above. */
-const ROUTE_RE = /^[a-z][a-z0-9-]*:./;
+/** `name:` followed by something (the name is lowercase words, as in the routes above), or a Personal route (`personal`, `personal/inbox`; see PERSONAL_ROUTES), which has no colon. */
+const ROUTE_RE = /^(?:[a-z][a-z0-9-]*:.|personal(?:\/[a-z]+)?(?:&|$))/;
 
 export type NotifyRoute =
 	| { kind: "open"; instanceId: string; computerId: string | null; reply: string | null }

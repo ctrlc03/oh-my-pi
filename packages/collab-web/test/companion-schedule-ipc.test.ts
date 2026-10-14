@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { ScheduleTool } from "@oh-my-pi/pi-coding-agent/tools/schedule";
 import {
 	CompanionRefusedError,
@@ -118,7 +119,7 @@ describe("the companion's schedule channel and omp's client", () => {
 
 	it("carries the agent's tool call to the scheduler and back", async () => {
 		const { sched } = await launch();
-		const session = { cwd: dir, getSessionId: () => "sess-1" };
+		const session = { cwd: dir, getSessionId: () => "sess-1", settings: Settings.isolated() };
 		const tool = new ScheduleTool(session, companionSchedules(dir));
 		const made = await tool.execute("c1", {
 			action: "create",

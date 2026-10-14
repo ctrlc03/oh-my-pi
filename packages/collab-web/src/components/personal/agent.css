@@ -1,0 +1,415 @@
+/* Personal agent: setup wizard, setup checklist, Agent tab cards, Settings tab and its sources editor. pa-* namespace; token colours only. */
+
+.pa-sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	clip-path: inset(50%);
+	border: 0;
+}
+
+.pa-note-text {
+	margin: 0;
+	font-size: 12.5px;
+	line-height: 1.45;
+	color: var(--fg-muted);
+}
+
+.pa-note-ok {
+	color: var(--fg);
+	border-color: color-mix(in srgb, var(--ok) 50%, transparent);
+	background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+
+.pa-note-warn > .sh-btn {
+	margin-top: 8px;
+}
+
+.pa-card-lead {
+	border-color: var(--accent);
+	background: color-mix(in srgb, var(--accent) 8%, var(--bg-raised));
+}
+
+.pa-chip {
+	display: inline-block;
+	padding: 1px 8px;
+	font-size: 11.5px;
+	font-weight: 600;
+	line-height: 1.5;
+	color: var(--fg-muted);
+	background: var(--bg-inset);
+	border: 1px solid var(--border-strong);
+	border-radius: 999px;
+}
+
+.pa-chip-ok {
+	color: var(--ok);
+	border-color: color-mix(in srgb, var(--ok) 50%, transparent);
+	background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+
+.pa-chip-warn {
+	color: var(--warn);
+	border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+	background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+
+.pa-chip-err {
+	color: var(--err);
+	border-color: color-mix(in srgb, var(--err) 45%, transparent);
+	background: color-mix(in srgb, var(--err) 10%, transparent);
+}
+
+.pa-path {
+	font: 12.5px / 1.4 var(--font-mono);
+	overflow-wrap: anywhere;
+	color: var(--fg);
+}
+
+.pa-textarea.sh-input {
+	height: auto;
+	min-height: 96px;
+	padding: 8px 11px;
+	line-height: 1.45;
+	resize: vertical;
+}
+
+/* ---- setup wizard ---- */
+.pa-wizard-intro {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.pa-wizard-intro p {
+	margin: 0;
+	font-size: 13.5px;
+	line-height: 1.5;
+	color: var(--fg-muted);
+}
+
+.pa-wizard-title {
+	margin: 0;
+	font-size: 18px;
+	font-weight: 600;
+}
+
+.pa-computers {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.pa-computer {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 44px;
+	padding: 8px 12px;
+	cursor: pointer;
+	background: var(--bg-inset);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+}
+
+.pa-computer input {
+	flex: none;
+	accent-color: var(--accent);
+}
+
+.pa-computer-on {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+}
+
+.pa-computer:has(input:focus-visible) {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
+}
+
+.pa-computer-text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.pa-computer-name {
+	font-size: 13.5px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.pa-counter {
+	font-size: 12px;
+	color: var(--fg-faint);
+}
+
+.pa-counter-over {
+	color: var(--warn);
+}
+
+.pa-list {
+	margin: 0;
+	padding-left: 18px;
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--fg-muted);
+}
+
+.pa-list code {
+	font-size: 12px;
+	color: var(--fg);
+}
+
+/* ---- setup checklist ---- */
+.pa-checklist {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.pa-check-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 10px 0;
+	border-bottom: 1px solid var(--border);
+}
+
+.pa-check-row:last-child {
+	border-bottom: 0;
+}
+
+.pa-check-icon {
+	flex: none;
+	margin-top: 1px;
+	color: var(--fg-faint);
+}
+
+.pa-check-done .pa-check-icon {
+	color: var(--ok);
+}
+
+.pa-check-body {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+}
+
+.pa-check-title {
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.pa-check-text {
+	font-size: 13px;
+	color: var(--fg-muted);
+	overflow-wrap: anywhere;
+}
+
+/* ---- Agent tab ---- */
+.pa-status-title {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.pa-headline {
+	margin: 0;
+	font-size: 13.5px;
+	line-height: 1.45;
+	color: var(--fg-muted);
+}
+
+.pa-facts {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 0;
+}
+
+.pa-fact {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 2px 12px;
+}
+
+.pa-fact-label {
+	flex: 0 0 110px;
+	font-size: 12.5px;
+	color: var(--fg-faint);
+}
+
+.pa-fact-value {
+	flex: 1 1 160px;
+	min-width: 0;
+	margin: 0;
+	font-size: 13px;
+	overflow-wrap: anywhere;
+}
+
+.pa-waiting {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px 12px;
+	padding-top: 10px;
+	font-size: 13px;
+	color: var(--fg-muted);
+	border-top: 1px solid var(--border);
+}
+
+.pa-confirm {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 10px 12px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+}
+
+/* ---- Settings tab ---- */
+.pa-money {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--fg-muted);
+}
+
+.pa-input-short {
+	width: 120px;
+	max-width: 100%;
+}
+
+.pa-input-path {
+	width: min(320px, 100%);
+}
+
+.pa-save {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+	padding-top: 4px;
+}
+
+.pa-save-state {
+	font-size: 12.5px;
+	color: var(--ok);
+}
+
+.pa-field-err {
+	min-width: 0;
+	font-size: 12.5px;
+	color: var(--err);
+	overflow-wrap: anywhere;
+}
+
+/* ---- sources ---- */
+.pa-sources {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.pa-source-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.pa-source {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px 12px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.pa-source-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 6px 12px;
+}
+
+.pa-source-main {
+	flex: 1 1 200px;
+	min-width: 0;
+}
+
+.pa-source-title {
+	font-size: 14px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.pa-source-main .sh-field-hint {
+	overflow-wrap: anywhere;
+}
+
+.pa-source-form {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 12px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+}
+
+.pa-check {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+}
+
+.pa-check input {
+	flex: none;
+	accent-color: var(--accent);
+}
+
+@media (max-width: 640px) {
+	.pa-input-path {
+		width: 100%;
+	}
+}
+
+@media (any-pointer: coarse) {
+	.pa-check,
+	.pa-money .sh-input,
+	.pa-input-path,
+	.pa-input-short,
+	.pa-source-form .sh-input:not(.pa-textarea),
+	.pa-save .sh-btn {
+		min-height: 44px;
+	}
+
+	.pa-panel .sh-segment {
+		min-width: 44px;
+	}
+
+	.pa-check input,
+	.pa-computer input {
+		width: 20px;
+		height: 20px;
+	}
+}

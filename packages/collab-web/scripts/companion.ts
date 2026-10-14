@@ -211,6 +211,7 @@ import {
 	saveSchedules,
 } from "./companion-schedule";
 import { startScheduleIpc } from "./companion-schedule-ipc";
+import { createPersonal } from "./companion-personal";
 import { createSessionOrg, ghSessionPrDone, loadOrgFile, saveOrgFile } from "./companion-sessionorg";
 import {
 	createSpendMonitor,
@@ -290,7 +291,10 @@ const statePath = path.join(configDir, "agent", "collab-companion.json");
 const invitesDir = path.join(configDir, "agent", "collab-companion-invites");
 const sessionsDir = path.join(configDir, "agent", "sessions");
 /** Message search over the session files; keeps the searchable text of recent files in memory. */
-const sessionSearch = createSessionSearch({ sessionsDir });
+const sessionSearch = createSessionSearch({
+	sessionsDir,
+	extraSessionsDirs: () => personal.sessionDirs().slice(1),
+});
 
 /**
  * Vendor agents (Claude Code, Codex, ...): each session runs in its own detached host process (`./foreign/host-main.ts`, started in
@@ -863,6 +867,41 @@ const settleCleanup = createSettleCleanup({
 	onError: err => console.error(`companion: worktree settle cleanup failed: ${errorText(err)}`),
 });
 
+/**
+ * The Personal agent (opt-in; see ./companion-personal and docs/personal-agent.md). Until the owner sets it up on this
+ * computer nothing here writes a file or starts a timer: the runtime is driven by the host poll below.
+ */
+const personal = await createPersonal({
+	configRoot: configDir,
+	machine,
+	computerId: state.roomId,
+	ompBin,
+	relayUrl: state.relayUrl,
+	webUrl,
+	localRelayUrl: () => localRelayUrl,
+	now: Date.now,
+	listHosts: async () => (await loadSessions()).hosts,
+	endHost: async instanceId => {
+		const target = await companionTmuxSession(instanceId);
+		if (target !== null) await killTmuxSession(target.tmux, target.name);
+	},
+	pushOwner: (payload, { presenceAware }) => {
+		const showing = new Set<string>();
+		if (presenceAware) for (const p of presence.values()) if (p.visible && p.endpoint) showing.add(p.endpoint);
+		for (const subscription of registry.subscriptions()) {
+			if (!showing.has(subscription.endpoint)) push(subscription, payload, payload.tag);
+		}
+	},
+	broadcast: frame => {
+		for (const peer of peers) room.send(frame, peer, zipPeers.has(peer));
+	},
+	refresh: () => void refresh(),
+	ipc: () => scheduleIpc,
+	overlayFile: path.join(configDir, "agent", "collab-companion-personal-overlay.yml"),
+	promptDir: path.join(configDir, COMPANION_RUN_DIR),
+	defaultSessionsDir: sessionsDir,
+});
+
 const sessionOrgPath = path.join(path.dirname(statePath), "collab-companion-sessionorg.json");
 
 /** Pin / snooze / settle state every device syncs through, and the auto-settle rules; see ./companion-sessionorg. */
@@ -899,6 +938,7 @@ const sessionOrg = createSessionOrg({
 		return true;
 	},
 	onError: err => console.error(`companion: session organisation failed: ${errorText(err)}`),
+	exempt: sessionId => personal.exempt(sessionId),
 });
 
 const fanoutPath = path.join(path.dirname(statePath), "collab-companion-fanout.json");
@@ -914,15 +954,17 @@ const scheduler = createScheduler({
 	initial: await loadSchedules(schedulesPath, Date.now()),
 	save: schedules => saveSchedules(schedulesPath, schedules),
 	start: schedule =>
-		startSession(
-			schedule.cwd,
-			schedule.mode === "resume" ? schedule.sessionId : undefined,
-			schedule.sandboxed,
-			schedule.worktree ? {} : undefined,
-			undefined,
-			schedule.prompt,
-			schedule.maxCostUsd,
-		),
+		schedule.deliverTo === "personal"
+			? personal.deliverSchedule(schedule).then(() => undefined)
+			: startSession(
+					schedule.cwd,
+					schedule.mode === "resume" ? schedule.sessionId : undefined,
+					schedule.sandboxed,
+					schedule.worktree ? {} : undefined,
+					undefined,
+					schedule.prompt,
+					schedule.maxCostUsd,
+				),
 	spendLimitReached: async () => {
 		const limit = state.spend?.limits.dailyUsd ?? null;
 		if (limit === null) return false;
@@ -945,8 +987,10 @@ setInterval(() => void scheduler.tick(), SCHEDULE_TICK_MS).unref();
 const scheduleIpc = await startScheduleIpc({
 	file: path.join(path.dirname(statePath), SCHEDULE_IPC_FILE),
 	scheduler,
-	validate: { now: Date.now, sandboxAvailable, checkDirectory },
+	validate: { now: Date.now, sandboxAvailable, checkDirectory, personalEnabled: personal.enabled },
+	personal: personal.ipc,
 });
+await personal.attach();
 
 /**
  * Push the session's pending question or the start of its last reply, falling
@@ -957,7 +1001,7 @@ async function announce(host: CompanionHost, edge: "input" | "done"): Promise<vo
 	let body = edge === "input" ? "Needs your input" : "Finished, your turn";
 	try {
 		const read = async () => {
-			const entries = await readSessionTail(sessionsDir, host.sessionId);
+			const entries = await readSessionTail(personal.sessionDirs(), host.sessionId);
 			return edge === "input" ? pendingQuestion(entries) : lastAssistantSummary(entries);
 		};
 		const text = (await read()) ?? (await Bun.sleep(750).then(read));
@@ -1034,6 +1078,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 	]);
 	if (!listed) return;
 	detectEdges(listed.hosts);
+	void personal.tick(listed.hosts);
 	void spendMonitor.tick();
 	void scheduler.tick();
 	void sessionOrg
@@ -1048,9 +1093,11 @@ async function refresh(targetPeer?: number): Promise<void> {
 	const frame: CompanionReply = {
 		t: "hosts",
 		machine,
-		hosts: listed.hosts.map(host =>
-			Object.hasOwn(fanoutOf, host.instanceId) ? { ...host, fanout: fanoutOf[host.instanceId] } : host,
-		),
+		hosts: personal
+			.markHosts(listed.hosts)
+			.map(host =>
+				Object.hasOwn(fanoutOf, host.instanceId) ? { ...host, fanout: fanoutOf[host.instanceId] } : host,
+			),
 		vapidKey: state.vapid.publicKey,
 		idle: listed.idle,
 		canStart: extras.canStart,
@@ -1081,6 +1128,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canEndOnSettle: true,
 		transcribe: extras.transcribe ?? undefined,
 		power: power ?? undefined,
+		...personal.hostsFields(extras.canStart),
 	};
 	const json = JSON.stringify(frame);
 	if (json !== lastHostsJson) for (const peer of peers) room.send(frame, peer, zipPeers.has(peer));
@@ -1206,7 +1254,11 @@ async function startSession(
 			const listedPids = listed.idle
 				.filter(session => session.sessionId.startsWith(resume))
 				.flatMap(session => knownPids.get(session.instanceId) ?? []);
-			const holders = await findSessionHolders(resume, await findSessionFile(sessionsDir, resume), listedPids);
+			const holders = await findSessionHolders(
+				resume,
+				await findSessionFile(personal.sessionDirs(), resume),
+				listedPids,
+			);
 			if (holders.length > 0) throw new SessionOpenElsewhereError(holders);
 		}
 	}
@@ -1394,6 +1446,9 @@ async function companionTmuxSession(instanceId: string): Promise<{ tmux: string;
 
 /** End a session the companion started: its tmux session is killed. */
 async function stopSession(instanceId: string): Promise<void> {
+	const host = knownHosts.find(h => h.instanceId === instanceId);
+	if (host !== undefined && personal.isPersonalHost(host))
+		throw new Error("The Personal agent is stopped from Settings → Personal agent");
 	const target = await companionTmuxSession(instanceId);
 	if (target === null) throw new Error("only sessions the companion started can be ended from here");
 	await killTmuxSession(target.tmux, target.name);
@@ -1544,7 +1599,7 @@ async function fanoutKeep(input: unknown): Promise<FanoutKeepResult> {
 /** Poll while a device is connected (fast) or one wants push notifications (slower). */
 function schedulePoll(): void {
 	if (pollTimer !== undefined) return;
-	if (peers.size === 0 && registry.subscriptions().length === 0) {
+	if (peers.size === 0 && registry.subscriptions().length === 0 && !personal.enabled()) {
 		// Unwatched gaps must not read as edges once watching resumes.
 		seen = null;
 		lastPower = null;
@@ -1674,6 +1729,10 @@ room.onFrame = (frame, fromPeer) => {
 			},
 		);
 	};
+	if (personal.isRequest(frame)) {
+		respond(frame.reqId, () => personal.handleRequest(frame));
+		return;
+	}
 	switch (frame.t) {
 		case "list":
 			if (frame.zip === true) zipPeers.add(fromPeer);
@@ -1836,7 +1895,7 @@ room.onFrame = (frame, fromPeer) => {
 			respond(frame.reqId, async () => {
 				// A fresh list: a session may have asked or finished since the last poll.
 				const { hosts } = await loadSessions();
-				const items = await buildInbox(hosts, id => readSessionTail(sessionsDir, id), Date.now());
+				const items = await buildInbox(hosts, id => readSessionTail(personal.sessionDirs(), id), Date.now());
 				return { t: "inbox", reqId: frame.reqId, items };
 			});
 			return;
@@ -1875,7 +1934,7 @@ room.onFrame = (frame, fromPeer) => {
 					want: { commit: frame.commit, pr: frame.pr },
 					session: {
 						title: session.sessionName,
-						summary: lastAssistantSummary(await readSessionTail(sessionsDir, session.sessionId)),
+						summary: lastAssistantSummary(await readSessionTail(personal.sessionDirs(), session.sessionId)),
 					},
 					ompBin,
 					model: gitFlow.settings.messageModel,
@@ -1982,6 +2041,7 @@ room.onFrame = (frame, fromPeer) => {
 			respond(frame.reqId, async () => {
 				const found = await findFileSessions({
 					sessionsDir,
+					extraSessionsDirs: personal.sessionDirs().slice(1),
 					cwd: await sessionCwd(frame.instanceId),
 					path: frame.path,
 				});
@@ -2440,6 +2500,7 @@ void quizzes.init().catch(err => console.error(`companion: starting quizzes fail
 function shutdown(): void {
 	// Runs are detached process groups: they would outlive the companion.
 	runs.stopAll();
+	personal.shutdown();
 	clearTimeout(pollTimer);
 	awake.release();
 	room.close();

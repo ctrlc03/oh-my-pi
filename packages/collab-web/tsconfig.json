@@ -15,6 +15,7 @@
 			"@oh-my-pi/pi-coding-agent/tools/approval-grants": ["./scripts/omp-grants.d.ts"],
 			"@oh-my-pi/pi-coding-agent/tools/path-rules": ["./scripts/omp-grants.d.ts"],
 			"@oh-my-pi/pi-coding-agent/tools/schedule": ["./scripts/omp-schedule-tool.d.ts"],
+			"@oh-my-pi/pi-coding-agent/config/settings": ["./scripts/omp-schedule-tool.d.ts"],
 			"@oh-my-pi/pi-coding-agent/stt/asr-client": ["./scripts/omp-stt.d.ts"],
 			"@oh-my-pi/pi-coding-agent/stt/downloader": ["./scripts/omp-stt.d.ts"],
 			"@oh-my-pi/pi-coding-agent/stt/models": ["./scripts/omp-stt.d.ts"]

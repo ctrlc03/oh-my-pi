@@ -457,6 +457,9 @@ import { SessionStatsTracker, type SessionStatsTrackerHost } from "./session-sta
 import { SessionTools, systemPromptDigest, type SessionToolsHost } from "./session-tools";
 import { resolveOpenAIWebsocketPreference } from "./settings-stream-fn";
 import type { ShakeMode, ShakeResult } from "./shake-types";
+import { deliveredEventIds } from "../personal/events";
+import { PersonalRuntime, personalRunDir } from "../personal/runtime";
+import { RollingSpendController } from "./rolling-spend";
 import { SpendCapController, type SpendCapLimits, type SpendCapStatus } from "./spend-cap";
 import { MODEL_MENTION_TAG_RE } from "@oh-my-pi/pi-tui/prompt/model-mention-syntax";
 import { PromptRouter, ROUTING_NOTICE_SOURCE } from "../routing/router";
@@ -953,6 +956,8 @@ export class AgentSession implements SettingsScope {
 	#profilesInstance: SessionProfiles | undefined;
 	/** Pull request watcher; idle until a pull request is watched. */
 	#prWatchInstance: PrWatchManager | undefined;
+	/** The Personal agent runtime (docs/personal-agent.md); only a top-level session with `personal.enabled` has one. */
+	#personalInstance: PersonalRuntime | undefined;
 	#workPoolYieldItems: readonly WorkPoolYieldItem[] = [];
 	/** Item set matching the last successfully rebuilt provider prompt. The base
 	 *  prompt starts consistent with the empty set; every later value is a
@@ -2036,6 +2041,16 @@ export class AgentSession implements SettingsScope {
 				emitNotice: (level, message, source) => this.emitNotice(level, message, source),
 			},
 			config.enforceSpendCap !== false,
+			// Profile-wide day/month limits (`session.spendLimits.*`, Personal sessions): inert unless one is on.
+			(config.agentKind ?? "main") === "main"
+				? new RollingSpendController({
+						settings: this.settings,
+						agentDir: this.settings.getAgentDir(),
+						sessionId: () => this.sessionId,
+						readSpend: () => this.#stats.getSpendUsage(),
+						emitNotice: (level, message, source) => this.emitNotice(level, message, source),
+					})
+				: undefined,
 		);
 		// Runs end at the next boundary after the turn that crossed a cap; its tools have finished by then.
 		this.agent.setShouldStop(() => this.#spendCap.shouldStop());
@@ -2690,6 +2705,7 @@ export class AgentSession implements SettingsScope {
 		this.#watchModelAvailabilitySettings();
 		if (readPersistedPrWatches(this.sessionManager.getBranch()).length > 0) this.prWatch.restore();
 		this.registerSessionChangeCallback(() => this.prWatch.sessionChanged());
+		this.#startPersonal(config);
 	}
 
 	/** Registers teardown to run when this session is disposed (e.g. handle listeners bound to it). */
@@ -3993,6 +4009,9 @@ export class AgentSession implements SettingsScope {
 	}
 
 	#processAgentEvent = async (event: AgentEvent): Promise<void> => {
+		// Synchronous and before any await: the Personal turn guard must see which message started the turn
+		// before the tool calls it leads to are approved.
+		this.#personalInstance?.onAgentEvent(event);
 		const eventPromptGeneration = this.#promptGeneration;
 		if (event.type === "agent_end" && this.#activeAgentContinue) {
 			this.#activeAgentContinue.turnEnded = true;
@@ -5148,6 +5167,11 @@ export class AgentSession implements SettingsScope {
 	 * execution still emit there).
 	 */
 	async #beforeToolCall(ctx: BeforeToolCallContext, signal?: AbortSignal): Promise<BeforeToolCallResult | undefined> {
+		// A turn started by outside content may not use some tools at all (`personal.externalTurns.policy`).
+		const personalRefusal = this.#personalInstance?.refuseToolCall(ctx.tool, ctx.args, name =>
+			this.#tools.registry.get(name),
+		);
+		if (personalRefusal !== undefined) return { block: true, reason: personalRefusal };
 		const runner = this.#extensionRunner;
 		runner?.markLoopToolCall?.(ctx.toolCall.id, ctx.tool.name);
 		const ttsrResult = await this.#ttsr.beforeToolCall(ctx);
@@ -6213,6 +6237,46 @@ export class AgentSession implements SettingsScope {
 	/** Current model (may be undefined if not yet selected) */
 	get model(): Model | undefined {
 		return this.agent.state.model;
+	}
+
+	/** The Personal agent runtime (`personal.enabled`, top-level sessions); undefined otherwise, when nothing of Personal runs. */
+	get personal(): PersonalRuntime | undefined {
+		return this.#personalInstance;
+	}
+
+	#startPersonal(config: AgentSessionConfig): void {
+		const personal = PersonalRuntime.createIf({
+			settings: this.settings,
+			agentDir: this.settings.getAgentDir(),
+			runDir: personalRunDir(),
+			topLevel: (config.agentKind ?? "main") === "main" && (config.memoryTaskDepth ?? 0) === 0,
+			sessionId: () => this.sessionId,
+			isBusy: () => this.#isDisposed || this.isBusyForSnapshot || this.isSessionTransitioning,
+			isDisposed: () => this.#isDisposed,
+			capped: () => this.#spendCap.rollingCapped(),
+			deliveredEventIds: () => deliveredEventIds(this.sessionManager.getEntries()),
+			deliver: (message, delivery) =>
+				this.sendCustomMessage(
+					message,
+					delivery.triggerTurn
+						? { triggerTurn: true, deliverAs: "followUp" }
+						: { triggerTurn: false, deliverAs: "nextTurn" },
+				),
+			// The graceful path is the mode's own shutdown (memory retained and consolidated); without a mode, dispose here.
+			requestExit: () => {
+				if (this.#extensionRunner) void this.#extensionRunner.shutdown();
+				else void this.dispose().finally(() => process.exit(0));
+			},
+			forceExit: async () => {
+				await this.dispose();
+				process.exit(0);
+			},
+			subscribeRunState: listener => this.subscribeRunState(listener),
+		});
+		if (!personal) return;
+		this.#personalInstance = personal;
+		this.addDisposer(() => void personal.dispose());
+		personal.start();
 	}
 
 	/**

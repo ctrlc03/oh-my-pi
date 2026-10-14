@@ -12,35 +12,35 @@ One JSON file with this shape (valid JSON: no comments, no trailing commas):
 
 ```json
 {
-  "root": "system",
-  "diagrams": [
-    {
-      "id": "system",
-      "title": "What the system is, in a few words",
-      "summary": "One or two sentences: what this system does and for whom.",
-      "nodes": [
-        {
-          "id": "api",
-          "label": "API server",
-          "kind": "service",
-          "summary": "Plain words: what it is for, not how it is built.",
-          "path": "packages/api",
-          "child": "comp-api",
-          "refs": ["packages/api/src/main.ts@12@createServer"]
-        }
-      ],
-      "edges": [
-        {
-          "id": "web-api",
-          "from": "web",
-          "to": "api",
-          "label": "sends requests",
-          "kind": "http",
-          "refs": ["packages/web/src/client.ts@40@fetch(`${API_URL}/orders`"]
-        }
-      ]
-    }
-  ]
+	"root": "system",
+	"diagrams": [
+		{
+			"id": "system",
+			"title": "What the system is, in a few words",
+			"summary": "One or two sentences: what this system does and for whom.",
+			"nodes": [
+				{
+					"id": "api",
+					"label": "API server",
+					"kind": "service",
+					"summary": "Plain words: what it is for, not how it is built.",
+					"path": "packages/api",
+					"child": "comp-api",
+					"refs": ["packages/api/src/main.ts@12@createServer"]
+				}
+			],
+			"edges": [
+				{
+					"id": "web-api",
+					"from": "web",
+					"to": "api",
+					"label": "sends requests",
+					"kind": "http",
+					"refs": ["packages/web/src/client.ts@40@fetch(`${API_URL}/orders`"]
+				}
+			]
+		}
+	]
 }
 ```
 

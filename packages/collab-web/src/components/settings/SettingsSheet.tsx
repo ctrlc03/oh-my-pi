@@ -1,6 +1,7 @@
 import {
 	ArrowLeft,
 	Bell,
+	Brain,
 	ChevronRight,
 	Info,
 	Keyboard,
@@ -22,6 +23,7 @@ import {
 	settingsLabel,
 	visibleSettingsSections,
 } from "../../lib/settings-ui";
+import { usePersonal } from "../../lib/use-personal";
 import { PHONE_QUERY, useMedia } from "../codemap/shared";
 import { Sheet } from "../shell/Sheet";
 import { ShortcutsPanel } from "../shell/ShortcutsPanel";
@@ -34,6 +36,7 @@ import { MessagesSection } from "./MessagesSection";
 import { NotificationsSection } from "./NotificationsSection";
 import { SessionsSection } from "./SessionsSection";
 import { Where } from "./SettingsRows";
+import { PersonalSection } from "./PersonalSection";
 import "./settings.css";
 
 export const SECTION_ICONS: Record<SettingsSection, LucideIcon> = {
@@ -44,6 +47,7 @@ export const SECTION_ICONS: Record<SettingsSection, LucideIcon> = {
 	keyboard: Keyboard,
 	computers: Laptop,
 	devices: Smartphone,
+	personal: Brain,
 	about: Info,
 };
 
@@ -67,6 +71,8 @@ function SectionContent({ section, env }: { section: SettingsSection; env: Setti
 			return <ComputersSection env={env} />;
 		case "devices":
 			return <DevicesSection env={env} />;
+		case "personal":
+			return <PersonalSection />;
 		case "about":
 			return <AboutSection env={env} />;
 	}
@@ -90,11 +96,12 @@ function joinNames(names: readonly string[]): string {
  * The computer(s) a section keeps its settings on, or null when it keeps them on this device alone. With one
  * computer its machine name; with several the ones that hold the section's settings ("each computer" when all do).
  */
-function whereMachine(section: SettingsSection, env: SettingsEnv): string | null {
+function whereMachine(section: SettingsSection, env: SettingsEnv, personalMachine: string | null): string | null {
 	const { computers, orgs } = env;
 	const named = (computer: ComputerHandle): string =>
 		computers.length === 1 ? (computer.snap.machine ?? "your computer") : computer.name;
 	let holders: readonly ComputerHandle[];
+	if (section === "personal") return personalMachine;
 	if (section === "devices") holders = computers;
 	else if (section === "sessions") holders = computers.filter(computer => orgs.of(computer.id).synced);
 	else return null;
@@ -110,7 +117,11 @@ function whereMachine(section: SettingsSection, env: SettingsEnv): string | null
  */
 export function SettingsSheet({ initial, env, onClose }: SettingsSheetProps): ReactNode {
 	const phone = useMedia(PHONE_QUERY);
-	const sections = visibleSettingsSections(env.computers.length > 0);
+	const personal = usePersonal();
+	const sections = visibleSettingsSections(
+		env.computers.length > 0,
+		personal.hostable.length > 0 || personal.home.computer !== null,
+	);
 	const [selected, setSelected] = useState<SettingsSection>(initial ?? lastSettingsSection() ?? "appearance");
 	// A section that went away (the computer was unpaired) gives way to the first.
 	const section = sections.includes(selected) ? selected : (sections[0] ?? "appearance");
@@ -167,9 +178,14 @@ export function SettingsSheet({ initial, env, onClose }: SettingsSheetProps): Re
 		root.current?.querySelector<HTMLElement>(`.sh-set-list [data-section="${next}"]`)?.focus();
 	};
 
-	// Notifications and About mark the location per group: they mix this device and the computers.
+	// Notifications and About mark the location per group: they mix this device and the computers. Personal lives on its home computer alone, which the setup flow has not chosen yet.
+	const personalMachine = personal.home.computer === null ? null : personal.home.computer.name;
 	const whereLine =
-		section === "notifications" || section === "about" ? null : <Where machine={whereMachine(section, env)} />;
+		section === "notifications" ||
+		section === "about" ||
+		(section === "personal" && personalMachine === null) ? null : (
+			<Where machine={whereMachine(section, env, personalMachine)} />
+		);
 
 	return (
 		<Sheet label="Settings" size="settings" onClose={onClose}>

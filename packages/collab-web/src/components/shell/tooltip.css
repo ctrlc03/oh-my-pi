@@ -95,8 +95,7 @@
 .sh-tip-probe {
 	position: fixed;
 	inset: 0;
-	padding: var(--safe-top) var(--safe-right) var(--safe-bottom)
-		var(--safe-left);
+	padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
 	pointer-events: none;
 	visibility: hidden;
 }

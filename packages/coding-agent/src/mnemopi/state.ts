@@ -13,7 +13,13 @@ import {
 	stripRetentionProtocolMarkers,
 	truncateRecallQuery,
 } from "../hindsight/content";
-import { countUserTurns, extractMessages } from "../hindsight/transcript";
+import {
+	countTurnStarts,
+	countUserTurns,
+	extractMessages,
+	extractTurnMessages,
+	type TurnMessage,
+} from "../hindsight/transcript";
 import {
 	findPersistedRecall,
 	type MemoryRecallChangesDetails,
@@ -27,8 +33,10 @@ import { redactMemorySecrets, redactRememberWrite } from "../memory-backend/reda
 import type { AgentSession, AgentSessionEvent } from "../session/agent-session";
 import memoryRecallChangesPrompt from "../prompts/system/memory-recall-changes.md" with { type: "text" };
 import mnemopiInstructions from "../prompts/system/mnemopi-instructions.md" with { type: "text" };
+import memoryTurnRecallPrompt from "../prompts/memories/turn-recall.md" with { type: "text" };
 import { type MnemopiBackendConfig, type MnemopiScoping, truncateApproxTokens } from "./config";
 import { mnemopiEmbedClient } from "./embed-client";
+import { agentWriteAuthor, currentTurnOrigin, type RowAuthor, rowAuthor } from "./origin";
 import { cfgMnemopiInjectionTokenLimit } from "./settings";
 
 /** A rendered recall block and where each tracked memory's text starts in it. */
@@ -126,9 +134,16 @@ export interface MnemopiMemoryEditOptions {
 }
 
 export interface MnemopiMemoryEditResult {
-	status: "updated" | "deleted" | "invalidated" | "not_found" | "not_editable";
+	status: "updated" | "deleted" | "invalidated" | "not_found" | "not_editable" | "protected";
 	bank?: string;
 	store?: MnemopiMemoryStore;
+	/**
+	 * Why a `protected` edit was refused: the owner pinned the row (`pinned`) or retracted it (`retracted`), or,
+	 * under `mnemopi.provenance`, the row is not one the agent wrote (`origin`: only the agent's own rows can be rewritten).
+	 */
+	reason?: "pinned" | "retracted" | "origin";
+	/** `forget` under `mnemopi.retention: permanent` invalidated the row instead of deleting it. */
+	kept?: boolean;
 }
 
 /** Which mnemopi table a resolved memory id lives in. `fact` rows are
@@ -151,6 +166,9 @@ interface MnemopiStoredMemoryRow {
 	metadata_json?: unknown;
 	valid_until?: unknown;
 	superseded_by?: unknown;
+	author_id?: unknown;
+	author_type?: unknown;
+	trust_tier?: unknown;
 }
 
 /**
@@ -213,10 +231,7 @@ function deriveRetainedTurnCursor(rows: readonly MnemopiRetentionCursorRow[], se
 	return cursor;
 }
 
-function sliceUnretainedMessages(
-	messages: MnemopiRetentionMessage[],
-	lastRetainedTurn: number,
-): MnemopiRetentionMessage[] {
+function sliceUnretainedMessages<T extends MnemopiRetentionMessage>(messages: T[], lastRetainedTurn: number): T[] {
 	if (lastRetainedTurn <= 0) return messages;
 	let userTurns = 0;
 	for (let index = 0; index < messages.length; index++) {
@@ -265,6 +280,9 @@ export class MnemopiSessionState {
 	unsubscribe?: () => void;
 	#retentionCursorLoaded = false;
 	#recallGeneration = 0;
+	#consolidateTimer: NodeJS.Timeout | undefined;
+	#consolidating = false;
+	#closed = false;
 
 	constructor(options: MnemopiSessionStateOptions) {
 		this.sessionId = options.sessionId;
@@ -389,7 +407,13 @@ export class MnemopiSessionState {
 					ineligible ??= { status: "not_editable", ...resultContext };
 					continue;
 				}
-				if ((op === "update" || op === "forget") && store !== "working") {
+				const protection = editProtection(row, op, this.config.provenance === true);
+				if (protection) {
+					return { status: "protected", reason: protection, ...resultContext };
+				}
+				// Under permanent retention nothing is deleted: `forget` retires the row, which stays findable by id.
+				const keepRow = op === "forget" && this.config.retention === "permanent";
+				if ((op === "update" || (op === "forget" && !keepRow)) && store !== "working") {
 					ineligible ??= { status: "not_found", ...resultContext };
 					continue;
 				}
@@ -403,13 +427,13 @@ export class MnemopiSessionState {
 					ineligible ??= { status: "not_found", ...resultContext };
 					continue;
 				}
-				if (op === "forget") {
+				if (op === "forget" && !keepRow) {
 					if (target.memory.forget(id)) return { status: "deleted", ...resultContext };
 					ineligible ??= { status: "not_found", ...resultContext };
 					continue;
 				}
-				if (target.memory.beam.invalidate(id, options.replacementId ?? null)) {
-					return { status: "invalidated", ...resultContext };
+				if (target.memory.beam.invalidate(id, op === "invalidate" ? (options.replacementId ?? null) : null)) {
+					return { status: "invalidated", ...(keepRow ? { kept: true } : {}), ...resultContext };
 				}
 				ineligible ??= { status: "not_found", ...resultContext };
 			}
@@ -432,7 +456,18 @@ export class MnemopiSessionState {
 		});
 	}
 
-	async collectScopedRecallResults(query: string): Promise<RecallResult[]> {
+	/**
+	 * Recall across the scoped banks. Under `mnemopi.provenance` rows an outside source wrote (`external`) stay
+	 * out, with the facts derived from them; `externalOnly` returns exactly those rows (facts left out) so a
+	 * caller can show them fenced as untrusted data. Without provenance every row is trusted alike and
+	 * `externalOnly` finds nothing.
+	 */
+	async collectScopedRecallResults(query: string, options: { externalOnly?: boolean } = {}): Promise<RecallResult[]> {
+		const provenance = this.config.provenance === true;
+		if (options.externalOnly && !provenance) return [];
+		const originOptions = options.externalOnly
+			? { includeFacts: false, authorType: "external" }
+			: { includeFacts: true, ...(provenance ? { excludeAuthorTypes: ["external"] } : {}) };
 		const merged: RecallResult[] = [];
 		const byId = new Map<string, number>();
 		const byContent = new Map<string, number>();
@@ -450,7 +485,7 @@ export class MnemopiSessionState {
 			try {
 				for (const recallQuery of queries) {
 					const results = await target.memory.recallEnhanced(recallQuery, this.config.recallLimit, {
-						includeFacts: true,
+						...originOptions,
 						channelId: target.bank,
 					});
 					targetSucceeded = true;
@@ -485,8 +520,8 @@ export class MnemopiSessionState {
 		});
 	}
 
-	recallResultsScoped(query: string): Promise<RecallResult[]> {
-		return this.collectScopedRecallResults(query);
+	recallResultsScoped(query: string, options: { externalOnly?: boolean } = {}): Promise<RecallResult[]> {
+		return this.collectScopedRecallResults(query, options);
 	}
 
 	formatScopedRecallContext(
@@ -504,9 +539,13 @@ export class MnemopiSessionState {
 	}
 
 	/** Background write: a failed write is logged and returns `undefined` instead of throwing. */
-	rememberInScope(memory: MnemopiRememberInput, options: MnemopiRememberOptions = {}): string | undefined {
+	rememberInScope(
+		memory: MnemopiRememberInput,
+		options: MnemopiRememberOptions = {},
+		author?: RowAuthor,
+	): string | undefined {
 		try {
-			return this.rememberScoped(memory, options);
+			return this.rememberScoped(memory, options, undefined, author);
 		} catch (error) {
 			logger.warn("Mnemopi: retain failed", {
 				bank: this.scoped.retain.bank,
@@ -519,15 +558,26 @@ export class MnemopiSessionState {
 	/**
 	 * Explicit write: throws the storage error, so the caller can report why nothing was stored.
 	 * `target` defaults to the retain bank; pass {@link getGlobalRetainTarget} for a global write.
+	 * Under `mnemopi.provenance` the row carries `author`, by default the agent's own in an owner turn and the
+	 * outside source's in a turn an outside event started; a guest turn writes nothing.
 	 */
 	rememberScoped(
 		memory: MnemopiRememberInput,
 		options: MnemopiRememberOptions = {},
 		target: MnemopiScopedMemory = this.scoped.retain,
+		author?: RowAuthor,
 	): string {
 		return withLoopPhase("mnemopi.retain", () => {
 			const [scrubbed, scrubbedOptions] = redactRememberWrite(memory, options);
-			return target.memory.remember(scrubbed, scrubbedOptions);
+			if (!this.config.provenance) return target.memory.remember(scrubbed, scrubbedOptions);
+			const writer = author ?? agentWriteAuthor(currentTurnOrigin(this.session.sessionManager));
+			if (!writer) throw new Error("Memory is not written during a guest turn.");
+			return target.memory.remember(scrubbed, {
+				...scrubbedOptions,
+				authorId: writer.authorId,
+				authorType: writer.authorType,
+				trustTier: writer.trustTier,
+			});
 		});
 	}
 
@@ -615,19 +665,101 @@ export class MnemopiSessionState {
 		return { content: prompt.render(memoryRecallChangesPrompt, { removed, updated }), memories: current };
 	}
 
+	/** The pinned memories (`mnemopi.pinnedTokenLimit`), oldest pin first per bank, whole ones only; the first that does not fit ends the list. */
+	#pinnedLines(): string[] {
+		const limitChars = (this.config.pinnedTokenLimit ?? 0) * 4;
+		const lines: string[] = [];
+		if (limitChars <= 0) return lines;
+		let used = 0;
+		const targets = dedupeScopedTargets([
+			this.scoped.retain,
+			...this.scoped.recall,
+			...(this.scoped.global ? [this.scoped.global] : []),
+		]);
+		for (const target of targets) {
+			let rows: MnemopiStoredMemoryRow[];
+			try {
+				rows = target.memory.getPinned() as MnemopiStoredMemoryRow[];
+			} catch (error) {
+				logger.warn("Mnemopi: reading pinned memories failed", {
+					bank: target.bank,
+					error: toError(error).message,
+				});
+				continue;
+			}
+			for (const row of rows) {
+				if (typeof row.content !== "string") continue;
+				const line = quoteMemoryText(recalledText(row.content));
+				if (used + line.length > limitChars) return lines;
+				lines.push(line);
+				used += line.length;
+			}
+		}
+		return lines;
+	}
+
+	/**
+	 * What `mnemopi.recallEveryTurn` delivers with a prompt: the pinned memories, and what recall finds for
+	 * the prompt within `mnemopi.recallEveryTurnTokenLimit`. A recall that fails delivers the pins alone, and
+	 * the turn goes on. Undefined when there is nothing to deliver or the turn was aborted.
+	 */
+	async #turnRecall(latestPrompt: string, signal?: AbortSignal): Promise<string | undefined> {
+		const query = withLoopPhase("mnemopi.recall", () => {
+			const queryMessages = [...this.#history(), { role: "user" as const, content: latestPrompt }];
+			const composed = composeRecallQuery(latestPrompt, queryMessages, this.config.recallContextTurns);
+			return truncateRecallQuery(composed, latestPrompt, this.config.recallMaxQueryChars);
+		});
+		let results: RecallResult[] = [];
+		try {
+			results = await this.collectScopedRecallResults(query);
+		} catch (error) {
+			logger.warn("Mnemopi: per-turn recall failed", { bank: this.config.bank, error: toError(error).message });
+		}
+		if (signal?.aborted) return undefined;
+		const tokenLimit = this.config.recallEveryTurnTokenLimit ?? 0;
+		const recalled: string[] = [];
+		let used = 0;
+		for (const result of results) {
+			const text = quoteMemoryText(recalledText(result.content));
+			const line = result.id ? `${text} (id: ${result.id})` : text;
+			if (used + line.length > tokenLimit * 4) {
+				if (recalled.length === 0 && tokenLimit > 0) recalled.push(truncateApproxTokens(line, tokenLimit));
+				break;
+			}
+			recalled.push(line);
+			used += line.length;
+		}
+		const pinned = this.#pinnedLines();
+		if (pinned.length === 0 && recalled.length === 0) return undefined;
+		return prompt.render(memoryTurnRecallPrompt, { pinned, recalled });
+	}
+
 	/**
 	 * A fresh recall is cut by `budget` to the prefix the prompt carries next to the memory
 	 * instructions; a reused one is resent exactly as delivered. Memories the delivered block
-	 * shows, even in part, are tracked for change reports.
+	 * shows, even in part, are tracked for change reports. With `mnemopi.recallEveryTurn`, the pinned
+	 * memories ride along, and every prompt after the first gets its own recall as a hidden message,
+	 * so the system prompt stays as the first turn left it.
 	 */
 	async beforeAgentStartPrompt(
 		promptText: string,
 		signal?: AbortSignal,
 		budget: (block: string) => string = block => this.budgetRecallBlock(block),
 	): Promise<MemoryPromptPreparation | undefined> {
-		if (!this.config.autoRecall || this.hasRecalledForFirstTurn) return undefined;
+		if (!this.config.autoRecall) return undefined;
+		const perTurn = this.config.recallEveryTurn === true && !this.aliasOf;
 		const latestPrompt = promptText.trim();
 		if (!latestPrompt) return undefined;
+		if (this.hasRecalledForFirstTurn) {
+			if (!perTurn) return undefined;
+			const turnGeneration = ++this.#recallGeneration;
+			const content = await this.#turnRecall(latestPrompt, signal);
+			if (!content) return undefined;
+			return {
+				notice: { content, details: { perTurn: true } },
+				commit: () => this.#recallGeneration === turnGeneration,
+			};
+		}
 		const generation = ++this.#recallGeneration;
 		// The transcript's recall is history: a resumed session sends it unchanged, so the
 		// prompt cache still matches, and reports what changed since as a new message.
@@ -637,28 +769,45 @@ export class MnemopiSessionState {
 			// The note carries what it reports, so a turn that never delivers it leaves the
 			// change for the next resume to report.
 			const changes = this.#recallChanges(persisted.memories);
+			// The resumed block answers the old first prompt, so this one gets its own recall.
+			const turnContent = perTurn ? await this.#turnRecall(latestPrompt, signal) : undefined;
+			const content = [changes?.content, turnContent].filter(part => part !== undefined).join("\n\n");
 			return {
 				context: persisted.text || undefined,
-				notice: changes && {
-					content: changes.content,
-					details: { scope, memories: changes.memories } satisfies MemoryRecallChangesDetails,
-				},
+				notice: content
+					? {
+							content,
+							details: changes
+								? ({ scope, memories: changes.memories } satisfies MemoryRecallChangesDetails)
+								: { perTurn: true },
+						}
+					: undefined,
 				commit: () => this.#commitRecall(generation, persisted.text, undefined),
 			};
 		}
 		const truncated = withLoopPhase("mnemopi.recall", () => {
-			const history = extractMessages(this.session.sessionManager);
-			const queryMessages = [...history, { role: "user" as const, content: latestPrompt }];
+			const queryMessages = [...this.#history(), { role: "user" as const, content: latestPrompt }];
 			const query = composeRecallQuery(latestPrompt, queryMessages, this.config.recallContextTurns);
 			return truncateRecallQuery(query, latestPrompt, this.config.recallMaxQueryChars);
 		});
 		const recall = await this.#recallBlock(truncated, signal);
 		const record = recall && this.#deliveredRecall(recall, budget);
+		// Pins come first, so the prompt budget never cuts them for recalled memories.
+		const pinned = perTurn ? this.#pinnedLines() : [];
+		const withPins = (text: string | undefined): string =>
+			[pinned.length > 0 ? prompt.render(memoryTurnRecallPrompt, { pinned, recalled: [] }) : "", text ?? ""]
+				.filter(part => part !== "")
+				.join("\n\n");
 		// The staged block and the transcript carry it as delivered; the session caches the
 		// full one, which every later prompt render cuts to the current budget.
 		return {
-			context: record?.text || undefined,
-			commit: () => this.#commitRecall(generation, recall?.text ?? "", record),
+			context: withPins(record?.text) || undefined,
+			commit: () =>
+				this.#commitRecall(
+					generation,
+					withPins(recall?.text),
+					record && { ...record, text: withPins(record.text) },
+				),
 		};
 	}
 
@@ -690,13 +839,14 @@ export class MnemopiSessionState {
 		const userTurns = withLoopPhase("mnemopi.retain", () => {
 			this.#restoreRetainedTurnCursor();
 			// Cheap gate first: most agent_end events are not retain turns, so skip text extraction.
-			return countUserTurns(this.session.sessionManager);
+			return this.config.provenance
+				? countTurnStarts(this.session.sessionManager)
+				: countUserTurns(this.session.sessionManager);
 		});
 		if (userTurns - this.lastRetainedTurn < this.config.retainEveryNTurns) return;
-		const messages = withLoopPhase("mnemopi.retain", () => {
-			const flat = extractMessages(this.session.sessionManager);
-			return sliceUnretainedMessages(flat, this.lastRetainedTurn);
-		});
+		const messages = withLoopPhase("mnemopi.retain", () =>
+			sliceUnretainedMessages(this.#history(), this.lastRetainedTurn),
+		);
 		await this.retainMessages(messages, `${this.sessionId}-${Date.now()}`, {
 			retainedThroughUserTurn: userTurns,
 		});
@@ -705,7 +855,7 @@ export class MnemopiSessionState {
 
 	async forceRetainCurrentSession(options: { extract?: boolean } = {}): Promise<void> {
 		if (this.aliasOf) return;
-		const flat = withLoopPhase("mnemopi.retain", () => extractMessages(this.session.sessionManager));
+		const flat = withLoopPhase("mnemopi.retain", () => this.#history());
 		const userTurns = withLoopPhase("mnemopi.retain", () => {
 			this.#restoreRetainedTurnCursor();
 			return flat.filter(message => message.role === "user").length;
@@ -718,20 +868,67 @@ export class MnemopiSessionState {
 		this.lastRetainedTurn = Math.max(this.lastRetainedTurn, userTurns);
 	}
 
+	/**
+	 * The session's user/assistant text, for recall queries and retention. Under `mnemopi.provenance` it is
+	 * tagged per turn and includes the prompts and events that arrive as custom messages (a Personal session's
+	 * collab prompts and events), which plain extraction skips.
+	 */
+	#history(): Array<{ role: string; content: string } & Partial<Pick<TurnMessage, "turn" | "turnOrigin">>> {
+		return this.config.provenance
+			? extractTurnMessages(this.session.sessionManager)
+			: extractMessages(this.session.sessionManager);
+	}
+
 	async retainMessages(
-		messages: Array<{ role: string; content: string }>,
+		messages: Array<{ role: string; content: string } & Partial<Pick<TurnMessage, "turn" | "turnOrigin">>>,
 		sourceId: string,
 		options: { extract?: boolean; retainedThroughUserTurn?: number } = {},
 	): Promise<void> {
 		// Label this body's transcript formatting and synchronous remember() work;
 		// callers label their preceding cursor and history extraction.
 		return withLoopPhase("mnemopi.retain", () => {
-			const { transcript, messageCount } = prepareRetentionTranscript(messages, true);
-			if (!transcript) return;
-			const { transcript: extractText } = prepareUserRetentionTranscript(messages);
-			const { transcript: embedText } = prepareEmbeddableRetentionTranscript(messages);
-			const shouldExtract = options.extract !== false && extractText !== null;
-			this.rememberInScope(transcript, {
+			if (!this.config.provenance) {
+				this.#storeTranscript(messages, sourceId, options);
+				return;
+			}
+			// Per turn, each stored under who the turn was for: the owner's words and the agent's answers to them are
+			// `owner` (facts come from the owner's words only), an outside event's text is `external` and yields no
+			// facts, and a guest's turn is not stored at all.
+			let start = 0;
+			while (start < messages.length) {
+				const { turn, turnOrigin } = messages[start];
+				let end = start + 1;
+				while (end < messages.length && messages[end].turn === turn) end++;
+				const group = messages.slice(start, end);
+				start = end;
+				if (turnOrigin?.origin === "guest") continue;
+				const external = turnOrigin?.origin === "external";
+				this.#storeTranscript(
+					group,
+					sourceId,
+					options,
+					rowAuthor(external ? "external" : "owner", turnOrigin?.source),
+					!external,
+				);
+			}
+		});
+	}
+
+	#storeTranscript(
+		messages: Array<{ role: string; content: string }>,
+		sourceId: string,
+		options: { extract?: boolean; retainedThroughUserTurn?: number },
+		author?: RowAuthor,
+		allowExtraction = true,
+	): void {
+		const { transcript, messageCount } = prepareRetentionTranscript(messages, true);
+		if (!transcript) return;
+		const { transcript: extractText } = prepareUserRetentionTranscript(messages);
+		const { transcript: embedText } = prepareEmbeddableRetentionTranscript(messages);
+		const shouldExtract = allowExtraction && options.extract !== false && extractText !== null;
+		this.rememberInScope(
+			transcript,
+			{
 				source: "coding-agent-transcript",
 				importance: 0.65,
 				metadata: {
@@ -750,8 +947,9 @@ export class MnemopiSessionState {
 				embedText,
 				veracity: "unknown",
 				memoryType: "episode",
-			});
-		});
+			},
+			author,
+		);
 	}
 
 	#restoreRetainedTurnCursor(): void {
@@ -790,6 +988,38 @@ export class MnemopiSessionState {
 				});
 			}
 		});
+		this.#startConsolidationTimer();
+	}
+
+	/** True while the periodic consolidation timer (`mnemopi.consolidateIntervalMinutes`) is armed. */
+	get consolidationTimerActive(): boolean {
+		return this.#consolidateTimer !== undefined;
+	}
+
+	#startConsolidationTimer(): void {
+		const minutes = this.config.consolidateIntervalMinutes ?? 0;
+		if (minutes <= 0 || this.aliasOf || this.#consolidateTimer) return;
+		this.#consolidateTimer = setInterval(() => void this.consolidatePeriodically(), minutes * 60_000);
+		this.#consolidateTimer.unref();
+	}
+
+	/**
+	 * One timer tick (`mnemopi.consolidateIntervalMinutes`): flush extractions and consolidate every owned bank,
+	 * the work `/memory enqueue` does, without retaining the transcript again. A run still going skips the tick,
+	 * so runs never overlap; a failure is logged and the next tick tries again. False when nothing ran.
+	 */
+	async consolidatePeriodically(): Promise<boolean> {
+		if (this.aliasOf || this.#closed || this.#consolidating) return false;
+		this.#consolidating = true;
+		try {
+			await this.consolidate({ full: true, extract: false, retain: false });
+			return true;
+		} catch (error) {
+			this.#logLifecycleFailure("periodic consolidation", [this.scoped.retain.bank], error);
+			return false;
+		} finally {
+			this.#consolidating = false;
+		}
 	}
 	#logLifecycleFailure(operation: string, banks: readonly string[], error: unknown): void {
 		logger.warn("Mnemopi: lifecycle hook failed", {
@@ -808,7 +1038,7 @@ export class MnemopiSessionState {
 		let context = persisted?.text;
 		let record: PersistedRecall | undefined;
 		if (persisted === undefined) {
-			const messages = withLoopPhase("mnemopi.recall", () => extractMessages(this.session.sessionManager));
+			const messages = withLoopPhase("mnemopi.recall", () => this.#history());
 			const lastUser = messages.findLast(message => message.role === "user");
 			if (!lastUser) return;
 			const query = withLoopPhase("mnemopi.recall", () =>
@@ -906,6 +1136,8 @@ export class MnemopiSessionState {
 		}
 		for (const memory of this.scoped.owned) {
 			await memory.flushExtractions();
+			// A periodic run suspended here can resume after dispose closed the handles.
+			if (this.#closed) return;
 			if (options.sleep === false) continue;
 			if (options.full) {
 				memory.sleepAllSessions(false);
@@ -955,8 +1187,11 @@ export class MnemopiSessionState {
 		this.#recallGeneration++;
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
+		clearInterval(this.#consolidateTimer);
+		this.#consolidateTimer = undefined;
 		if (this.aliasOf) return;
 		const closeOwned = (): void => {
+			this.#closed = true;
 			for (const memory of this.scoped.owned) memory.close();
 		};
 		if (options.consolidate === false) {
@@ -1138,6 +1373,10 @@ function createMemory(config: MnemopiBackendConfig, bank: string): Mnemopi {
 		proactiveLinking: config.proactiveLinking,
 		polyphonicRecall: config.polyphonicRecall,
 		enhancedRecall: config.enhancedRecall,
+		...(config.retention === "permanent"
+			? { workingMemoryLimit: Number.POSITIVE_INFINITY, degradeEpisodic: false }
+			: {}),
+		...(config.provenance ? { provenance: true } : {}),
 	} as ConstructorParameters<typeof Mnemopi>[0]);
 }
 
@@ -1202,6 +1441,23 @@ function recalledText(content: string): string {
 /** Neutralises markup in memory text quoted into a note, so it cannot close or forge the note's tags. */
 function quoteMemoryText(text: string): string {
 	return text.replaceAll("<", "&lt;");
+}
+
+/**
+ * Why the agent may not change `row` with `op`, if it may not: the owner pinned or retracted it, or, under
+ * provenance, `update` would rewrite a row the agent did not write (the owner's words, or text from outside).
+ */
+function editProtection(
+	row: MnemopiStoredMemoryRow,
+	op: MnemopiMemoryEditOperation,
+	provenance: boolean,
+): MnemopiMemoryEditResult["reason"] {
+	const metadata = factMetadata(row.metadata_json);
+	if (metadata.pinned === true) return "pinned";
+	if (metadata.retracted_by === "owner") return "retracted";
+	if (provenance && op === "update" && typeof row.author_type === "string" && row.author_type !== "agent")
+		return "origin";
+	return undefined;
 }
 
 /** A fact row's `{subject, predicate, object, source_msg_id}` metadata, or an empty record. */

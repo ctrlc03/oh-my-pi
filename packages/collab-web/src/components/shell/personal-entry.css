@@ -1,0 +1,91 @@
+/* The Personal entry pinned at the top of the home computer's sessions, and the line other computers' groups show. pa-entry-*; token colours only. */
+
+.pa-entry-list {
+	margin-bottom: 6px;
+	padding-bottom: 6px;
+	border-bottom: 1px solid var(--border);
+}
+
+.pa-entry {
+	background: var(--accent-muted);
+	border-radius: var(--radius);
+}
+
+.pa-entry .sh-recent-join[aria-current] {
+	background: var(--selected);
+}
+
+.pa-entry .sh-recent-title svg:first-child {
+	color: var(--accent);
+}
+
+.pa-entry-state {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.pa-entry .sh-recent-meta {
+	align-items: center;
+	gap: 6px;
+}
+
+.pa-entry[data-tone="bad"] .pa-entry-state,
+.pa-entry[data-tone="warn"] .pa-entry-state {
+	color: var(--warn);
+}
+
+.pa-entry[data-tone="bad"] .pa-entry-state {
+	color: var(--err);
+}
+
+.pa-entry-badge {
+	margin-left: auto;
+}
+
+.pa-entry-start {
+	flex: none;
+	height: 28px;
+	padding: 0 10px;
+}
+
+.pa-entry .sh-btn-icon {
+	flex: none;
+}
+
+@media (any-pointer: coarse) {
+	.pa-entry-start,
+	.pa-entry .sh-btn-icon {
+		min-height: 44px;
+		min-width: 44px;
+	}
+}
+
+/* Another computer's group: where Personal lives. */
+.pa-entry-away {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+	margin-bottom: 6px;
+	font-size: 12.5px;
+	color: var(--fg-faint);
+}
+
+.pa-entry-away-text {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.pa-entry-away-open {
+	height: 26px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+
+@media (any-pointer: coarse) {
+	.pa-entry-away-open {
+		min-height: 44px;
+	}
+}

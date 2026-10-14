@@ -6,6 +6,7 @@ import { logger, setProjectDir } from "@oh-my-pi/pi-utils";
 import { clearClaudePluginRootsCache } from "../discovery/helpers";
 import { rebindMemoryBackendForCwd } from "../hindsight/backend";
 import { memoryStatsUnavailableMessage, resolveMemoryBackend } from "../memory-backend";
+import { MemoryClearRefusedError } from "../memory-backend/clear-refused";
 import type { FreshSessionResult, HandoffResult } from "../session/agent-session";
 import { COMPACT_MODES, parseCompactArgs } from "../session/compact-modes";
 import { USER_INTERRUPT_LABEL } from "../session/messages";
@@ -570,7 +571,13 @@ export const BUILTIN_LIFECYCLE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> =
 				}
 				case "clear":
 				case "reset": {
-					await backend.clear(runtime.settings.getAgentDir(), runtime.cwd, runtime.session);
+					try {
+						await backend.clear(runtime.settings.getAgentDir(), runtime.cwd, runtime.session);
+					} catch (error) {
+						if (!(error instanceof MemoryClearRefusedError)) throw error;
+						await runtime.output(error.message);
+						return commandConsumed();
+					}
 					await runtime.session.refreshBaseSystemPrompt();
 					await runtime.output("Memory cleared.");
 					return commandConsumed();

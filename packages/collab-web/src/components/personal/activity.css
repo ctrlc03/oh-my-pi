@@ -1,0 +1,371 @@
+/* Settings → Personal agent → Activity (proposals, digests, events) and the Personal rows of the inbox. */
+
+.pa-act {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 0;
+}
+
+.pa-act-bar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.pa-act-bar .sh-segmented {
+	flex-wrap: wrap;
+	max-width: 100%;
+}
+
+.pa-act-list {
+	display: grid;
+	gap: 10px;
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.pa-act-list > li {
+	min-width: 0;
+}
+
+.pa-older {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 8px;
+}
+
+/* ---- chips and the small meta line beside a title ---- */
+.pa-act-meta {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+	font-size: 12px;
+	color: var(--fg-faint);
+}
+
+.pa-act-tag {
+	display: inline-flex;
+	align-items: center;
+	padding: 1px 8px;
+	font-size: 11.5px;
+	font-weight: 500;
+	line-height: 18px;
+	white-space: nowrap;
+	color: var(--fg-muted);
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: 999px;
+}
+
+.pa-act-tag-ok {
+	color: var(--ok);
+	background: color-mix(in srgb, var(--ok) 10%, transparent);
+	border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+
+.pa-act-tag-warn {
+	color: var(--warn);
+	background: color-mix(in srgb, var(--warn) 10%, transparent);
+	border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+}
+
+.pa-act-tag-bad {
+	color: var(--err);
+	background: color-mix(in srgb, var(--err) 10%, transparent);
+	border-color: color-mix(in srgb, var(--err) 40%, transparent);
+}
+
+/* ---- a proposal ---- */
+.pa-prop {
+	min-width: 0;
+}
+
+.pa-prop .pa-card-title {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.pa-prop-why {
+	margin: 0;
+	padding-left: 10px;
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--fg-muted);
+	overflow-wrap: anywhere;
+	border-left: 2px solid var(--border-strong);
+}
+
+.sh-input.pa-prop-edit {
+	height: auto;
+	min-height: 72px;
+	padding: 8px 11px;
+	font-family: inherit;
+	line-height: 1.45;
+	resize: vertical;
+}
+
+/* The diff: a marker column says what changed, the tint only helps. */
+.pa-diff {
+	display: flex;
+	flex-direction: column;
+	font-family: var(--font-mono);
+	font-size: 12.5px;
+	line-height: 1.5;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	overflow: hidden;
+}
+
+.pa-diff-row {
+	display: grid;
+	grid-template-columns: 24px minmax(0, 1fr);
+	padding: 2px 0;
+	color: var(--fg-faint);
+}
+
+.pa-diff-add {
+	color: var(--fg);
+	background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+.pa-diff-del {
+	color: var(--fg);
+	background: color-mix(in srgb, var(--err) 14%, transparent);
+}
+
+.pa-diff-mark {
+	font-weight: 600;
+	text-align: center;
+	user-select: none;
+}
+
+.pa-diff-add .pa-diff-mark {
+	color: var(--ok);
+}
+
+.pa-diff-del .pa-diff-mark {
+	color: var(--err);
+}
+
+.pa-diff-text {
+	padding-right: 8px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+/* ---- a digest ---- */
+.pa-dig {
+	min-width: 0;
+}
+
+.pa-dig-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.pa-dig-toggle {
+	display: flex;
+	flex: 1 1 200px;
+	align-items: flex-start;
+	gap: 6px;
+	min-width: 0;
+	padding: 0;
+	text-align: left;
+	color: inherit;
+	background: none;
+	border: 0;
+}
+
+.pa-dig-toggle:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
+}
+
+.pa-dig-toggle > svg {
+	flex: none;
+	margin-top: 2px;
+	color: var(--fg-muted);
+}
+
+.pa-dig-text {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.pa-dig-title {
+	font-size: 14px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.pa-act-unread {
+	display: inline-block;
+	width: 8px;
+	height: 8px;
+	margin-right: 6px;
+	vertical-align: 1px;
+	background: var(--accent);
+	border-radius: 50%;
+}
+
+.pa-dig-body {
+	min-width: 0;
+	font-size: 13.5px;
+	overflow-wrap: anywhere;
+	overflow-x: auto;
+}
+
+.pa-dig-bare {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+}
+
+/* ---- an event ---- */
+.pa-evt {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+	padding: 10px 12px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.pa-evt-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 4px 10px;
+}
+
+.pa-evt-source {
+	font-family: var(--font-mono);
+	font-size: 12px;
+	color: var(--fg-muted);
+	overflow-wrap: anywhere;
+}
+
+.pa-evt-title {
+	font-size: 13.5px;
+	font-weight: 500;
+	overflow-wrap: anywhere;
+}
+
+.pa-evt-detail {
+	font-size: 12.5px;
+	line-height: 1.45;
+	color: var(--fg-muted);
+	overflow-wrap: anywhere;
+}
+
+.pa-evt-link {
+	display: inline-flex;
+	align-items: flex-start;
+	gap: 4px;
+	font-size: 12px;
+	color: var(--accent);
+	overflow-wrap: anywhere;
+}
+
+.pa-evt-link > svg {
+	flex: none;
+	margin-top: 3px;
+}
+
+/* ---- Personal rows in the inbox ---- */
+.pa-inbox-item {
+	min-width: 0;
+}
+
+.pa-inbox-item > * {
+	min-width: 0;
+}
+
+.pa-inbox-item .pa-card {
+	padding: 0;
+	background: transparent;
+	border: 0;
+}
+
+/* The row's own header already names the item and says when. */
+.pa-inbox-item .pa-card-head {
+	display: none;
+}
+
+.pa-inbox-dim {
+	opacity: 0.65;
+}
+
+.pa-inbox-top {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+}
+
+.pa-inbox-tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 11.5px;
+	font-weight: 500;
+	color: var(--fg-muted);
+}
+
+.pa-inbox-tag-warn {
+	color: var(--warn);
+}
+
+.pa-inbox-tag-bad {
+	color: var(--err);
+}
+
+.pa-inbox-time {
+	margin-left: auto;
+	font-size: 12px;
+	color: var(--fg-faint);
+}
+
+.pa-inbox-title {
+	font-size: 14px;
+	font-weight: 500;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+
+.pa-inbox-answer {
+	font-size: 13px;
+	color: var(--fg-muted);
+	overflow-wrap: anywhere;
+}
+
+@media (any-pointer: coarse) {
+	.pa-evt-link {
+		align-items: center;
+		min-height: 44px;
+	}
+
+	.pa-older .sh-btn,
+	.pa-dig-head .sh-btn {
+		min-height: 44px;
+	}
+
+	.pa-dig-toggle {
+		min-height: 44px;
+	}
+}

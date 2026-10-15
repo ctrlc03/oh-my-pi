@@ -8,6 +8,7 @@ import type {
 	ToolSpeculationPolicy,
 } from "@oh-my-pi/pi-agent-core";
 import type { ImageContent, ToolExample } from "@oh-my-pi/pi-ai";
+import { highStakesDecision } from "../high-stakes/gate";
 import { sandboxUncoveredToolDecision } from "../sandbox/run";
 import { formatBackgroundNotice } from "@oh-my-pi/pi-tui/tools/bash";
 import { parseConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
@@ -346,9 +347,17 @@ function formatEvalInputLanguage(value: string): string {
 
 export class EvalTool implements AgentTool<typeof evalSchema> {
 	readonly name = "eval";
-	/** The eval kernels run outside the shell sandbox, so a sandboxed session asks first. */
-	readonly approval = (): ToolApprovalDecision =>
-		(this.session && sandboxUncoveredToolDecision(this.session.settings, "the eval kernel")) || "exec";
+	/** A publishing call in a high-stakes session is refused; the eval kernels run outside the shell sandbox, so a sandboxed session asks first. */
+	readonly approval = (args?: unknown): ToolApprovalDecision => {
+		const code = isRecord(args) && typeof args.code === "string" ? args.code : undefined;
+		const stakes =
+			this.session && code !== undefined
+				? highStakesDecision({ cwd: this.session.cwd, agentDir: this.session.settings.getAgentDir(), script: code })
+				: undefined;
+		return (
+			stakes ?? ((this.session && sandboxUncoveredToolDecision(this.session.settings, "the eval kernel")) || "exec")
+		);
+	};
 	readonly formatApprovalDetails = (args: unknown): string[] => {
 		const params = isRecord(args) ? args : {};
 		const language =

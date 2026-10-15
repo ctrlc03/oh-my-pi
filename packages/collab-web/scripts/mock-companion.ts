@@ -6,7 +6,7 @@
  *
  *   bun scripts/mock-companion.ts [--port 7468] [--web http://localhost:3000/] [--dir /tmp/mock-companion] [--session-link <room link>]
  *                                 [--machine <name>] [--hosts 1,2,3] [--session-id <id>]
- *                                 [--personal fresh|enabled] [--personal-login ready|missing]
+ *                                 [--personal fresh|enabled] [--personal-login ready|missing] [--stakes on|off] [--stakes-on 7,9]
  *
  * `--machine` names the computer and gives its sessions ids of their own (the way two real computers never share a session id,
  * though their processes may share an instance id: `inst-1` here and there); `--hosts` lists only those fixture sessions
@@ -38,6 +38,14 @@
  * Personal profile's login; with `missing` the agent stays stopped until the file `<--dir>/personal-login-ready` exists
  * (`touch` it, which stands for running `omp --profile personal login`). While the file `<--dir>/personal-failed` exists the
  * enabled agent's run is `failed` (the entry's Failed state); remove it and the session starts again.
+ *
+ * High-stakes sessions (./mock-stakes) are on unless `--stakes off` (an older companion: no capability, no chip, no toggle, no disabled
+ * buttons). `--stakes-on 7,9` starts those fixture sessions high stakes (`api-pagination` is 7, the one `--session-link` opens). Every
+ * listed session also answers canned `git-review`, `git-commit`, `git-push`, `pr-create` and `pr-merge`, which refuse while the session
+ * is high stakes and not covered. The quiz that unlocks them has ten questions (answer `a` to every one to pass; six of ten fails at the
+ * default 90 % pass mark). `touch <--dir>/stakes-edit` simulates the agent editing a high-stakes session's files after a pass, so the next
+ * quiz covers only what is new. A mode change is written to `<--dir>/stakes-markers.txt`, which `mock-host.ts --stakes-markers <that file>`
+ * shows in its transcript as the session's marker.
  */
 
 import * as fs from "node:fs/promises";
@@ -54,8 +62,10 @@ import type {
 } from "../src/lib/companion";
 import { formatPairingUrl } from "../src/lib/companion";
 import { encodeBase64Url, formatCollabLink, generateRoomId, parseCollabLink } from "../src/lib/link";
+import { parseHidden } from "../src/lib/hidden-messages";
 import { parseOrg } from "../src/lib/session-org";
 import { CollabSocket } from "../src/lib/socket";
+import { createHiddenMessages, loadHiddenFile, saveHiddenFile } from "./companion-hidden";
 import { createSessionOrg, loadOrgFile, saveOrgFile } from "./companion-sessionorg";
 import { startLocalRelay } from "./local-relay";
 import type { MockBakeoffJudge } from "./mock-bakeoff";
@@ -67,6 +77,7 @@ import { createMockPersonal } from "./mock-personal";
 import { createMockQuiz, mockStackPrs } from "./mock-quiz";
 import { createMockSearch } from "./mock-search";
 import { createMockSpar } from "./mock-spar";
+import { createMockStakes } from "./mock-stakes";
 import { createMockStart } from "./mock-start";
 import { createMockSettle } from "./mock-settle";
 
@@ -169,6 +180,15 @@ const sessionOrg = createSessionOrg({
 	onError: err => console.error(`mock-companion: ${err instanceof Error ? err.message : String(err)}`),
 });
 
+const hiddenPath = path.join(dir, "collab-companion-hidden.json");
+/** The messages hidden from the chat, per session, with the real store over a temp file. */
+const hiddenMessages = createHiddenMessages({
+	now: Date.now,
+	initial: await loadHiddenFile(hiddenPath),
+	save: file => saveHiddenFile(hiddenPath, file),
+	onChange: () => broadcast(),
+});
+
 /** The vendor agents and their sessions: live ones are in `hosts`, ended ones are listed and resumed from here. */
 const foreign = createMockForeign({ hosts });
 /** The folders and model-comparison requests, over a throw-away git repository in the state directory. */
@@ -267,9 +287,32 @@ const blueprint = createMockBlueprint({
 	},
 });
 
+/** High-stakes sessions: the mode, the quiz that unlocks pushes, and canned push and pull request requests that refuse until it is passed. */
+const stakesFlag = flag("--stakes", "on");
+if (stakesFlag !== "on" && stakesFlag !== "off") throw new Error("--stakes takes on or off");
+const stakesMarkers = path.join(dir, "stakes-markers.txt");
+await fs.rm(stakesMarkers, { force: true });
+const stakes = createMockStakes({
+	enabled: stakesFlag === "on",
+	dir,
+	hosts,
+	idle,
+	initiallyOn: flag("--stakes-on", "")
+		.split(",")
+		.filter(n => n !== "")
+		.map(n => `inst-${n}`),
+	marker: { instanceId: "inst-7", file: stakesMarkers },
+	addQuiz: (id, sessionId, delta) => quiz.addStakesQuiz(id, sessionId, delta),
+	broadcastFrame: frame => {
+		for (const peer of peers) socket.send(frame, peer);
+	},
+	onHostsChanged: () => broadcast(),
+});
+
 /** Quizzes on code changes: a finished stack quiz, one half answered, a failed one; new ones tick to ready. `--quiz-stage-ms` slows the ticks. */
 const quiz = createMockQuiz({
 	instanceId: "inst-7",
+	stakes: stakes.quizHook,
 	stageMs: Number(flag("--quiz-stage-ms", "1200")),
 	onChanged: id => {
 		for (const peer of peers) socket.send({ t: "quiz-changed", id }, peer);
@@ -333,7 +376,7 @@ function hostsFrame(): CompanionReply {
 	return {
 		t: "hosts",
 		machine: machine || "mock-computer",
-		hosts: fanout.annotate(hosts),
+		hosts: stakes.decorate(fanout.annotate(hosts)),
 		...fanout.capabilities,
 		...starts.capabilities,
 		...search.capabilities,
@@ -343,13 +386,16 @@ function hostsFrame(): CompanionReply {
 		...bakeoff.capabilities,
 		...foreign.capabilities,
 		...settle.capabilities,
+		...stakes.capabilities,
 		...personal?.capabilities(),
 		canGithub: true,
-		idle,
+		idle: stakes.decorate(idle),
 		vapidKey: "",
 		sessionOrgRev: sessionOrg.file().rev,
 		canOrderSessions: true,
 		canEndOnSettle: true,
+		canHideMessages: true,
+		hiddenRev: hiddenMessages.file().rev,
 	};
 }
 
@@ -383,6 +429,16 @@ socket.onFrame = (frame, fromPeer) => {
 			socket.send({ t: "session-org", reqId: frame.reqId, doc, rev }, fromPeer);
 			broadcast();
 		});
+	else if (frame.t === "hidden-messages")
+		void hiddenMessages.sync(frame.sessionId, parseHidden(frame.doc)).then(
+			({ doc, rev }) =>
+				socket.send({ t: "hidden-messages", reqId: frame.reqId, sessionId: frame.sessionId, doc, rev }, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
 	else if (foreign.handles(frame))
 		void foreign.answer(frame).then(
 			reply => socket.send(reply, fromPeer),
@@ -394,7 +450,11 @@ socket.onFrame = (frame, fromPeer) => {
 		);
 	else if (starts.handles(frame))
 		void starts.answer(frame).then(
-			reply => socket.send(reply, fromPeer),
+			reply => {
+				if (frame.t === "start" && frame.highStakes === true && reply.t === "started")
+					stakes.started(reply.instanceId);
+				socket.send(reply, fromPeer);
+			},
 			(err: unknown) =>
 				socket.send(
 					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
@@ -449,6 +509,15 @@ socket.onFrame = (frame, fromPeer) => {
 		);
 	else if (frame.t === "run-targets")
 		socket.send({ t: "run-targets", reqId: frame.reqId, targets: MOCK_RUN_TARGETS }, fromPeer);
+	else if (stakes.handles(frame))
+		void stakes.answer(frame, `device-${fromPeer}`).then(
+			reply => socket.send(reply, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
 	else if (settle.handles(frame))
 		void settle.answer(frame).then(
 			reply => socket.send(reply, fromPeer),
@@ -483,6 +552,33 @@ socket.onFrame = (frame, fromPeer) => {
 		socket.send({ t: "inbox", reqId: frame.reqId, items }, fromPeer);
 	} else if (frame.t === "github")
 		socket.send({ t: "github", reqId: frame.reqId, repo: "example/app", items: MOCK_PRS }, fromPeer);
+	else if (frame.t === "github-item") {
+		const item = MOCK_PRS.find(pr => pr.number === frame.number);
+		if (item === undefined)
+			socket.send({ t: "error", reqId: frame.reqId, message: `no ${frame.kind} #${frame.number}` }, fromPeer);
+		else
+			socket.send(
+				{
+					t: "github-item",
+					reqId: frame.reqId,
+					item: {
+						...item,
+						body: "Canned pull request of the mock companion.",
+						checkList: [],
+						comments: [],
+						olderComments: 0,
+						branch: { head: `feature/pr-${item.number}`, base: "main" },
+						head: "9f3c2d7a1b84e50c6d2f913a7b05e48c1d6a2f90",
+						size: { additions: 120, deletions: 34, files: 5 },
+					},
+				},
+				fromPeer,
+			);
+	} else if (frame.t === "pr-files")
+		socket.send(
+			{ t: "pr-files", reqId: frame.reqId, head: "9f3c2d7a1b84e50c6d2f913a7b05e48c1d6a2f90", files: [] },
+			fromPeer,
+		);
 	else
 		socket.send(
 			{ t: "error", reqId: frame.reqId, message: `the mock companion does not answer ${frame.t}` },
@@ -503,6 +599,7 @@ socket.connect();
 
 const timer = setInterval(() => {
 	void sessionOrg.tick([...hosts, ...idle.map(session => ({ ...session, inputRequired: false }))]);
+	void stakes.tick();
 	broadcast();
 }, POLL_MS);
 

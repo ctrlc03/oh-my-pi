@@ -319,6 +319,44 @@
 	background: color-mix(in srgb, var(--err) 14%, transparent);
 }
 
+.qz-tag[data-kind="stakes"] {
+	color: var(--warn);
+	background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+
+.qz-tag[data-kind="passed"] {
+	color: var(--ok);
+	background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+/* The results of a high-stakes quiz say whether the push is unlocked. */
+.qz-stakes {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 14px;
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--fg);
+	background: color-mix(in srgb, var(--warn) 12%, var(--bg-raised));
+	border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+	border-radius: var(--radius);
+}
+
+.qz-stakes svg {
+	flex: none;
+	color: var(--warn);
+}
+
+.qz-stakes[data-tone="passed"] {
+	background: color-mix(in srgb, var(--ok) 12%, var(--bg-raised));
+	border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+}
+
+.qz-stakes[data-tone="passed"] svg {
+	color: var(--ok);
+}
+
 /* ---- form ---- */
 .qz-form {
 	display: flex;
@@ -1004,8 +1042,9 @@ label.qz-choice:hover {
 		overscroll-behavior: contain;
 	}
 
+	/* Bounded, so the buttons above and below a long excerpt stay in reach and the code scrolls inside its box. */
 	.qz-scroll-question .qz-code-area .ar-code {
-		max-height: none;
+		max-height: calc(var(--view-h) * 0.6);
 	}
 
 	.qz-scroll-question .qz-answer-area {

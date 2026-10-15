@@ -901,8 +901,9 @@
 		overscroll-behavior: contain;
 	}
 
+	/* Bounded, so the buttons above and below a long excerpt stay in reach and the code scrolls inside its box. */
 	.sp-scroll-point .sp-code-area .ar-code {
-		max-height: none;
+		max-height: calc(var(--view-h) * 0.6);
 	}
 
 	.sp-scroll-point .sp-answer-area {

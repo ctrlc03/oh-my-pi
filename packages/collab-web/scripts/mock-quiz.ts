@@ -11,8 +11,7 @@
  * limit, to see how the app shows both. Every folder of the computer counts as a folder of the one fixture repository.
  */
 
-import type { BlueprintCommit, BlueprintExcerpt, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
-import { BLUEPRINT_EXCERPT_CONTEXT } from "@oh-my-pi/pi-wire/blueprint";
+import type { BlueprintCommit, BlueprintExcerpt, BlueprintExcerptRef, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
 import type {
 	Quiz,
 	QuizAnswerRecord,
@@ -25,7 +24,9 @@ import type {
 	QuizVerdict,
 } from "@oh-my-pi/pi-wire/quiz";
 import { QUIZ_MAX_ANSWER_CHARS, QUIZ_VERSION, scoreAttempt } from "@oh-my-pi/pi-wire/quiz";
+import type { QuizStakes } from "@oh-my-pi/pi-wire/stakes";
 import type { CompanionReply, CompanionRequest } from "../src/lib/companion";
+import { excerptOf as readExcerpt } from "./companion-excerpt";
 
 export const MOCK_QUIZ_ROOT = "/work/interfold";
 const OTHER_ROOT = "/work/acme-shop";
@@ -173,10 +174,57 @@ mod provider_cache;
 pub use event_reader::EvmEventReader;
 pub use provider_cache::ProviderCache;
 `,
-	"crates/evm/src/provider_cache.rs": `use alloy::providers::{Provider, ProviderBuilder};
+	"crates/evm/src/provider_cache.rs": `//! Providers, one per chain.
+//!
+//! Every reader and writer on a chain asks this cache for its provider instead of connecting on its own, so a node
+//! that follows five contracts on one chain holds one connection, not five. A provider is created on first use and
+//! kept until the process ends or the chain is evicted.
+//!
+//! The cache does not retry a failed connection: the caller sees the error and decides, because a reader wants to
+//! back off while a one-off RPC call wants to give up.
+use alloy::providers::{Provider, ProviderBuilder};
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
+
+/// Chains one node follows at most; a node with more is misconfigured, not busy.
+pub const MAX_CHAINS: usize = 32;
+
+/// How long a connection may take to open before the caller gets an error.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Why a provider could not be handed out.
+#[derive(Debug)]
+pub enum CacheError {
+    /// The node already follows [MAX_CHAINS] chains.
+    TooManyChains(usize),
+    /// The RPC endpoint did not answer in time.
+    Timeout(String),
+    /// The endpoint answered with something that is not a chain.
+    Rejected(String),
+}
+
+impl fmt::Display for CacheError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CacheError::TooManyChains(count) => write!(f, "already following {count} chains"),
+            CacheError::Timeout(url) => write!(f, "{url} did not answer in {CONNECT_TIMEOUT:?}"),
+            CacheError::Rejected(url) => write!(f, "{url} is not an RPC endpoint"),
+        }
+    }
+}
+
+impl std::error::Error for CacheError {}
+
+/// Counters the node's status page shows.
+#[derive(Default, Debug, Clone, Copy)]
+pub struct CacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub evictions: u64,
+}
 
 /// One connected provider per chain, shared by every reader and writer.
 #[derive(Default)]
@@ -193,6 +241,57 @@ impl ProviderCache {
         let provider: Arc<dyn Provider> = Arc::new(provider);
         self.providers.write().await.insert(chain_id, provider.clone());
         Ok(provider)
+    }
+
+    /// Chains with a provider right now.
+    pub async fn len(&self) -> usize {
+        self.providers.read().await.len()
+    }
+
+    /// Drops a chain's provider; the next get connects again.
+    pub async fn evict(&self, chain_id: u64) -> bool {
+        self.providers.write().await.remove(&chain_id).is_some()
+    }
+
+    /// Drops every provider, for a node that is shutting down or changing its endpoints.
+    pub async fn clear(&self) {
+        self.providers.write().await.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn starts_empty() {
+        let cache = ProviderCache::default();
+        assert_eq!(cache.len().await, 0);
+    }
+
+    #[tokio::test]
+    async fn evicting_a_chain_that_is_not_there_is_not_an_error() {
+        let cache = ProviderCache::default();
+        assert!(!cache.evict(1).await);
+    }
+
+    #[tokio::test]
+    async fn clear_leaves_nothing() {
+        let cache = ProviderCache::default();
+        cache.clear().await;
+        assert_eq!(cache.len().await, 0);
+    }
+
+    #[test]
+    fn errors_name_the_endpoint() {
+        let error = CacheError::Timeout("http://localhost:8545".into());
+        assert!(error.to_string().contains("localhost:8545"));
+    }
+
+    #[test]
+    fn stats_start_at_zero() {
+        let stats = CacheStats::default();
+        assert_eq!((stats.hits, stats.misses, stats.evictions), (0, 0, 0));
     }
 }
 `,
@@ -272,7 +371,70 @@ serde = { workspace = true }
 [dev-dependencies]
 e3-data = { workspace = true }
 `,
-	"crates/evm/src/helpers.rs": `use alloy::providers::{Provider, ProviderBuilder};
+	"crates/evm/src/helpers.rs": `//! Small helpers the EVM code reaches for; none of them keeps state.
+use alloy::primitives::{Address, B256};
+use alloy::providers::{Provider, ProviderBuilder};
+use std::time::Duration;
+
+/// How many times a read is tried before the caller sees the error.
+pub const READ_ATTEMPTS: usize = 3;
+
+/// Pause between two tries of the same read.
+pub const READ_BACKOFF: Duration = Duration::from_millis(250);
+
+/// The chain a well-known id belongs to, for log lines; unknown ids are shown as numbers.
+pub fn chain_name(chain_id: u64) -> String {
+    match chain_id {
+        1 => "mainnet".to_string(),
+        10 => "optimism".to_string(),
+        137 => "polygon".to_string(),
+        8453 => "base".to_string(),
+        42161 => "arbitrum".to_string(),
+        11155111 => "sepolia".to_string(),
+        other => format!("chain {other}"),
+    }
+}
+
+/// Shortens an address to \`0x1234…abcd\` for log lines.
+pub fn short_address(address: &Address) -> String {
+    let full = address.to_string();
+    format!("{}…{}", &full[..6], &full[full.len() - 4..])
+}
+
+/// Shortens a hash the same way.
+pub fn short_hash(hash: &B256) -> String {
+    let full = hash.to_string();
+    format!("{}…{}", &full[..6], &full[full.len() - 4..])
+}
+
+/// Whether an endpoint looks like one we can speak to, before spending a connection on it.
+pub fn is_rpc_url(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://") || url.starts_with("ws://") || url.starts_with("wss://")
+}
+
+/// Waits before the next try of a read: a fixed pause, longer for each earlier failure.
+pub fn backoff(attempt: usize) -> Duration {
+    READ_BACKOFF * (attempt as u32 + 1)
+}
+
+/// Runs \`read\` up to [\`READ_ATTEMPTS\`] times, pausing between failures, and returns the last error.
+pub async fn with_retries<T, F, Fut>(mut read: F) -> anyhow::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<T>>,
+{
+    let mut last = None;
+    for attempt in 0..READ_ATTEMPTS {
+        match read().await {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                last = Some(error);
+                tokio::time::sleep(backoff(attempt)).await;
+            }
+        }
+    }
+    Err(last.expect("READ_ATTEMPTS is not zero"))
+}
 
 /// Connects to the chain's RPC endpoint; called wherever a provider is needed.
 pub async fn create_provider(rpc_url: &str) -> anyhow::Result<impl Provider> {
@@ -314,23 +476,13 @@ export function cite(path: string, token: string, side: Side = "head"): Blueprin
 
 const LANGUAGES: Record<string, string> = { rs: "rust", toml: "ini" };
 
-export function excerptOf(ref: BlueprintRef, commit: BlueprintCommit | undefined): BlueprintExcerpt | null {
+/** The code a ref cites, cut the way the real companion cuts it (default window, or the range the ref asks for). */
+export function excerptOf(ref: BlueprintExcerptRef, commit: BlueprintCommit | undefined): BlueprintExcerpt | null {
 	const side = ref.side ?? "head";
 	const text = sourceOf(ref.path, side);
 	if (text === undefined) return null;
-	const all = text.split("\n");
-	if (all[all.length - 1] === "") all.pop();
-	const start = Math.max(1, ref.line - BLUEPRINT_EXCERPT_CONTEXT);
-	const end = Math.min(all.length, ref.line + BLUEPRINT_EXCERPT_CONTEXT);
-	return {
-		path: ref.path,
-		start,
-		lines: all.slice(start - 1, end),
-		line: ref.line,
-		side,
-		commit: commit?.commit ?? "",
-		language: LANGUAGES[ref.path.split(".").pop() ?? ""],
-	};
+	const excerpt = readExcerpt(text.split("\n"), ref, side, commit?.commit ?? "");
+	return excerpt === null ? null : { ...excerpt, language: LANGUAGES[ref.path.split(".").pop() ?? ""] };
 }
 
 /** What the real companion keeps back until a question is answered. */
@@ -715,10 +867,21 @@ const STAGES = [
 ];
 const STAGE_MS = 1200;
 const OPEN_COST_USD = 0.012;
+const STAKES_QUESTIONS = 10;
+
+/** What the high-stakes mock (./mock-stakes) adds to quizzes: the stakes facts of a quiz, and the news of a finished attempt. */
+export interface MockQuizStakes {
+	/** The stakes facts of a quiz; undefined for one that was not made for a high-stakes session. */
+	of(id: string): QuizStakes | undefined;
+	/** An attempt that asks every question was finished (every question answered). */
+	finished(quiz: Quiz, attempt: QuizAttempt): void;
+}
 
 export interface MockQuiz {
 	/** Fields the mock companion's `hosts` frame needs for the app to offer quizzes. */
 	capabilities: { canQuiz: true };
+	/** Make a ready quiz of {@link STAKES_QUESTIONS} choice questions (`a` is right in each) for a high-stakes session's push, with an open first attempt. */
+	addStakesQuiz(id: string, sessionId: string, delta: boolean): void;
 	handles(request: CompanionRequest): boolean;
 	/** Open answers wait for the "model", so the reply is a promise. */
 	answer(request: CompanionRequest): Promise<CompanionReply>;
@@ -735,6 +898,8 @@ export function createMockQuiz(options: {
 	stageMs?: number;
 	/** Milliseconds the "model" takes to grade an open answer. */
 	gradeMs?: number;
+	/** Set when the quizzes are those of high-stakes sessions. */
+	stakes?: MockQuizStakes;
 }): MockQuiz {
 	const stageMs = options.stageMs ?? STAGE_MS;
 	const gradeMs = options.gradeMs ?? 700;
@@ -1033,8 +1198,72 @@ export function createMockQuiz(options: {
 		};
 	};
 
+	const withStakes = (summary: QuizSummary): QuizSummary => {
+		const stakes = options.stakes?.of(summary.id);
+		return stakes === undefined
+			? { ...summary }
+			: { ...summary, stakes: { delta: stakes.delta, passed: stakes.passedAttempt !== undefined } };
+	};
+
+	const addStakesQuiz = (id: string, sessionId: string, delta: boolean): void => {
+		const specs = Array.from({ length: STAKES_QUESTIONS }, (_, at): QuestionSpec => ({
+			question: {
+				kind: "choice",
+				prompt: `What does the event bus do with an event? (${at + 1} of ${STAKES_QUESTIONS})`,
+				topic: `Event routing ${at + 1}`,
+				refs: [cite("crates/events/src/lib.rs", "pub use bus")],
+				choices: [
+					{ id: "a", text: "It routes the event to its subscribers" },
+					{ id: "b", text: "It drops the event" },
+					{ id: "c", text: "It writes the event to a database" },
+				],
+			},
+			secret: {
+				kind: "choice",
+				answer: "a",
+				explanation: "The bus routes every typed event to the subscribers that asked for it.",
+				refs: [cite("crates/events/src/lib.rs", "pub use bus")],
+			},
+		}));
+		const { questions, secrets } = questionsOf([{ specs }]);
+		const quiz: Quiz = {
+			v: QUIZ_VERSION,
+			id,
+			title: delta ? "interfold · changes since your last pass" : "interfold @ worktree vs main",
+			repo: { root: MOCK_QUIZ_ROOT, name: "interfold", github: "example/interfold" },
+			createdAt: Date.now(),
+			model: "anthropic/claude-sonnet-5-5",
+			sessionId,
+			parts: [
+				{
+					index: 0,
+					title: "What the session changed",
+					head: { commit: "e41b09d7a2c8135f6b0e94a7d3c15882f60b7d19", ref: "@worktree" },
+					base: { commit: "5be29d0c7f13a864e9d02b1c8a47e5f3906d1a22", ref: "main" },
+				},
+			],
+			questions,
+			warnings: [],
+		};
+		readyStored(
+			{ quiz, secrets },
+			{ subject: delta ? "changes since your last pass" : "worktree vs main", sessionId, costUsd: 0.2 },
+			[
+				attemptOf(
+					quiz,
+					"a1",
+					Date.now(),
+					questions.map(question => question.id),
+					{},
+				),
+			],
+		);
+		push(id);
+	};
+
 	return {
 		capabilities: { canQuiz: true },
+		addStakesQuiz,
 		handles: request => request.t.startsWith("quiz-"),
 		stop() {
 			for (const stored of quizzes.values()) clearInterval(stored.timer);
@@ -1044,7 +1273,7 @@ export function createMockQuiz(options: {
 				case "quiz-list": {
 					// Every folder of the mock computer is a folder of the fixture repository.
 					const rows = [...quizzes.values()]
-						.map(stored => ({ ...stored.summary }))
+						.map(stored => withStakes(stored.summary))
 						.filter(summary => request.cwd === undefined || summary.repoRoot === MOCK_QUIZ_ROOT)
 						.sort((a, b) => b.createdAt - a.createdAt);
 					return { t: "quiz-list", reqId: request.reqId, quizzes: rows };
@@ -1085,7 +1314,13 @@ export function createMockQuiz(options: {
 				case "quiz-get": {
 					const stored = ready(request.id);
 					// The quiz as stored has no rubric: the secrets are a separate table, never part of the reply.
-					return { t: "quiz-get", reqId: request.reqId, quiz: stored.quiz, attempts: stored.attempts };
+					return {
+						t: "quiz-get",
+						reqId: request.reqId,
+						quiz: stored.quiz,
+						attempts: stored.attempts,
+						stakes: options.stakes?.of(stored.summary.id),
+					};
 				}
 				case "quiz-answer": {
 					const stored = ready(request.id);
@@ -1128,6 +1363,7 @@ export function createMockQuiz(options: {
 					stored.attempts = stored.attempts.map(item => (item.id === updated.id ? updated : item));
 					if (question.kind === "open") stored.summary.costUsd = (stored.summary.costUsd ?? 0) + OPEN_COST_USD;
 					refreshSummary(stored);
+					if (updated.finishedAt !== undefined) options.stakes?.finished(stored.quiz, updated);
 					push(stored.summary.id);
 					return { t: "quiz-answer", reqId: request.reqId, verdict, attempt: updated };
 				}

@@ -1049,6 +1049,25 @@
 	max-height: calc(8 * 1.5em + 16px);
 }
 
+/* Buttons above and below a block that can show more of its file; the block between them scrolls on its own. */
+.ar-expand {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.ar-code-more {
+	color: var(--fg-muted);
+	background: var(--bg-inset);
+}
+
+.ar-code-more-error {
+	margin: 0;
+	font-size: 12px;
+	color: var(--err);
+}
+
 .ar-code-gutter {
 	position: sticky;
 	left: 0;

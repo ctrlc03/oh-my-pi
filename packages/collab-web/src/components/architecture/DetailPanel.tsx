@@ -2,6 +2,7 @@ import type {
 	Blueprint,
 	BlueprintDiagram,
 	BlueprintEdge,
+	BlueprintExcerptRef,
 	BlueprintNode,
 	BlueprintRef,
 } from "@oh-my-pi/pi-wire/blueprint";
@@ -9,14 +10,19 @@ import { ArrowRight, ExternalLink, Layers, LoaderCircle, X } from "lucide-react"
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRequest } from "../../lib/use-request";
-import { CodeBlock } from "./CodeBlock";
+import type { WidenExcerpt } from "./ExpandableCode";
+import { ExpandableCode } from "./ExpandableCode";
 import type { ExportedExcerpt } from "./blueprint-model";
 import { childOf, edgeEnds, edgeKind, nodeKind, refKey, refLabel, shortCommit } from "./blueprint-model";
 
 /** Where the viewer gets code from: the companion while live, the embedded table in an exported page. */
 export interface MapSource {
-	/** Code around each ref, in order; null for a ref the commit does not have. */
-	excerpts(refs: BlueprintRef[]): Promise<(ExportedExcerpt | null)[]>;
+	/**
+	 * Code around each ref, in order; null for a ref the commit does not have. A ref with `from`/`to` asks for that range
+	 * of its file; a source that cannot (an exported page) answers the default window, without `total`, and the panel
+	 * then offers no "show more".
+	 */
+	excerpts(refs: BlueprintExcerptRef[]): Promise<(ExportedExcerpt | null)[]>;
 	/** Syntax-highlighted markup of an excerpt's lines, when this source can make it; exported excerpts carry theirs. */
 	highlight?(excerpt: ExportedExcerpt): Promise<string | undefined>;
 	/** What to say of a ref that has no code here; the default says the commit does not have it. */
@@ -153,6 +159,7 @@ export function DetailPanel({
 									reference={ref}
 									excerpt={state.value[i] ?? null}
 									source={source}
+									cache={cache}
 									editor={editor}
 								/>
 							))}
@@ -207,21 +214,33 @@ function RefBlock({
 	reference,
 	excerpt,
 	source,
+	cache,
 	editor,
 }: {
 	map: Blueprint;
 	reference: BlueprintRef;
 	excerpt: ExportedExcerpt | null;
 	source: MapSource;
+	cache: ExcerptCache;
 	editor: EditorAccess | null;
 }): ReactNode {
+	// A widened excerpt replaces the one read first, so it is still wide when the node is selected again.
+	const widen = useCallback<WidenExcerpt>(
+		async request => {
+			const [found] = await source.excerpts([request]);
+			if (found === undefined || found === null) return null;
+			cache.set(refKey(request), found);
+			return found;
+		},
+		[source, cache],
+	);
 	return (
 		<section className="ar-ref" aria-label={`${reference.path} line ${reference.line}`}>
 			<RefHeading reference={reference} map={map} editor={editor} />
 			{excerpt === null ? (
 				<p className="ar-panel-note">{source.absent ?? "The code is not available at that commit."}</p>
 			) : (
-				<CodeBlock excerpt={excerpt} highlight={source.highlight} />
+				<ExpandableCode reference={reference} excerpt={excerpt} highlight={source.highlight} widen={widen} />
 			)}
 		</section>
 	);

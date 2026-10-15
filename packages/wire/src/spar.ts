@@ -17,6 +17,7 @@
  * apply, and the scoring rule.
  */
 
+import type { BlueprintExcerptRef } from "./blueprint";
 import type { QuizCreate, QuizPart, QuizRef } from "./quiz";
 
 /** Format version of the stored spar. */
@@ -188,7 +189,8 @@ export interface SparGetAnswer {
  *   risk (`open`, also skipping). No model.
  * - `spar-again` `{ id, from?, only? }` → `{ run }`: a new run of every point (`all`) or those the latest run (or
  *   `from`) did not hold (`unsettled`, the default).
- * - `spar-excerpt` `{ id, part, refs }` → `{ excerpts }` (same order; `@design` refs are read from the stored document)
+ * - `spar-excerpt` `{ id, part, refs }` → `{ excerpts }` (same order; `@design` refs are read from the stored document; a ref
+ *   may carry `from`/`to`, see {@link BlueprintExcerptRef})
  * - `spar-delete` `{ id }` → `{}` (stops it first when running)
  *
  * The companion pushes `{ t: "spar-changed", id }` when a spar's summary changes (progress, done, failed, replied).
@@ -200,7 +202,7 @@ export type SparRequest =
 	| { t: "spar-reply"; reqId: number; id: string; run: string; point: string; text: string }
 	| { t: "spar-close"; reqId: number; id: string; run: string; point: string; as: "lost" | "open"; note?: string }
 	| { t: "spar-again"; reqId: number; id: string; from?: string; only?: "all" | "unsettled" }
-	| { t: "spar-excerpt"; reqId: number; id: string; part: number; refs: QuizRef[] }
+	| { t: "spar-excerpt"; reqId: number; id: string; part: number; refs: BlueprintExcerptRef[] }
 	| { t: "spar-delete"; reqId: number; id: string };
 
 /**

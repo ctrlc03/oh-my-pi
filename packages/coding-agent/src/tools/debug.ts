@@ -38,6 +38,7 @@ import {
 	selectLaunchAdapter,
 } from "../dap";
 import debugDescription from "../prompts/tools/debug.md" with { type: "text" };
+import { highStakesDecision } from "../high-stakes/gate";
 import type { ToolSession } from ".";
 import { truncateForPrompt } from "./approval";
 import type { OutputMeta } from "@oh-my-pi/pi-tui/tools/output-meta";
@@ -543,8 +544,21 @@ function resolveDisassemblyReference(memoryReference: string | undefined): strin
 export class DebugTool implements AgentTool<typeof debugSchema, DebugExecutionDetails> {
 	readonly name = "debug";
 	readonly approval = (args: unknown): ToolApprovalDecision => {
-		const rawAction = (args as Partial<DebugParams>).action;
-		const action = typeof rawAction === "string" ? rawAction.toLowerCase() : "";
+		const params = args as Partial<DebugParams>;
+		const action = typeof params.action === "string" ? params.action.toLowerCase() : "";
+		// A launched program, or a debugger command that shells out (`shell git push`, `!git push`), can publish.
+		const quote = (word: string): string => `'${word.replaceAll("'", "'\\''")}'`;
+		const programArgs = Array.isArray(params.args) ? params.args.filter(arg => typeof arg === "string") : [];
+		const words = typeof params.program === "string" ? [params.program, ...programArgs] : [];
+		const expression = typeof params.expression === "string" ? params.expression : "";
+		const stakes = highStakesDecision({
+			cwd: this.session.cwd,
+			agentDir: this.session.settings.getAgentDir(),
+			command: [words.map(quote).join(" "), expression.replace(/^\s*(?:-exec\s+)?(?:shell\s+|!)/, "")]
+				.filter(part => part !== "")
+				.join("\n"),
+		});
+		if (stakes) return stakes;
 		return DEBUG_READONLY_ACTIONS.has(action) ? "read" : "exec";
 	};
 	readonly formatApprovalDetails = (args: unknown): string[] => {

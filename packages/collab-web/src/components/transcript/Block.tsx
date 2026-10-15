@@ -1,15 +1,44 @@
-import { Check, ChevronRight, Copy, FileText, Reply, Send, Share2, SquareTerminal, X } from "lucide-react";
+import {
+	Check,
+	ChevronRight,
+	Copy,
+	Eye,
+	EyeOff,
+	FileText,
+	FoldVertical,
+	Reply,
+	Send,
+	Share2,
+	SquareTerminal,
+	X,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { type Block, hasOutput, type ToolMeta } from "../../lib/blocks";
 import { fmtDuration } from "../../lib/format";
+import type { HiddenSlot } from "../../lib/hidden-messages";
 import { normalizeWs } from "../../tool-render/util";
 import type { ToolHeadState } from "../../tool-render";
+import { HiddenMarker } from "./HiddenMarker";
 
 /** How long a button reads as done before it goes back. */
 export const COPIED_MS = 1500;
 
 export type CopyWhat = "command" | "output" | "both";
+
+/** Hiding messages from the chat; only the transcripts of a session offer it. */
+export interface BlockHideApi {
+	/** Nothing in the block is still running, so it can be hidden. */
+	can(id: string): boolean;
+	/** The same for the prompt's whole exchange. */
+	canExchange(id: string): boolean;
+	/** The block is hidden and shown in place for now. */
+	isHidden(id: string): boolean;
+	hide(id: string): void;
+	/** Hide the prompt and everything the agent did up to the next prompt. */
+	hideExchange(id: string): void;
+	unhide(id: string): void;
+}
 
 /** What a block's buttons do; the transcript supplies it over every block it renders. */
 export interface BlockApi {
@@ -18,7 +47,24 @@ export interface BlockApi {
 	send(id: string): void;
 	/** Open the touch action sheet for the block. */
 	openSheet(id: string): void;
+	/** Absent where messages cannot be hidden. */
+	hide?: BlockHideApi;
 }
+
+/** How the transcript shows hidden blocks: runs of them become one marker, or show dimmed once revealed. */
+export interface HideView {
+	/** Hidden blocks (by id) and where they sit in their run. */
+	slots: ReadonlyMap<string, HiddenSlot>;
+	/** The hidden block is shown in place (its run was shown, or all hidden messages are). */
+	isRevealed(id: string): boolean;
+	/** Show the run in place, or fold it back to its marker. */
+	toggle(group: string): void;
+	/** Unhide every block of the run. */
+	unhideGroup(group: string): void;
+}
+
+/** A row whose blocks are all hidden: the blocks inside do not show a marker of their own. */
+export const HiddenRowContext = createContext(false);
 
 export interface BlocksContextValue {
 	/** The blocks the transcript renders, by id; anything else (streaming text, queued prompts) has no actions. */
@@ -30,6 +76,8 @@ export interface BlocksContextValue {
 	selectMode: boolean;
 	canSend: boolean;
 	api: BlockApi;
+	/** Null where messages cannot be hidden. */
+	hide: HideView | null;
 }
 
 export const BlocksContext = createContext<BlocksContextValue | null>(null);
@@ -101,6 +149,7 @@ export function BlockActions({
 		if ((await api.share(id)) === "copied") flash("share");
 	};
 	const isCall = block.kind === "tool" || block.kind === "run";
+	const hide = api.hide;
 	return (
 		<span className={`tr-block-actions${floating ? " tr-block-actions--float" : ""}`} data-flash={done ?? undefined}>
 			{isCall && (
@@ -135,6 +184,26 @@ export function BlockActions({
 					<Share2 size={13} />
 				</ActionButton>
 			)}
+			{hide !== undefined &&
+				(hide.isHidden(id) ? (
+					<ActionButton label="Unhide" done={false} onClick={() => hide.unhide(id)}>
+						<Eye size={13} />
+					</ActionButton>
+				) : (
+					<ActionButton label="Hide" done={false} disabled={!hide.can(id)} onClick={() => hide.hide(id)}>
+						<EyeOff size={13} />
+					</ActionButton>
+				))}
+			{hide !== undefined && block.kind === "prompt" && !hide.isHidden(id) && (
+				<ActionButton
+					label="Hide this exchange"
+					done={false}
+					disabled={!hide.canExchange(id)}
+					onClick={() => hide.hideExchange(id)}
+				>
+					<FoldVertical size={13} />
+				</ActionButton>
+			)}
 			{extra}
 		</span>
 	);
@@ -164,45 +233,60 @@ export function BlockShell({
 	children: ReactNode;
 }): ReactNode {
 	const ctx = useContext(BlocksContext);
+	const inHiddenRow = useContext(HiddenRowContext);
 	const known = id !== null && ctx !== null && ctx.blocks.has(id);
 	const selected = known && ctx.selected.has(id);
+	const slot = id === null ? undefined : ctx?.hide?.slots.get(id);
+	const hide = ctx?.hide ?? null;
+	const revealed = id !== null && hide !== null && hide.isRevealed(id);
+	if (slot !== undefined && !revealed) {
+		return slot.start && !inHiddenRow && hide !== null ? (
+			<HiddenMarker slot={slot} revealed={false} hide={hide} />
+		) : null;
+	}
+	const marker =
+		slot?.start === true && !inHiddenRow && hide !== null ? <HiddenMarker slot={slot} revealed hide={hide} /> : null;
 	return (
-		<div
-			className={`tr-block tr-block--${kind}`}
-			data-block={known ? id : undefined}
-			data-kind={kind}
-			data-selected={selected ? "" : undefined}
-			data-copied={known && ctx.copied.has(id) ? "" : undefined}
-			data-select-mode={known && ctx.selectMode ? "" : undefined}
-		>
-			<div className="tr-block-gutter" data-block-select aria-hidden={!known || undefined}>
+		<>
+			{marker}
+			<div
+				className={`tr-block tr-block--${kind}`}
+				data-block={known ? id : undefined}
+				data-hidden={slot !== undefined ? "" : undefined}
+				data-kind={kind}
+				data-selected={selected ? "" : undefined}
+				data-copied={known && ctx.copied.has(id) ? "" : undefined}
+				data-select-mode={known && ctx.selectMode ? "" : undefined}
+			>
+				<div className="tr-block-gutter" data-block-select aria-hidden={!known || undefined}>
+					{known && (
+						<span className="tr-block-check" role="checkbox" aria-checked={selected} aria-label="Select block">
+							{selected && <Check size={11} strokeWidth={3} />}
+						</span>
+					)}
+				</div>
+				<div className="tr-block-main">
+					{label !== undefined && (
+						<div className="tr-block-head tr-block-head--label" data-block-select title={title}>
+							<span className="tr-block-author">{label}</span>
+							{known && <BlockActions id={id} extra={extra} />}
+						</div>
+					)}
+					{children}
+				</div>
+				{known && label === undefined && kind !== "tool" && <BlockActions id={id} floating />}
+				{known && ctx.canSend && (
+					<span className="tr-block-reveal tr-block-reveal--send" aria-hidden>
+						<Reply size={16} />
+					</span>
+				)}
 				{known && (
-					<span className="tr-block-check" role="checkbox" aria-checked={selected} aria-label="Select block">
-						{selected && <Check size={11} strokeWidth={3} />}
+					<span className="tr-block-reveal tr-block-reveal--copy" aria-hidden>
+						<Copy size={16} />
 					</span>
 				)}
 			</div>
-			<div className="tr-block-main">
-				{label !== undefined && (
-					<div className="tr-block-head tr-block-head--label" data-block-select title={title}>
-						<span className="tr-block-author">{label}</span>
-						{known && <BlockActions id={id} extra={extra} />}
-					</div>
-				)}
-				{children}
-			</div>
-			{known && label === undefined && kind !== "tool" && <BlockActions id={id} floating />}
-			{known && ctx.canSend && (
-				<span className="tr-block-reveal tr-block-reveal--send" aria-hidden>
-					<Reply size={16} />
-				</span>
-			)}
-			{known && (
-				<span className="tr-block-reveal tr-block-reveal--copy" aria-hidden>
-					<Copy size={16} />
-				</span>
-			)}
-		</div>
+		</>
 	);
 }
 

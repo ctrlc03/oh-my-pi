@@ -1,11 +1,13 @@
 import { ExternalLink, GitBranch, GitPullRequest, LoaderCircle, RefreshCw, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CompanionClient, GitReview, GitText } from "../../lib/companion";
 import { relTime } from "../../lib/format";
 import type { DiffReview } from "../../lib/review-comments";
+import { type StakesGate, stakesBlocked } from "../../lib/stakes";
 import { useRequest } from "../../lib/use-request";
 import type { ToolRenderHost } from "../../tool-render";
+import { HighStakesChip, StakesGateNote } from "./StakesControl";
 import { TreeFile } from "./WorkingTree";
 import "./review.css";
 
@@ -30,6 +32,8 @@ export interface ReviewPanelProps {
 	title: string | null;
 	/** null: commenting on diffs is off. */
 	diffReview: DiffReview | null;
+	/** Open the quiz with this id (the one a blocked push needs); null: the *Take the quiz* action is not offered. */
+	onOpenQuiz: ((id: string) => void) | null;
 }
 
 type Step = "commit" | "push" | "pr";
@@ -43,6 +47,7 @@ const STEP_LABEL: Record<Step, string> = {
 const BUSY_REASON = "Agent is working; wait until it is idle";
 const UNKNOWN_BUSY_REASON = "Agent state unknown; update omp on the computer";
 const NO_PR_REASON = "gh is not installed or not signed in on the computer";
+const PUSH_FIRST_REASON = "Push the branch first";
 
 /** Double-quoted for the confirm preview, as a shell would take the text. */
 function quote(text: string): string {
@@ -73,7 +78,7 @@ function blockedReason(step: Step | "chain", review: GitReview, busy: boolean | 
 	if (!canPr) return NO_PR_REASON;
 	if (review.pr?.state === "OPEN") return "A pull request is already open";
 	if (review.base === null) return "No base branch found (origin/HEAD, main or master)";
-	if (step === "pr") return review.pushed ? null : "Push the branch first";
+	if (step === "pr") return review.pushed ? null : PUSH_FIRST_REASON;
 	if (review.remote === null) return "No origin remote";
 	return review.files.length === 0 && review.commits.length === 0 ? "No changes against the base branch" : null;
 }
@@ -122,7 +127,7 @@ interface ReviewViewProps extends ReviewPanelProps {
 }
 
 function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: ReviewViewProps): ReactNode {
-	const { client, instanceId, host, canPr, canGitFlow, busy, title, diffReview } = props;
+	const { client, instanceId, host, canPr, canGitFlow, busy, title, diffReview, onOpenQuiz } = props;
 	const [plan, setPlan] = useState<Step[] | null>(null);
 	const [running, setRunning] = useState<Step | null>(null);
 	const [message, setMessage] = useState(title ?? review.commits[0]?.subject ?? "");
@@ -238,7 +243,12 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 		(!plan.includes("commit") || message.trim().length > 0) &&
 		(!plan.includes("pr") || prTitle.trim().length > 0);
 	const chain = chainSteps(review);
-	const actions: { label: string; steps: Step[]; reason: string | null; primary?: boolean }[] = [
+	const stakes = review.stakes;
+	const stakesOnHold = stakesBlocked(stakes);
+	/** The line that explains a gated action: pushing and a chain that pushes say "push", a pull request alone says so. */
+	const gateOf = (steps: Step[]): StakesGate | null =>
+		!stakesOnHold ? null : steps.includes("push") ? "push" : steps.includes("pr") ? "pr" : null;
+	const specs: { label: string; steps: Step[]; reason: string | null; primary?: boolean }[] = [
 		{ label: "Commit", steps: ["commit"], reason: blockedReason("commit", review, busy, canPr) },
 		{ label: "Push", steps: ["push"], reason: blockedReason("push", review, busy, canPr) },
 		{ label: "Create PR", steps: ["pr"], reason: blockedReason("pr", review, busy, canPr) },
@@ -249,9 +259,25 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 			primary: true,
 		},
 	];
+	const actions = specs.map(spec => {
+		const gate = gateOf(spec.steps);
+		// Until the quiz is passed the branch cannot be pushed either, so "push the branch first" would mislead.
+		return { ...spec, gate, reason: gate !== null && spec.reason === PUSH_FIRST_REASON ? null : spec.reason };
+	});
 	// Disabled actions grouped by why, so one cause reads once.
 	const disabledReasons: Record<string, string[]> = {};
 	for (const action of actions) if (action.reason !== null) (disabledReasons[action.reason] ??= []).push(action.label);
+	// The quiz lines, once each, for the actions nothing else already holds back.
+	const gates = actions.flatMap(action => (action.reason === null && action.gate !== null ? [action.gate] : []));
+	const shownGates = [...new Set(gates)];
+
+	useEffect(() => {
+		const sessionId = stakes?.sessionId;
+		if (sessionId === undefined) return;
+		return client.onStakesChanged(changed => {
+			if (changed === sessionId) onRefresh();
+		});
+	}, [client, stakes?.sessionId, onRefresh]);
 
 	return (
 		<>
@@ -282,6 +308,7 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 					{review.commits.length} commit{review.commits.length === 1 ? "" : "s"}
 				</span>
 				{review.dirty && <span className="sh-chip">uncommitted</span>}
+				{stakes?.on && <HighStakesChip />}
 				{!review.isDefaultBranch && <span className="sh-chip">{review.pushed ? "pushed" : "not pushed"}</span>}
 				{review.worktree && <span className="sh-chip">worktree</span>}
 				{review.pr !== null && (
@@ -299,7 +326,7 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 						key={action.label}
 						type="button"
 						className={`sh-btn${action.primary ? " sh-btn-primary" : ""}`}
-						disabled={action.reason !== null || running !== null}
+						disabled={action.reason !== null || action.gate !== null || running !== null}
 						onClick={() => begin(action.steps)}
 					>
 						{action.label}
@@ -314,6 +341,15 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 						</li>
 					))}
 				</ul>
+			)}
+			{stakes?.on && (
+				<StakesGateNote
+					status={stakes}
+					gates={shownGates}
+					client={client}
+					instanceId={instanceId}
+					onOpenQuiz={onOpenQuiz}
+				/>
 			)}
 
 			{plan !== null && (

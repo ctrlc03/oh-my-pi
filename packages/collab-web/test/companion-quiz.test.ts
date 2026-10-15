@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { BLUEPRINT_EXCERPT_CONTEXT } from "@oh-my-pi/pi-wire/blueprint";
 import type { QuizVerdictKind } from "@oh-my-pi/pi-wire/quiz";
 import { type AgentLaunch, GATED_TOOL_SETTINGS } from "../scripts/companion-agent";
 import type { RunOmp } from "../scripts/companion-headless";
@@ -238,6 +239,15 @@ describe("a quiz run", () => {
 		]);
 		expect(hit!.lines[hit!.line - hit!.start]).toContain("Writable");
 		expect(gone).toBeNull();
+		// A request with no range gets the default window; one with a range, those lines of the same file at the commit.
+		expect(hit!.lines.length).toBeLessThanOrEqual(2 * BLUEPRINT_EXCERPT_CONTEXT + 1);
+		const [whole, partial] = await h.quizzes.excerpt(id, 0, [
+			{ ...quiz.questions[0]!.refs[0]!, from: 1, to: 9_999 },
+			{ ...quiz.questions[0]!.refs[0]!, from: hit!.line, to: hit!.line },
+		]);
+		expect(whole).toMatchObject({ start: 1, commit: hit!.commit, side: hit!.side, total: whole!.lines.length });
+		expect(whole!.lines[hit!.line - 1]).toContain("Writable");
+		expect([partial!.start, partial!.lines.length, partial!.total]).toEqual([hit!.line, 1, whole!.total]);
 
 		await h.quizzes.remove(id);
 		expect(await h.quizzes.list(repo)).toEqual([]);

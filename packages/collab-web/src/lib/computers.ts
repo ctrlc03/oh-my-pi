@@ -290,6 +290,7 @@ export const FEATURES = {
 	fanout: { can: "canFanout", lacks: "can't compare models" },
 	blueprint: { can: "canBlueprint", lacks: "can't build architecture maps" },
 	quiz: { can: "canQuiz", lacks: "can't write quizzes" },
+	highStakes: { can: "canHighStakes", lacks: "can't gate pushes behind a quiz" },
 	spar: { can: "canSpar", lacks: "can't run sparring sessions" },
 	bakeoff: { can: "canBakeoff", lacks: "can't run bake-offs" },
 	foreign: { can: "canForeign", lacks: "can't run other agents" },

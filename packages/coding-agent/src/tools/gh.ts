@@ -16,6 +16,7 @@ import {
 	prompt,
 	untilAborted,
 } from "@oh-my-pi/pi-utils";
+import { highStakesDecision } from "../high-stakes/gate";
 import githubDescription from "../prompts/tools/github.md" with { type: "text" };
 import { github } from "../utils/github";
 import { loadImageAttachmentInput } from "../utils/image-loading";
@@ -138,6 +139,14 @@ export class GithubTool implements AgentTool<typeof githubSchema, GhToolDetails>
 	readonly approval = (args: unknown): ToolApprovalDecision => {
 		const rawOp = (args as Partial<GithubInput>).op;
 		const op = typeof rawOp === "string" ? rawOp : "";
+		if (op === "pr_create" || op === "pr_push") {
+			const stakes = highStakesDecision({
+				cwd: this.session.cwd,
+				agentDir: this.session.settings.getAgentDir(),
+				githubOp: op,
+			});
+			if (stakes) return stakes;
+		}
 		return GITHUB_READONLY_OPS.has(op) ? "read" : "exec";
 	};
 	readonly summary = "Interact with GitHub repositories, files, pull requests, and Actions";

@@ -14,6 +14,7 @@ import { Transcript } from "../transcript/Transcript";
 import { Composer, type ComposerHandle } from "./Composer";
 import { useComposerExtras } from "./composer-extras";
 import { useEditPrompt } from "./EditPromptSheet";
+import { useHiddenMessages } from "./HiddenMessages";
 import { useTurnChanges } from "./TurnChangesSheet";
 import "./split.css";
 
@@ -104,6 +105,7 @@ export function SplitPane({
 	const composerRef = useRef<ComposerHandle>(null);
 	const editPrompt = useEditPrompt(client, snap, composerRef);
 	const turnChanges = useTurnChanges(client, snap, sessionId, composerRef);
+	const hidden = useHiddenMessages(sessionId, computer);
 	const sendToAgent = useCallback((text: string) => composerRef.current?.insert(text), []);
 	const { newSince, seen: newSeen, markSeen, markTail } = useNewSince(client, roomId, snap.entries, live);
 	const sendSessionCommand = useCallback(
@@ -202,10 +204,12 @@ export function SplitPane({
 					onTurnChanges={turnChanges.onTurnChanges}
 					onSendToAgent={snap.readOnly ? undefined : sendToAgent}
 					sessionModel={snap.state?.model?.id}
+					hide={hidden.control}
 				/>
 			</div>
 			{editPrompt.sheet}
 			{turnChanges.sheet}
+			{hidden.bar}
 			<Composer
 				ref={composerRef}
 				key={roomId}

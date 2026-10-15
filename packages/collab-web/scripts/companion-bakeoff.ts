@@ -12,7 +12,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { BlueprintExcerpt, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
+import type { BlueprintExcerpt, BlueprintExcerptRef } from "@oh-my-pi/pi-wire/blueprint";
 import {
 	BAKEOFF_DEFAULT_MAX_COST_USD,
 	BAKEOFF_MAX_CHALLENGERS,
@@ -277,7 +277,7 @@ export interface Bakeoffs {
 	judge(cwd: string | undefined): Promise<BakeoffJudgeInfo>;
 	create(request: Partial<BakeoffCreate>): Promise<{ id: string }>;
 	get(id: string): Promise<Bakeoff>;
-	excerpt(id: string, entry: string, refs: readonly BlueprintRef[]): Promise<(BlueprintExcerpt | null)[]>;
+	excerpt(id: string, entry: string, refs: readonly BlueprintExcerptRef[]): Promise<(BlueprintExcerpt | null)[]>;
 	/** Stop one entry (what it did so far is kept), or the whole run. */
 	stop(id: string, entry: string | undefined): Promise<void>;
 	/** Take an entry: design mode marks it, implementation mode keeps its worktree. */

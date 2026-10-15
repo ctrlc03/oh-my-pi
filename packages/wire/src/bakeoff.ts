@@ -16,7 +16,7 @@
  * Pure JSON shapes, plus the rules both sides use (presets, labels, budgets).
  */
 
-import type { BlueprintExcerpt, BlueprintRef } from "./blueprint";
+import type { BlueprintExcerpt, BlueprintExcerptRef } from "./blueprint";
 import type { QuizRef } from "./quiz";
 
 /** Format version of the stored bake-off. */
@@ -304,7 +304,7 @@ export type BakeoffRequest =
 	| { t: "bakeoff-judge"; reqId: number; cwd?: string }
 	| ({ t: "bakeoff-create"; reqId: number } & BakeoffCreate)
 	| { t: "bakeoff-get"; reqId: number; id: string }
-	| { t: "bakeoff-excerpt"; reqId: number; id: string; entry: string; refs: BlueprintRef[] }
+	| { t: "bakeoff-excerpt"; reqId: number; id: string; entry: string; refs: BlueprintExcerptRef[] }
 	| { t: "bakeoff-stop"; reqId: number; id: string; entry?: string }
 	| { t: "bakeoff-take"; reqId: number; id: string; entry: string; removeOthers?: boolean; discardDirty?: boolean }
 	| { t: "bakeoff-delete"; reqId: number; id: string }

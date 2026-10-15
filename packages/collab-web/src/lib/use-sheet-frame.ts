@@ -82,18 +82,12 @@ function measure(panel: HTMLElement): Frame {
 }
 
 /**
- * `enabled` turns the whole thing on (a floating frame only makes sense with a fine pointer and room); `key` names
- * the sheet's saved frame. Nothing is saved until the user moves or resizes.
+ * `enabled` turns the whole thing on (a floating frame only makes sense with a fine pointer and room). Every big sheet
+ * reads and writes the one shared frame. Nothing is saved until the user moves or resizes.
  */
-export function useSheetFrame(key: string, enabled: boolean, panel: RefObject<HTMLDivElement | null>): SheetFrame {
+export function useSheetFrame(enabled: boolean, panel: RefObject<HTMLDivElement | null>): SheetFrame {
 	const zoom = useUiZoom();
-	const [saved, setSaved] = useState(() => ({ key, frame: readFrame(key) }));
-	let current = saved;
-	if (saved.key !== key) {
-		// The same sheet showing another kind of page (screens: the list, then a screen): that page's own frame.
-		current = { key, frame: readFrame(key) };
-		setSaved(current);
-	}
+	const [saved, setSaved] = useState(readFrame);
 	const [view, setView] = useState<View>(layoutViewport);
 	useEffect(() => {
 		if (!enabled) return;
@@ -108,10 +102,7 @@ export function useSheetFrame(key: string, enabled: boolean, panel: RefObject<HT
 	}, [enabled, zoom]);
 
 	// The saved frame as it fits the window now; the saved one itself is never rewritten by a smaller window.
-	const frame = useMemo(
-		() => (enabled && current.frame !== null ? clampFrame(current.frame, view) : null),
-		[enabled, current.frame, view],
-	);
+	const frame = useMemo(() => (enabled && saved !== null ? clampFrame(saved, view) : null), [enabled, saved, view]);
 
 	const layer = useRef<HTMLDivElement>(null);
 	const syncLayer = useCallback((): void => {
@@ -134,13 +125,10 @@ export function useSheetFrame(key: string, enabled: boolean, panel: RefObject<HT
 	const lastPress = useRef(Number.NEGATIVE_INFINITY);
 	useEffect(() => () => stop.current?.(), []);
 
-	const commit = useCallback(
-		(next: Frame | null): void => {
-			saveFrame(key, next);
-			setSaved({ key, frame: next });
-		},
-		[key],
-	);
+	const commit = useCallback((next: Frame | null): void => {
+		saveFrame(next);
+		setSaved(next);
+	}, []);
 
 	const begin = useCallback(
 		(start: { pointerId: number; clientX: number; clientY: number }, how: Grab, holder: HTMLElement): void => {

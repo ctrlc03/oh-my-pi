@@ -21,6 +21,7 @@ import type { OrgSection } from "../../lib/session-org";
 import { HostState, hostTitle, SandboxedChip } from "./CompanionCard";
 import { AgentChip } from "./AgentChip";
 import { FanoutChip } from "./FanoutSheet";
+import { HighStakesMark } from "./StakesControl";
 import type { DragSpec, RangeAction } from "./use-org-drag";
 
 /** Holding a row this long on a touch screen opens its menu. */
@@ -222,6 +223,7 @@ export function OrgRow(props: OrgRowProps): ReactNode {
 						<span className="sh-recent-name">{title}</span>
 						{current && <span className="sh-chip">here</span>}
 						{item.host.sandboxed && <SandboxedChip />}
+						{item.host.highStakes === true && <HighStakesMark />}
 						{item.host.fanout && <FanoutChip fanout={item.host.fanout} />}
 						{joining === item.host.instanceId && <LoaderCircle size={13} className="sh-spin" />}
 					</span>
@@ -249,6 +251,7 @@ export function OrgRow(props: OrgRowProps): ReactNode {
 					<span className="sh-recent-title">
 						<span className="sh-recent-name">{title}</span>
 						{item.session.sandboxed && <SandboxedChip />}
+						{item.session.highStakes === true && <HighStakesMark />}
 					</span>
 					<span className="sh-recent-meta">
 						{props.wake && <span className="sh-host-state">snoozed {props.wake}</span>}

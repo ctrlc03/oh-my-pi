@@ -2,7 +2,7 @@ import type {
 	Blueprint,
 	BlueprintCreate,
 	BlueprintExcerpt,
-	BlueprintRef,
+	BlueprintExcerptRef,
 	BlueprintRefsAnswer,
 	BlueprintSummary,
 } from "@oh-my-pi/pi-wire/blueprint";
@@ -36,7 +36,7 @@ export async function getBlueprint(client: CompanionClient, id: string): Promise
 export async function getExcerpts(
 	client: CompanionClient,
 	id: string,
-	refs: BlueprintRef[],
+	refs: BlueprintExcerptRef[],
 ): Promise<(BlueprintExcerpt | null)[]> {
 	return (await client.requestBlueprint({ t: "blueprint-excerpt", id, refs }, EXCERPT_TIMEOUT_MS)).excerpts;
 }

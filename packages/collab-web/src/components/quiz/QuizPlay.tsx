@@ -1,8 +1,9 @@
 import type { BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
 import type { Quiz, QuizAttempt } from "@oh-my-pi/pi-wire/quiz";
+import type { QuizStakes } from "@oh-my-pi/pi-wire/stakes";
 import { LoaderCircle } from "lucide-react";
 import type { ReactNode } from "react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CompanionClient } from "../../lib/companion";
 import type { Draft } from "./QuestionView";
 import { QuestionView } from "./QuestionView";
@@ -10,7 +11,7 @@ import { QuizHeader } from "./QuizHeader";
 import type { ExcerptCache, ExcerptReader } from "./QuizCode";
 import { SummaryView } from "./SummaryView";
 import type { QuizGiven } from "./quiz-api";
-import { answerQuiz, getQuizExcerpts, retryQuiz } from "./quiz-api";
+import { answerQuiz, getQuiz, getQuizExcerpts, retryQuiz } from "./quiz-api";
 import {
 	answerOf,
 	attemptHistory,
@@ -19,6 +20,7 @@ import {
 	nextQuestion,
 	positionOf,
 	progressOf,
+	stakesBannerOf,
 	summaryOf,
 } from "./quiz-flow";
 
@@ -28,6 +30,8 @@ export interface QuizPlayProps {
 	/** Every attempt the companion holds; the latest unfinished one is resumed at its first unanswered question. */
 	attempts: readonly QuizAttempt[];
 	costUsd: number | undefined;
+	/** Set on a quiz made for a high-stakes session's push: what passing it unlocks, and the attempt that passed. */
+	stakes?: QuizStakes;
 	/** Opens a cited line of the checkout on screen when it is this quiz's repository; absent when the quiz is not about that checkout. */
 	editor?: { root: string; open(path: string, line?: number): void };
 	/** Back to the new-quiz form about this quiz's subject; null when there is none to offer. */
@@ -48,12 +52,28 @@ export function QuizPlay({
 	quiz,
 	attempts: given,
 	costUsd,
+	stakes: loadedStakes,
 	editor,
 	onNewQuiz,
 	onHistory,
 	onClose,
 }: QuizPlayProps): ReactNode {
 	const [attempts, setAttempts] = useState<readonly QuizAttempt[]>(given);
+	const [stakes, setStakes] = useState(loadedStakes);
+	const stakesSession = stakes?.sessionId;
+	// The pass is recorded by the companion once the last answer is in: read it again for the banner.
+	const refreshStakes = useCallback(() => {
+		getQuiz(client, quiz.id).then(
+			answer => setStakes(answer.stakes),
+			() => undefined,
+		);
+	}, [client, quiz.id]);
+	useEffect(() => {
+		if (stakesSession === undefined) return;
+		return client.onStakesChanged(changed => {
+			if (changed === stakesSession) refreshStakes();
+		});
+	}, [client, stakesSession, refreshStakes]);
 	const landing = useMemo(() => landingOf(quiz, given), [quiz, given]);
 	const [attemptId, setAttemptId] = useState<string | null>(landing?.attempt ?? null);
 	const [view, setView] = useState<View>(
@@ -86,6 +106,7 @@ export function QuizPlay({
 		try {
 			const reply = await answerQuiz(client, quiz.id, attempt.id, questionId, answer);
 			setAttempts(list => list.map(item => (item.id === reply.attempt.id ? reply.attempt : item)));
+			if (reply.attempt.finishedAt !== undefined && stakesSession !== undefined) refreshStakes();
 		} catch (err) {
 			setErrors(list => ({ ...list, [questionId]: messageOf(err) }));
 		} finally {
@@ -181,6 +202,7 @@ export function QuizPlay({
 			<div className="qz-scroll">
 				<SummaryView
 					summary={summaryOf(quiz, attempt)}
+					stakes={stakes === undefined ? null : { banner: stakesBannerOf(quiz, attempt, stakes) }}
 					attempts={attemptHistory(attempts)}
 					attemptId={attempt.id}
 					costUsd={costUsd}

@@ -86,6 +86,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { QrCode, renderQrHalfBlocks } from "@oh-my-pi/pi-tui/chrome/qrcode";
 import { SCHEDULE_IPC_FILE } from "@oh-my-pi/pi-wire/schedule";
+import { STAKES_IPC_FILE } from "@oh-my-pi/pi-wire/stakes";
 import { generateRoomKey, importRoomKey } from "../src/lib/codec";
 import {
 	type FanoutCompare,
@@ -119,6 +120,7 @@ import {
 	type ParsedCollabLink,
 	parseCollabLink,
 } from "../src/lib/link";
+import { parseHidden } from "../src/lib/hidden-messages";
 import { parseOrg } from "../src/lib/session-org";
 import { type AgentRunner } from "./companion-agent";
 import { createBakeoffs } from "./companion-bakeoff";
@@ -214,7 +216,9 @@ import {
 	saveSchedules,
 } from "./companion-schedule";
 import { startScheduleIpc } from "./companion-schedule-ipc";
+import { createStakes } from "./companion-stakes";
 import { createPersonal } from "./companion-personal";
+import { createHiddenMessages, loadHiddenFile, saveHiddenFile } from "./companion-hidden";
 import { createSessionOrg, ghSessionPrDone, loadOrgFile, saveOrgFile } from "./companion-sessionorg";
 import {
 	createSpendMonitor,
@@ -946,6 +950,16 @@ const sessionOrg = createSessionOrg({
 	exempt: sessionId => personal.exempt(sessionId),
 });
 
+const hiddenPath = path.join(path.dirname(statePath), "collab-companion-hidden.json");
+
+/** The messages the user hid from the chat, per session, so every device shows the same ones; see ./companion-hidden. */
+const hiddenMessages = createHiddenMessages({
+	now: Date.now,
+	initial: await loadHiddenFile(hiddenPath),
+	save: file => saveHiddenFile(hiddenPath, file),
+	onChange: () => void refresh(),
+});
+
 const fanoutPath = path.join(path.dirname(statePath), "collab-companion-fanout.json");
 /** Best-of-N groups (see ./companion-fanout), newest first. */
 let fanoutGroups = await loadGroups(fanoutPath);
@@ -994,6 +1008,7 @@ const scheduleIpc = await startScheduleIpc({
 	scheduler,
 	validate: { now: Date.now, sandboxAvailable, checkDirectory, personalEnabled: personal.enabled },
 	personal: personal.ipc,
+	stakes: { prePush: body => stakes.prePush(body) },
 });
 await personal.attach();
 
@@ -1090,6 +1105,9 @@ async function refresh(targetPeer?: number): Promise<void> {
 		.tick([...listed.hosts, ...listed.idle.map(session => ({ ...session, inputRequired: false }))])
 		.catch(err => console.error(`companion: session organisation failed: ${errorText(err)}`));
 	void prWatch.tick();
+	void stakes
+		.tick([...listed.hosts, ...listed.idle])
+		.catch(err => console.error(`companion: high-stakes check failed: ${errorText(err)}`));
 	void prWake.tick();
 	void worktreeSweeper.tick().catch(err => console.error(`companion: worktree cleanup failed: ${errorText(err)}`));
 	detectPowerEdges(power);
@@ -1098,19 +1116,22 @@ async function refresh(targetPeer?: number): Promise<void> {
 	const frame: CompanionReply = {
 		t: "hosts",
 		machine,
-		hosts: personal
-			.markHosts(listed.hosts)
-			.map(host =>
-				Object.hasOwn(fanoutOf, host.instanceId) ? { ...host, fanout: fanoutOf[host.instanceId] } : host,
-			),
+		hosts: stakes.markRows(
+			personal
+				.markHosts(listed.hosts)
+				.map(host =>
+					Object.hasOwn(fanoutOf, host.instanceId) ? { ...host, fanout: fanoutOf[host.instanceId] } : host,
+				),
+		),
 		vapidKey: state.vapid.publicKey,
-		idle: listed.idle,
+		idle: stakes.markRows(listed.idle),
 		canStart: extras.canStart,
 		canSandbox: extras.canStart && sandboxAvailable,
 		canPr: extras.canPr,
 		canCodemap: codemapReady,
 		canBlueprint: codemapReady,
 		canQuiz: extras.canStart,
+		canHighStakes: extras.canStart,
 		canSpar: extras.canStart,
 		canBakeoff: extras.canStart,
 		canEdit: true,
@@ -1133,6 +1154,8 @@ async function refresh(targetPeer?: number): Promise<void> {
 		sessionOrgRev: sessionOrg.file().rev,
 		canOrderSessions: true,
 		canEndOnSettle: true,
+		canHideMessages: true,
+		hiddenRev: hiddenMessages.file().rev,
 		transcribe: extras.transcribe ?? undefined,
 		power: power ?? undefined,
 		...personal.hostsFields(extras.canStart),
@@ -1219,6 +1242,8 @@ async function startSession(
 	foreign?: ForeignStart,
 	/** A session that only reads the code and writes one file (architecture maps); see {@link RestrictLaunch}. */
 	restrict?: RestrictLaunch,
+	/** New omp sessions: block pushes and pull requests until a quiz is passed (./companion-stakes); the device that asked. */
+	highStakes?: string,
 ): Promise<string> {
 	if (
 		typeof cwd !== "string" ||
@@ -1295,6 +1320,7 @@ async function startSession(
 				},
 			)
 		: null;
+	let pendingStakes: string | undefined;
 	try {
 		// A failing setup (an install that breaks) discards the tree below, like a session that cannot start.
 		if (created) await setupWorktree(created, sandboxed);
@@ -1305,6 +1331,9 @@ async function startSession(
 		return await startLock(lockKey, async () => {
 			const before = new Set((await loadSessions()).hosts.map(h => h.instanceId));
 			const spawnedAt = Date.now();
+			// The folder is gated before omp runs in it, so the session never has a moment without the hook.
+			if (highStakes !== undefined && !plan && resume === undefined)
+				pendingStakes = await stakes.expect(launchCwd, highStakes);
 			const launched = await launchInTmux({
 				tmux,
 				ompBin,
@@ -1350,6 +1379,10 @@ async function startSession(
 						resume !== undefined && (plan ? host.sessionId === resume : host.sessionId.startsWith(resume));
 					if (resumed || (hostCwd === launched.cwd && host.startedAt >= spawnedAt - 1_000)) {
 						// Where this session works is how its settle finds its worktree later; never from a session file.
+						if (pendingStakes !== undefined) {
+							await stakes.adopt(pendingStakes, host.sessionId);
+							pendingStakes = undefined;
+						}
 						await settleCleanup
 							.recordSession(host.sessionId, launched.cwd)
 							.catch(err =>
@@ -1382,6 +1415,8 @@ async function startSession(
 	} catch (err) {
 		// The branch and worktree only exist for this session.
 		if (created) await discardWorktree(created);
+		if (pendingStakes !== undefined)
+			await stakes.discard(pendingStakes).catch(error => console.error(`companion: ${errorText(error)}`));
 		throw err;
 	}
 }
@@ -1390,7 +1425,7 @@ async function startSession(
  * The `start` request: `scratch` starts a new session without a project in a fresh folder under the config dir
  * (see ./companion-scratch); a start that fails leaves no empty folder behind, and no start ever deletes one that holds files.
  */
-async function startFromRequest(frame: Extract<CompanionRequest, { t: "start" }>): Promise<string> {
+async function startFromRequest(frame: Extract<CompanionRequest, { t: "start" }>, deviceName: string): Promise<string> {
 	const prompt = parseStartPrompt(frame.prompt);
 	const foreign: ForeignStart = { agent: frame.agent, model: frame.model, permission: frame.permission };
 	if (frame.scratch === undefined)
@@ -1404,6 +1439,8 @@ async function startFromRequest(frame: Extract<CompanionRequest, { t: "start" }>
 			undefined,
 			undefined,
 			foreign,
+			undefined,
+			frame.highStakes === true ? deviceName : undefined,
 		);
 	if (
 		typeof frame.scratch !== "object" ||
@@ -1517,8 +1554,30 @@ const quizzes = createQuizzes({
 	},
 	agent: agentRunner,
 	ompBin,
+	stakes: { mark: () => stakes.mark(), finished: (doc, attempt) => stakes.finished(doc, attempt) },
 	log: message => console.log(`companion: ${message}`),
 });
+
+/**
+ * High-stakes sessions: the mode of each session and the states a quiz has covered (./companion-stakes). Pushes and
+ * pull requests from the app are refused here, and the pre-push hook of the session's repository asks over the
+ * loopback channel (`scheduleIpc`, its own token in `collab-companion-stakes-ipc`).
+ */
+const stakes = createStakes({
+	agentDir: path.dirname(statePath),
+	now: Date.now,
+	session: async instanceId => {
+		const session = await listedSession(instanceId);
+		return { sessionId: session.sessionId, cwd: session.cwd };
+	},
+	quizzes,
+	changed: sessionId => {
+		for (const peer of peers) room.send({ t: "stakes-changed", sessionId }, peer, zipPeers.has(peer));
+	},
+	log: message => console.log(`companion: ${message}`),
+});
+await stakes.init().catch(err => console.error(`companion: starting high-stakes sessions failed: ${errorText(err)}`));
+await scheduleIpc.publishStakes(path.join(path.dirname(statePath), STAKES_IPC_FILE));
 
 /** Sparring on code changes and designs: stored beside the quizzes; the points are written by a read-only session, each defence answered by a headless omp run on the default model. */
 const spars = createSpars({
@@ -1934,7 +1993,10 @@ room.onFrame = (frame, fromPeer) => {
 			respond(frame.reqId, async () => ({
 				t: "started",
 				reqId: frame.reqId,
-				instanceId: await startFromRequest(frame),
+				instanceId: await startFromRequest(
+					frame,
+					registry.records.find(device => device.id === deviceId)?.name ?? "a device",
+				),
 			}));
 			return;
 		case "agents":
@@ -2071,6 +2133,12 @@ room.onFrame = (frame, fromPeer) => {
 				return { t: "session-org", reqId: frame.reqId, doc, rev };
 			});
 			return;
+		case "hidden-messages":
+			respond(frame.reqId, async () => {
+				const { doc, rev } = await hiddenMessages.sync(frame.sessionId, parseHidden(frame.doc));
+				return { t: "hidden-messages", reqId: frame.reqId, sessionId: frame.sessionId, doc, rev };
+			});
+			return;
 		case "session-search":
 			respond(frame.reqId, async () => {
 				const { results, truncated } = await sessionSearch.search(frame.query, frame.limit);
@@ -2137,11 +2205,16 @@ room.onFrame = (frame, fromPeer) => {
 			});
 			return;
 		case "git-review":
-			respond(frame.reqId, async () => ({
-				t: "review",
-				reqId: frame.reqId,
-				review: await gitReview(await sessionCwd(frame.instanceId), await canCreatePr()),
-			}));
+			respond(frame.reqId, async () => {
+				const [review, status] = await Promise.all([
+					gitReview(await sessionCwd(frame.instanceId), await canCreatePr()),
+					stakes.status(frame.instanceId).catch(err => {
+						console.error(`companion: high-stakes status failed: ${errorText(err)}`);
+						return undefined;
+					}),
+				]);
+				return { t: "review", reqId: frame.reqId, review: status ? { ...review, stakes: status } : review };
+			});
 			return;
 		case "git-review-diff":
 			respond(frame.reqId, async () => {
@@ -2159,8 +2232,40 @@ room.onFrame = (frame, fromPeer) => {
 			return;
 		case "git-push":
 			respond(frame.reqId, async () => {
-				await gitPush(await idleSessionCwd(frame.instanceId));
+				const cwd = await idleSessionCwd(frame.instanceId);
+				await stakes.guard(frame.instanceId, "push");
+				await gitPush(cwd);
 				return { t: "ok", reqId: frame.reqId };
+			});
+			return;
+		case "stakes-get":
+			respond(frame.reqId, async () => ({
+				t: "stakes",
+				reqId: frame.reqId,
+				status: await stakes.status(frame.instanceId),
+			}));
+			return;
+		case "stakes-set":
+			respond(frame.reqId, async () => ({
+				t: "stakes",
+				reqId: frame.reqId,
+				status: await stakes.set(frame.instanceId, frame.on, {
+					confirmOff: frame.confirmOff,
+					by: registry.records.find(device => device.id === deviceId)?.name ?? "a device",
+				}),
+			}));
+			return;
+		case "stakes-quiz":
+			respond(frame.reqId, async () => ({
+				t: "stakes-quiz",
+				reqId: frame.reqId,
+				...(await stakes.quiz(frame.instanceId)),
+			}));
+			return;
+		case "stakes-settings":
+			respond(frame.reqId, async () => {
+				if (frame.passMark !== undefined) await stakes.setPassMark(frame.passMark);
+				return { t: "stakes-settings", reqId: frame.reqId, settings: stakes.settings() };
 			});
 			return;
 		case "pr-create":
@@ -2169,6 +2274,7 @@ room.onFrame = (frame, fromPeer) => {
 					throw new Error("invalid pull request");
 				if (frame.draft !== undefined && typeof frame.draft !== "boolean") throw new Error("invalid pull request");
 				if (!(await canCreatePr())) throw new Error("gh is not installed or not signed in on this computer");
+				await stakes.guard(frame.instanceId, "pr");
 				const url = await createPullRequest(await idleSessionCwd(frame.instanceId), {
 					title: frame.title,
 					body: frame.body,
@@ -2508,6 +2614,7 @@ room.onFrame = (frame, fromPeer) => {
 			return;
 		case "pr-merge":
 			respond(frame.reqId, async () => {
+				await stakes.guard(frame.instanceId, "merge", frame.head);
 				await prReview.merge(await reviewWriteCwd(frame.instanceId), frame.number, {
 					method: frame.method,
 					deleteBranch: frame.deleteBranch,

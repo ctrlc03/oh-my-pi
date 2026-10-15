@@ -21,6 +21,16 @@ export const BLUEPRINT_VERSION = 1;
 export const MAX_BLUEPRINT_DIAGRAMS = 2_000;
 /** Lines of context an excerpt returns on each side of the cited line. */
 export const BLUEPRINT_EXCERPT_CONTEXT = 12;
+/** Lines one "show more" asks for above or below an excerpt. */
+export const BLUEPRINT_EXCERPT_STEP = 20;
+/**
+ * Most lines one excerpt may hold, however wide the range asked for. A whole file of a few thousand lines still opens in
+ * one reply, while a single answer stays small enough for the relay (lines are cut at 400 characters, so well under a MB)
+ * and for the browser to draw as one block; a larger file is read a window at a time.
+ */
+export const BLUEPRINT_EXCERPT_MAX_LINES = 2_000;
+/** Ranged excerpts one request may ask for: each can be {@link BLUEPRINT_EXCERPT_MAX_LINES} long, so a reply stays bounded. */
+export const BLUEPRINT_EXCERPT_MAX_RANGES = 20;
 
 /**
  * Code behind a node or an edge: `token` occurs on line `line` (1-based) of `path` (repository-relative,
@@ -176,6 +186,17 @@ export interface BlueprintCreate {
 	model?: string;
 }
 
+/**
+ * A ref in an excerpt request, optionally asking for more than the default window: lines `from` to `to` (1-based,
+ * inclusive) of the file at the ref's commit and side. The range is widened to hold the cited line, cut to the file and
+ * to {@link BLUEPRINT_EXCERPT_MAX_LINES}; one that is not a pair of whole numbers with `from <= to` is ignored. A
+ * companion that predates ranges ignores both fields and answers the default window, without `total`.
+ */
+export interface BlueprintExcerptRef extends BlueprintRef {
+	from?: number;
+	to?: number;
+}
+
 /** Lines around a ref at the map's head (or base) commit, read from git, so they stay right after the branch moves on. */
 export interface BlueprintExcerpt {
 	path: string;
@@ -188,6 +209,11 @@ export interface BlueprintExcerpt {
 	commit: string;
 	/** Detected from the extension for highlighting (`ts`, `rs`, `sol` …). */
 	language?: string;
+	/**
+	 * Lines in the whole file. Present when the companion can read ranges, so a viewer knows whether there is more above
+	 * (`start > 1`) or below (`start + lines.length - 1 < total`); absent, it offers no "show more".
+	 */
+	total?: number;
 }
 
 /**
@@ -197,7 +223,7 @@ export interface BlueprintExcerpt {
  * - `blueprint-list` `{ cwd? }` → `{ maps: BlueprintSummary[] }` (all repositories when `cwd` is omitted)
  * - `blueprint-create` `BlueprintCreate` → `{ id }` (the map appears in the list as `running`)
  * - `blueprint-get` `{ id }` → `{ map: Blueprint }`
- * - `blueprint-excerpt` `{ id, refs: BlueprintRef[] }` → `{ excerpts: (BlueprintExcerpt | null)[] }` (same order)
+ * - `blueprint-excerpt` `{ id, refs: BlueprintExcerptRef[] }` → `{ excerpts: (BlueprintExcerpt | null)[] }` (same order)
  * - `blueprint-delete` `{ id }` → `{}` (stops it first when running)
  * - `blueprint-refs` `{ cwd, q? }` → `{ branches: string[]; current?: string; prs?: { number: number; title: string; head: string; base: string }[] }`
  *
@@ -207,7 +233,7 @@ export type BlueprintRequest =
 	| { t: "blueprint-list"; reqId: number; cwd?: string }
 	| ({ t: "blueprint-create"; reqId: number } & BlueprintCreate)
 	| { t: "blueprint-get"; reqId: number; id: string }
-	| { t: "blueprint-excerpt"; reqId: number; id: string; refs: BlueprintRef[] }
+	| { t: "blueprint-excerpt"; reqId: number; id: string; refs: BlueprintExcerptRef[] }
 	| { t: "blueprint-delete"; reqId: number; id: string }
 	| { t: "blueprint-refs"; reqId: number; cwd: string; q?: string };
 

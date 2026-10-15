@@ -15,6 +15,7 @@ import type {
 	QuizVerdictKind,
 } from "@oh-my-pi/pi-wire/quiz";
 import { QUIZ_MAX_ANSWER_CHARS } from "@oh-my-pi/pi-wire/quiz";
+import { quizPassed, type QuizStakes } from "@oh-my-pi/pi-wire/stakes";
 
 /** Title of the one part of a quiz about a session's own changes when the quiz does not name it. */
 const CHANGES_TITLE = "What the session changed";
@@ -236,6 +237,34 @@ export function summaryOf(quiz: Quiz, attempt: QuizAttempt): SummaryModel {
 			const kind = answerOf(attempt, question.id)?.verdict.kind;
 			return kind !== undefined && kind !== "right";
 		}).length,
+	};
+}
+
+/** What the results screen of a high-stakes quiz says about the push: passed, or why not yet. */
+export interface StakesBanner {
+	tone: "passed" | "failed";
+	text: string;
+}
+
+/**
+ * The banner of a stakes quiz's results, or null while the attempt is unfinished. The score is compared with
+ * {@link quizPassed}, exactly, never from the rounded percent. Only an attempt at every question can pass, so a
+ * shorter one says that instead of showing a score it cannot be judged by.
+ */
+export function stakesBannerOf(quiz: Quiz, attempt: QuizAttempt, stakes: QuizStakes): StakesBanner | null {
+	const { points, total } = attempt.score;
+	const finished = attempt.finishedAt !== undefined;
+	const full = quiz.questions.every(question => attempt.questions.includes(question.id));
+	const recorded = stakes.passedAttempt === attempt.id;
+	const earned = finished && full && stakes.passedAttempt === undefined && quizPassed(points, total, stakes.passMark);
+	// A pass the companion is still recording reads as a pass; one earned in another attempt still unlocks the push.
+	if (recorded || earned) return { tone: "passed", text: "Passed — you can push now" };
+	if (stakes.passedAttempt !== undefined) return { tone: "passed", text: "Passed earlier — you can push now" };
+	if (!finished) return null;
+	if (!full) return { tone: "failed", text: "Only an attempt at every question can pass" };
+	return {
+		tone: "failed",
+		text: `Not passed: ${formatPoints(points)} of ${total} points, ${stakes.passMark}% needed`,
 	};
 }
 

@@ -696,41 +696,44 @@ export class ExtensionUiController {
 		});
 		const signal = dialogOptions?.signal ? AbortSignal.any([dialogOptions.signal, steered.signal]) : steered.signal;
 		try {
-			const choice = await this.#raceCollabDialog(request, signal, localSignal =>
-				this.#presentDialog(localSignal, settle => {
-					const editor = this.ctx.editor;
-					const dialog = new ApprovalDialogComponent(
-						prompt.compact,
-						{ onApprove: () => settle(APPROVE_OPTION), onDeny: () => settle(DENY_OPTION) },
-						{
-							tui: this.ctx.ui,
-							fullPrompt: prompt.full,
-							timeout: dialogOptions?.timeout,
-							onTimeout: dialogOptions?.onTimeout,
-							onTimeoutStart: dialogOptions?.onTimeoutStart,
-							onTimeoutReset: dialogOptions?.onTimeoutReset,
-							draft: {
-								hasDraft: () =>
-									editor.getText().length > 0 || editor.pendingImages.length > 0 || editor.pasteInFlight,
-								handleInput: keyData => editor.handleDraftEdit(keyData),
+			const choice = await this.#raceCollabDialog(
+				request,
+				signal,
+				localSignal =>
+					this.#presentDialog(localSignal, settle => {
+						const editor = this.ctx.editor;
+						const dialog = new ApprovalDialogComponent(
+							prompt.compact,
+							{ onApprove: () => settle(APPROVE_OPTION), onDeny: () => settle(DENY_OPTION) },
+							{
+								tui: this.ctx.ui,
+								fullPrompt: prompt.full,
+								timeout: dialogOptions?.timeout,
+								onTimeout: dialogOptions?.onTimeout,
+								onTimeoutStart: dialogOptions?.onTimeoutStart,
+								onTimeoutReset: dialogOptions?.onTimeoutReset,
+								draft: {
+									hasDraft: () =>
+										editor.getText().length > 0 || editor.pendingImages.length > 0 || editor.pasteInFlight,
+									handleInput: keyData => editor.handleDraftEdit(keyData),
+								},
 							},
-						},
-					);
-					this.ctx.editorContainer.clear();
-					this.ctx.editorContainer.addChild(dialog);
-					this.ctx.editorContainer.addChild(editor);
-					this.ctx.ui.setFocus(dialog);
-					// The dialog owns focus but forwards typing: keep the composer's cursor visible.
-					editor.focused = true;
-					this.ctx.ui.requestRender();
-					return () => {
-						dialog.dispose();
+						);
 						this.ctx.editorContainer.clear();
+						this.ctx.editorContainer.addChild(dialog);
 						this.ctx.editorContainer.addChild(editor);
-						this.ctx.ui.setFocus(editor);
+						this.ctx.ui.setFocus(dialog);
+						// The dialog owns focus but forwards typing: keep the composer's cursor visible.
+						editor.focused = true;
 						this.ctx.ui.requestRender();
-					};
-				}),
+						return () => {
+							dialog.dispose();
+							this.ctx.editorContainer.clear();
+							this.ctx.editorContainer.addChild(editor);
+							this.ctx.ui.setFocus(editor);
+							this.ctx.ui.requestRender();
+						};
+					}),
 				dialogOptions?.onAnswer,
 			);
 			return choice === APPROVE_OPTION;

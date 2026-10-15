@@ -31,6 +31,8 @@ import { FileRestoreBar } from "./components/shell/FileRestoreBar";
 import { FileSheet } from "./components/shell/FileSheet";
 import { FixItHost } from "./components/shell/FixItHost";
 import { HeaderBar } from "./components/shell/HeaderBar";
+import { useHiddenMessages } from "./components/shell/HiddenMessages";
+import type { StakesControl } from "./components/shell/StakesControl";
 import { useTurnUndo } from "./components/shell/TurnUndo";
 import { useMedia } from "./components/codemap/shared";
 import { PaneSheet } from "./components/shell/PaneSheet";
@@ -60,6 +62,7 @@ import { collectChanges } from "./lib/changes";
 import { GuestClient } from "./lib/client";
 import { togglePalette, usePaletteEntries } from "./lib/palette";
 import { type CompanionHost, extractPairing, type PairingLink } from "./lib/companion";
+import { stakesOn, stakesToggleShown } from "./lib/stakes";
 import { type ComputerHandle, computerById, planOpen, resolveSessionHome } from "./lib/computers";
 import { latestClear } from "./lib/context-clear";
 import { subscribeDraft } from "./lib/draft-bus";
@@ -69,6 +72,7 @@ import { adjacentRoom, IS_MAC, type ShortcutId, shortcutFires } from "./lib/shor
 import { matchesMedia, useUiZoom } from "./lib/zoom";
 import { useEdgeGestures } from "./lib/use-edge-gestures";
 import { sessionMarkdown } from "./lib/export";
+import { withoutHidden } from "./lib/hidden-messages";
 import { blobToBase64 } from "./lib/images";
 import { useAppBadge } from "./lib/badge";
 import { applyOpenIntent, claimPendingAnswer, setOpenIntent } from "./lib/inbox";
@@ -640,6 +644,7 @@ function Session({
 	const editPrompt = useEditPrompt(client, snap, composerRef);
 	const turnChanges = useTurnChanges(client, snap, sessionId, composerRef, true);
 	const turnUndo = useTurnUndo(client, snap, composerRef);
+	const hidden = useHiddenMessages(sessionId, computer);
 	const canStashDraft = !snap.readOnly && snap.phase !== "ended";
 	usePaletteEntries(
 		useMemo(
@@ -895,6 +900,27 @@ function Session({
 		setQuiz({ view: "new", subject: { kind: "changes" } });
 	}, []);
 	const openQuizzes = useCallback(() => setQuiz({ view: "home" }), []);
+	// The quiz a blocked push needs, opened on its own: the Changes and GitHub sheets give way to it.
+	const openStakesQuiz = useCallback(
+		(id: string) => {
+			if (computerId === null) return;
+			setChangesOpen(false);
+			setGithubOpen(false);
+			setQuiz({ view: "quiz", computerId, id });
+		},
+		[computerId],
+	);
+	const canStakes = computer?.snap.canHighStakes === true;
+	const listed = hostRow !== undefined;
+	const stakesIsOn = listed && stakesOn({ canHighStakes: canStakes }, hostRow);
+	const stakesShown = stakesToggleShown({ canHighStakes: canStakes }, snap.agent);
+	const highStakes = useMemo<StakesControl | null>(
+		() =>
+			stakesShown && listed && companionClient !== null && hostId !== null
+				? { client: companionClient, instanceId: hostId, on: stakesIsOn }
+				: null,
+		[stakesShown, listed, stakesIsOn, companionClient, hostId],
+	);
 	const sparChanges = useCallback(() => {
 		setChangesOpen(false);
 		setQuiz({ view: "spar-new", subject: { kind: "changes" } });
@@ -1027,7 +1053,15 @@ function Session({
 	// Built on click from every entry, not the trimmed view; the ref keeps the callback stable for the memoized header.
 	const entriesRef = useRef(snap.entries);
 	entriesRef.current = snap.entries;
-	const exportMarkdown = useCallback((title: string) => sessionMarkdown(entriesRef.current, { title }), []);
+	// Copy, Export and Share of the conversation leave out the messages hidden from the chat, unless they are being shown.
+	const hiddenRef = useRef(hidden.control);
+	hiddenRef.current = hidden.control;
+	const exportMarkdown = useCallback((title: string) => {
+		const hide = hiddenRef.current;
+		const entries =
+			hide === undefined || hide.showing ? entriesRef.current : withoutHidden(entriesRef.current, hide.hidden);
+		return sessionMarkdown(entries, { title });
+	}, []);
 
 	// Desktop shortcuts (the keymap lives in lib/shortcuts.ts, which the help sheet lists too). Typing in a
 	// field suppresses everything but Esc; an open sheet or drawer owns Esc itself, and the composer aborts a
@@ -1281,6 +1315,7 @@ function Session({
 				phase={snap.phase}
 				readOnly={snap.readOnly}
 				sandboxed={computer?.snap.hosts.some(host => host.sessionId === sessionId && host.sandboxed) ?? false}
+				highStakes={highStakes}
 				agent={snap.agent}
 				canPermission={Object.hasOwn(snap.features, "permission-mode")}
 				subCount={subCount}
@@ -1304,6 +1339,7 @@ function Session({
 				models={snap.models}
 				onSessionCommand={sendSessionCommand}
 				turnUndo={turnUndo.control}
+				hiddenMessages={hidden.control}
 				contextItems={Object.hasOwn(snap.features, "context-items") ? snap.contextItems : undefined}
 				canWatchPr={Object.hasOwn(snap.features, "pr-watch")}
 				exportMarkdown={exportMarkdown}
@@ -1374,6 +1410,7 @@ function Session({
 							onTurnChanges={turnChanges.onTurnChanges}
 							onSendToAgent={snap.readOnly ? undefined : sendToAgent}
 							sessionModel={snap.state?.model?.id}
+							hide={hidden.control}
 						/>
 					</div>
 					{editPrompt.sheet}
@@ -1490,6 +1527,7 @@ function Session({
 				onUndo={() => client.sendSessionCommand("redo-files")}
 			/>
 			{turnUndo.bar}
+			{hidden.bar}
 			<SpendCapBar spend={Object.hasOwn(snap.features, "spend-cap") ? snap.state?.spend : undefined} />
 			<Toasts notices={snap.notices} />
 			<SessionAlert computers={computers} currentSessionId={sessionId} onOpen={onOpenHost} />
@@ -1538,6 +1576,7 @@ function Session({
 					sessionId={sessionId}
 					onSendToAgent={snap.readOnly ? null : sendReviewToAgent}
 					onQuiz={canQuizHere ? quizChanges : null}
+					onOpenQuiz={canQuizHere ? openStakesQuiz : null}
 					onSpar={canSparHere ? sparChanges : null}
 					onBakeoff={canBakeoffHere ? bakeoffChanges : null}
 					onClose={() => setChangesOpen(false)}
@@ -1639,6 +1678,7 @@ function Session({
 					canFixIt={computer?.snap.canFixIt === true}
 					onMapPr={canMapHere ? mapPr : null}
 					onQuizPr={canQuizHere ? quizPr : null}
+					onOpenQuiz={canQuizHere ? openStakesQuiz : null}
 					onSparPr={canSparHere ? sparPr : null}
 					onClose={() => setGithubOpen(false)}
 				/>

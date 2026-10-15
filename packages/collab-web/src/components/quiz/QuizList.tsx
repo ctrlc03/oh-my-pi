@@ -7,6 +7,8 @@ import {
 	LoaderCircle,
 	Plus,
 	RefreshCw,
+	ShieldAlert,
+	ShieldCheck,
 	Trash2,
 	TriangleAlert,
 	X,
@@ -292,6 +294,17 @@ function QuizRow({ quiz, client, canWatch, onOpen, onOpenHost, onChanged }: Quiz
 						{status.kind === "score" && <CircleCheck size={11} aria-hidden="true" />}
 						{status.text}
 					</span>
+					{quiz.stakes !== undefined && (
+						<span className="qz-tag" data-kind="stakes">
+							<ShieldAlert size={11} aria-hidden="true" /> High stakes
+						</span>
+					)}
+					{quiz.stakes?.delta === true && <span className="qz-tag">New changes only</span>}
+					{quiz.stakes?.passed === true && (
+						<span className="qz-tag" data-kind="passed">
+							<ShieldCheck size={11} aria-hidden="true" /> Passed
+						</span>
+					)}
 					{quiz.questionCount !== undefined && (
 						<span>
 							{quiz.questionCount} {quiz.questionCount === 1 ? "question" : "questions"}

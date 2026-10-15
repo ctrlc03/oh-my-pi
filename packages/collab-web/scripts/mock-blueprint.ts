@@ -12,19 +12,21 @@ import type {
 	BlueprintDiagram,
 	BlueprintEdge,
 	BlueprintExcerpt,
+	BlueprintExcerptRef,
 	BlueprintNode,
 	BlueprintRef,
 	BlueprintRefsAnswer,
 	BlueprintSummary,
 } from "@oh-my-pi/pi-wire/blueprint";
 import * as fs from "node:fs";
-import { BLUEPRINT_EXCERPT_CONTEXT, BLUEPRINT_VERSION } from "@oh-my-pi/pi-wire/blueprint";
+import { BLUEPRINT_VERSION } from "@oh-my-pi/pi-wire/blueprint";
 import type { CompanionReply, CompanionRequest } from "../src/lib/companion";
+import { excerptOf as readExcerpt } from "./companion-excerpt";
 
 const sourceCache = new Map<string, string[] | null>();
 
 /** Code around a citation read from a checkout (its working tree, not the map's commit: lines may differ). */
-function excerptFromDir(dir: string, ref: BlueprintRef, commit: string): BlueprintExcerpt | null {
+function excerptFromDir(dir: string, ref: BlueprintExcerptRef, commit: string): BlueprintExcerpt | null {
 	const file = `${dir}/${ref.path}`;
 	if (!sourceCache.has(file)) {
 		try {
@@ -35,18 +37,8 @@ function excerptFromDir(dir: string, ref: BlueprintRef, commit: string): Bluepri
 	}
 	const all = sourceCache.get(file);
 	if (all === null || all === undefined) return null;
-	const start = Math.max(1, ref.line - BLUEPRINT_EXCERPT_CONTEXT);
-	if (start > all.length) return null;
-	const end = Math.min(all.length, ref.line + BLUEPRINT_EXCERPT_CONTEXT);
-	return {
-		path: ref.path,
-		start,
-		lines: all.slice(start - 1, end),
-		line: ref.line,
-		side: ref.side ?? "head",
-		commit,
-		language: LANGUAGES[ref.path.split(".").pop() ?? ""],
-	};
+	const excerpt = readExcerpt(all, ref, ref.side ?? "head", commit);
+	return excerpt === null ? null : { ...excerpt, language: LANGUAGES[ref.path.split(".").pop() ?? ""] };
 }
 export const MOCK_REPO_ROOT = "/work/acme-shop";
 const HEAD_COMMIT = "9c41e07b3a5d2f86c1e04a7d5b93f2a1d60e8c47";
@@ -228,23 +220,12 @@ function cite(path: string, token: string, side: "head" | "base" = "head"): Blue
 
 const LANGUAGES: Record<string, string> = { ts: "typescript", tsx: "tsx" };
 
-function excerptOf(ref: BlueprintRef, commit: { head: string; base: string }): BlueprintExcerpt | null {
+function excerptOf(ref: BlueprintExcerptRef, commit: { head: string; base: string }): BlueprintExcerpt | null {
 	const side = ref.side ?? "head";
 	const text = sourceOf(ref.path, side);
 	if (text === undefined) return null;
-	const all = text.split("\n");
-	if (all[all.length - 1] === "") all.pop();
-	const start = Math.max(1, ref.line - BLUEPRINT_EXCERPT_CONTEXT);
-	const end = Math.min(all.length, ref.line + BLUEPRINT_EXCERPT_CONTEXT);
-	return {
-		path: ref.path,
-		start,
-		lines: all.slice(start - 1, end),
-		line: ref.line,
-		side,
-		commit: side === "base" ? commit.base : commit.head,
-		language: LANGUAGES[ref.path.split(".").pop() ?? ""],
-	};
+	const excerpt = readExcerpt(text.split("\n"), ref, side, side === "base" ? commit.base : commit.head);
+	return excerpt === null ? null : { ...excerpt, language: LANGUAGES[ref.path.split(".").pop() ?? ""] };
 }
 
 type NodeSpec = Omit<BlueprintNode, "refs"> & { refs?: BlueprintRef[] };

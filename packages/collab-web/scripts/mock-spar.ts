@@ -21,8 +21,7 @@
  * `spar-close` never calls the "model": `lost` is "you conceded", `open` is "accept the risk".
  */
 
-import type { BlueprintExcerpt } from "@oh-my-pi/pi-wire/blueprint";
-import { BLUEPRINT_EXCERPT_CONTEXT } from "@oh-my-pi/pi-wire/blueprint";
+import type { BlueprintExcerpt, BlueprintExcerptRef } from "@oh-my-pi/pi-wire/blueprint";
 import type { QuizPart, QuizRef, QuizStackPr } from "@oh-my-pi/pi-wire/quiz";
 import type {
 	Spar,
@@ -43,6 +42,7 @@ import {
 	scoreSpar,
 } from "@oh-my-pi/pi-wire/spar";
 import type { CompanionReply, CompanionRequest } from "../src/lib/companion";
+import { excerptOf as readExcerpt } from "./companion-excerpt";
 import { cite, excerptOf, MOCK_QUIZ_ROOT, mockStackPrs } from "./mock-quiz";
 
 const MINUTE = 60 * 1000;
@@ -100,21 +100,9 @@ function designCite(token: string): QuizRef {
 	return { path: SPAR_DESIGN_PATH, line: index + 1, token };
 }
 
-function designExcerpt(ref: QuizRef, text: string): BlueprintExcerpt | null {
-	const all = text.split("\n");
-	if (all[all.length - 1] === "") all.pop();
-	if (ref.line < 1 || ref.line > all.length) return null;
-	const start = Math.max(1, ref.line - BLUEPRINT_EXCERPT_CONTEXT);
-	const end = Math.min(all.length, ref.line + BLUEPRINT_EXCERPT_CONTEXT);
-	return {
-		path: SPAR_DESIGN_PATH,
-		start,
-		lines: all.slice(start - 1, end),
-		line: ref.line,
-		side: "head",
-		commit: "",
-		language: "markdown",
-	};
+function designExcerpt(ref: BlueprintExcerptRef, text: string): BlueprintExcerpt | null {
+	const excerpt = readExcerpt(text.split("\n"), ref, "head", "");
+	return excerpt === null ? null : { ...excerpt, language: "markdown" };
 }
 
 /** What the real companion keeps back from the device until a point is closed. */

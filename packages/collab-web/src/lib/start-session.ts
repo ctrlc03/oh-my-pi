@@ -14,6 +14,8 @@ export interface StartDraft {
 	/** The folder, or {@link NO_PROJECT}. */
 	cwd: string;
 	sandboxed: boolean;
+	/** Pushes and pull requests need a passed quiz (needs `canHighStakes`). Ignored for vendor agents. */
+	highStakes?: boolean;
 	/** Work on a new branch in its own git worktree. */
 	worktree: boolean;
 	/** The worktree's branch name; empty for the default. */
@@ -33,6 +35,8 @@ export interface StartTarget {
 	/** Session id being resumed; undefined for a new session. */
 	resume?: string;
 	sandboxed: boolean;
+	/** New sessions only: a resumed session keeps the mode it was stored with. */
+	highStakes?: boolean;
 	worktree?: { branch?: string };
 	/** A session without a project; `hint` names its folder. */
 	scratch?: { hint?: string };
@@ -61,6 +65,7 @@ export function newSessionTarget(draft: StartDraft): StartTarget {
 	return {
 		cwd: draft.cwd,
 		sandboxed: draft.sandboxed,
+		highStakes: draft.highStakes === true && draft.agent === null ? true : undefined,
 		worktree: draft.worktree && !isProjectless(draft.cwd) ? { branch: draft.branch.trim() || undefined } : undefined,
 		scratch: draft.cwd === NO_PROJECT ? { hint } : undefined,
 		...(draft.agent === null
@@ -74,6 +79,7 @@ export function startOptions(target: StartTarget, extra: { prompt?: string; forc
 	return {
 		resume: target.resume,
 		sandboxed: target.sandboxed || undefined,
+		highStakes: target.highStakes || undefined,
 		worktree: target.worktree,
 		scratch: target.scratch,
 		agent: target.agent,

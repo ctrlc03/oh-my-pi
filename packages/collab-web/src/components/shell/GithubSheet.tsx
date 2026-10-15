@@ -55,6 +55,8 @@ export interface GithubSheetProps {
 	onMapPr?: ((pr: { number: number; title: string }) => void) | null;
 	/** Start a quiz on a pull request; null unless the paired computer can write quizzes. */
 	onQuizPr?: ((pr: { number: number; title: string }) => void) | null;
+	/** Open a quiz by id (the one a blocked merge needs); null unless the paired computer can write quizzes. */
+	onOpenQuiz?: ((id: string) => void) | null;
 	/** Start a sparring session on a pull request; null unless the paired computer can spar. */
 	onSparPr?: ((pr: { number: number; title: string }) => void) | null;
 	onClose(): void;
@@ -100,6 +102,7 @@ export function GithubSheet({
 	canFixIt,
 	onMapPr,
 	onQuizPr,
+	onOpenQuiz,
 	onSparPr,
 	onClose,
 }: GithubSheetProps): ReactNode {
@@ -140,6 +143,7 @@ export function GithubSheet({
 					canFixIt={canFixIt === true}
 					onMapPr={onMapPr ?? null}
 					onQuizPr={onQuizPr ?? null}
+					onOpenQuiz={onOpenQuiz ?? null}
 					onSparPr={onSparPr ?? null}
 					onClose={onClose}
 				/>
@@ -265,6 +269,7 @@ interface ItemDetailProps {
 	canFixIt: boolean;
 	onMapPr: ((pr: { number: number; title: string }) => void) | null;
 	onQuizPr: ((pr: { number: number; title: string }) => void) | null;
+	onOpenQuiz: ((id: string) => void) | null;
 	onSparPr: ((pr: { number: number; title: string }) => void) | null;
 	onClose(): void;
 }
@@ -280,6 +285,7 @@ function ItemDetail({
 	canFixIt,
 	onMapPr,
 	onQuizPr,
+	onOpenQuiz,
 	onSparPr,
 	onClose,
 }: ItemDetailProps): ReactNode {
@@ -504,6 +510,7 @@ function ItemDetail({
 						setMerging(false);
 						reload();
 					}}
+					onOpenQuiz={onOpenQuiz}
 					onClose={() => setMerging(false)}
 				/>
 			)}

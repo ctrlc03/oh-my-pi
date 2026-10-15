@@ -8,9 +8,8 @@ import {
 	MIN_H,
 	MIN_W,
 	moveFrame,
-	parseFrames,
+	parseFrame,
 	resizeFrame,
-	withFrame,
 } from "../src/lib/sheet-frame";
 
 const VIEW = { width: 1440, height: 900 };
@@ -142,67 +141,30 @@ describe("keyFrame", () => {
 	});
 });
 
-describe("parseFrames", () => {
-	it("reads a stored map", () => {
-		const frames = parseFrames({
-			quizzes: { x: 10, y: 20, w: 900, h: 700 },
-			sparring: { x: 0, y: 0, w: 500, h: 400 },
-		});
-		expect([...frames.keys()]).toEqual(["quizzes", "sparring"]);
-		expect(frames.get("quizzes")).toEqual({ x: 10, y: 20, w: 900, h: 700 });
+describe("parseFrame", () => {
+	it("reads a stored frame and copies only the four numbers", () => {
+		expect(parseFrame({ x: 1, y: 2, w: 600, h: 500, extra: "x" })).toEqual({ x: 1, y: 2, w: 600, h: 500 });
 	});
 
-	it("gives nothing for stored junk", () => {
-		for (const junk of [null, undefined, 7, "x", true, [], [{ x: 1, y: 1, w: 500, h: 500 }]]) {
-			expect(parseFrames(junk).size).toBe(0);
+	it("gives none for anything that is not a usable frame", () => {
+		for (const junk of [
+			null,
+			undefined,
+			7,
+			"x",
+			true,
+			[],
+			[{ x: 1, y: 1, w: 500, h: 500 }],
+			{ x: 1, y: 2, w: 600 },
+			{ x: "1", y: 2, w: 600, h: 500 },
+			{ x: Number.NaN, y: 2, w: 600, h: 500 },
+			{ x: 1, y: 2, w: Number.POSITIVE_INFINITY, h: 500 },
+			{ x: 1, y: 2, w: 0, h: 500 },
+			{ x: 1, y: 2, w: 600, h: -5 },
+			// The per-sheet map an earlier build stored under another key.
+			{ quizzes: { x: 1, y: 2, w: 600, h: 500 } },
+		]) {
+			expect(parseFrame(junk)).toBeNull();
 		}
-	});
-
-	it("drops entries that are not a usable frame and keeps the rest", () => {
-		const frames = parseFrames({
-			good: { x: 1, y: 2, w: 600, h: 500 },
-			missing: { x: 1, y: 2, w: 600 },
-			text: { x: "1", y: 2, w: 600, h: 500 },
-			nan: { x: Number.NaN, y: 2, w: 600, h: 500 },
-			infinite: { x: 1, y: 2, w: Number.POSITIVE_INFINITY, h: 500 },
-			empty: { x: 1, y: 2, w: 0, h: 500 },
-			negative: { x: 1, y: 2, w: 600, h: -5 },
-			nothing: null,
-			scalar: 4,
-		});
-		expect([...frames.keys()]).toEqual(["good"]);
-	});
-
-	it("copies only the four numbers", () => {
-		const frames = parseFrames({ a: { x: 1, y: 2, w: 600, h: 500, extra: "x" } });
-		expect(frames.get("a")).toEqual({ x: 1, y: 2, w: 600, h: 500 });
-	});
-
-	it("survives a key that collides with an object prototype", () => {
-		const frames = parseFrames(JSON.parse('{"__proto__": {"x": 1, "y": 2, "w": 600, "h": 500}}'));
-		expect(frames.get("__proto__")).toEqual({ x: 1, y: 2, w: 600, h: 500 });
-		expect(frames.get("constructor")).toBeUndefined();
-	});
-});
-
-describe("withFrame", () => {
-	const saved = parseFrames({ quizzes: FRAME, sparring: { x: 0, y: 0, w: 500, h: 400 } });
-
-	it("sets one sheet's frame and leaves the others", () => {
-		const next = withFrame(saved, "quizzes", { x: 1, y: 2, w: 600, h: 500 });
-		expect(next.get("quizzes")).toEqual({ x: 1, y: 2, w: 600, h: 500 });
-		expect(next.get("sparring")).toEqual({ x: 0, y: 0, w: 500, h: 400 });
-		expect(saved.get("quizzes")).toEqual(FRAME);
-	});
-
-	it("forgets a sheet's frame on reset, leaving the others", () => {
-		const next = withFrame(saved, "quizzes", null);
-		expect(next.has("quizzes")).toBe(false);
-		expect(next.get("sparring")).toEqual({ x: 0, y: 0, w: 500, h: 400 });
-		expect(saved.has("quizzes")).toBe(true);
-	});
-
-	it("forgetting a sheet with no frame changes nothing", () => {
-		expect([...withFrame(saved, "usage", null).keys()]).toEqual(["quizzes", "sparring"]);
 	});
 });

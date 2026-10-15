@@ -21,6 +21,7 @@ import { isPosixShell } from "@oh-my-pi/pi-utils/procmgr";
 import { raceJobSettlement, resolveAutoBackgroundWaitMs } from "../async";
 import type { Settings } from "../config/settings";
 import { applyDirenvPreflight, type BashResult, executeBash } from "../exec/bash-executor";
+import { highStakesDecision } from "../high-stakes/gate";
 import { parseEscalation, prepareSandboxRun, type SandboxEscalation, sandboxEscalationDecision } from "../sandbox/run";
 import { effectiveSandboxMode } from "../sandbox/settings";
 import { InternalUrlRouter } from "../internal-urls";
@@ -608,6 +609,17 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 		return "exec";
 	};
 	readonly approval = (args: unknown): ToolApprovalDecision => {
+		// A high-stakes refusal comes first and is not lifted by an escalation, a pattern `allow` or the approval mode.
+		const { command, cwd } = args as Partial<BashToolInput>;
+		const sessionCwd = this.session.cwd;
+		const stakes = highStakesDecision({
+			cwd: sessionCwd,
+			commandCwd:
+				typeof cwd === "string" && cwd !== "" && !cwd.includes("://") ? resolveToCwd(cwd, sessionCwd) : undefined,
+			agentDir: this.session.settings.getAgentDir(),
+			command: typeof command === "string" ? command : undefined,
+		});
+		if (stakes) return stakes;
 		const decision = this.#patternApproval(args);
 		if (typeof decision !== "string" && decision.policy === "deny") return decision;
 		const { escalate, justification } = args as Partial<BashToolInput>;

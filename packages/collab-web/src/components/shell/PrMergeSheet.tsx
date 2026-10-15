@@ -1,8 +1,11 @@
+import type { StakesStatus } from "@oh-my-pi/pi-wire/stakes";
 import { LoaderCircle, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CompanionClient, GithubCheckState, GithubItemDetail, PrMergeMethod } from "../../lib/companion";
+import { stakesBlocked } from "../../lib/stakes";
 import { Sheet } from "./Sheet";
+import { StakesGateNote } from "./StakesControl";
 import "./review.css";
 import "./pr-review.css";
 
@@ -10,6 +13,8 @@ export interface PrMergeSheetProps {
 	client: CompanionClient;
 	instanceId: string;
 	pr: GithubItemDetail;
+	/** Open the quiz with this id (the one a blocked merge needs); null: the *Take the quiz* action is not offered. */
+	onOpenQuiz: ((id: string) => void) | null;
 	/** The pull request is merged. */
 	onMerged(): void;
 	onClose(): void;
@@ -40,7 +45,14 @@ function repoOf(url: string): string {
  * merge otherwise. The pull request is frozen as it was when the sheet opened (a refresh underneath must not
  * change what is being confirmed), and the merge is pinned to that head commit.
  */
-export function PrMergeSheet({ client, instanceId, pr: opened, onMerged, onClose }: PrMergeSheetProps): ReactNode {
+export function PrMergeSheet({
+	client,
+	instanceId,
+	pr: opened,
+	onMerged,
+	onOpenQuiz,
+	onClose,
+}: PrMergeSheetProps): ReactNode {
 	const [pr] = useState(opened);
 	const [method, setMethod] = useState<PrMergeMethod>("squash");
 	const [deleteBranch, setDeleteBranch] = useState(false);
@@ -49,6 +61,7 @@ export function PrMergeSheet({ client, instanceId, pr: opened, onMerged, onClose
 	const [allowPending, setAllowPending] = useState(false);
 	const [merging, setMerging] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [stakes, setStakes] = useState<StakesStatus | undefined>(undefined);
 	const checks = CHECKS[pr.checks ?? "none"];
 	const head = pr.head;
 	const blocked =
@@ -56,6 +69,28 @@ export function PrMergeSheet({ client, instanceId, pr: opened, onMerged, onClose
 		(pr.draft && !allowDraft) ||
 		(pr.checks === "fail" && !allowFailing) ||
 		(pr.checks === "pending" && !allowPending);
+	const stakesHeld = stakesBlocked(stakes);
+	// A merge needs the quiz of a high-stakes session passed; the companion refuses it otherwise, so the button says so first.
+	useEffect(() => {
+		if (!client.getSnapshot().canHighStakes) return;
+		let stale = false;
+		const load = (): void => {
+			client.stakesStatus(instanceId).then(
+				status => {
+					if (!stale) setStakes(status);
+				},
+				(err: unknown) => {
+					if (!stale) setError(`Could not check high stakes: ${err instanceof Error ? err.message : String(err)}`);
+				},
+			);
+		};
+		load();
+		const stop = client.onStakesChanged(load);
+		return () => {
+			stale = true;
+			stop();
+		};
+	}, [client, instanceId]);
 
 	const repo = repoOf(pr.url);
 	const target = `${pr.number}${repo ? ` --repo ${repo}` : ""}`;
@@ -153,6 +188,15 @@ export function PrMergeSheet({ client, instanceId, pr: opened, onMerged, onClose
 				<div className="sh-field-label">This will run on your computer, against GitHub:</div>
 				<pre className="sh-review-cmd">{commands.join("\n")}</pre>
 				{error !== null && <div className="sh-connect-error sh-review-error">{error}</div>}
+				{stakes?.on && (
+					<StakesGateNote
+						status={stakes}
+						gates={stakesHeld ? ["merge"] : []}
+						client={client}
+						instanceId={instanceId}
+						onOpenQuiz={onOpenQuiz}
+					/>
+				)}
 				<div className="sh-review-confirm-actions">
 					<button type="button" className="sh-btn" onClick={onClose} disabled={merging}>
 						Cancel
@@ -160,7 +204,7 @@ export function PrMergeSheet({ client, instanceId, pr: opened, onMerged, onClose
 					<button
 						type="button"
 						className="sh-btn sh-btn-primary"
-						disabled={blocked || merging}
+						disabled={blocked || stakesHeld || merging}
 						onClick={() => void merge()}
 					>
 						{merging && <LoaderCircle size={14} className="sh-spin" />} Merge

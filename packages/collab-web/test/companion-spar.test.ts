@@ -560,6 +560,19 @@ describe("a spar on a design", () => {
 		expect(fromDesign!.lines[fromDesign!.line - fromDesign!.start]).toContain("time to live");
 		expect(fromCode!.lines[0]).toContain("TTL");
 
+		// A request without a range gets the default window; with one, the stored document is read wider.
+		const designLines = DESIGN.trimEnd().split("\n").length;
+		expect(fromDesign).toMatchObject({ start: 1, total: designLines, commit: "document" });
+		const [wider, aboveTheTop, many] = await h.spars.excerpt(id, 0, [
+			{ path: "@design", line: 4, token: "time to live", from: 2, to: 5 },
+			{ path: "@design", line: 4, token: "time to live", from: -10, to: 4 },
+			{ path: "app.ts", line: 1, token: "TTL", from: 1, to: 500 },
+		]);
+		expect([wider!.start, wider!.lines.length]).toEqual([2, 4]);
+		expect(aboveTheTop).toMatchObject({ start: 1, total: designLines });
+		expect(aboveTheTop!.lines).toHaveLength(4);
+		expect(many).toMatchObject({ start: 1, total: 1, lines: ["export const TTL = 300;"] });
+
 		// The partner reads the design as code too.
 		h.reply.move = "partly";
 		const answered = await h.spars.reply({

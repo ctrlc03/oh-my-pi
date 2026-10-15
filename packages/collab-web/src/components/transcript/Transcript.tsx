@@ -1,11 +1,13 @@
 import type { AssistantMessage, ImageContent, SessionEntry, TextContent, ToolResultMessage } from "@oh-my-pi/pi-wire";
-import { ArrowDown, ArrowUp, Check, ChevronRight, Copy, FileDiff, Pencil, Share2, X } from "lucide-react";
+import { STAKES_MARKER_TYPE } from "@oh-my-pi/pi-wire/stakes";
+import { ArrowDown, ArrowUp, Check, ChevronRight, Copy, FileDiff, Pencil, Share2, ShieldAlert, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ActiveTool, ConnectionPhase } from "../../lib/client";
 import { IS_MAC, shortcutFires } from "../../lib/shortcuts";
-import { replyText, turnMarkdown, type TurnRange, turnRanges } from "../../lib/export";
-import { buildBlocks, buildChatBlocks, replyId, toolResults } from "../../lib/blocks";
+import { contentMarkdown, replyText, turnMarkdown, type TurnRange, turnRanges } from "../../lib/export";
+import { type Block, buildBlocks, buildChatBlocks, replyId, toolResults } from "../../lib/blocks";
+import { type HideControl, hiddenSlots, memberIds, withoutHidden } from "../../lib/hidden-messages";
 import { fmtDuration, fmtTokens } from "../../lib/format";
 import { ASYNC_RESULT_TYPE, asyncResultJobs } from "../../lib/async-result";
 import type { NewSince } from "../../lib/new-since";
@@ -15,10 +17,11 @@ import { copyText, shareText } from "../../lib/share";
 import { focusedPane } from "../../lib/use-split";
 import { toLayout } from "../../lib/zoom";
 import type { ToolRenderHost } from "../../tool-render";
-import { useBlocks } from "./use-blocks";
+import { type HideArgs, useBlocks } from "./use-blocks";
 import { buildChatItems, type ChatItem, type ChatToolCall } from "./chat-items";
 import { Markdown, StreamingMarkdown } from "./Markdown";
-import { BlockShell, BlocksContext, useFlash } from "./Block";
+import { BlockShell, BlocksContext, type HideView, HiddenRowContext, useFlash } from "./Block";
+import { HiddenMarker } from "./HiddenMarker";
 import { ToolCard } from "./ToolCard";
 import "./transcript.css";
 
@@ -65,6 +68,8 @@ export interface TranscriptProps {
 	sessionModel?: string;
 	/** Blocks offer *Send to agent*: this puts the quoted excerpt into the message box. */
 	onSendToAgent?: (text: string) => void;
+	/** The session's hidden messages and what hides them; absent where messages cannot be hidden (the agent drawer). */
+	hide?: HideControl;
 }
 
 interface ScrollGeometry {
@@ -113,6 +118,7 @@ function Row({
 	title,
 	entryId,
 	alsoEntries,
+	blockIds,
 	children,
 }: {
 	kind: "user" | "assistant" | "custom";
@@ -122,9 +128,18 @@ function Row({
 	entryId?: string;
 	/** Further entries this row also renders (a folded tool run spans several). */
 	alsoEntries?: readonly string[];
+	/** The blocks the row renders: while all of them are hidden the row gives way to the marker of their run. */
+	blockIds?: readonly string[];
 	children: ReactNode;
 }): ReactNode {
-	return (
+	const hide = useContext(BlocksContext)?.hide ?? null;
+	const slots = hide === null || blockIds === undefined ? [] : blockIds.map(id => hide.slots.get(id));
+	const first = slots[0];
+	const hiddenRow = hide !== null && first !== undefined && slots.every(slot => slot !== undefined);
+	if (hiddenRow && !blockIds?.every(id => hide.isRevealed(id))) {
+		return first.start ? <HiddenMarker slot={first} revealed={false} hide={hide} /> : null;
+	}
+	const row = (
 		<div
 			className={`tr-row tr-row--${kind}`}
 			data-entry={entryId}
@@ -135,6 +150,13 @@ function Row({
 			</div>
 			<div className="tr-body">{children}</div>
 		</div>
+	);
+	if (!hiddenRow) return row;
+	return (
+		<>
+			{first.start && <HiddenMarker slot={first} revealed hide={hide} />}
+			<HiddenRowContext.Provider value>{row}</HiddenRowContext.Provider>
+		</>
 	);
 }
 
@@ -237,6 +259,16 @@ function AsyncResultRow({ entry }: { entry: Extract<SessionEntry, { type: "custo
 			</BlockShell>
 		</Row>
 	);
+}
+
+/** The ids of the blocks an assistant entry renders: its texts and its tool calls, as the chat's blocks name them. */
+function assistantBlockIds(entryId: string, message: AssistantMessage): string[] {
+	const ids: string[] = [];
+	message.content.forEach((block, i) => {
+		if (block.type === "text" && block.text.trim()) ids.push(replyId(entryId, i));
+		else if (block.type === "toolCall") ids.push(block.id);
+	});
+	return ids;
 }
 
 function AssistantBody({
@@ -361,14 +393,17 @@ interface PlannedTurn extends TurnRange {
 function TurnActions({
 	entries,
 	turn,
+	hidden,
 	onChanges,
 }: {
 	entries: readonly SessionEntry[];
 	turn: PlannedTurn;
+	/** Messages the copy and the share leave out: the hidden ones, unless they are being shown. */
+	hidden: ReadonlySet<string>;
 	onChanges?: () => void;
 }): ReactNode {
 	const [done, flash] = useFlash();
-	const slice = (): readonly SessionEntry[] => entries.slice(turn.from, turn.to);
+	const slice = (): readonly SessionEntry[] => withoutHidden(entries.slice(turn.from, turn.to), hidden);
 	const copyReply = async (): Promise<void> => {
 		if (await copyText(replyText(slice()))) flash("reply");
 	};
@@ -461,7 +496,7 @@ const EntryRow = memo(function EntryRow({
 			switch (msg.role) {
 				case "user":
 					return (
-						<Row kind="user" gutter="" entryId={entry.id}>
+						<Row kind="user" gutter="" entryId={entry.id} blockIds={[entry.id]}>
 							<BlockShell
 								id={entry.id}
 								kind="prompt"
@@ -478,7 +513,13 @@ const EntryRow = memo(function EntryRow({
 					);
 				case "assistant":
 					return (
-						<Row kind="assistant" gutter="agent" title={entry.timestamp} entryId={entry.id}>
+						<Row
+							kind="assistant"
+							gutter="agent"
+							title={entry.timestamp}
+							entryId={entry.id}
+							blockIds={assistantBlockIds(entry.id, msg)}
+						>
 							<AssistantBody
 								message={msg}
 								entryId={entry.id}
@@ -505,7 +546,7 @@ const EntryRow = memo(function EntryRow({
 						? ((details as Record<string, unknown>).from as string)
 						: "guest";
 				return (
-					<Row kind="user" gutter="" entryId={entry.id}>
+					<Row kind="user" gutter="" entryId={entry.id} blockIds={[entry.id]}>
 						<BlockShell
 							id={entry.id}
 							kind="prompt"
@@ -524,6 +565,16 @@ const EntryRow = memo(function EntryRow({
 			}
 			if (entry.customType === ASYNC_RESULT_TYPE) return <AsyncResultRow entry={entry} />;
 			if (!entry.display) return null;
+			if (entry.customType === STAKES_MARKER_TYPE) {
+				return (
+					<Row kind="custom" gutter="" title={entry.timestamp} entryId={entry.id}>
+						<div className="tr-stakes">
+							<ShieldAlert size={14} aria-hidden="true" />
+							<span>{contentMarkdown(entry.content)}</span>
+						</div>
+					</Row>
+				);
+			}
 			return (
 				<Row kind="custom" gutter="" title={entry.timestamp} entryId={entry.id}>
 					<div className="tr-custom">
@@ -576,6 +627,7 @@ const EntryRow = memo(function EntryRow({
 }, entryRowEqual);
 
 const MAX_RUN_NAMES = 3;
+const NO_IDS: ReadonlySet<string> = new Set();
 
 /**
  * A folded run of tool calls: one line ("ran 7 tools · bash, edit, read", or the
@@ -677,7 +729,12 @@ function ChatRow({
 		case "text": {
 			const answeredBy = item.entryId === null ? undefined : otherModels.get(item.entryId);
 			return (
-				<Row kind="assistant" gutter={item.lead ? "agent" : ""} entryId={item.entryId ?? undefined}>
+				<Row
+					kind="assistant"
+					gutter={item.lead ? "agent" : ""}
+					entryId={item.entryId ?? undefined}
+					blockIds={item.entryId === null ? undefined : [item.key]}
+				>
 					<BlockShell id={item.entryId === null ? null : item.key} kind="reply">
 						{item.pending ? <StreamingMarkdown text={item.text} /> : <Markdown text={item.text} />}
 					</BlockShell>
@@ -692,6 +749,7 @@ function ChatRow({
 					gutter={item.lead ? "agent" : ""}
 					entryId={item.entryId ?? undefined}
 					alsoEntries={item.entryIds}
+					blockIds={item.entryId === null ? undefined : [item.key]}
 				>
 					<BlockShell id={item.entryId === null ? null : item.key} kind="run">
 						<ToolRun calls={item.calls} results={results} active={active} host={host} />
@@ -773,6 +831,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		cleared,
 		sessionModel,
 		onSendToAgent,
+		hide,
 	} = props;
 
 	// null follows the tail. A number pins the first mounted entry while the
@@ -963,9 +1022,73 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	// The blocks the view renders, in order, for selecting and copying. Chat items are built here without
 	// the live stream, so token updates do not churn the list.
 	const blockItems = useMemo(() => (chat ? buildChatItems(visible, null, true, []) : null), [chat, visible]);
-	const blocks = useMemo(
+	const allBlocks = useMemo(
 		() => (blockItems === null ? buildBlocks(visible, results) : buildChatBlocks(blockItems, results)),
 		[blockItems, visible, results],
+	);
+
+	// Hidden messages: runs of adjacent hidden blocks fold into one marker, which shows them in place (dimmed) on request.
+	const canHide = hide !== undefined;
+	const hiddenIds = hide?.hidden ?? NO_IDS;
+	const showingHidden = hide?.showing === true;
+	const slots = useMemo(() => hiddenSlots(allBlocks, hiddenIds), [allBlocks, hiddenIds]);
+	/** Hidden blocks the reader showed in place. */
+	const [revealed, setRevealed] = useState<ReadonlySet<string>>(NO_IDS);
+	const hideRef = useRef(hide);
+	hideRef.current = hide;
+	const hideView = useMemo<HideView | null>(() => {
+		if (!canHide) return null;
+		const groupBlocks = (group: string): Block[] => allBlocks.filter(block => slots.get(block.id)?.group === group);
+		return {
+			slots,
+			isRevealed: id => showingHidden || revealed.has(id),
+			toggle: group => {
+				const ids = groupBlocks(group).map(block => block.id);
+				setRevealed(current => {
+					const next = new Set(current);
+					const open = ids.every(id => next.has(id));
+					for (const id of ids) {
+						if (open) next.delete(id);
+						else next.add(id);
+					}
+					return next;
+				});
+			},
+			unhideGroup: group => hideRef.current?.unhide(groupBlocks(group).flatMap(memberIds)),
+		};
+	}, [canHide, slots, showingHidden, revealed, allBlocks]);
+	const blocks = useMemo(
+		() =>
+			hideView === null
+				? allBlocks
+				: allBlocks.filter(block => !slots.has(block.id) || hideView.isRevealed(block.id)),
+		[allBlocks, hideView, slots],
+	);
+	/** Blocks with a call still running (or one the agent is yet to answer while it works): they cannot be hidden. */
+	const liveBlocks = useMemo(() => {
+		const live = new Set<string>();
+		for (const block of allBlocks) {
+			if (block.kind !== "tool" && block.kind !== "run") continue;
+			const tools = block.kind === "tool" ? [block] : block.tools;
+			if (tools.some(tool => tool.result === undefined && (working || activeTools.has(tool.id)))) live.add(block.id);
+		}
+		return live;
+	}, [allBlocks, activeTools, working]);
+	const hideArgs = useMemo<HideArgs | undefined>(
+		() =>
+			hideView === null
+				? undefined
+				: {
+						all: allBlocks,
+						view: hideView,
+						live: liveBlocks,
+						hide: (ids, count) => {
+							setRevealed(NO_IDS);
+							hideRef.current?.hide(ids, count);
+						},
+						unhide: ids => hideRef.current?.unhide(ids),
+					},
+		[allBlocks, hideView, liveBlocks],
 	);
 	const blockUi = useBlocks({
 		blocks,
@@ -975,6 +1098,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		onSendToAgent,
 		onEdit,
 		onChanges,
+		hide: hideArgs,
 	});
 
 	// Where each turn's agent work ends, for the copy/share row. Computed over all
@@ -1012,16 +1136,31 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		return ends;
 	}, [chatItems, turnPlan]);
 	const finished = !working && stream === null;
+	/** Turns whose agent blocks are all hidden: no copy or share row for what is not on screen. */
+	const turnsOut = useMemo(() => {
+		const withAgent = new Set<number>();
+		const shownAgent = new Set<number>();
+		const onScreen = new Set(blocks.map(block => block.id));
+		for (const block of allBlocks) {
+			if (block.kind === "prompt" || block.entryId === null || !Object.hasOwn(turnPlan.byEntry, block.entryId))
+				continue;
+			const t = turnPlan.byEntry[block.entryId]!;
+			withAgent.add(t);
+			if (onScreen.has(block.id)) shownAgent.add(t);
+		}
+		return new Set([...withAgent].filter(t => !shownAgent.has(t)));
+	}, [allBlocks, blocks, turnPlan]);
 	/** The action row for turn `t`, once its agent work is done. */
 	const turnActions = (t: number | undefined): ReactNode => {
 		const turn = t === undefined ? undefined : turnPlan.turns[t];
-		if (turn === undefined || !turn.agent) return null;
+		if (turn === undefined || !turn.agent || turnsOut.has(t!)) return null;
 		if (t === turnPlan.turns.length - 1 && !finished) return null;
 		const promptId = entries[turn.from]?.id;
 		return (
 			<TurnActions
 				entries={entries}
 				turn={turn}
+				hidden={showingHidden ? NO_IDS : hiddenIds}
 				onChanges={onChanges !== undefined && promptId !== undefined ? () => onChanges(promptId) : undefined}
 			/>
 		);

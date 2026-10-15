@@ -8,6 +8,7 @@ import {
 	LoaderCircle,
 	Plus,
 	RefreshCw,
+	ShieldAlert,
 	ShieldCheck,
 	X,
 } from "lucide-react";
@@ -103,6 +104,7 @@ export function StartSessionSheet({
 	const canScratch = computer?.snap.canScratch ?? false;
 	const canBackgroundStart = computer?.snap.canBackgroundStart ?? false;
 	const canForeign = computer?.snap.canForeign ?? false;
+	const canHighStakes = computer?.snap.canHighStakes ?? false;
 	const loadAgents = useCallback(
 		() => (canForeign && client !== null ? client.requestAgents() : Promise.resolve<CompanionAgent[]>([])),
 		[client, canForeign],
@@ -117,6 +119,7 @@ export function StartSessionSheet({
 	);
 	const [starting, setStarting] = useState<StartTarget | null>(null);
 	const [sandboxed, setSandboxed] = useState(false);
+	const [highStakes, setHighStakes] = useState(false);
 	const [worktree, setWorktree] = useState(false);
 	const [branch, setBranch] = useState("");
 	const [prompt, setPrompt] = useState(initial?.prompt ?? "");
@@ -165,12 +168,16 @@ export function StartSessionSheet({
 	// Other vendors' agents run unsandboxed for now: only omp sessions offer the option.
 	const canSandboxHere = agent === null && canSandbox;
 	const effectiveSandbox = sandboxed && canSandboxHere;
+	// Vendor agents' pushes are not gated: only omp sessions offer the mode, and only in a repository.
+	const canStakesHere = agent === null && canHighStakes;
+	const effectiveStakes = highStakes && canStakesHere;
 	const agentName = (id: string | undefined): string =>
 		id === undefined ? "omp" : (agentList.find(entry => entry.id === id)?.name ?? id);
 
 	const draft = (cwd: string): StartDraft => ({
 		cwd,
 		sandboxed: effectiveSandbox,
+		highStakes: effectiveStakes && !isProjectless(cwd),
 		worktree,
 		branch,
 		prompt,
@@ -216,6 +223,7 @@ export function StartSessionSheet({
 				fromPrompt === null ? null : folderLabel(current.cwd),
 				target.agent === undefined ? null : agentName(target.agent),
 				target.sandboxed ? "Sandboxed" : null,
+				target.highStakes ? "High stakes" : null,
 				target.worktree ? "New worktree" : null,
 			]
 				.filter(Boolean)
@@ -374,6 +382,21 @@ export function StartSessionSheet({
 										? "Reads and edits files only; changes stay in this folder. No commands run."
 										: `Runs ${chosenAgent.name} with its own sandbox, which limits what it can change.`}
 								</span>
+							</span>
+						</label>
+					)}
+					{canStakesHere && !projectless && !fan && (
+						<label className="sh-start-sandbox">
+							<input
+								type="checkbox"
+								checked={effectiveStakes}
+								onChange={e => setHighStakes(e.currentTarget.checked)}
+							/>
+							<span className="sh-start-sandbox-text">
+								<span className="sh-start-sandbox-title">
+									<ShieldAlert size={14} /> High stakes
+								</span>
+								<span className="sh-field-hint">Pushes and pull requests need a passed quiz.</span>
 							</span>
 						</label>
 					)}

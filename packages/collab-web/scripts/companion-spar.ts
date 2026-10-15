@@ -12,7 +12,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { BlueprintExcerpt, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
+import type { BlueprintExcerpt, BlueprintExcerptRef } from "@oh-my-pi/pi-wire/blueprint";
 import { QUIZ_MAX_PARTS, type QuizPart, type QuizStackPr, type QuizStackSource } from "@oh-my-pi/pi-wire/quiz";
 import {
 	SPAR_DESIGN_PATH,
@@ -142,7 +142,7 @@ export interface Spars {
 		run: SparRun;
 	}>;
 	again(request: { id: string; from?: string; only?: unknown }): Promise<{ run: SparRun }>;
-	excerpt(id: string, part: number, refs: readonly BlueprintRef[]): Promise<(BlueprintExcerpt | null)[]>;
+	excerpt(id: string, part: number, refs: readonly BlueprintExcerptRef[]): Promise<(BlueprintExcerpt | null)[]>;
 	remove(id: string): Promise<void>;
 	stack(cwd: string, pr: number): Promise<{ stack: QuizStackPr[]; source: QuizStackSource }>;
 	/** Mark runs in flight as interrupted and end their sessions. */

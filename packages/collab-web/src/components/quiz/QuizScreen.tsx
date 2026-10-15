@@ -236,6 +236,7 @@ function ReadyQuiz({
 				client={client}
 				quiz={state.value.quiz}
 				attempts={state.value.attempts}
+				stakes={state.value.stakes}
 				costUsd={summary.costUsd}
 				editor={editor}
 				onNewQuiz={onNewQuiz}

@@ -2,8 +2,11 @@ import {
 	Check,
 	CheckSquare,
 	Copy,
+	Eye,
+	EyeOff,
 	FileDiff,
 	FileText,
+	FoldVertical,
 	Pencil,
 	Send,
 	Share2,
@@ -77,6 +80,7 @@ export function BlockSheet({
 		onClose();
 		run();
 	};
+	const hide = api.hide;
 	return (
 		<Sheet label="Block actions" onClose={onClose}>
 			<div className="sh-sheet-head">
@@ -125,6 +129,25 @@ export function BlockSheet({
 						})
 					}
 				/>
+				{hide !== undefined &&
+					(hide.isHidden(block.id) ? (
+						<SheetRow icon={<Eye size={16} />} label="Unhide" onClick={() => act(() => hide.unhide(block.id))} />
+					) : (
+						<SheetRow
+							icon={<EyeOff size={16} />}
+							label="Hide"
+							disabled={!hide.can(block.id)}
+							onClick={() => act(() => hide.hide(block.id))}
+						/>
+					))}
+				{hide !== undefined && block.kind === "prompt" && !hide.isHidden(block.id) && (
+					<SheetRow
+						icon={<FoldVertical size={16} />}
+						label="Hide this exchange"
+						disabled={!hide.canExchange(block.id)}
+						onClick={() => act(() => hide.hideExchange(block.id))}
+					/>
+				)}
 				{block.kind === "prompt" && block.editable && onEdit !== undefined && (
 					<SheetRow
 						icon={<Pencil size={16} />}

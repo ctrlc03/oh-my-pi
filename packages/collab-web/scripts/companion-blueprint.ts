@@ -23,7 +23,7 @@ import {
 	type BlueprintCreate,
 	type BlueprintDiagram,
 	type BlueprintExcerpt,
-	type BlueprintRef,
+	type BlueprintExcerptRef,
 	type BlueprintRefsAnswer,
 	type BlueprintSummary,
 } from "@oh-my-pi/pi-wire/blueprint";
@@ -93,7 +93,7 @@ export interface Blueprints {
 	list(cwd: string | undefined): Promise<BlueprintSummary[]>;
 	create(request: BlueprintCreate): Promise<{ id: string }>;
 	get(id: string): Promise<Blueprint>;
-	excerpt(id: string, refs: readonly BlueprintRef[]): Promise<(BlueprintExcerpt | null)[]>;
+	excerpt(id: string, refs: readonly BlueprintExcerptRef[]): Promise<(BlueprintExcerpt | null)[]>;
 	remove(id: string): Promise<void>;
 	refs(cwd: string, query: string | undefined): Promise<BlueprintRefsAnswer>;
 	/** Mark runs in flight as interrupted and end their sessions. */

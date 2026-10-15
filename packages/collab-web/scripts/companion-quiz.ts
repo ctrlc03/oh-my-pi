@@ -17,7 +17,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { BlueprintExcerpt, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
+import type { BlueprintCommit, BlueprintExcerpt, BlueprintExcerptRef } from "@oh-my-pi/pi-wire/blueprint";
 import {
 	QUIZ_MAX_ANSWER_CHARS,
 	QUIZ_MAX_PARTS,
@@ -43,6 +43,7 @@ import {
 	prepareOutputFile,
 	READONLY_AGENT_TOOLS,
 	restrictedOverlayYaml,
+	type RunRequest,
 	runAgentToFile,
 } from "./companion-agent";
 import {
@@ -51,6 +52,7 @@ import {
 	pruneLeftoverWorktrees,
 	readBlob,
 	removeWorktreeDir,
+	type RepoInfo,
 	repoInfo,
 	resolveTarget,
 } from "./companion-blueprint-git";
@@ -68,7 +70,7 @@ import {
 	renderExcerpts,
 } from "./companion-quiz-grade";
 import { detectStack, ghPrSource, type PrSource } from "./companion-quiz-stack";
-import { createQuizStore, type QuizDoc } from "./companion-quiz-store";
+import { createQuizStore, type QuizDoc, type QuizDocStakes } from "./companion-quiz-store";
 import { type ParsedQuestion, parseQuizOutput, verifyQuiz } from "./companion-quiz-verify";
 import {
 	briefParts,
@@ -117,6 +119,14 @@ export interface QuizDeps {
 	prSource?: (root: string) => PrSource;
 	/** Timing of the wait for the agent; tests shorten it. */
 	watch?: Partial<AgentWatchOptions>;
+	/**
+	 * High-stakes sessions (./companion-stakes): the pass mark in force, and what to do when an attempt on a stakes quiz
+	 * finishes (resolves true when it passed and unlocked the push).
+	 */
+	stakes?: {
+		mark(): number;
+		finished(doc: QuizDoc, attempt: QuizAttempt): Promise<boolean>;
+	};
 	log?(message: string): void;
 }
 
@@ -126,12 +136,26 @@ export interface Quizzes {
 	list(cwd: string | undefined): Promise<QuizSummary[]>;
 	create(request: QuizCreate): Promise<{ id: string }>;
 	get(id: string): Promise<QuizGetAnswer>;
+	/** The list row of one quiz, or undefined when there is none. */
+	summary(id: string): QuizSummary | undefined;
+	/**
+	 * Write a quiz for a high-stakes session's exact states (./companion-stakes): `head` and `base` are used as given,
+	 * not re-resolved, so a delta quiz compares the two trees and nothing else.
+	 */
+	createForStakes(input: {
+		cwd: string;
+		sessionId: string;
+		head: BlueprintCommit;
+		base: BlueprintCommit;
+		stakes: QuizDocStakes;
+		model?: string;
+	}): Promise<{ id: string }>;
 	answer(request: { id: string; attempt: string; question: string; text?: unknown; choice?: unknown }): Promise<{
 		verdict: QuizVerdict;
 		attempt: QuizAttempt;
 	}>;
 	retry(request: { id: string; from?: string; only?: unknown }): Promise<{ attempt: QuizAttempt }>;
-	excerpt(id: string, part: number, refs: readonly BlueprintRef[]): Promise<(BlueprintExcerpt | null)[]>;
+	excerpt(id: string, part: number, refs: readonly BlueprintExcerptRef[]): Promise<(BlueprintExcerpt | null)[]>;
 	remove(id: string): Promise<void>;
 	stack(cwd: string, pr: number): Promise<{ stack: QuizStackPr[]; source: QuizStackSource }>;
 	/** Mark runs in flight as interrupted and end their sessions. */
@@ -146,6 +170,8 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 	const outDir = path.join(deps.cacheDir, "out");
 	const overlayDir = path.join(deps.cacheDir, "overlay");
 	const runs = new Map<string, Run>();
+	/** Stakes bindings of the runs in flight, written into the document when it is saved. */
+	const stakesByRun = new Map<string, QuizDocStakes>();
 	const locks: Locks = new Map();
 	const slots = createRunSlots(MAX_CONCURRENT_RUNS);
 	const log = deps.log ?? (() => undefined);
@@ -188,6 +214,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 			costUsd: doc.generationCostUsd + doc.gradingCostUsd,
 			maxCostUsd: doc.maxCostUsd,
 			...(doc.quiz.sessionId ? { sessionId: doc.quiz.sessionId } : {}),
+			...(doc.stakes ? { stakes: { delta: doc.stakes.delta, passed: doc.stakes.passedAttempt !== undefined } } : {}),
 		};
 	}
 
@@ -353,6 +380,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 				maxCostUsd: job.maxCostUsd,
 				generationCostUsd: costUsd ?? 0,
 				gradingCostUsd: 0,
+				...(stakesByRun.has(run.id) ? { stakes: stakesByRun.get(run.id) } : {}),
 			};
 			await progress(run, "Saving the quiz");
 			const current = store.get(run.id);
@@ -362,6 +390,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 			deps.changed(run.id);
 		} finally {
 			slots.release();
+			stakesByRun.delete(run.id);
 			if (checkoutDir) await removeWorktreeDir(job.root, checkoutDir).catch(() => undefined);
 			await fs.rm(runDir, { recursive: true, force: true }).catch(() => undefined);
 		}
@@ -387,6 +416,52 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 		attempt.score = scoreAttempt(doc.quiz.questions, attempt);
 		if (attempt.finishedAt === undefined && attempt.questions.every(id => Object.hasOwn(attempt.answers, id)))
 			attempt.finishedAt = now;
+	}
+
+	/** Register a run for an already resolved change and start writing its questions. */
+	async function launch(
+		info: RepoInfo,
+		plan: { target?: Job["target"]; prs?: number[]; title: string; subject: string },
+		parsed: RunRequest,
+		sessionId: string | undefined,
+		stakes: QuizDocStakes | undefined,
+	): Promise<{ id: string }> {
+		const { target, prs, title, subject } = plan;
+		const id = store.newId();
+		const run: Run = { id, cancelled: false, held: 0, done: Promise.resolve() };
+		const job: Job = {
+			root: info.root,
+			name: info.name,
+			github: info.github,
+			title,
+			subject,
+			prs,
+			target,
+			sessionId,
+			maxCostUsd: parsed.maxCostUsd,
+			model: parsed.model,
+		};
+		await store.put({
+			id,
+			title,
+			repoRoot: info.root,
+			subject,
+			createdAt: deps.now(),
+			status: "running",
+			progress: "Waiting to start",
+			maxCostUsd: parsed.maxCostUsd,
+			...(sessionId ? { sessionId } : {}),
+			...(stakes ? { stakes: { delta: stakes.delta, passed: false } } : {}),
+		});
+		if (stakes) stakesByRun.set(id, stakes);
+		deps.changed(id);
+		runs.set(id, run);
+		run.done = execute(run, job)
+			.catch(err => fail(run, info.root, err))
+			.finally(() => {
+				runs.delete(id);
+			});
+		return { id };
 	}
 
 	return {
@@ -438,44 +513,42 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 				subject = `${resolved.label} vs ${baseName}`;
 				title = `${info.name} @ ${subject}`;
 			}
-			const id = store.newId();
-			const run: Run = { id, cancelled: false, held: 0, done: Promise.resolve() };
-			const job: Job = {
-				root: info.root,
-				name: info.name,
-				github: info.github,
-				title,
-				subject,
-				prs,
-				target,
-				sessionId: request.sessionId,
-				maxCostUsd: parsed.maxCostUsd,
-				model: parsed.model,
-			};
-			await store.put({
-				id,
-				title,
-				repoRoot: info.root,
-				subject,
-				createdAt: deps.now(),
-				status: "running",
-				progress: "Waiting to start",
-				maxCostUsd: parsed.maxCostUsd,
-				...(request.sessionId ? { sessionId: request.sessionId } : {}),
-			});
-			deps.changed(id);
-			runs.set(id, run);
-			run.done = execute(run, job)
-				.catch(err => fail(run, info.root, err))
-				.finally(() => {
-					runs.delete(id);
-				});
-			return { id };
+			return await launch(info, { target, prs, title, subject }, parsed, request.sessionId, undefined);
+		},
+
+		async createForStakes(input) {
+			const parsed = checkRunRequest({ cwd: input.cwd, model: input.model }, DEFAULT_QUIZ_MAX_COST_USD);
+			checkSessionId(input.sessionId);
+			if (deps.agent === null)
+				throw new Error("This computer cannot run the question-writing session (tmux is missing).");
+			const info = await repoInfo(parsed.cwd);
+			const baseName = input.base.ref ?? input.base.commit.slice(0, 8);
+			const subject = input.stakes.delta ? "the new changes" : `worktree vs ${baseName}`;
+			const title = `${info.name} · high stakes · ${subject}`;
+			const target: Job["target"] = { head: input.head, base: input.base, label: "worktree" };
+			return await launch(info, { target, title, subject }, parsed, input.sessionId, input.stakes);
+		},
+
+		summary(id) {
+			return store.get(id);
 		},
 
 		async get(id) {
 			const doc = await readReady(id);
-			return { quiz: doc.quiz, attempts: doc.attempts };
+			return {
+				quiz: doc.quiz,
+				attempts: doc.attempts,
+				...(doc.stakes && deps.stakes
+					? {
+							stakes: {
+								sessionId: doc.stakes.sessionId,
+								delta: doc.stakes.delta,
+								passMark: deps.stakes.mark(),
+								...(doc.stakes.passedAttempt ? { passedAttempt: doc.stakes.passedAttempt } : {}),
+							},
+						}
+					: {}),
+			};
 		},
 
 		answer(request) {
@@ -543,6 +616,8 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 				}
 				attempt.answers[question.id] = record;
 				refreshAttempt(doc, attempt, now);
+				if (doc.stakes && deps.stakes && (await deps.stakes.finished(doc, attempt)))
+					doc.stakes.passedAttempt ??= attempt.id;
 				await save(doc);
 				return { verdict, attempt };
 			});

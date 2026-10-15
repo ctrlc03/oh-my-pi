@@ -1,4 +1,4 @@
-import type { BlueprintExcerpt, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
+import type { BlueprintExcerpt, BlueprintExcerptRef } from "@oh-my-pi/pi-wire/blueprint";
 import type {
 	Bakeoff,
 	BakeoffCreate,
@@ -49,7 +49,7 @@ export async function getBakeoffExcerpts(
 	client: CompanionClient,
 	id: string,
 	entry: string,
-	refs: BlueprintRef[],
+	refs: BlueprintExcerptRef[],
 ): Promise<(BlueprintExcerpt | null)[]> {
 	const out: (BlueprintExcerpt | null)[] = [];
 	for (let at = 0; at < refs.length; at += BAKEOFF_EXCERPT_BATCH) {

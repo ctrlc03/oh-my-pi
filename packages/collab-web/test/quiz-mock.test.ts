@@ -192,6 +192,36 @@ describe("the mock quiz companion", () => {
 		mock.stop();
 	});
 
+	it("answers a range of lines of a citation's file, at the commit of its side, with the file's length", async () => {
+		const { mock, ask } = setup();
+		const got = await ask({ t: "quiz-get", id: "qz-stack" }, "quiz-get");
+		const head = got.quiz.questions
+			.flatMap(question => question.refs)
+			.find(ref => ref.path.endsWith("provider_cache.rs"))!;
+		const base = got.quiz.questions
+			.flatMap(question => question.refs)
+			.find(ref => ref.side === "base" && ref.path.endsWith("helpers.rs"))!;
+		const { excerpts } = await ask(
+			{
+				t: "quiz-excerpt",
+				id: "qz-stack",
+				part: 0,
+				refs: [head, { ...head, from: 1, to: 9_999 }, { ...base, from: 1, to: 9_999 }, { ...base, from: 3, to: 1 }],
+			},
+			"quiz-excerpt",
+		);
+		const [normal, whole, before, bad] = excerpts;
+		expect(normal!.total).toBeGreaterThan(normal!.lines.length);
+		expect([whole!.start, whole!.lines.length, whole!.total]).toEqual([1, normal!.total, normal!.total]);
+		expect(whole!.lines[head.line - 1]).toContain(head.token);
+		expect(before).toMatchObject({ side: "base", start: 1 });
+		expect(before!.lines).toHaveLength(before!.total!);
+		expect(before!.lines[base.line - 1]).toContain(base.token);
+		// A bad range is ignored, as no range.
+		expect(bad!.lines.length).toBeLessThan(before!.lines.length);
+		mock.stop();
+	});
+
 	it("finds a stack of three for the fixture's pull requests and a lone pull request otherwise", async () => {
 		const { mock, ask } = setup();
 		for (const pr of [2243, 2244, 2245]) {

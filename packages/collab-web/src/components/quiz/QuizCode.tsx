@@ -1,10 +1,11 @@
-import type { BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
+import type { BlueprintExcerptRef, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
 import { ChevronDown, ChevronUp, ExternalLink, LoaderCircle, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useRef, useState } from "react";
 import { useNarrow } from "./use-narrow";
 import { useRequest } from "../../lib/use-request";
-import { CodeBlock } from "../architecture/CodeBlock";
+import type { WidenExcerpt } from "../architecture/ExpandableCode";
+import { ExpandableCode } from "../architecture/ExpandableCode";
 import type { ExportedExcerpt } from "../architecture/blueprint-model";
 import { refKey } from "../architecture/blueprint-model";
 import { highlightExcerpt } from "../architecture/highlight-excerpt";
@@ -16,8 +17,11 @@ function cacheKey(part: number, ref: BlueprintRef): string {
 	return `${part}:${refKey(ref)}`;
 }
 
-/** Reads the code around citations at a part's commit, in the order of `refs`; null for a ref the commit does not have. Keep it stable between renders. */
-export type ExcerptReader = (part: number, refs: BlueprintRef[]) => Promise<(ExportedExcerpt | null)[]>;
+/**
+ * Reads the code around citations at a part's commit, in the order of `refs`; null for a ref the commit does not have.
+ * A ref with `from`/`to` asks for that range of its file. Keep it stable between renders.
+ */
+export type ExcerptReader = (part: number, refs: BlueprintExcerptRef[]) => Promise<(ExportedExcerpt | null)[]>;
 
 export interface QuizCodeProps {
 	excerpts: ExcerptReader;
@@ -45,6 +49,16 @@ export function QuizCode({ excerpts, part, refs, cache, openInEditor }: QuizCode
 		return list.map(ref => cache.get(cacheKey(part, ref)) ?? null);
 	}, [excerpts, part, list, cache]);
 	const { state, reload } = useRequest(load);
+	// A widened excerpt replaces the one read first, so it is still wide when the reader comes back to the question.
+	const widen = useCallback<WidenExcerpt>(
+		async request => {
+			const [found] = await excerpts(part, [request]);
+			if (found === undefined || found === null) return null;
+			cache.set(cacheKey(part, request), found);
+			return found;
+		},
+		[excerpts, part, cache],
+	);
 	const narrow = useNarrow();
 	const [open, setOpen] = useState(false);
 	// Beside the question the code has room; under it, one short window until the reader asks for the rest.
@@ -86,7 +100,13 @@ export function QuizCode({ excerpts, part, refs, cache, openInEditor }: QuizCode
 						(state.value[at] === null || state.value[at] === undefined ? (
 							<p className="qz-note">The code is not available at that commit.</p>
 						) : (
-							<CodeBlock excerpt={state.value[at]} highlight={highlightExcerpt} compact={compact} />
+							<ExpandableCode
+								reference={ref}
+								excerpt={state.value[at]}
+								highlight={highlightExcerpt}
+								compact={compact}
+								widen={widen}
+							/>
 						))}
 				</section>
 			))}

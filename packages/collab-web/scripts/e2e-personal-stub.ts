@@ -64,8 +64,11 @@ export interface StubModel {
 	port: number;
 	/** Every request so far, oldest first. */
 	requests: StubRequest[];
-	/** Queue a reply for the next agent-loop request `when` accepts (any, when omitted). */
-	enqueue(reply: StubReply, when?: (request: StubRequest) => boolean): void;
+	/**
+	 * Queue a reply for the next agent-loop request `when` accepts (any, when omitted). A function is called with that
+	 * request, for a reply that depends on what it contains (a path in the prompt).
+	 */
+	enqueue(reply: StubReply | ((request: StubRequest) => StubReply), when?: (request: StubRequest) => boolean): void;
 	/** The reply for an agent-loop request that finds the queue empty; text "Noted." by default. */
 	setIdle(reply: StubReply): void;
 	/** Drop queued replies and recorded requests. */
@@ -192,7 +195,10 @@ function chunks(reply: StubReply, callIds: string): object[] {
 /** Start the stub on a port the operating system picks. */
 export function startStubModel(): StubModel {
 	const requests: StubRequest[] = [];
-	const queue: Array<{ reply: StubReply; when?: (request: StubRequest) => boolean }> = [];
+	const queue: Array<{
+		reply: StubReply | ((request: StubRequest) => StubReply);
+		when?: (request: StubRequest) => boolean;
+	}> = [];
 	const waiters: Array<{
 		match: (request: StubRequest) => boolean;
 		after: number;
@@ -220,7 +226,8 @@ export function startStubModel(): StubModel {
 			let reply: StubReply = { text: "ok" };
 			if (entry.toolNames.length > 0) {
 				const at = queue.findIndex(item => (item.when ? item.when(entry) : true));
-				reply = at >= 0 ? queue.splice(at, 1)[0]!.reply : idle;
+				const picked = at >= 0 ? queue.splice(at, 1)[0]!.reply : idle;
+				reply = typeof picked === "function" ? picked(entry) : picked;
 			}
 			if (reply.delayMs) await Bun.sleep(reply.delayMs);
 			if (body.stream !== true) {

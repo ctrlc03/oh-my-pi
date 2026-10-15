@@ -2,7 +2,7 @@
  * Offline mock collab host: starts the local relay, opens a room as host, and
  * serves the canned fixture session to any collab-web guest that joins.
  *
- *   bun scripts/mock-host.ts [--port 7466] [--local-relay [PORT]] [--many-models] [--agent <id>]
+ *   bun scripts/mock-host.ts [--port 7466] [--local-relay [PORT]] [--many-models] [--agent <id>] [--stakes-markers <file>]
  *
  * Prints a full join link (guests may prompt and run session controls) and a
  * view link (read-only). Replays a scripted streaming turn on every guest
@@ -44,6 +44,7 @@ import type {
 	TextContent,
 	WireModel,
 } from "@oh-my-pi/pi-wire";
+import { STAKES_MARKER_TYPE } from "@oh-my-pi/pi-wire/stakes";
 import { type HelloFrame, RoomHost, type RoomPeer } from "./foreign/room-host";
 import {
 	fixtureAgents,
@@ -163,6 +164,40 @@ const mockPrWatch = new MockPrWatch({
 	},
 });
 setInterval(() => mockPrWatch.tick(), 2_000).unref();
+/**
+ * `--stakes-markers <file>`: each line the mock companion appends to the file (scripts/mock-stakes.ts, a change of a session's
+ * high-stakes mode) becomes the visible marker message the real session writes into its transcript.
+ */
+const stakesMarkersAt = argv.indexOf("--stakes-markers");
+if (stakesMarkersAt >= 0) {
+	const file = argv[stakesMarkersAt + 1];
+	if (file === undefined) {
+		console.error("mock-host: --stakes-markers takes a file");
+		process.exit(1);
+	}
+	let seen = 0;
+	setInterval(() => {
+		void Bun.file(file)
+			.text()
+			.catch(() => "")
+			.then(text => {
+				const lines = text.split("\n").filter(line => line !== "");
+				for (const line of lines.slice(seen)) {
+					liveEntrySeq++;
+					appendEntry({
+						id: `live-${liveEntrySeq}`,
+						parentId: lastEntryId,
+						timestamp: new Date().toISOString(),
+						type: "custom_message",
+						customType: STAKES_MARKER_TYPE,
+						content: line,
+						display: true,
+					});
+				}
+				seen = lines.length;
+			});
+	}, 500).unref();
+}
 const mockLimits = createMockLimits({
 	limitedSeconds: mockLimitedSeconds,
 	limitedProvider: "anthropic",

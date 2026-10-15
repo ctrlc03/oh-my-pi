@@ -8,6 +8,20 @@ import { type Quiz, type QuizAttempt, type QuizSummary, QUIZ_VERSION } from "@oh
 import { createDocStore, type DocStore } from "./companion-doc-store";
 import type { QuizKey } from "./companion-quiz-verify";
 
+/** The high-stakes session a quiz was made for (./companion-stakes) and the exact states it compares. */
+export interface QuizDocStakes {
+	sessionId: string;
+	/** Tree of the quizzed state: what a pass covers. */
+	headTree: string;
+	headCommit: string;
+	/** Where the quiz starts: the merge base with the default branch, or the latest passed state for a delta quiz. */
+	baseCommit: string;
+	baseTree: string;
+	delta: boolean;
+	/** The attempt that passed, once one did. */
+	passedAttempt?: string;
+}
+
 /** A stored quiz: what devices see, what only the companion sees, and the attempts so far. */
 export interface QuizDoc {
 	v: typeof QUIZ_VERSION;
@@ -22,6 +36,8 @@ export interface QuizDoc {
 	generationCostUsd: number;
 	/** What grading open answers has cost so far, USD. */
 	gradingCostUsd: number;
+	/** Set on a quiz made for a high-stakes session's push. */
+	stakes?: QuizDocStakes;
 }
 
 export type QuizStore = DocStore<QuizSummary, QuizDoc>;

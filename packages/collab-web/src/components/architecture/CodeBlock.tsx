@@ -1,10 +1,12 @@
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ExportedExcerpt } from "./blueprint-model";
 
 /**
  * Lines of one excerpt with a gutter, the cited line banded, and the syntax colours when `highlight` can make them
- * (an exported excerpt carries its own). Shared by the architecture maps' code panel and the quiz.
+ * (an exported excerpt carries its own). Shared by the architecture maps' code panel, the quiz, the sparring partner
+ * and the bake-off. The box scrolls inside a maximum height and opens with the cited line in view; when lines are added
+ * above it (a wider excerpt of the same code) what the reader was looking at stays in place.
  */
 export function CodeBlock({
 	excerpt,
@@ -41,21 +43,40 @@ export function CodeBlock({
 	}, [excerpt, highlight, text]);
 	const gutter = useMemo(() => excerpt.lines.map((_, i) => excerpt.start + i).join("\n"), [excerpt]);
 	const hit = excerpt.line - excerpt.start + 1;
-	useEffect(() => {
+	const identity = `${excerpt.side}:${excerpt.commit}:${excerpt.path}:${excerpt.line}`;
+	const placed = useRef<{ identity: string; start: number; compact: boolean } | null>(null);
+	useLayoutEffect(() => {
 		const box = frame.current;
-		if (!compact || box === null) {
-			if (box !== null) box.scrollTop = 0;
+		if (box === null) return;
+		const before = placed.current;
+		placed.current = { identity, start: excerpt.start, compact };
+		const row = Number.parseFloat(getComputedStyle(box).fontSize) * 1.5;
+		if (compact) {
+			// Two lines of context above the cited one: the window opens on it rather than on the top of the excerpt.
+			box.scrollTop = Math.max(0, (hit - 3) * row);
 			return;
 		}
-		// Two lines of context above the cited one: the window opens on it rather than on the top of the excerpt.
-		const row = Number.parseFloat(getComputedStyle(box).fontSize) * 1.5;
-		box.scrollTop = Math.max(0, (hit - 3) * row);
-	}, [compact, hit]);
+		const pad = Number.parseFloat(getComputedStyle(box.querySelector(".ar-code-text") ?? box).paddingTop);
+		const top = pad + (hit - 1) * row;
+		if (before !== null && before.identity === identity && !before.compact) {
+			// The same code, wider. Lines added above push it down: keep the reader where they were and show some of the
+			// new lines, but never at the cost of the cited line, which stays in view.
+			const added = (before.start - excerpt.start) * row;
+			if (added > 0) {
+				const target = box.scrollTop + added - Math.min(added, box.clientHeight * 0.6);
+				box.scrollTop = Math.max(target, top + 2 * row - box.clientHeight);
+			}
+			return;
+		}
+		// First sight: the cited line in view, in the middle of the box unless it is already near the top.
+		box.scrollTop = top + row > box.clientHeight ? Math.max(0, top - (box.clientHeight - row) / 2) : 0;
+	}, [compact, hit, identity, excerpt.start]);
 	return (
 		<div
 			ref={frame}
 			className={compact ? "ar-code ar-code-compact" : "ar-code"}
 			role="figure"
+			tabIndex={-1}
 			aria-label={`Code around line ${excerpt.line} of ${excerpt.path}`}
 		>
 			<pre className="ar-code-gutter" aria-hidden>

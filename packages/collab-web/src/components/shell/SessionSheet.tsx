@@ -5,6 +5,7 @@ import {
 	ChevronRight,
 	Copy,
 	Download,
+	Eye,
 	type LucideIcon,
 	LogOut,
 	MessageSquare,
@@ -27,10 +28,12 @@ import { openSettings } from "../../lib/settings-ui";
 import { effectiveKeys, formatCombo, IS_MAC, useOverrides } from "../../lib/shortcuts";
 import { formatUsage, type SessionUsage } from "../../lib/usage";
 import { ContextItems } from "./ContextItems";
+import type { HiddenMessagesControl } from "./HiddenMessages";
 import { AgentChip } from "./AgentChip";
 import { PermissionControl } from "./PermissionControl";
 import { PrWatch } from "./PrWatch";
 import { SandboxedChip } from "./CompanionCard";
+import { HighStakesChip, HighStakesRow, type StakesControl } from "./StakesControl";
 import { ModelList } from "./ModelControls";
 import { Sheet } from "./Sheet";
 import type { TurnUndoControl } from "./TurnUndo";
@@ -56,6 +59,8 @@ export interface SessionSheetProps {
 	phaseLabel: string;
 	readOnly: boolean;
 	sandboxed: boolean;
+	/** This session's high-stakes mode; null unless the paired computer can gate pushes behind a quiz and this is an omp session. */
+	highStakes: StakesControl | null;
 	/** The vendor agent behind this session; null for an omp session. */
 	agent: AgentRef | null;
 	/** The host advertises `permission-mode`. */
@@ -118,6 +123,8 @@ export interface SessionSheetProps {
 	onSessionCommand(cmd: SessionCommand, arg?: string): void;
 	/** Undo and redo of the last turn; undefined unless the host advertises `undo` and this guest may write. */
 	turnUndo: TurnUndoControl | undefined;
+	/** Messages hidden from this session's chat; undefined where none can be. */
+	hiddenMessages: HiddenMessagesControl | undefined;
 	/** The host's latest "what fills the context" ranking; undefined unless the host advertises `context-items`, null until it replies. */
 	contextItems: ContextItemsInfo | null | undefined;
 	/** The host can watch pull requests (feature `pr-watch`). */
@@ -138,6 +145,7 @@ export function SessionSheet({
 	phaseLabel,
 	readOnly,
 	sandboxed,
+	highStakes,
 	agent,
 	canPermission,
 	contextPct,
@@ -173,6 +181,7 @@ export function SessionSheet({
 	models,
 	onSessionCommand,
 	turnUndo,
+	hiddenMessages,
 	contextItems,
 	canWatchPr,
 	exportMarkdown,
@@ -319,6 +328,7 @@ export function SessionSheet({
 						{readOnly && <span className="sh-chip">read-only</span>}
 						<AgentChip agent={agent} />
 						{sandboxed && <SandboxedChip />}
+						{highStakes?.on && <HighStakesChip />}
 					</dd>
 				</div>
 				{canPermission && state?.permission !== undefined && !readOnly && phase === "live" && (
@@ -332,6 +342,7 @@ export function SessionSheet({
 						</dd>
 					</div>
 				)}
+				{highStakes !== null && <HighStakesRow control={highStakes} />}
 				{state?.model && (
 					<div className="sh-sheet-row">
 						<dt>Model</dt>
@@ -579,6 +590,26 @@ export function SessionSheet({
 									</button>
 								))}
 							</div>
+						</dd>
+					</div>
+				)}
+				{hiddenMessages !== undefined && (hiddenMessages.any || hiddenMessages.showing) && (
+					<div className="sh-sheet-row sh-sheet-row-top">
+						<dt>Hidden</dt>
+						<dd className="sh-sheet-compact">
+							<button
+								type="button"
+								className={hiddenMessages.showing ? "sh-btn sh-btn-on" : "sh-btn"}
+								aria-pressed={hiddenMessages.showing}
+								onClick={() => hiddenMessages.setShowing(!hiddenMessages.showing)}
+							>
+								<Eye size={13} /> Show hidden messages
+							</button>
+							<span className="sh-sheet-faint">
+								{hiddenMessages.synced
+									? "Hidden from the chat on all your devices; the agent still sees them."
+									: "Hidden from the chat on this device; the agent still sees them."}
+							</span>
 						</dd>
 					</div>
 				)}

@@ -1,4 +1,4 @@
-import type { BlueprintExcerpt, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
+import type { BlueprintExcerpt, BlueprintExcerptRef } from "@oh-my-pi/pi-wire/blueprint";
 import type {
 	QuizAttempt,
 	QuizCreate,
@@ -34,10 +34,10 @@ export async function createQuiz(client: CompanionClient, request: QuizCreate): 
 	return (await client.requestQuiz({ t: "quiz-create", ...request }, CREATE_TIMEOUT_MS)).id;
 }
 
-/** The quiz without its answers, and every attempt made at it. */
+/** The quiz without its answers, every attempt made at it, and, for a high-stakes quiz, what passing it unlocks. */
 export async function getQuiz(client: CompanionClient, id: string): Promise<QuizGetAnswer> {
-	const { quiz, attempts } = await client.requestQuiz({ t: "quiz-get", id }, QUIZ_TIMEOUT_MS);
-	return { quiz, attempts };
+	const { quiz, attempts, stakes } = await client.requestQuiz({ t: "quiz-get", id }, QUIZ_TIMEOUT_MS);
+	return { quiz, attempts, stakes };
 }
 
 /** What a person answered: free text for an open question, the id of a choice for a choice question. */
@@ -70,7 +70,7 @@ export async function getQuizExcerpts(
 	client: CompanionClient,
 	id: string,
 	part: number,
-	refs: BlueprintRef[],
+	refs: BlueprintExcerptRef[],
 ): Promise<(BlueprintExcerpt | null)[]> {
 	const out: (BlueprintExcerpt | null)[] = [];
 	for (let at = 0; at < refs.length; at += QUIZ_EXCERPT_BATCH) {

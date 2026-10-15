@@ -1,7 +1,8 @@
 /**
- * Where a big sheet (a `full`, `wide` or `settings` {@link Sheet}) sits and how large it is when the user has moved or
- * resized it. Everything here is a pure function of numbers in layout px (what CSS speaks, see `zoom.ts`) so the
- * decisions can be tested; the DOM side is `use-sheet-frame.ts`.
+ * Where the big sheets (a `full`, `wide` or `settings` {@link Sheet}) sit and how large they are when the user has
+ * moved or resized one. They share one frame, so switching between them keeps the window where it was. Everything
+ * here is a pure function of numbers in layout px (what CSS speaks, see `zoom.ts`) so the decisions can be tested;
+ * the DOM side is `use-sheet-frame.ts`.
  *
  * A saved frame is the user's preference and is never rewritten because the window shrank: the frame on screen is the
  * saved one clamped into the window, and it comes back when the room does.
@@ -33,8 +34,8 @@ export const MIN_H = 320;
 /** What an arrow key moves the sheet by, or a Shift+arrow resizes it by. */
 export const KEY_STEP = 16;
 
-/** Per-device map from a sheet's key to its frame. */
-export const FRAMES_KEY = "omp.collab.sheet-frames";
+/** The per-device frame of the big sheets. */
+export const FRAME_KEY = "omp.collab.sheet-frame";
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.min(max, Math.max(min, value));
@@ -136,31 +137,17 @@ function isFrame(value: unknown): value is Frame {
 	);
 }
 
-/** The saved frames out of whatever was stored: entries that are not a usable frame are dropped, anything else gives none. */
-export function parseFrames(raw: unknown): Map<string, Frame> {
-	const frames = new Map<string, Frame>();
-	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return frames;
-	for (const [key, value] of Object.entries(raw)) {
-		if (isFrame(value)) frames.set(key, { x: value.x, y: value.y, w: value.w, h: value.h });
-	}
-	return frames;
+/** The saved frame out of whatever was stored; anything that is not a usable frame gives none. */
+export function parseFrame(raw: unknown): Frame | null {
+	return isFrame(raw) ? { x: raw.x, y: raw.y, w: raw.w, h: raw.h } : null;
 }
 
-/** `frames` with `key` set to `frame`, or forgotten for null (so that sheet is back at its default place and size). */
-export function withFrame(frames: ReadonlyMap<string, Frame>, key: string, frame: Frame | null): Map<string, Frame> {
-	const next = new Map(frames);
-	if (frame === null) next.delete(key);
-	else next.set(key, frame);
-	return next;
+/** The saved frame, or null when the user has not moved or resized a big sheet. */
+export function readFrame(): Frame | null {
+	return parseFrame(readJson(FRAME_KEY));
 }
 
-/** The saved frame of the sheet `key`, or null when the user has not moved or resized it. */
-export function readFrame(key: string): Frame | null {
-	return parseFrames(readJson(FRAMES_KEY)).get(key) ?? null;
-}
-
-/** Saves (or, for null, forgets) one sheet's frame, leaving the others as the device has them now. */
-export function saveFrame(key: string, frame: Frame | null): void {
-	const next = withFrame(parseFrames(readJson(FRAMES_KEY)), key, frame);
-	writeJson(FRAMES_KEY, next.size === 0 ? null : Object.fromEntries(next));
+/** Saves the frame, or forgets it for null (the sheets go back to their default place and size). */
+export function saveFrame(frame: Frame | null): void {
+	writeJson(FRAME_KEY, frame);
 }

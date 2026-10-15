@@ -43,7 +43,7 @@ import type {
 	BakeoffWriteup,
 } from "@oh-my-pi/pi-wire/bakeoff";
 import { BAKEOFF_LABELS, BAKEOFF_VERSION, isMeasuredMetric } from "@oh-my-pi/pi-wire/bakeoff";
-import type { BlueprintExcerpt, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
+import type { BlueprintExcerpt, BlueprintExcerptRef, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
 import type { CompanionReply, CompanionRequest, RunTarget } from "../src/lib/companion";
 import { checkBakeoffCreate } from "./companion-bakeoff";
 import { cite, excerptOf, MOCK_QUIZ_ROOT } from "./mock-quiz";
@@ -1094,7 +1094,7 @@ export function createMockBakeoff(options: {
 		return found as Stored & { bakeoff: Bakeoff & { result: BakeoffResult } };
 	};
 
-	const excerptFor = (ref: BlueprintRef): BlueprintExcerpt | null => {
+	const excerptFor = (ref: BlueprintExcerptRef): BlueprintExcerpt | null => {
 		const side = ref.side ?? "head";
 		const excerpt = excerptOf(ref, { commit: side === "base" ? BASE_COMMIT : HEAD_COMMIT });
 		return excerpt === null || excerpt.lines.length === 0 ? null : excerpt;

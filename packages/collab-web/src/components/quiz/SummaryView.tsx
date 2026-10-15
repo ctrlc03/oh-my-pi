@@ -1,13 +1,26 @@
 import type { QuizAttempt } from "@oh-my-pi/pi-wire/quiz";
-import { CircleAlert, CircleCheck, CircleX, History, ListRestart, LoaderCircle, Plus, RotateCcw } from "lucide-react";
+import {
+	CircleAlert,
+	CircleCheck,
+	CircleX,
+	History,
+	ListRestart,
+	LoaderCircle,
+	Plus,
+	RotateCcw,
+	ShieldAlert,
+	ShieldCheck,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { fmtCost, relTime } from "../../lib/format";
-import { formatPoints, type SummaryModel, type SummaryQuestion, verdictLook } from "./quiz-flow";
+import { formatPoints, type StakesBanner, type SummaryModel, type SummaryQuestion, verdictLook } from "./quiz-flow";
 
 const TONE_ICON = { right: CircleCheck, partly: CircleAlert, wrong: CircleX } as const;
 
 export interface SummaryViewProps {
 	summary: SummaryModel;
+	/** Set on a quiz made for a high-stakes session's push: what the results say about it. Only a full run can pass, so the retry of missed answers is not offered. */
+	stakes: { banner: StakesBanner | null } | null;
 	/** Every attempt at the quiz, newest first. */
 	attempts: readonly QuizAttempt[];
 	/** The attempt shown. */
@@ -41,6 +54,7 @@ function Mark({ kind }: { kind: SummaryQuestion["kind"] }): ReactNode {
 /** The results of an attempt: the score, each part's, the topics to revisit (each linking to its questions), and what to do next. */
 export function SummaryView({
 	summary,
+	stakes,
 	attempts,
 	attemptId,
 	costUsd,
@@ -54,6 +68,9 @@ export function SummaryView({
 	onHistory,
 }: SummaryViewProps): ReactNode {
 	const busy = retrying !== null;
+	const banner = stakes?.banner ?? null;
+	// A stakes quiz that has not passed asks for a full run; otherwise a full retry is the main action only when nothing was missed.
+	const retryAllFirst = stakes === null ? summary.missed === 0 : banner?.tone !== "passed";
 	return (
 		<div className="qz-summary">
 			<div className="qz-score" role="group" aria-label="Score">
@@ -67,6 +84,16 @@ export function SummaryView({
 					{costUsd !== undefined && <span className="qz-hint">Quiz cost so far {fmtCost(costUsd)}</span>}
 				</div>
 			</div>
+			{banner !== null && (
+				<div className="qz-stakes" data-tone={banner.tone} role="status">
+					{banner.tone === "passed" ? (
+						<ShieldCheck size={16} aria-hidden="true" />
+					) : (
+						<ShieldAlert size={16} aria-hidden="true" />
+					)}
+					<span>{banner.text}</span>
+				</div>
+			)}
 			{error !== null && (
 				<div className="qz-alert" role="alert">
 					<CircleAlert size={15} aria-hidden="true" />
@@ -74,7 +101,7 @@ export function SummaryView({
 				</div>
 			)}
 			<div className="qz-actions qz-actions-start">
-				{summary.missed > 0 && (
+				{summary.missed > 0 && stakes === null && (
 					<button
 						type="button"
 						className="sh-btn sh-btn-primary"
@@ -87,12 +114,12 @@ export function SummaryView({
 				)}
 				<button
 					type="button"
-					className={summary.missed > 0 ? "sh-btn" : "sh-btn sh-btn-primary"}
+					className={retryAllFirst ? "sh-btn sh-btn-primary" : "sh-btn"}
 					disabled={busy}
 					onClick={() => onRetry("all")}
 				>
-					{retrying === "all" ? <LoaderCircle size={14} className="sh-spin" /> : <ListRestart size={14} />} Retry
-					all
+					{retrying === "all" ? <LoaderCircle size={14} className="sh-spin" /> : <ListRestart size={14} />}{" "}
+					{stakes === null ? "Retry all" : "Retry all questions"}
 				</button>
 				{onNewQuiz !== null && (
 					<button type="button" className="sh-btn" disabled={busy} onClick={onNewQuiz}>

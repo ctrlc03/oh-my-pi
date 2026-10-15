@@ -458,6 +458,7 @@ import { SessionTools, systemPromptDigest, type SessionToolsHost } from "./sessi
 import { resolveOpenAIWebsocketPreference } from "./settings-stream-fn";
 import type { ShakeMode, ShakeResult } from "./shake-types";
 import { deliveredEventIds } from "../personal/events";
+import { HighStakesWatch, readRecordedStakesMode, STAKES_ENTRY_TYPE, STAKES_MARKER_TYPE } from "../high-stakes/watch";
 import { PersonalRuntime, personalRunDir } from "../personal/runtime";
 import { RollingSpendController } from "./rolling-spend";
 import { SpendCapController, type SpendCapLimits, type SpendCapStatus } from "./spend-cap";
@@ -2706,6 +2707,7 @@ export class AgentSession implements SettingsScope {
 		if (readPersistedPrWatches(this.sessionManager.getBranch()).length > 0) this.prWatch.restore();
 		this.registerSessionChangeCallback(() => this.prWatch.sessionChanged());
 		this.#startPersonal(config);
+		this.#startHighStakesWatch(config);
 	}
 
 	/** Registers teardown to run when this session is disposed (e.g. handle listeners bound to it). */
@@ -6242,6 +6244,39 @@ export class AgentSession implements SettingsScope {
 	/** The Personal agent runtime (`personal.enabled`, top-level sessions); undefined otherwise, when nothing of Personal runs. */
 	get personal(): PersonalRuntime | undefined {
 		return this.#personalInstance;
+	}
+
+	/**
+	 * The high-stakes mode watch (top-level sessions): writes a visible marker when the mode the companion keeps for this
+	 * checkout changes. It reads one small file and does nothing while the companion has published nothing.
+	 */
+	#startHighStakesWatch(config: AgentSessionConfig): void {
+		if ((config.agentKind ?? "main") !== "main" || (config.memoryTaskDepth ?? 0) !== 0) return;
+		const watch = new HighStakesWatch({
+			host: {
+				cwd: () => this.sessionManager.getCwd(),
+				agentDir: () => this.settings.getAgentDir(),
+				canWrite: () => !this.#isDisposed && !this.isSessionTransitioning,
+				recorded: () => readRecordedStakesMode(this.sessionManager.getBranch()),
+				announce: async (content, details) => {
+					await this.sendCustomMessage(
+						{ customType: STAKES_MARKER_TYPE, content, display: true, attribution: "user", details },
+						{ triggerTurn: false, deliverAs: "nextTurn" },
+					);
+				},
+				record: on => {
+					this.sessionManager.appendCustomEntry(STAKES_ENTRY_TYPE, { on });
+				},
+			},
+		});
+		this.addDisposer(() => watch.dispose());
+		this.addDisposer(
+			this.subscribeRunState(state => {
+				if (state === "idle") void watch.check();
+			}),
+		);
+		this.addDisposer(this.registerSessionChangeCallback(() => watch.sessionChanged()));
+		watch.start();
 	}
 
 	#startPersonal(config: AgentSessionConfig): void {

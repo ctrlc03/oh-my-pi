@@ -14,8 +14,6 @@ export interface SheetProps {
 	size?: "wide" | "full" | "palette" | "settings";
 	/** The control that opened it: on desktop the sheet opens upward from it instead of under the header. */
 	anchor?: DOMRect;
-	/** Names the sheet's saved place and size (default `label`); only where one label stands for pages that should not share a frame. */
-	frameKey?: string;
 	onClose(): void;
 	children: ReactNode;
 }
@@ -44,13 +42,14 @@ function anchorStyle(rect: DOMRect): CSSProperties {
  * Overlay panel: a bottom sheet on phones, a dropdown card under the header
  * elsewhere (or above its `anchor`). Escape and the backdrop close it; with sheets
  * stacked (a file opened from the changes list), Escape closes only the top one.
- * The big ones (`full`, `wide`, `settings`) can be moved and resized with a mouse; see `use-sheet-frame.ts`.
+ * The big ones (`full`, `wide`, `settings`) can be moved and resized with a mouse, all in one shared frame; see
+ * `use-sheet-frame.ts`.
  */
-export function Sheet({ label, size, anchor, frameKey, onClose, children }: SheetProps): ReactNode {
+export function Sheet({ label, size, anchor, onClose, children }: SheetProps): ReactNode {
 	const panel = useRef<HTMLDivElement>(null);
 	const big = size === "full" || size === "wide" || size === "settings";
 	const framed = useMedia(FRAMED_QUERY) && big && anchor === undefined;
-	const frame = useSheetFrame(frameKey ?? label, framed, panel);
+	const frame = useSheetFrame(framed, panel);
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent): void => {
 			// Escape an inner widget already handled (the editor closing its search panel) leaves the sheet open.

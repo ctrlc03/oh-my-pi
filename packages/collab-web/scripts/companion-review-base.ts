@@ -6,12 +6,12 @@
  * part cites is really there. Functions over an explicit context: the engines own their stores and their closures.
  */
 
-import type { BlueprintCommit, BlueprintExcerpt, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
+import type { BlueprintCommit, BlueprintExcerpt, BlueprintExcerptRef, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
 import { QUIZ_MAX_PARTS, type QuizCreate, type QuizPart } from "@oh-my-pi/pi-wire/quiz";
 import type { BriefPart } from "./companion-quiz-agent";
 import { holdCommit, readBlob, releaseCommits, resolveTarget, stackBase } from "./companion-blueprint-git";
 import { checkCitations, readCitedFiles, type Side, Warnings } from "./companion-citations";
-import { excerptOf, readExcerpts, splitLines } from "./companion-excerpt";
+import { assertRangeBudget, excerptOf, readExcerpts, splitLines } from "./companion-excerpt";
 import { partDiff } from "./companion-quiz-diff";
 import { type Digest, sessionDigest } from "./companion-quiz-digest";
 import type { PrSource, StackPr } from "./companion-quiz-stack";
@@ -274,10 +274,11 @@ export function commitsOf(part: QuizPart): { head: string; base?: string } {
 export async function partExcerpts(
 	subject: CodeSubject,
 	part: number,
-	refs: readonly BlueprintRef[],
+	refs: readonly BlueprintExcerptRef[],
 ): Promise<(BlueprintExcerpt | null)[]> {
 	const found = subject.parts[part];
 	if (!found) throw new Error("There is no such part.");
+	assertRangeBudget(refs);
 	const documents = subject.documents;
 	const inGit = refs.filter(ref => !documents?.has(ref.path));
 	const read = inGit.length === 0 ? [] : await readExcerpts(subject.repo.root, commitsOf(found), inGit);

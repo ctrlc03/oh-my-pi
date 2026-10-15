@@ -17,7 +17,8 @@
  * questions). Pure JSON shapes, plus the scoring rules both sides use.
  */
 
-import type { BlueprintCommit, BlueprintExcerpt, BlueprintRef } from "./blueprint";
+import type { BlueprintCommit, BlueprintExcerpt, BlueprintExcerptRef, BlueprintRef } from "./blueprint";
+import type { QuizStakes } from "./stakes";
 
 /** Format version of the stored quiz. */
 export const QUIZ_VERSION = 1;
@@ -183,6 +184,8 @@ export interface QuizSummary {
 	/** The limit this quiz was made with, USD. */
 	maxCostUsd?: number;
 	sessionId?: string;
+	/** Set on a quiz made for a high-stakes session's push ({@link ./stakes}): whether it covers only the changes since the latest pass, and whether it has passed. */
+	stakes?: { delta: boolean; passed: boolean };
 }
 
 /** What to quiz. */
@@ -230,7 +233,8 @@ export interface QuizStackPr {
  *   attempt (with its score) returned. An answered question cannot be answered again in the same attempt.
  * - `quiz-retry` `{ id, from?, only? }` → `{ attempt }`: a new attempt asking every question (`only: "all"`, the
  *   default) or the ones `from` (default: the latest attempt) did not answer right (`only: "missed"`)
- * - `quiz-excerpt` `{ id, part, refs }` → `{ excerpts }` (same order; read from git at that part's commit)
+ * - `quiz-excerpt` `{ id, part, refs }` → `{ excerpts }` (same order; read from git at that part's commit; a ref may carry
+ *   `from`/`to`, see {@link BlueprintExcerptRef})
  * - `quiz-delete` `{ id }` → `{}` (stops it first when running)
  * - `quiz-stack` `{ cwd, pr }` → `{ stack, source }`: the pull requests stacked with `pr`, bottom first, `pr` included
  *   (`source` says how it was found; a PR that is not part of a stack answers a one-element list with `"none"`)
@@ -243,7 +247,7 @@ export type QuizRequest =
 	| { t: "quiz-get"; reqId: number; id: string }
 	| { t: "quiz-answer"; reqId: number; id: string; attempt: string; question: string; text?: string; choice?: string }
 	| { t: "quiz-retry"; reqId: number; id: string; from?: string; only?: "all" | "missed" }
-	| { t: "quiz-excerpt"; reqId: number; id: string; part: number; refs: BlueprintRef[] }
+	| { t: "quiz-excerpt"; reqId: number; id: string; part: number; refs: BlueprintExcerptRef[] }
 	| { t: "quiz-delete"; reqId: number; id: string }
 	| { t: "quiz-stack"; reqId: number; cwd: string; pr: number };
 
@@ -252,6 +256,8 @@ export type QuizStackSource = "branches" | "body" | "none";
 export interface QuizGetAnswer {
 	quiz: Quiz;
 	attempts: QuizAttempt[];
+	/** Set on a quiz made for a high-stakes session: what passing it unlocks. */
+	stakes?: QuizStakes;
 }
 
 export type QuizExcerpt = BlueprintExcerpt;

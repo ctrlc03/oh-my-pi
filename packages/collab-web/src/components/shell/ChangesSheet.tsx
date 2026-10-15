@@ -42,6 +42,8 @@ export interface ChangesSheetProps {
 	onSendToAgent: ((text: string) => void) | null;
 	/** Start a quiz on this session's changes; null unless the paired computer can write quizzes. */
 	onQuiz?: (() => void) | null;
+	/** Open a quiz by id, on the computer that runs this session (the one a blocked push needs); null unless the paired computer can write quizzes. */
+	onOpenQuiz?: ((id: string) => void) | null;
 	/** Start a sparring session on this session's changes; null unless the paired computer can spar. */
 	onSpar?: (() => void) | null;
 	/** Start a bake-off on this session's changes; null unless the paired computer can run bake-offs. */
@@ -64,6 +66,7 @@ export function ChangesSheet({
 	sessionId,
 	onSendToAgent,
 	onQuiz,
+	onOpenQuiz,
 	onSpar,
 	onBakeoff,
 	onClose,
@@ -169,6 +172,7 @@ export function ChangesSheet({
 					busy={tree.busy}
 					title={tree.title}
 					diffReview={review}
+					onOpenQuiz={onOpenQuiz ?? null}
 				/>
 			) : (
 				<AgentEdits changes={changes} host={host} />

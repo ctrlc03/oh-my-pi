@@ -107,6 +107,29 @@
 	align-self: stretch;
 }
 
+/* A session's high-stakes mode was switched: a quiet line, not a prompt. */
+.tr-stakes {
+	display: flex;
+	align-items: flex-start;
+	align-self: stretch;
+	min-width: 0;
+	gap: 8px;
+	font-size: 12.5px;
+	line-height: 1.45;
+	color: var(--fg-muted);
+}
+
+.tr-stakes svg {
+	flex: none;
+	margin-top: 2px;
+	color: var(--warn);
+}
+
+.tr-stakes span {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
 /* The delivered output of a background job, inside its card row. */
 .tr-job-body {
 	font-family: var(--font-ui);
@@ -1226,6 +1249,7 @@
 @media (max-width: 640px) {
 	.tr-selbar {
 		bottom: max(12px, var(--safe-bottom));
+		flex-wrap: wrap;
 		gap: 4px;
 		padding: 8px;
 	}
@@ -1454,5 +1478,48 @@
 	}
 	.tr-jump-label {
 		display: none;
+	}
+}
+
+/* ---- hidden messages: a thin marker between hairlines, and dimmed blocks while shown in place ---- */
+
+.tr-hidden {
+	margin: 6px 0;
+}
+
+.tr-hidden[data-revealed] {
+	color: var(--fg-muted);
+}
+
+.tr-hidden-btn {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 22px;
+	padding: 0 10px;
+	font-size: 11.5px;
+	color: var(--fg-muted);
+	background: var(--bg-raised);
+	border: 1px solid var(--border-strong);
+	border-radius: 999px;
+	cursor: pointer;
+}
+
+.tr-hidden-btn:hover {
+	color: var(--fg);
+}
+
+.tr-block[data-hidden] {
+	opacity: 0.55;
+	border-style: dashed;
+}
+
+@media (any-pointer: coarse) {
+	/* Finger-sized without growing the thin marker. */
+	.tr-hidden-btn::before {
+		content: "";
+		position: absolute;
+		inset: -12px -6px;
 	}
 }

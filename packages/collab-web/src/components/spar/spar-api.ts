@@ -1,4 +1,4 @@
-import type { BlueprintExcerpt, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
+import type { BlueprintExcerpt, BlueprintExcerptRef } from "@oh-my-pi/pi-wire/blueprint";
 import type { SparCreate, SparGetAnswer, SparRecord, SparRun, SparSummary, SparTurn } from "@oh-my-pi/pi-wire/spar";
 import type { CompanionClient } from "../../lib/companion";
 
@@ -77,7 +77,7 @@ export async function getSparExcerpts(
 	client: CompanionClient,
 	id: string,
 	part: number,
-	refs: BlueprintRef[],
+	refs: BlueprintExcerptRef[],
 ): Promise<(BlueprintExcerpt | null)[]> {
 	const out: (BlueprintExcerpt | null)[] = [];
 	for (let at = 0; at < refs.length; at += SPAR_EXCERPT_BATCH) {

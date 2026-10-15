@@ -39,6 +39,13 @@ import type {
 	QuizSummary,
 	QuizVerdict,
 } from "@oh-my-pi/pi-wire/quiz";
+import type {
+	StakesChangedFrame,
+	StakesReply,
+	StakesRequest,
+	StakesSettings,
+	StakesStatus,
+} from "@oh-my-pi/pi-wire/stakes";
 import type { SparGetAnswer, SparRecord, SparRequest, SparRun, SparSummary, SparTurn } from "@oh-my-pi/pi-wire/spar";
 import type { BakeoffReply, BakeoffRequest } from "@oh-my-pi/pi-wire/bakeoff";
 import type { Schedule, ScheduleInput } from "@oh-my-pi/pi-wire/schedule";
@@ -54,6 +61,7 @@ import type {
 	FanoutRequest,
 	HostFanout,
 } from "./fanout";
+import type { HiddenDoc } from "./hidden-messages";
 import type { OrgDoc } from "./session-org";
 import { CollabSocket } from "./socket";
 
@@ -108,6 +116,8 @@ const PING_SAMPLES = 3;
 const AGENTS_REFRESH_TIMEOUT_MS = 60_000;
 /** Installing an ACP adapter runs `npm install` on the computer. */
 const AGENT_INSTALL_TIMEOUT_MS = 330_000;
+/** `stakes-quiz` writes the quiz's record and lists it as running before it answers. */
+const STAKES_QUIZ_TIMEOUT_MS = 60_000;
 export type { AgentRef };
 
 /** A model a foreign agent offers, by its vendor id; what `start`'s `model` takes. */
@@ -171,6 +181,8 @@ export interface CompanionHost {
 	relayConnected: boolean;
 	/** Started sandboxed: file tools only, writes confined to `cwd`. Absent from companions that predate it. */
 	sandboxed?: boolean;
+	/** Pushing and pull requests need a passed quiz on the session's changes (`@oh-my-pi/pi-wire/stakes`). Absent from companions that predate it. */
+	highStakes?: boolean;
 	/** Started by a best-of-N fan-out: the group it belongs to and the model it runs on. */
 	fanout?: HostFanout;
 	/** The vendor agent behind a foreign session; absent for an omp session. */
@@ -191,6 +203,8 @@ export interface CompanionIdleSession {
 	busy: boolean | null;
 	/** See {@link CompanionHost.sandboxed}. */
 	sandboxed?: boolean;
+	/** See {@link CompanionHost.highStakes}. */
+	highStakes?: boolean;
 	/** The vendor agent behind a foreign session; absent for an omp session. */
 	agent?: AgentRef;
 }
@@ -265,6 +279,8 @@ export interface GitReview {
 	pr: { number: number; url: string; state: string; title: string } | null;
 	/** The checkout is a linked git worktree. */
 	worktree: boolean;
+	/** The session's high-stakes state; present only from a companion with `canHighStakes`. */
+	stakes?: StakesStatus;
 }
 
 /** Text for the confirm dialog of "commit, push and open PR". */
@@ -976,6 +992,8 @@ export type CompanionRequest =
 			cwd: string;
 			resume?: string;
 			sandboxed?: boolean;
+			/** New sessions only (needs `canHighStakes`): block pushes and pull requests until a quiz on the session's changes is passed. Ignored for vendor agents. */
+			highStakes?: boolean;
 			worktree?: { branch?: string };
 			scratch?: { hint?: string };
 			prompt?: string;
@@ -1032,6 +1050,8 @@ export type CompanionRequest =
 	| { t: "session-search"; reqId: number; query: string; limit?: number }
 	/** Merge `doc` (the device's pin/snooze/settle document, when given) into the computer's, last writer winning per session; answered with the merged document (needs `sessionOrgRev`). */
 	| { t: "session-org"; reqId: number; doc?: OrgDoc }
+	/** Merge `doc` (the device's hidden messages of the session, when given) into the computer's, last writer winning per message id; answered with the merged document (needs `canHideMessages`). */
+	| { t: "hidden-messages"; reqId: number; sessionId: string; doc?: HiddenDoc }
 	/** The session's terminal: the screen of the tmux pane running it, plus recent scrollback. */
 	| { t: "pane"; reqId: number; instanceId: string }
 	/** Sessions that changed `path` (absolute, or relative to the repository root) in the session's repository; answered with `sessions`. */
@@ -1112,6 +1132,8 @@ export type CompanionRequest =
 	| SparRequest
 	/** Design bake-offs (needs `canBakeoff`); see `@oh-my-pi/pi-wire/bakeoff`. */
 	| BakeoffRequest
+	/** High-stakes sessions (needs `canHighStakes`); see `@oh-my-pi/pi-wire/stakes`. */
+	| StakesRequest
 	/** The Personal agent (needs `canPersonal`); see `@oh-my-pi/pi-wire/personal`. */
 	| PersonalRequest;
 
@@ -1137,6 +1159,8 @@ export type CompanionReply =
 			canBlueprint?: boolean;
 			/** The companion can write, grade and store quizzes on code changes (`quiz-*` requests). */
 			canQuiz?: boolean;
+			/** The companion can gate pushes and pull requests behind a quiz (`stakes-*` requests, `highStakes` on a host). */
+			canHighStakes?: boolean;
 			/** The companion can write, argue and store sparring sessions (`spar-*` requests). */
 			canSpar?: boolean;
 			/** The companion can run, review and store design bake-offs (`bakeoff-*` requests). */
@@ -1183,6 +1207,10 @@ export type CompanionReply =
 			canOrderSessions?: boolean;
 			/** The companion ends the sessions it started when they settle, if the organisation's `endOnSettle` setting is on. */
 			canEndOnSettle?: boolean;
+			/** The companion keeps the messages the user hid from the chat, per session, and answers `hidden-messages`. */
+			canHideMessages?: boolean;
+			/** Revision of the computer's hidden messages (any session); present with `canHideMessages`. A new number means fetch the open session's again. */
+			hiddenRev?: number;
 			/** The companion can transcribe voice recordings, and with which model; absent when it cannot. */
 			transcribe?: TranscribeInfo;
 			/** Power of the computer; absent off macOS and from companions that predate it. */
@@ -1234,6 +1262,7 @@ export type CompanionReply =
 	| { t: "sessions"; reqId: number; sessions: SessionOverview[] }
 	| { t: "session-search"; reqId: number; results: SessionSearchHit[]; truncated: boolean }
 	| { t: "session-org"; reqId: number; doc: OrgDoc; rev: number }
+	| { t: "hidden-messages"; reqId: number; sessionId: string; doc: HiddenDoc; rev: number }
 	| { t: "pane"; reqId: number; pane: PaneCapture }
 	| { t: "codemap"; reqId: number; view: CodemapView }
 	| { t: "codemap-search"; reqId: number; hits: CodemapNode[] }
@@ -1275,6 +1304,9 @@ export type CompanionReply =
 	| { t: "quiz-stack"; reqId: number; stack: QuizStackPr[]; source: QuizStackSource }
 	/** Pushed to every authenticated device when a quiz's summary changes (progress, done, failed, answered); carries no `reqId`. */
 	| { t: "quiz-changed"; id: string }
+	| StakesReply
+	/** Pushed to every authenticated device when a session's high-stakes state changed (mode, pass, quiz); carries no `reqId`. */
+	| StakesChangedFrame
 	| { t: "spar-list"; reqId: number; spars: SparSummary[] }
 	| { t: "spar-create"; reqId: number; id: string }
 	| ({ t: "spar-get"; reqId: number } & SparGetAnswer)
@@ -1409,6 +1441,8 @@ export interface CompanionSnapshot {
 	canBlueprint: boolean;
 	/** The companion can write, grade and store quizzes on code changes. */
 	canQuiz: boolean;
+	/** The companion can gate pushes and pull requests behind a quiz. */
+	canHighStakes: boolean;
 	/** The companion can write, argue and store sparring sessions on code changes and designs. */
 	canSpar: boolean;
 	/** The companion can run, review and store design bake-offs. */
@@ -1455,6 +1489,10 @@ export interface CompanionSnapshot {
 	canOrderSessions: boolean;
 	/** The computer can end the sessions it started when they settle (`endOnSettle`); older ones leave them running. */
 	canEndOnSettle: boolean;
+	/** The computer keeps the messages hidden from the chat, per session, so every device shows the same ones. */
+	canHideMessages: boolean;
+	/** Revision of the computer's hidden messages; null when it keeps none (older companions). A new number means refetch. */
+	hiddenRev: number | null;
 	/** Voice input on the computer; null when the companion cannot transcribe. */
 	transcribe: TranscribeInfo | null;
 	/** Power of the computer, while the companion reports it. */
@@ -1477,6 +1515,7 @@ type CompanionAnswer = Exclude<
 			| "auth-failed"
 			| "blueprint-changed"
 			| "quiz-changed"
+			| "stakes-changed"
 			| "spar-changed"
 			| "bakeoff-changed"
 			| "personal-changed";
@@ -1507,6 +1546,7 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	canPr: false,
 	canBlueprint: false,
 	canQuiz: false,
+	canHighStakes: false,
 	canSpar: false,
 	canBakeoff: false,
 	canCodemap: false,
@@ -1531,6 +1571,8 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	sessionOrgRev: null,
 	canOrderSessions: false,
 	canEndOnSettle: false,
+	canHideMessages: false,
+	hiddenRev: null,
 	transcribe: null,
 	power: null,
 	vapidKey: null,
@@ -1543,6 +1585,7 @@ export class CompanionClient {
 	readonly #listeners = new Set<() => void>();
 	readonly #blueprintListeners = new Set<(id: string) => void>();
 	readonly #quizListeners = new Set<(id: string) => void>();
+	readonly #stakesListeners = new Set<(sessionId: string) => void>();
 	readonly #sparListeners = new Set<(id: string) => void>();
 	readonly #bakeoffListeners = new Set<(id: string) => void>();
 	readonly #personalListeners = new Set<(frame: PersonalChanged) => void>();
@@ -1650,6 +1693,14 @@ export class CompanionClient {
 		this.#quizListeners.add(listener);
 		return () => {
 			this.#quizListeners.delete(listener);
+		};
+	}
+
+	/** Called with a session id when the companion pushes that its high-stakes state changed (mode, pass, quiz). */
+	onStakesChanged(listener: (sessionId: string) => void): () => void {
+		this.#stakesListeners.add(listener);
+		return () => {
+			this.#stakesListeners.delete(listener);
 		};
 	}
 
@@ -1852,6 +1903,32 @@ export class CompanionClient {
 		return (await this.#call({ t: "pr-create", instanceId, title, body, draft }, "link", GIT_REMOTE_TIMEOUT_MS)).url;
 	}
 
+	/** A session's high-stakes state (needs `canHighStakes`). */
+	async stakesStatus(instanceId: string): Promise<StakesStatus> {
+		return (await this.#call({ t: "stakes-get", instanceId }, "stakes")).status;
+	}
+
+	/** Turn a session's high-stakes mode on or off (needs `canHighStakes`); the companion refuses off unless `confirmOff` is true, which the app sends only after asking the user. */
+	async setHighStakes(instanceId: string, on: boolean, options: { confirmOff?: boolean } = {}): Promise<StakesStatus> {
+		const confirmOff = options.confirmOff === true ? true : undefined;
+		return (await this.#call({ t: "stakes-set", instanceId, on, confirmOff }, "stakes")).status;
+	}
+
+	/** The quiz on exactly the diff a push needs covered: the one that exists, or a new one (needs `canHighStakes`). */
+	async stakesQuiz(instanceId: string): Promise<{ id: string; delta: boolean; created: boolean }> {
+		const { id, delta, created } = await this.#call(
+			{ t: "stakes-quiz", instanceId },
+			"stakes-quiz",
+			STAKES_QUIZ_TIMEOUT_MS,
+		);
+		return { id, delta, created };
+	}
+
+	/** The companion-wide high-stakes settings; `passMark` (a whole percent from 50 to 100) replaces the mark first (needs `canHighStakes`). */
+	async stakesSettings(passMark?: number): Promise<StakesSettings> {
+		return (await this.#call({ t: "stakes-settings", passMark }, "stakes-settings")).settings;
+	}
+
 	/** Remove the linked worktree at `path` (under the companion's worktrees folder); its branch stays. */
 	async removeWorktree(path: string): Promise<void> {
 		await this.#call({ t: "worktree-remove", path }, "ok", GIT_WRITE_TIMEOUT_MS);
@@ -1926,6 +2003,12 @@ export class CompanionClient {
 	/** Merge this device's session organisation into the computer's and read the result (needs `sessionOrgRev`). */
 	async syncSessionOrg(doc?: OrgDoc): Promise<{ doc: OrgDoc; rev: number }> {
 		const reply = await this.#call({ t: "session-org", doc }, "session-org");
+		return { doc: reply.doc, rev: reply.rev };
+	}
+
+	/** Merge this device's hidden messages of a session into the computer's and read the result (needs `canHideMessages`). */
+	async syncHiddenMessages(sessionId: string, doc?: HiddenDoc): Promise<{ doc: HiddenDoc; rev: number }> {
+		const reply = await this.#call({ t: "hidden-messages", sessionId, doc }, "hidden-messages");
 		return { doc: reply.doc, rev: reply.rev };
 	}
 
@@ -2074,6 +2157,7 @@ export class CompanionClient {
 		options: {
 			resume?: string;
 			sandboxed?: boolean;
+			highStakes?: boolean;
 			worktree?: { branch?: string };
 			scratch?: { hint?: string };
 			prompt?: string;
@@ -2228,6 +2312,7 @@ export class CompanionClient {
 				canPr: frame.canPr ?? false,
 				canBlueprint: frame.canBlueprint ?? false,
 				canQuiz: frame.canQuiz ?? false,
+				canHighStakes: frame.canHighStakes ?? false,
 				canSpar: frame.canSpar ?? false,
 				canBakeoff: frame.canBakeoff ?? false,
 				canCodemap: frame.canCodemap ?? false,
@@ -2252,6 +2337,8 @@ export class CompanionClient {
 				sessionOrgRev: frame.sessionOrgRev ?? null,
 				canOrderSessions: frame.canOrderSessions ?? false,
 				canEndOnSettle: frame.canEndOnSettle ?? false,
+				canHideMessages: frame.canHideMessages ?? false,
+				hiddenRev: frame.hiddenRev ?? null,
 				transcribe: frame.transcribe ?? null,
 				power: frame.power ?? null,
 				vapidKey: frame.vapidKey,
@@ -2265,6 +2352,10 @@ export class CompanionClient {
 		}
 		if (frame.t === "quiz-changed") {
 			for (const listener of this.#quizListeners) listener(frame.id);
+			return;
+		}
+		if (frame.t === "stakes-changed") {
+			for (const listener of this.#stakesListeners) listener(frame.sessionId);
 			return;
 		}
 		if (frame.t === "spar-changed") {

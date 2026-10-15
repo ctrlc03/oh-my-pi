@@ -20,6 +20,7 @@ import {
 } from "../../lib/blocks";
 import type { ActiveTool } from "../../lib/client";
 import { messageText } from "../../lib/format";
+import { blocksMemberIds, exchangeBlocks, memberIds } from "../../lib/hidden-messages";
 import {
 	type Axis,
 	classifyAxis,
@@ -33,7 +34,7 @@ import {
 import { copyText, shareText } from "../../lib/share";
 import { IS_MAC, shortcutFires } from "../../lib/shortcuts";
 import { focusedPane } from "../../lib/use-split";
-import { type BlockApi, type BlocksContextValue, COPIED_MS } from "./Block";
+import { type BlockApi, type BlockHideApi, type BlocksContextValue, COPIED_MS, type HideView } from "./Block";
 import { BlockSheet } from "./BlockSheet";
 import { BlockTextSheet } from "./BlockTextSheet";
 import { SelectionBar } from "./SelectionBar";
@@ -149,8 +150,20 @@ interface Touch {
 	tapOnly: boolean;
 }
 
+/** What hiding messages needs of the transcript; absent where messages cannot be hidden. */
+export interface HideArgs {
+	/** Every block in order, those hidden included: an exchange runs from a prompt to the next one whatever is hidden. */
+	all: readonly Block[];
+	view: HideView;
+	/** Ids of the blocks still running (or waiting on the agent): they cannot be hidden. */
+	live: ReadonlySet<string>;
+	/** Hide the messages `ids`, `count` blocks' worth. */
+	hide(ids: readonly string[], count: number): void;
+	unhide(ids: readonly string[]): void;
+}
+
 export interface UseBlocksArgs {
-	/** The blocks the transcript renders, in order. */
+	/** The blocks the transcript renders, in order: hidden ones are in only while shown. */
 	blocks: readonly Block[];
 	rootRef: RefObject<HTMLDivElement | null>;
 	/** Running tools: a block's copy includes the output so far. */
@@ -160,6 +173,7 @@ export interface UseBlocksArgs {
 	onSendToAgent?: (text: string) => void;
 	onEdit?: (entryId: string) => void;
 	onChanges?: (entryId: string) => void;
+	hide?: HideArgs;
 }
 
 export interface UseBlocks {
@@ -194,6 +208,7 @@ export function useBlocks({
 	onSendToAgent,
 	onEdit,
 	onChanges,
+	hide,
 }: UseBlocksArgs): UseBlocks {
 	const [selection, setSelection] = useState<BlockSelection>(NO_SELECTION);
 	const [selectMode, setSelectMode] = useState(false);
@@ -203,8 +218,9 @@ export function useBlocks({
 	const noHover = useNoHover();
 
 	const byId = useMemo(() => new Map(blocks.map(block => [block.id, block])), [blocks]);
-	const latest = useRef({ blocks, byId, active, selection, selectMode, onSendToAgent });
-	latest.current = { blocks, byId, active, selection, selectMode, onSendToAgent };
+	const latest = useRef({ blocks, byId, active, selection, selectMode, onSendToAgent, hide });
+	latest.current = { blocks, byId, active, selection, selectMode, onSendToAgent, hide };
+	const canHide = hide !== undefined;
 
 	// Blocks that leave the transcript (the view switched, the window trimmed) leave the selection.
 	useEffect(() => {
@@ -223,6 +239,35 @@ export function useBlocks({
 	}, []);
 
 	const api = useMemo<BlockApi>(() => {
+		/** Hide `blocks` that are not hidden yet and not running; nothing when any of them is running. */
+		const hideBlocks = (picked: readonly Block[]): void => {
+			const h = latest.current.hide;
+			if (h === undefined || picked.length === 0 || picked.some(block => h.live.has(block.id))) return;
+			const fresh = picked.filter(block => !h.view.slots.has(block.id));
+			if (fresh.length > 0) h.hide(blocksMemberIds(fresh), fresh.length);
+		};
+		const allById = (id: string): Block | undefined => latest.current.hide?.all.find(block => block.id === id);
+		const hideApi: BlockHideApi = {
+			can: id => latest.current.hide?.live.has(id) === false && allById(id) !== undefined,
+			canExchange: id => {
+				const h = latest.current.hide;
+				const exchange = h === undefined ? [] : exchangeBlocks(h.all, id);
+				return h !== undefined && exchange.length > 0 && exchange.every(block => !h.live.has(block.id));
+			},
+			isHidden: id => latest.current.hide?.view.slots.has(id) === true,
+			hide(id) {
+				const block = allById(id);
+				if (block !== undefined) hideBlocks([block]);
+			},
+			hideExchange(id) {
+				const h = latest.current.hide;
+				if (h !== undefined) hideBlocks(exchangeBlocks(h.all, id));
+			},
+			unhide(id) {
+				const block = allById(id);
+				if (block !== undefined) latest.current.hide?.unhide(memberIds(block));
+			},
+		};
 		const get = (id: string): Block | undefined => {
 			const block = latest.current.byId.get(id);
 			return block === undefined ? undefined : liveBlock(block, latest.current.active);
@@ -248,8 +293,9 @@ export function useBlocks({
 				if (block !== undefined) latest.current.onSendToAgent?.(blocksQuote([block]));
 			},
 			openSheet: setSheetId,
+			hide: canHide ? hideApi : undefined,
 		};
-	}, []);
+	}, [canHide]);
 
 	const copyBlock = useCallback(
 		(id: string): void => {
@@ -492,14 +538,18 @@ export function useBlocks({
 			selectMode,
 			canSend: onSendToAgent !== undefined,
 			api,
+			hide: hide?.view ?? null,
 		}),
-		[byId, selection.ids, copied, selectMode, onSendToAgent, api],
+		[byId, selection.ids, copied, selectMode, onSendToAgent, api, hide?.view],
 	);
 
 	const sheetBlock = sheetId === null ? undefined : byId.get(sheetId);
 	const textBlock = textId === null ? undefined : byId.get(textId);
 	const chosenCount = selection.ids.size;
 	const showBar = selectMode || (chosenCount > 0 && (noHover || chosenCount > 1));
+	const picked = hide === undefined ? [] : selectedBlocks(selection, blocks);
+	const pickedHide = picked.filter(block => !hide?.view.slots.has(block.id) && !hide?.live.has(block.id));
+	const pickedUnhide = picked.filter(block => hide?.view.slots.has(block.id));
 	const overlay = (
 		<>
 			{sheetBlock !== undefined && (
@@ -530,6 +580,22 @@ export function useBlocks({
 					<SelectionBar
 						count={chosenCount}
 						canSend={onSendToAgent !== undefined}
+						hide={
+							hide === undefined
+								? undefined
+								: {
+										hideCount: pickedHide.length,
+										unhideCount: pickedUnhide.length,
+										onHide: () => {
+											hide.hide(blocksMemberIds(pickedHide), pickedHide.length);
+											clear();
+										},
+										onUnhide: () => {
+											hide.unhide(blocksMemberIds(pickedUnhide));
+											clear();
+										},
+									}
+						}
 						onCopy={() => copyText(blocksMarkdown(chosen()))}
 						onSend={() => {
 							onSendToAgent?.(blocksQuote(chosen()));

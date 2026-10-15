@@ -11,6 +11,9 @@
  * The same server also carries the Personal agent's channel (`POST /personal` from its session, `POST /event` from local
  * scripts) under a second token of its own, so the schedule token never authorizes it. Those two paths answer 404 until
  * the Personal profile exists (`personal.serving()`), and the token is only written to a file by `publishPersonal`.
+ *
+ * High-stakes sessions' `pre-push` hook (./companion-stakes-hook) asks `POST /stakes/pre-push` under a third token, written
+ * by `publishStakes`: it only answers whether pushing these commits is allowed, so it can neither change a mode nor pass a quiz.
  */
 
 import * as crypto from "node:crypto";
@@ -24,6 +27,7 @@ import type {
 } from "@oh-my-pi/pi-wire/personal-ipc";
 import { MAX_PERSONAL_BODY_BYTES } from "@oh-my-pi/pi-wire/personal-ipc";
 import type { ScheduleIpcEndpoint, ScheduleIpcReply, ScheduleIpcRequest } from "@oh-my-pi/pi-wire/schedule";
+import { STAKES_PRE_PUSH_PATH } from "@oh-my-pi/pi-wire/stakes";
 import { type Scheduler, type ValidateDeps, parseScheduleInput } from "./companion-schedule";
 
 const MAX_BODY_BYTES = 256 * 1024;
@@ -38,12 +42,25 @@ export interface PersonalIpcHandlers {
 	event(input: unknown): Promise<{ status: number; reply: PersonalEventPostReply }>;
 }
 
+/** Where the pre-push hook finds the companion: written to `<agent dir>/collab-companion-stakes-ipc` (mode 0600). */
+export interface StakesIpcEndpoint {
+	port: number;
+	token: string;
+	pid: number;
+}
+
+/** What the high-stakes pre-push hook's loopback path calls into (see ./companion-stakes). */
+export interface StakesIpcHandlers {
+	prePush(body: string): Promise<{ allow: boolean; message: string }>;
+}
+
 export interface ScheduleIpcOptions {
 	/** Where the endpoint (port and token) is published. */
 	file: string;
 	scheduler: Pick<Scheduler, "list" | "save" | "remove">;
 	validate: ValidateDeps;
 	personal?: PersonalIpcHandlers;
+	stakes?: StakesIpcHandlers;
 }
 
 export interface ScheduleIpc {
@@ -54,6 +71,10 @@ export interface ScheduleIpc {
 	publishPersonal(file: string): Promise<void>;
 	/** Publish a copy of the schedule endpoint, for a profile whose `schedule` tool looks in its own agent dir. */
 	publishSchedule(file: string): Promise<void>;
+	/** The pre-push hook's endpoint: the same port, its own token. Not written anywhere until {@link publishStakes}. */
+	stakesEndpoint: StakesIpcEndpoint;
+	/** Publish the pre-push hook's endpoint (mode 0600) where the hook looks. */
+	publishStakes(file: string): Promise<void>;
 	/** Remove a file published here, when it is still ours. */
 	unpublish(file: string): Promise<void>;
 	/** Stop listening and remove the endpoint files (when they are still ours). */
@@ -108,6 +129,21 @@ async function removeIfOurs(file: string, token: string): Promise<void> {
 	if (published?.token === token) await fs.rm(file, { force: true });
 }
 
+/** Serve the pre-push hook's question (`POST /stakes/pre-push`); the caller has checked the Origin header and method. */
+async function serveStakes(stakes: StakesIpcHandlers, token: string, req: Request): Promise<Response> {
+	const reply = (status: number, text: string): Response =>
+		new Response(text, { status, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+	if (!tokenMatches(req.headers.get("authorization"), token)) return reply(401, "unauthorized\n");
+	const text = await req.text();
+	if (text.length > MAX_BODY_BYTES) return reply(413, "request too large\n");
+	try {
+		const answer = await stakes.prePush(text);
+		return reply(200, answer.allow ? "allow\n" : `deny\n${answer.message}\n`);
+	} catch (err) {
+		return reply(200, `deny\nThe companion could not check the quiz: ${errorText(err)}\n`);
+	}
+}
+
 /** Serve `/personal` and `/event`; the caller has checked the Origin header, method and path. */
 async function servePersonal(
 	personal: PersonalIpcHandlers,
@@ -145,6 +181,7 @@ async function servePersonal(
 export async function startScheduleIpc(options: ScheduleIpcOptions): Promise<ScheduleIpc> {
 	const token = crypto.randomBytes(32).toString("base64url");
 	const personalToken = crypto.randomBytes(32).toString("base64url");
+	const stakesToken = crypto.randomBytes(32).toString("base64url");
 	const published: { file: string; token: string }[] = [];
 	const server = Bun.serve({
 		hostname: "127.0.0.1",
@@ -156,6 +193,8 @@ export async function startScheduleIpc(options: ScheduleIpcOptions): Promise<Sch
 			if (req.headers.has("origin") || req.method !== "POST") return reply(404, { ok: false, error: "not found" });
 			if (options.personal && (url.pathname === "/personal" || url.pathname === "/event"))
 				return await servePersonal(options.personal, personalToken, req, url.pathname);
+			if (options.stakes && url.pathname === STAKES_PRE_PUSH_PATH)
+				return await serveStakes(options.stakes, stakesToken, req);
 			if (url.pathname !== "/schedule") return reply(404, { ok: false, error: "not found" });
 			if (!tokenMatches(req.headers.get("authorization"), token))
 				return reply(401, { ok: false, error: "unauthorized" });
@@ -174,6 +213,7 @@ export async function startScheduleIpc(options: ScheduleIpcOptions): Promise<Sch
 	if (port === undefined) throw new Error("schedule channel did not get a port");
 	const endpoint: ScheduleIpcEndpoint = { port, token, pid: process.pid };
 	const personalEndpoint: PersonalIpcEndpoint = { port, token: personalToken, pid: process.pid };
+	const stakesEndpoint: StakesIpcEndpoint = { port, token: stakesToken, pid: process.pid };
 	await writeEndpoint(options.file, endpoint);
 	published.push({ file: options.file, token });
 	const unpublish = async (file: string): Promise<void> => {
@@ -189,8 +229,10 @@ export async function startScheduleIpc(options: ScheduleIpcOptions): Promise<Sch
 	return {
 		endpoint,
 		personalEndpoint,
+		stakesEndpoint,
 		publishPersonal: file => publish(file, personalEndpoint, personalToken),
 		publishSchedule: file => publish(file, endpoint, token),
+		publishStakes: file => publish(file, stakesEndpoint, stakesToken),
 		unpublish,
 		async stop() {
 			await server.stop(true);

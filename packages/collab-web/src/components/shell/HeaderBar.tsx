@@ -13,6 +13,8 @@ import { OmpMark } from "./OmpMark";
 import { SessionSheet } from "./SessionSheet";
 import { TOP_BAR_ICONS } from "./top-bar-icons";
 import { PHONE_QUERY, useMedia } from "../codemap/shared";
+import type { HiddenMessagesControl } from "./HiddenMessages";
+import { HighStakesMark, type StakesControl } from "./StakesControl";
 import type { TurnUndoControl } from "./TurnUndo";
 
 const PHASE_LABEL: Record<ConnectionPhase, string> = {
@@ -30,6 +32,8 @@ export interface HeaderBarProps {
 	readOnly: boolean;
 	/** The paired computer reports this session as sandboxed (file tools only, edits confined to its folder). */
 	sandboxed: boolean;
+	/** This session's high-stakes mode; null unless the paired computer can gate pushes behind a quiz and this is an omp session. */
+	highStakes: StakesControl | null;
 	subCount: number;
 	railOpen: boolean;
 	onToggleRail(): void;
@@ -94,6 +98,8 @@ export interface HeaderBarProps {
 	onSessionCommand(cmd: SessionCommand, arg?: string): void;
 	/** Undo and redo of the last turn; undefined unless the host advertises `undo` and this guest may write. */
 	turnUndo: TurnUndoControl | undefined;
+	/** Messages hidden from this session's chat; undefined where none can be. */
+	hiddenMessages: HiddenMessagesControl | undefined;
 	/** Host ranking of what fills the context; undefined unless the host advertises `context-items`, null until it replies. */
 	contextItems: ContextItemsInfo | null | undefined;
 	/** The host can watch pull requests (feature `pr-watch`). */
@@ -109,6 +115,7 @@ export const HeaderBar = memo(function HeaderBar({
 	phase,
 	readOnly,
 	sandboxed,
+	highStakes,
 	agent,
 	canPermission,
 	subCount,
@@ -149,6 +156,7 @@ export const HeaderBar = memo(function HeaderBar({
 	models,
 	onSessionCommand,
 	turnUndo,
+	hiddenMessages,
 	contextItems,
 	canWatchPr,
 	exportMarkdown,
@@ -246,6 +254,7 @@ export const HeaderBar = memo(function HeaderBar({
 								<ShieldCheck size={12} />
 							</span>
 						)}
+						{highStakes?.on && <HighStakesMark />}
 						<AgentChip agent={agent} variant="mark" />
 						{state?.permission === "full" && (
 							<span
@@ -343,6 +352,7 @@ export const HeaderBar = memo(function HeaderBar({
 					phaseLabel={PHASE_LABEL[phase]}
 					readOnly={readOnly}
 					sandboxed={sandboxed}
+					highStakes={highStakes}
 					agent={agent}
 					canPermission={canPermission}
 					contextPct={pct}
@@ -474,6 +484,7 @@ export const HeaderBar = memo(function HeaderBar({
 					models={models}
 					onSessionCommand={onSessionCommand}
 					turnUndo={turnUndo}
+					hiddenMessages={hiddenMessages}
 					contextItems={contextItems}
 					canWatchPr={canWatchPr}
 					exportMarkdown={exportMarkdown}

@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added the agent side of high-stakes sessions (docs/collab.md, *High-stakes sessions*): `bash`, `eval`, `github` (`pr_create`, `pr_push`) and `debug` calls that publish (`git push` in any spelling including aliases, `--no-verify` and hook overrides, `gh`/`hub`/`glab` pull request create, merge and close, `gh api`/`curl` writes to pull request, merge, ref, commit and contents endpoints) get a tool-owned `deny` decision, which no approval mode, saved grant, `allow` rule or sandbox escalation lifts, while the checkout's mode in the companion's state file is on and its HEAD tree is not covered by a quiz pass; and a session writes a visible `high-stakes` marker when the mode changes (also for a change made while it was not running).
 - Added `describeJudge(settings, registry)` (`judgment`): what the `judge` role resolves to first, as `{ kind, explicit, label }` (`native`, `local` or `online`; whether `modelRoles.judge` names the model itself or the chain fell through to a general-purpose one; `provider/id`), or `undefined` when no model is available. Features that spend on judgments can show it before they rely on it.
 - Added the `onUsage` option to `openStandaloneJudge(cwd, purpose, { onUsage })`: it receives every billed judgment attempt (cache hits never), so a caller outside a session that enforces a spending limit can read the cost.
 - Added `StandaloneJudge.describe`, the `describeJudge` result of the judge `openStandaloneJudge` resolved, next to `native`.

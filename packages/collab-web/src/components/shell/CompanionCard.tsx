@@ -40,6 +40,7 @@ import { PersonalSlot } from "./PersonalEntry";
 import { QrScanner } from "./QrScanner";
 import { SchedulesEntry } from "./SchedulesSheet";
 import { SessionsSheet } from "./SessionsSheet";
+import { HighStakesChip } from "./StakesControl";
 import { StartSessionSheet } from "./StartSessionSheet";
 import { UsageSheet } from "./UsageSheet";
 
@@ -310,6 +311,7 @@ export function HostList({
 								{current && <span className="sh-chip">here</span>}
 								<AgentChip agent={host.agent} />
 								{host.sandboxed && <SandboxedChip />}
+								{host.highStakes === true && <HighStakesChip />}
 								{host.fanout && <FanoutChip fanout={host.fanout} />}
 								{joining === host.instanceId && <LoaderCircle size={13} className="sh-spin" />}
 							</span>
@@ -364,6 +366,7 @@ export function IdleList({ idle, joining, disabled, onShare }: IdleListProps): R
 								<span className="sh-recent-name">{hostTitle(session)}</span>
 								<AgentChip agent={session.agent} />
 								{session.sandboxed && <SandboxedChip />}
+								{session.highStakes === true && <HighStakesChip />}
 							</span>
 							<span className="sh-recent-meta">
 								{session.busy && <span className="sh-host-state sh-host-state-busy">working</span>}

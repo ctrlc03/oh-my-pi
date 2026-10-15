@@ -447,7 +447,9 @@
 	min-width: 0;
 }
 
+/* Column wide, not as wide as its longest code line: `.bo-cited` starts its children at their own width. */
 .bo-refs {
+	align-self: stretch;
 	align-items: stretch;
 	gap: 14px;
 }

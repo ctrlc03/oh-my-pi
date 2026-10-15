@@ -185,6 +185,7 @@
 
 ### Fixed
 
+- A bake-off entry's *Show code* list grew as wide as its longest code line, so on a computer it ran past the write-up column and was cut off, and the *Show 20 more lines* buttons looked empty (their labels were centred in the hidden part). The list now takes the column's width and long lines scroll inside the code box.
 - A quiz failed outright with "The agent's quiz could not be used (its file was not valid JSON)" when the question-writing agent made one slip, such as a stray closing brace. The agent now gets one more session, told what was wrong, on what is left of the writing share; only a second rejected file fails the quiz.
 - The Quizzes | Sparring switch on the quiz list is styled and marks the current tab, as the Sparring list's switch does.
 - The Changes sheet's title ("Agent edits") was squeezed into a column of single letters on a phone once its header held *Quiz me* and *Spar with this change*; the actions now drop to a row of their own when they do not fit beside the title.

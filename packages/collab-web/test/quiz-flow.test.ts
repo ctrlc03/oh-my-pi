@@ -1,5 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import type { Quiz, QuizAttempt, QuizQuestion, QuizStackPr, QuizSummary, QuizVerdict } from "@oh-my-pi/pi-wire/quiz";
+import type {
+	Quiz,
+	QuizAttempt,
+	QuizFocus,
+	QuizQuestion,
+	QuizStackPr,
+	QuizSummary,
+	QuizVerdict,
+} from "@oh-my-pi/pi-wire/quiz";
 import { QUIZ_MAX_ANSWER_CHARS, QUIZ_VERSION, scoreAttempt } from "@oh-my-pi/pi-wire/quiz";
 import {
 	answerKeyAction,
@@ -232,6 +240,8 @@ describe("the new-quiz form", () => {
 		useConversation: true,
 		stack: [] as QuizStackPr[],
 		scope: "stack" as const,
+		focus: "mixed" as QuizFocus,
+		canTopic: false,
 		limit: "1",
 		model: "",
 	};

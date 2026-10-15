@@ -145,7 +145,7 @@ describe("verifyQuiz", () => {
 		expect(result.questions[0]!.refs).toEqual([{ path: "src/a.ts", line: 2, token: "KEY" }]);
 		expect(result.questions[2]!.refs[0]).toMatchObject({ path: "src/b.ts", side: "base", token: "oldB" });
 		expect(result.stats).toMatchObject({ moved: 1, questionsDropped: 3 });
-		expect(result.warnings.join(" ")).toContain("it cites no code");
+		expect(result.warnings.join(" ")).toContain("it cites nothing");
 		expect(result.warnings.join(" ")).toContain("none of its citations held");
 		expect(Object.keys(result.keys)).toEqual(["q1", "q2", "q3"]);
 		expect(result.keys.q1!.rubric!.points).toEqual(["says why"]);

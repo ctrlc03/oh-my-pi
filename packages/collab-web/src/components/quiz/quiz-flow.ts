@@ -8,14 +8,18 @@ import type {
 	Quiz,
 	QuizAttempt,
 	QuizCreate,
+	QuizFocus,
+	QuizFolder,
 	QuizPart,
 	QuizQuestion,
 	QuizStackPr,
+	QuizSubject as QuizAbout,
 	QuizSummary,
 	QuizVerdictKind,
 } from "@oh-my-pi/pi-wire/quiz";
-import { QUIZ_MAX_ANSWER_CHARS } from "@oh-my-pi/pi-wire/quiz";
+import { QUIZ_DEFAULT_FOCUS, QUIZ_FOCUSES, QUIZ_MAX_ANSWER_CHARS } from "@oh-my-pi/pi-wire/quiz";
 import { quizPassed, type QuizStakes } from "@oh-my-pi/pi-wire/stakes";
+import { isProjectless } from "../../lib/start-session";
 
 /** Title of the one part of a quiz about a session's own changes when the quiz does not name it. */
 const CHANGES_TITLE = "What the session changed";
@@ -326,16 +330,90 @@ export type QuizSubject =
 	| { kind: "branch"; name: string }
 	| { kind: "pr"; number: number; title: string };
 
-/** The subject to offer for another quiz like `quiz`: its pull request (any one of a stack finds the rest), else the changes. */
-export function subjectOf(quiz: Quiz): QuizSubject {
+/** What the new-quiz form starts on: a {@link QuizSubject}, or the session's topic, design and implementation. */
+export type QuizStartSubject = QuizSubject | { kind: "topic" };
+
+/** The subject to offer for another quiz like `quiz`: its topic, its pull request (any one of a stack finds the rest), else the changes. */
+export function subjectOf(quiz: Quiz): QuizStartSubject {
+	if (quiz.about === "session") return { kind: "topic" };
 	const part = quiz.parts.find(item => item.pr !== undefined);
 	return part?.pr === undefined ? { kind: "changes" } : { kind: "pr", number: part.pr.number, title: part.title };
 }
 
+/** Whether a folder is known to be a git repository: assumed unless it is a scratch folder or the companion said otherwise. Only a companion that writes topic quizzes can quiz one that is not. */
+export function isGitFolder(cwd: string, canTopic: boolean, folder: QuizFolder | null): boolean {
+	return !canTopic || (!isProjectless(cwd) && folder?.git !== false);
+}
+
+export interface ChoiceContext {
+	/** The computer writes topic quizzes (`canQuizTopic`). */
+	canTopic: boolean;
+	/** The omp session the form is made from; null when none is at hand. */
+	sessionId: string | null;
+	/** The folder is a git repository ({@link isGitFolder}). */
+	git: boolean;
+	/** What the form was opened on: a quiz about changes is offered for it even without a session. */
+	subject: QuizStartSubject;
+}
+
+/** The subjects the form offers, in order: the diff ones need a git repository, the topic needs `canQuizTopic` and a session. */
+export function quizChoices({ canTopic, sessionId, git, subject }: ChoiceContext): QuizStartSubject["kind"][] {
+	const choices: QuizStartSubject["kind"][] = [];
+	if (git) {
+		if (sessionId !== null || subject.kind === "changes") choices.push("changes");
+		choices.push("branch", "pr");
+	}
+	if (canTopic && sessionId !== null) choices.push("topic");
+	return choices;
+}
+
+/** The labels of the focuses. */
+export const FOCUS_LABELS: Record<QuizFocus, string> = {
+	mixed: "Mixed",
+	understanding: "Understanding",
+	design: "Design",
+	implementation: "Implementation",
+};
+
+/** Why a topic quiz of a folder without code cannot lean on its implementation. */
+export const NO_CODE_REASON = "This folder has no code to ask about.";
+
+export interface FocusChoice {
+	value: QuizFocus;
+	label: string;
+	/** Why it cannot be picked; null when it can. */
+	disabled: string | null;
+}
+
+/**
+ * The focuses to offer, in order. *Implementation* is disabled for a topic quiz of a folder the companion says has
+ * no code; while the folder is unknown (loading, or the lookup failed) it stays enabled and the companion decides.
+ */
+export function focusChoices(kind: QuizStartSubject["kind"], folder: QuizFolder | null): FocusChoice[] {
+	return QUIZ_FOCUSES.map(value => ({
+		value,
+		label: FOCUS_LABELS[value],
+		disabled: value === "implementation" && kind === "topic" && folder?.code === false ? NO_CODE_REASON : null,
+	}));
+}
+
+/** The focus to use: the one picked, or Mixed when it is disabled for what is picked now. */
+export function effectiveFocus(focus: QuizFocus, choices: readonly FocusChoice[]): QuizFocus {
+	return choices.some(choice => choice.value === focus && choice.disabled === null) ? focus : QUIZ_DEFAULT_FOCUS;
+}
+
+/** Small tags a quiz shows beside its title: that it is about a session's topic, and the focus when it is not the balanced default. */
+export function aboutTags(quiz: { about?: QuizAbout; focus?: QuizFocus }): string[] {
+	const tags: string[] = [];
+	if (quiz.about === "session") tags.push("Topic");
+	if (quiz.focus !== undefined && quiz.focus !== QUIZ_DEFAULT_FOCUS) tags.push(FOCUS_LABELS[quiz.focus]);
+	return tags;
+}
+
 export interface QuizFormValues {
-	/** Any folder of the repository. */
+	/** Any folder of the repository (for a topic quiz, any folder). */
 	cwd: string;
-	subject: QuizSubject;
+	subject: QuizStartSubject;
 	/** The session whose conversation may be read; null: none to offer. */
 	sessionId: string | null;
 	/** The checkbox "Ask about why things were done". */
@@ -344,6 +422,10 @@ export interface QuizFormValues {
 	stack: readonly QuizStackPr[];
 	/** The radio: the whole stack, or only the pull request the form is about. */
 	scope: "stack" | "single";
+	/** What the questions lean on. */
+	focus: QuizFocus;
+	/** The computer writes topic quizzes (`canQuizTopic`); an older one ignores `focus`, so it is not sent. */
+	canTopic: boolean;
 	/** The cost-limit field as typed. */
 	limit: string;
 	/** The model field as typed; empty: the companion's default. */
@@ -364,7 +446,11 @@ export function buildCreate(values: QuizFormValues): { request: QuizCreate } | {
 	const request: QuizCreate = { cwd: values.cwd, maxCostUsd };
 	const model = values.model.trim();
 	if (model !== "") request.model = model;
-	if (values.subject.kind === "changes") {
+	if (values.subject.kind === "topic") {
+		if (values.sessionId === null) return { error: "Open a session to quiz its topic." };
+		request.sessionId = values.sessionId;
+		request.subject = "session";
+	} else if (values.subject.kind === "changes") {
 		request.ref = "@worktree";
 		request.base = "@default";
 		if (values.useConversation && values.sessionId !== null) request.sessionId = values.sessionId;
@@ -378,6 +464,7 @@ export function buildCreate(values: QuizFormValues): { request: QuizCreate } | {
 	} else {
 		request.pr = values.subject.number;
 	}
+	if (values.canTopic && values.focus !== QUIZ_DEFAULT_FOCUS) request.focus = values.focus;
 	return { request };
 }
 

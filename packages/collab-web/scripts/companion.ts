@@ -185,6 +185,7 @@ import {
 } from "./companion-sessions";
 import { COMPANION_RUN_DIR } from "./companion-sandbox";
 import { createSettleCleanup, loadSettleState, saveSettleState } from "./companion-settle";
+import { createDiskGuard, loadDiskFile, saveDiskFile } from "./companion-disk";
 import { createSessionLister } from "./companion-list";
 import { preferredRelayPort, startCompanionRelay } from "./companion-local-relay";
 import {
@@ -950,6 +951,35 @@ const sessionOrg = createSessionOrg({
 	exempt: sessionId => personal.exempt(sessionId),
 });
 
+const diskGuardPath = path.join(path.dirname(statePath), "collab-companion-disk.json");
+
+/** Watches free space under the worktrees and the home folder, warns, and (opt-in) cleans build output; see ./companion-disk. */
+const diskGuard = createDiskGuard({
+	initial: await loadDiskFile(diskGuardPath),
+	save: file => saveDiskFile(diskGuardPath, file),
+	machine,
+	home: os.homedir(),
+	dirs: () => worktreeLocations(gitFlow, worktreesDir),
+	sessions: async () => {
+		await loadSessions();
+		return [...knownHosts, ...knownIdle].map(session => ({
+			sessionId: session.sessionId,
+			name: session.sessionName || path.basename(session.cwd) || "session",
+			cwd: session.cwd,
+			busy: session.busy,
+			inputRequired: "inputRequired" in session && session.inputRequired === true,
+		}));
+	},
+	sessionsIn: tree => settleCleanup.sessionsIn(tree),
+	activity: sessionId => sessionOrg.file().activity[sessionId],
+	ignorePids: () => new Set([process.pid, ...knownPids.values()]),
+	alert: notice => {
+		for (const subscription of registry.subscriptions()) push(subscription, notice, notice.tag);
+	},
+	onChange: () => void refresh(),
+	onError: err => console.error(`companion: disk check failed: ${errorText(err)}`),
+});
+
 const hiddenPath = path.join(path.dirname(statePath), "collab-companion-hidden.json");
 
 /** The messages the user hid from the chat, per session, so every device shows the same ones; see ./companion-hidden. */
@@ -1131,6 +1161,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canCodemap: codemapReady,
 		canBlueprint: codemapReady,
 		canQuiz: extras.canStart,
+		canQuizTopic: extras.canStart,
 		canHighStakes: extras.canStart,
 		canSpar: extras.canStart,
 		canBakeoff: extras.canStart,
@@ -1158,6 +1189,8 @@ async function refresh(targetPeer?: number): Promise<void> {
 		hiddenRev: hiddenMessages.file().rev,
 		transcribe: extras.transcribe ?? undefined,
 		power: power ?? undefined,
+		canDiskGuard: true,
+		disk: diskGuard.health() ?? undefined,
 		...personal.hostsFields(extras.canStart),
 	};
 	const json = JSON.stringify(frame);
@@ -2117,6 +2150,23 @@ room.onFrame = (frame, fromPeer) => {
 				};
 			});
 			return;
+		case "disk-guard":
+			respond(frame.reqId, async () => {
+				if (frame.settings !== undefined)
+					return { t: "disk-guard", reqId: frame.reqId, ...(await diskGuard.setSettings(frame.settings)) };
+				return { t: "disk-guard", reqId: frame.reqId, ...(await diskGuard.state()) };
+			});
+			return;
+		case "disk-scan":
+			respond(frame.reqId, async () => ({ t: "disk-scan", reqId: frame.reqId, ...(await diskGuard.scan()) }));
+			return;
+		case "disk-clean":
+			respond(frame.reqId, async () => {
+				if (!Array.isArray(frame.paths) || frame.paths.some(picked => typeof picked !== "string"))
+					throw new Error("invalid paths");
+				return { t: "disk-clean", reqId: frame.reqId, ...(await diskGuard.clean(frame.paths)) };
+			});
+			return;
 		case "usage":
 			respond(frame.reqId, async () => {
 				if (!isUsageRange(frame.range)) throw new Error("unknown usage range");
@@ -2391,6 +2441,12 @@ room.onFrame = (frame, fromPeer) => {
 			respond(frame.reqId, async () => {
 				if (typeof frame.cwd !== "string") throw new Error("invalid folder");
 				return { t: "quiz-stack", reqId: frame.reqId, ...(await quizzes.stack(frame.cwd, frame.pr)) };
+			});
+			return;
+		case "quiz-folder":
+			respond(frame.reqId, async () => {
+				if (typeof frame.cwd !== "string") throw new Error("invalid folder");
+				return { t: "quiz-folder", reqId: frame.reqId, folder: await quizzes.folder(frame.cwd) };
 			});
 			return;
 		case "spar-list":
@@ -2774,6 +2830,7 @@ room.onClose = (route, reason, willReconnect) => {
 
 room.connect();
 schedulePoll();
+diskGuard.start();
 // Loading the codemap module is slow and may fail on a checkout without the native extractor: never block startup on it.
 void loadCodemap().then(ready => {
 	codemapReady = ready;

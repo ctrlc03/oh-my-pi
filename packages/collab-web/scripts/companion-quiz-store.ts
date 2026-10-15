@@ -36,6 +36,11 @@ export interface QuizDoc {
 	generationCostUsd: number;
 	/** What grading open answers has cost so far, USD. */
 	gradingCostUsd: number;
+	/**
+	 * The files a quiz on the topic of a folder that is not a git repository cites, as lines by path, read when the quiz
+	 * was made so they do not change under it. A quiz of a git folder reads its commit instead; absent on any other quiz.
+	 */
+	files?: Record<string, string[]>;
 	/** Set on a quiz made for a high-stakes session's push. */
 	stakes?: QuizDocStakes;
 }

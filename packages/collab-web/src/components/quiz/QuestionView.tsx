@@ -1,6 +1,18 @@
 import type { Quiz, QuizAnswerRecord, QuizQuestion } from "@oh-my-pi/pi-wire/quiz";
 import { QUIZ_MAX_ANSWER_CHARS, QUIZ_POINTS } from "@oh-my-pi/pi-wire/quiz";
-import { ArrowRight, CircleAlert, CircleCheck, CircleX, ListChecks, LoaderCircle, Send } from "lucide-react";
+import {
+	ArrowRight,
+	BookOpen,
+	Bot,
+	CircleAlert,
+	CircleCheck,
+	CircleX,
+	ListChecks,
+	LoaderCircle,
+	MessageSquare,
+	Send,
+	User,
+} from "lucide-react";
 import type { FormEvent, KeyboardEvent, ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { refKey } from "../architecture/blueprint-model";
@@ -48,6 +60,8 @@ export interface QuestionViewProps {
 	next: { label: string; results: boolean } | null;
 	onNext(): void;
 	onBackToResults(): void;
+	/** Shows a message of the session's conversation in its transcript; absent when the quiz's session is not the one open. */
+	onShowEntry?(entry: string): void;
 }
 
 /**
@@ -70,10 +84,13 @@ export function QuestionView({
 	next,
 	onNext,
 	onBackToResults,
+	onShowEntry,
 }: QuestionViewProps): ReactNode {
 	const verdictRefs = (record?.verdict.refs ?? []).filter(
 		ref => !question.refs.some(own => refKey(own) === refKey(ref)),
 	);
+	const sessionRefs = question.session ?? [];
+	const hasCode = sessionRefs.length > 0 || question.refs.length > 0 || verdictRefs.length > 0;
 	return (
 		<div className="qz-question">
 			<div className="qz-qhead">
@@ -98,8 +115,15 @@ export function QuestionView({
 					<span className="qz-bar-fill" style={{ width: `${Math.round(progress.fraction * 100)}%` }} />
 				</div>
 			</div>
-			<div className="qz-split">
+			<div className={hasCode ? "qz-split" : "qz-split qz-split-solo"}>
 				<div className="qz-prompt-area">
+					{question.background === true && (
+						<div className="qz-chips">
+							<span className="qz-chip qz-chip-background">
+								<BookOpen size={11} aria-hidden="true" /> Background
+							</span>
+						</div>
+					)}
 					<div className="qz-prompt">
 						<Markdown text={question.prompt} />
 					</div>
@@ -110,16 +134,61 @@ export function QuestionView({
 						</details>
 					)}
 				</div>
-				<div className="qz-code-area">
-					<h3 className="qz-heading">{question.refs.length === 1 ? "The code" : "The code this is about"}</h3>
-					<QuizCode {...code} part={question.part} refs={question.refs} />
-					{verdictRefs.length > 0 && (
-						<>
-							<h3 className="qz-heading">What the explanation points at</h3>
-							<QuizCode {...code} part={question.part} refs={verdictRefs} />
-						</>
-					)}
-				</div>
+				{hasCode && (
+					<div className="qz-code-area">
+						{sessionRefs.length > 0 && (
+							<>
+								<h3 className="qz-heading">From the conversation</h3>
+								<ul className="qz-quotes">
+									{sessionRefs.map(cited => (
+										<li key={`${cited.entry}:${cited.quote}`} className="qz-quote" data-role={cited.role}>
+											<div className="qz-quote-head">
+												<span className="qz-quote-role">
+													{cited.role === "user" ? (
+														<User size={12} aria-hidden="true" />
+													) : (
+														<Bot size={12} aria-hidden="true" />
+													)}{" "}
+													{cited.role === "user" ? "You" : "Agent"}
+												</span>
+												{onShowEntry !== undefined && (
+													<button
+														type="button"
+														className="sh-btn qz-quote-show"
+														onClick={() => onShowEntry(cited.entry)}
+													>
+														<MessageSquare size={12} aria-hidden="true" /> Show in session
+													</button>
+												)}
+											</div>
+											<blockquote className="qz-quote-text">{cited.quote}</blockquote>
+										</li>
+									))}
+								</ul>
+							</>
+						)}
+						{question.refs.length > 0 && (
+							<>
+								<h3 className="qz-heading">
+									{quiz.about === "session"
+										? question.refs.length === 1
+											? "The file"
+											: "The files this is about"
+										: question.refs.length === 1
+											? "The code"
+											: "The code this is about"}
+								</h3>
+								<QuizCode {...code} part={question.part} refs={question.refs} />
+							</>
+						)}
+						{verdictRefs.length > 0 && (
+							<>
+								<h3 className="qz-heading">What the explanation points at</h3>
+								<QuizCode {...code} part={question.part} refs={verdictRefs} />
+							</>
+						)}
+					</div>
+				)}
 				<div className="qz-answer-area">
 					{record === undefined ? (
 						<AnswerBox

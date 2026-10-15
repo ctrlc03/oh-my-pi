@@ -309,6 +309,14 @@ export function unavailableReason(computer: ComputerHandle, feature: Feature): s
 	return snap[can] ? null : `This computer ${lacks}. Update omp there.`;
 }
 
+/** Whether the session's ⋯ menu offers *Quiz me on this session*: the computer writes quizzes on a session's topic (an older one writes only quizzes on changes) and a session is open. */
+export function topicQuizOffered(
+	snap: Pick<CompanionSnapshot, "canQuiz" | "canQuizTopic">,
+	sessionId: string | null,
+): boolean {
+	return snap.canQuiz && snap.canQuizTopic && sessionId !== null;
+}
+
 /**
  * The computer a new piece of work starts on: the one on screen, else the one used last, else the first
  * that can take it. Null when none can.

@@ -30,7 +30,7 @@ For each part write 3–5 open questions, and 1–2 multiple-choice questions. A
 
 Good questions test cause and effect, direction (A depends on B, not B on A), the difference between a type-level fact and a runtime one, ownership versus type, and why a seam sits where it does. Bad questions: names, counts, line numbers, "what does this function return" when the signature says so, "list the files", anything answerable without understanding the code, anything that needs knowledge outside this repository and the conversation. Write for someone who has seen the change once and has not memorised it. A good question can be answered in one to four sentences.
 
-Every question has:
+{{angle}}Every question has:
 
 - `prompt`: the question itself, one or two sentences, self-contained (it names the things it asks about).
 - `reminder`: a short paragraph (2–4 sentences) that recalls the idea the question rests on, the way a good tutor would before asking: it gives the concept and where it lives, but never the answer. The developer reads it before answering.

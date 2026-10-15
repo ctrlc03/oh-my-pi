@@ -64,11 +64,29 @@ export function renderExcerpts(excerpts: readonly (BlueprintExcerpt | null)[], m
 }
 
 export interface GradeInput {
-	question: Pick<QuizQuestion, "prompt" | "reminder" | "topic">;
+	question: Pick<QuizQuestion, "prompt" | "reminder" | "topic" | "background" | "session">;
 	partTitle: string;
 	rubric: NonNullable<QuizKey["rubric"]>;
 	excerpts: string;
+	/** What the quiz writer wrote of the facts the answer rests on (a question of general background knowledge always has it). */
+	explanation?: string;
 	answer: string;
+}
+
+/** What the grader is told besides the rubric and the code: the explanation, and the passages of the conversation the question cites. */
+export function renderReference(input: Pick<GradeInput, "question" | "explanation">): string {
+	const blocks: string[] = [];
+	if (input.question.background)
+		blocks.push(
+			"This question is about general background knowledge: it cites no code and no conversation. Grade the answer against the rubric and the explanation below.",
+		);
+	if (input.explanation) blocks.push(`## Explanation (the facts the answer rests on)\n\n${input.explanation}`);
+	const session = input.question.session ?? [];
+	if (session.length > 0)
+		blocks.push(
+			`## Passages of the conversation the question cites\n\n${session.map(ref => `${ref.role === "user" ? "The developer" : "The agent"}: "${ref.quote}"`).join("\n\n")}`,
+		);
+	return blocks.join("\n\n");
 }
 
 function bullets(items: readonly string[]): string {
@@ -85,7 +103,8 @@ export function buildGradePrompt(input: GradeInput): string {
 		points: bullets(input.rubric.points),
 		misconceptions: bullets(input.rubric.misconceptions),
 		modelAnswer: input.rubric.modelAnswer ?? "(none given)",
-		code: input.excerpts,
+		code: input.question.background ? "(none: a question of general background knowledge)" : input.excerpts,
+		reference: renderReference(input),
 		answer: input.answer,
 	}).trim();
 }

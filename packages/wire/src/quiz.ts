@@ -1,12 +1,19 @@
 /**
  * "Quiz me": questions that test whether you understood a set of code changes (a branch, a pull request, a
- * stack of pull requests, or what an agent session just changed), written by a read-only agent on the computer
- * and graded there. Every question cites the code it is about as `path@line@token` (the same citation as an
- * architecture map, {@link BlueprintRef}); the companion checks each citation against the commit before the quiz
- * is stored and drops a question whose citations all fail.
+ * stack of pull requests, or what an agent session just changed), or the topic, design and implementation of a
+ * session (its conversation and the files in its folder, with the topic's general background). The questions are
+ * written by a read-only agent on the computer and graded there. Every question cites what it is about, and the
+ * companion checks each citation before the quiz is stored and drops a question whose citations all fail:
  *
- * A quiz has one {@link QuizPart} per pull request of a stack (or one part for a single change), and 3–5
- * conceptual questions per part: why a dependency caused something, what a type change does, which message
+ * - code as `path@line@token` (the same citation as an architecture map, {@link BlueprintRef}), checked against the
+ *   commit of its part (or, for a folder that is not a git repository, against the file as read when the quiz was made);
+ * - a message of the session's conversation ({@link QuizSessionRef}): its entry id and a quoted passage, checked
+ *   against the session file;
+ * - nothing, for a question of general background knowledge ({@link QuizQuestion.background}); it carries an
+ *   explanation instead.
+ *
+ * A quiz has one {@link QuizPart} per pull request of a stack (or one part for a single change, or for a topic), and
+ * 3–5 conceptual questions per part: why a dependency caused something, what a type change does, which message
  * starts a flow. Most are `open` (answered in your own words, graded by a small model call against a hidden
  * rubric); some are `choice` (graded on the spot, no model).
  *
@@ -34,6 +41,18 @@ export const QUIZ_POINTS = { right: 1, partly: 0.5, wrong: 0 } as const;
 /** Code a question is about; verified like an architecture map's citation. `side: "base"` cites the code a change removed. */
 export type QuizRef = BlueprintRef;
 
+/** What a quiz asks about: the changes of a session or branch (the default), or the topic, design and implementation of a session. */
+export type QuizSubject = "changes" | "session";
+
+/** What a quiz leans on. `mixed` is the default and balances the others. */
+export type QuizFocus = "mixed" | "understanding" | "design" | "implementation";
+/** The focuses in the order a form lists them. */
+export const QUIZ_FOCUSES: readonly QuizFocus[] = ["mixed", "understanding", "design", "implementation"];
+/** The focus of a request that names none. */
+export const QUIZ_DEFAULT_FOCUS: QuizFocus = "mixed";
+/** Of the questions of a high-stakes quiz, about this share are design or understanding questions; the rest are about the changes. */
+export const QUIZ_STAKES_TOPIC_SHARE = 0.25;
+
 export type QuizQuestionKind = "open" | "choice";
 
 export interface QuizChoice {
@@ -42,18 +61,32 @@ export interface QuizChoice {
 	text: string;
 }
 
-/** One pull request of a stack, or the one change a quiz is about. */
+/** One pull request of a stack, or the one change a quiz is about, or the topic of a session. */
 export interface QuizPart {
 	/** Position in {@link Quiz.parts}, from 0. */
 	index: number;
-	/** The pull request's title, or the branch / "What the session changed". */
+	/** The pull request's title, or the branch / "What the session changed" / the topic of a session. */
 	title: string;
 	/** Set when the part is a pull request. */
 	pr?: { number: number; url?: string; head?: string; base?: string };
-	/** Commit the questions of this part cite (side `head`). */
+	/**
+	 * Commit the questions of this part cite (side `head`). A topic quiz of a git folder cites the working tree as
+	 * snapshotted when it was made, without a `base`; of a folder that is not a git repository, the placeholder
+	 * `{ commit: "folder" }`: its cited files are stored with the quiz and read from there.
+	 */
 	head: BlueprintCommit;
-	/** What `head` is compared with: citations of removed code (side `base`) read it. */
+	/** What `head` is compared with: citations of removed code (side `base`) read it. Absent on a topic quiz. */
 	base?: BlueprintCommit;
+}
+
+/** A message of the session's conversation a question is about. */
+export interface QuizSessionRef {
+	/** Id of the entry in the session (the id the transcript is scrolled to by). */
+	entry: string;
+	/** Who wrote the message. */
+	role: "user" | "assistant";
+	/** A passage of that message, checked to be in it (whitespace aside), shown with the question. */
+	quote: string;
 }
 
 export interface QuizQuestion {
@@ -67,8 +100,19 @@ export interface QuizQuestion {
 	reminder?: string;
 	/** Short name of what the question tests ("Dev-dependency cycles"): what the summary tells you to revisit. */
 	topic: string;
-	/** Verified citations: the code to show with the question, the first one is the main one. At least one. */
+	/**
+	 * Verified citations of code (or of a file of the session's folder): what to show with the question, the first one
+	 * is the main one. At least one, unless the question cites the conversation ({@link session}) or is
+	 * {@link background}, which have none.
+	 */
 	refs: QuizRef[];
+	/** Verified citations of the session's conversation. */
+	session?: QuizSessionRef[];
+	/**
+	 * General background knowledge the session and its files do not hold: no citation, and the answer key carries an
+	 * explanation. The app marks it so you know the code does not answer it.
+	 */
+	background?: boolean;
 	/** The options of a `choice` question, in the order to show them. */
 	choices?: QuizChoice[];
 }
@@ -85,6 +129,10 @@ export interface Quiz {
 	model?: string;
 	/** The omp session whose conversation the questions were written from, when one was given and could be read. */
 	sessionId?: string;
+	/** What the quiz asks about; absent on a quiz made before topic quizzes: its changes. */
+	about?: QuizSubject;
+	/** What it leans on; absent: `mixed`. */
+	focus?: QuizFocus;
 	parts: QuizPart[];
 	questions: QuizQuestion[];
 	/** Everything the build fixed, dropped or skipped, in plain words. */
@@ -184,13 +232,17 @@ export interface QuizSummary {
 	/** The limit this quiz was made with, USD. */
 	maxCostUsd?: number;
 	sessionId?: string;
+	/** What the quiz asks about; absent on a quiz made before topic quizzes: its changes. */
+	about?: QuizSubject;
+	/** What it leans on; absent: `mixed`. */
+	focus?: QuizFocus;
 	/** Set on a quiz made for a high-stakes session's push ({@link ./stakes}): whether it covers only the changes since the latest pass, and whether it has passed. */
 	stakes?: { delta: boolean; passed: boolean };
 }
 
 /** What to quiz. */
 export interface QuizCreate {
-	/** Any folder inside the repository. */
+	/** Any folder inside the repository; for `subject: "session"`, any folder, a git repository or not. */
 	cwd: string;
 	/**
 	 * Branch, tag, commit, or `@worktree` (the folder's current files, uncommitted changes included, snapshotted without
@@ -208,6 +260,20 @@ export interface QuizCreate {
 	/** Spend limit for the quiz, generation and grading together, USD. */
 	maxCostUsd?: number;
 	model?: string;
+	/**
+	 * What to quiz: `"changes"` (the default) a branch, a pull request, a stack or the session's worktree, as before; or
+	 * `"session"`, the topic, design and implementation of the session `sessionId`, which is required: its
+	 * conversation, the files in `cwd` (a git folder's working tree as it is now, any other folder's files as they are
+	 * now, the cited ones stored with the quiz) and the topic's general background. `ref`, `base`, `pr` and `stack` are
+	 * ignored for it, and it needs no git repository. Needs the `canQuizTopic` capability.
+	 */
+	subject?: QuizSubject;
+	/**
+	 * What the questions lean on: `understanding` (the concepts of the topic), `design` (the choices and trade-offs),
+	 * `implementation` (how the code does it: refused for a folder without code) or `mixed` (the default). Also shapes a
+	 * quiz on changes, where `understanding` and `design` ask about the concepts and decisions behind the diff.
+	 */
+	focus?: QuizFocus;
 }
 
 /** A pull request of a detected stack. */
@@ -223,7 +289,9 @@ export interface QuizStackPr {
 
 /**
  * Companion requests (sent in the companion room like the other `t`-tagged requests, answered by `reqId`).
- * The companion advertises `canQuiz` in its hello when it supports them.
+ * The companion advertises `canQuiz` in its hello when it supports them, and `canQuizTopic` when it also writes quizzes
+ * on a session's topic (`subject: "session"`, `focus`, `quiz-folder`, session and background questions); a device
+ * that does not see `canQuizTopic` offers the quiz on changes only.
  *
  * - `quiz-list` `{ cwd? }` → `{ quizzes: QuizSummary[] }` (all repositories when `cwd` is omitted)
  * - `quiz-create` `QuizCreate` → `{ id }` (the quiz appears in the list as `running`)
@@ -233,11 +301,14 @@ export interface QuizStackPr {
  *   attempt (with its score) returned. An answered question cannot be answered again in the same attempt.
  * - `quiz-retry` `{ id, from?, only? }` → `{ attempt }`: a new attempt asking every question (`only: "all"`, the
  *   default) or the ones `from` (default: the latest attempt) did not answer right (`only: "missed"`)
- * - `quiz-excerpt` `{ id, part, refs }` → `{ excerpts }` (same order; read from git at that part's commit; a ref may carry
+ * - `quiz-excerpt` `{ id, part, refs }` → `{ excerpts }` (same order; read from git at that part's commit, or from the
+ *   files stored with a quiz on the topic of a folder that is not a git repository; a ref may carry
  *   `from`/`to`, see {@link BlueprintExcerptRef})
  * - `quiz-delete` `{ id }` → `{}` (stops it first when running)
  * - `quiz-stack` `{ cwd, pr }` → `{ stack, source }`: the pull requests stacked with `pr`, bottom first, `pr` included
  *   (`source` says how it was found; a PR that is not part of a stack answers a one-element list with `"none"`)
+ * - `quiz-folder` `{ cwd }` → `{ folder: QuizFolder }`: what a topic quiz of that folder can draw on, so a form can
+ *   disable the *Implementation* focus of a folder without code (needs `canQuizTopic`)
  *
  * The companion pushes `{ t: "quiz-changed", id }` when a quiz's summary changes (progress, done, failed, answered).
  */
@@ -249,7 +320,20 @@ export type QuizRequest =
 	| { t: "quiz-retry"; reqId: number; id: string; from?: string; only?: "all" | "missed" }
 	| { t: "quiz-excerpt"; reqId: number; id: string; part: number; refs: BlueprintExcerptRef[] }
 	| { t: "quiz-delete"; reqId: number; id: string }
-	| { t: "quiz-stack"; reqId: number; cwd: string; pr: number };
+	| { t: "quiz-stack"; reqId: number; cwd: string; pr: number }
+	| { t: "quiz-folder"; reqId: number; cwd: string };
+
+/** What a topic quiz can draw on in a folder. */
+export interface QuizFolder {
+	/** The folder is inside a git repository. */
+	git: boolean;
+	/** It holds source code (not only notes and documents), so the *Implementation* focus makes sense. */
+	code: boolean;
+	/** Files a topic quiz can read there (counted up to a limit). */
+	files: number;
+	/** Short name of the folder: the repository's, a scratch folder's label, or its last path part. */
+	name: string;
+}
 
 export type QuizStackSource = "branches" | "body" | "none";
 

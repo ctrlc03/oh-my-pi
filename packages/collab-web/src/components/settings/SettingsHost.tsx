@@ -1,3 +1,4 @@
+import { DISK_ROUTE } from "@oh-my-pi/pi-wire/disk";
 import { Settings } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo } from "react";
@@ -10,6 +11,7 @@ import {
 	useSettingsRequest,
 	visibleSettingsSections,
 } from "../../lib/settings-ui";
+import { subscribeRoute } from "../../lib/notify-route";
 import { IS_MAC, shortcutFires } from "../../lib/shortcuts";
 import { usePersonal } from "../../lib/use-personal";
 import type { SettingsEnv } from "./env";
@@ -65,6 +67,15 @@ export function SettingsHost({ env }: { env: SettingsEnv }): ReactNode {
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
 	}, []);
+
+	// A low-space notification names this route: it opens the section that holds the Disk space group.
+	useEffect(
+		() =>
+			subscribeRoute(route => {
+				if (route === DISK_ROUTE) openSettings("sessions");
+			}),
+		[],
+	);
 
 	return request === null ? null : (
 		<SettingsSheet key={request.id} initial={request.section} env={env} onClose={closeSettings} />

@@ -63,7 +63,7 @@ import { GuestClient } from "./lib/client";
 import { togglePalette, usePaletteEntries } from "./lib/palette";
 import { type CompanionHost, extractPairing, type PairingLink } from "./lib/companion";
 import { stakesOn, stakesToggleShown } from "./lib/stakes";
-import { type ComputerHandle, computerById, planOpen, resolveSessionHome } from "./lib/computers";
+import { type ComputerHandle, computerById, planOpen, resolveSessionHome, topicQuizOffered } from "./lib/computers";
 import { latestClear } from "./lib/context-clear";
 import { subscribeDraft } from "./lib/draft-bus";
 import { openDiagramFile, openSketch } from "./lib/diagram-store";
@@ -555,6 +555,7 @@ function Session({
 	// Quizzes are listed across the computers; quizzing this session's changes needs the computer that runs it.
 	const canQuiz = computers.some(candidate => candidate.client !== null && candidate.snap.canQuiz);
 	const canQuizHere = companionClient !== null && hostId !== null && computer?.snap.canQuiz === true;
+	const canQuizTopicHere = canQuizHere && computer !== null && topicQuizOffered(computer.snap, sessionId);
 	const quizPr = useCallback((pr: { number: number; title: string }) => {
 		setGithubOpen(false);
 		setQuiz({ view: "new", subject: { kind: "pr", ...pr } });
@@ -883,6 +884,17 @@ function Session({
 		setScreensOpen(true);
 	}, []);
 	const closeScreens = useCallback(() => setScreensOpen(false), []);
+	// Showing a quiz's citation of the conversation: the quiz gives way to the transcript, scrolled to that message.
+	// Opening a quiz clears the jump, so showing the same message again scrolls again.
+	const showQuizEntry = useCallback((entryId: string) => {
+		setQuiz(null);
+		setSearch(null);
+		setJumpTarget(entryId);
+	}, []);
+	const quizOpen = quiz !== null;
+	useEffect(() => {
+		if (quizOpen) setJumpTarget(null);
+	}, [quizOpen]);
 	const [changesOpen, setChangesOpen] = useState(false);
 	// A kept model-comparison winner opens on its branch review, where the pull request is made.
 	const [changesTab, setChangesTab] = useState<"branch" | undefined>(undefined);
@@ -900,6 +912,7 @@ function Session({
 		setQuiz({ view: "new", subject: { kind: "changes" } });
 	}, []);
 	const openQuizzes = useCallback(() => setQuiz({ view: "home" }), []);
+	const quizTopic = useCallback(() => setQuiz({ view: "new", subject: { kind: "topic" } }), []);
 	// The quiz a blocked push needs, opened on its own: the Changes and GitHub sheets give way to it.
 	const openStakesQuiz = useCallback(
 		(id: string) => {
@@ -1353,6 +1366,7 @@ function Session({
 				onOpenSparring={canSparHere ? openSparring : null}
 				onOpenBakeoff={canBakeoffHere ? openBakeoffs : null}
 				onOpenPane={canPane ? openPane : null}
+				onQuizTopic={canQuizTopicHere ? quizTopic : null}
 				onOpenPreview={canPreview ? openPreview : null}
 				onOpenGithub={canGithub ? openGithub : null}
 				onOpenRun={canRun ? openRun : null}
@@ -1630,6 +1644,7 @@ function Session({
 					onOpenHost={onOpenHost}
 					onOpenFile={canEdit ? openFile : undefined}
 					onBakeoff={canBakeoff ? bakeoffSpar : undefined}
+					onShowEntry={hostId !== null && sessionId !== null ? showQuizEntry : undefined}
 					onClose={() => setQuiz(null)}
 				/>
 			)}

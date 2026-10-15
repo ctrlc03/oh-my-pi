@@ -6,7 +6,7 @@
  *
  *   bun scripts/mock-companion.ts [--port 7468] [--web http://localhost:3000/] [--dir /tmp/mock-companion] [--session-link <room link>]
  *                                 [--machine <name>] [--hosts 1,2,3] [--session-id <id>]
- *                                 [--personal fresh|enabled] [--personal-login ready|missing] [--stakes on|off] [--stakes-on 7,9]
+ *                                 [--personal fresh|enabled] [--personal-login ready|missing] [--stakes on|off] [--stakes-on 7,9] [--disk on|off]
  *
  * `--machine` names the computer and gives its sessions ids of their own (the way two real computers never share a session id,
  * though their processes may share an instance id: `inst-1` here and there); `--hosts` lists only those fixture sessions
@@ -14,6 +14,10 @@
  * for `mock-host`): the `api-pagination` fixture session lists under it, so the session opened from the list is hosted by this computer and
  * its working-tree features (changes, quizzes, architecture maps of its changes) are offered. The room and its key are kept in `<--dir>/room.json`, so a restarted
  * mock is the same computer to the devices paired with it.
+ *
+ * A session without a project (`fhe-statistics`, `inst-12`) lists in a scratch folder (`TOPIC_CWD` in ./fixture-topic); `--topic` makes
+ * it the one `--session-link` opens (pair it with `mock-host.ts --topic`, whose talk about statistics on encrypted data the topic
+ * quizzes of ./mock-quiz cite), under `--session-id` or `mock-topic-session`, and `api-pagination` keeps its own id.
  *
  * Prints a pairing link (`#pair:…`); open it in as many browsers or tabs as you like (each
  * is a new device). It never touches ~/.omp, tmux, or GitHub: listing and pull request
@@ -46,6 +50,12 @@
  * default 90 % pass mark). `touch <--dir>/stakes-edit` simulates the agent editing a high-stakes session's files after a pass, so the next
  * quiz covers only what is new. A mode change is written to `<--dir>/stakes-markers.txt`, which `mock-host.ts --stakes-markers <that file>`
  * shows in its transcript as the session's marker.
+ *
+ * The disk guard (./mock-disk) is on unless `--disk off` (a companion that predates it: no capability, no warning, no Disk space group in
+ * Settings → Sessions). The mock computer is short on space (6.3 GB free of 500 GB, limit 40 GB by default) with five canned worktrees of
+ * build output: two the guard may delete, one a cargo build runs in (busy), one used an hour ago (recent) and one whose size could not be
+ * measured. *Clean now* removes what is picked and gives its size back as free space, so the warning clears once enough went. Nothing
+ * touches a real disk.
  */
 
 import * as fs from "node:fs/promises";
@@ -74,12 +84,14 @@ import { createMockBlueprint } from "./mock-blueprint";
 import { createMockFanout } from "./mock-fanout";
 import { createMockForeign, mockForeignHosts } from "./mock-foreign";
 import { createMockPersonal } from "./mock-personal";
+import { TOPIC_CWD, TOPIC_SESSION_ID } from "./fixture-topic";
 import { createMockQuiz, mockStackPrs } from "./mock-quiz";
 import { createMockSearch } from "./mock-search";
 import { createMockSpar } from "./mock-spar";
 import { createMockStakes } from "./mock-stakes";
 import { createMockStart } from "./mock-start";
 import { createMockSettle } from "./mock-settle";
+import { createMockDisk } from "./mock-disk";
 
 const POLL_MS = 3000;
 const argv = Bun.argv.slice(2);
@@ -93,6 +105,7 @@ await fs.mkdir(dir, { recursive: true });
 const webUrl = flag("--web", "http://localhost:3000/");
 const machine = flag("--machine", "");
 const joinedSessionId = flag("--session-id", "");
+const topicMode = argv.includes("--topic");
 const only = flag("--hosts", "")
 	.split(",")
 	.filter(n => n !== "")
@@ -127,11 +140,15 @@ const hosts: CompanionHost[] = [
 	host(3, "docs-pass", { inputRequired: true, busy: false }),
 	host(4, "merged-feature"),
 	host(5, "spike-wasm", { busy: true }),
-	host(7, "api-pagination", joinedSessionId === "" ? {} : { sessionId: joinedSessionId }),
+	host(7, "api-pagination", joinedSessionId === "" || topicMode ? {} : { sessionId: joinedSessionId }),
 	host(8, "release-notes"),
 	host(9, "perf-profiling"),
 	host(10, "i18n-strings"),
 	host(11, "ci-cache"),
+	host(12, "fhe-statistics", {
+		cwd: TOPIC_CWD,
+		...(topicMode ? { sessionId: joinedSessionId === "" ? TOPIC_SESSION_ID : joinedSessionId } : {}),
+	}),
 ].filter(h => only.length === 0 || only.includes(Number(h.instanceId.slice("inst-".length))));
 if (only.length === 0) hosts.push(...mockForeignHosts(now));
 const idle: CompanionIdleSession[] = [
@@ -309,6 +326,11 @@ const stakes = createMockStakes({
 	onHostsChanged: () => broadcast(),
 });
 
+/** The disk guard (./mock-disk): a computer short on space with canned worktrees to clean. `--disk off` is a companion that predates it: nothing advertised or answered. */
+const diskFlag = flag("--disk", "on");
+if (diskFlag !== "on" && diskFlag !== "off") throw new Error("--disk takes on or off");
+const disk = diskFlag === "on" ? await createMockDisk({ dir, onChange: () => broadcast() }) : undefined;
+
 /** Quizzes on code changes: a finished stack quiz, one half answered, a failed one; new ones tick to ready. `--quiz-stage-ms` slows the ticks. */
 const quiz = createMockQuiz({
 	instanceId: "inst-7",
@@ -387,6 +409,7 @@ function hostsFrame(): CompanionReply {
 		...foreign.capabilities,
 		...settle.capabilities,
 		...stakes.capabilities,
+		...disk?.hostsFields(),
 		...personal?.capabilities(),
 		canGithub: true,
 		idle: stakes.decorate(idle),
@@ -511,6 +534,15 @@ socket.onFrame = (frame, fromPeer) => {
 		socket.send({ t: "run-targets", reqId: frame.reqId, targets: MOCK_RUN_TARGETS }, fromPeer);
 	else if (stakes.handles(frame))
 		void stakes.answer(frame, `device-${fromPeer}`).then(
+			reply => socket.send(reply, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
+	else if (disk?.handles(frame))
+		void disk.answer(frame).then(
 			reply => socket.send(reply, fromPeer),
 			(err: unknown) =>
 				socket.send(

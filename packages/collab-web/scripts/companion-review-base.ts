@@ -13,7 +13,7 @@ import { holdCommit, readBlob, releaseCommits, resolveTarget, stackBase } from "
 import { checkCitations, readCitedFiles, type Side, Warnings } from "./companion-citations";
 import { assertRangeBudget, excerptOf, readExcerpts, splitLines } from "./companion-excerpt";
 import { partDiff } from "./companion-quiz-diff";
-import { type Digest, sessionDigest } from "./companion-quiz-digest";
+import { type Digest, type DigestOptions, sessionDigest } from "./companion-quiz-digest";
 import type { PrSource, StackPr } from "./companion-quiz-stack";
 import { findSessionFile } from "./companion-sessions";
 
@@ -236,19 +236,24 @@ export async function briefParts(
 	return out;
 }
 
-/** The conversation of a session as a brief shows it, or null (with a warning) when it cannot be read. */
+/**
+ * The conversation of a session as a brief shows it, or null (with a warning) when it cannot be read. `what` names what
+ * is written from it; the warning says it then comes from `without` alone. `ids` marks each message with its session
+ * entry id and returns the messages whole, so citations of them can be checked ({@link DigestOptions.ids}).
+ */
 export async function readDigest(
 	sessionsDir: string,
 	sessionId: string | undefined,
 	warnings: string[],
 	what: string,
+	options: DigestOptions & { without?: string } = {},
 ): Promise<Digest | null> {
 	if (!sessionId) return null;
 	const file = await findSessionFile(sessionsDir, sessionId);
-	const digest = file === null ? null : await sessionDigest(file, DIGEST_CHARS);
+	const digest = file === null ? null : await sessionDigest(file, DIGEST_CHARS, { ids: options.ids });
 	if (digest === null)
 		warnings.push(
-			`The conversation of session ${sessionId} could not be read, so the ${what} come from the code alone.`,
+			`The conversation of session ${sessionId} could not be read, so the ${what} come from ${options.without ?? "the code"} alone.`,
 		);
 	return digest;
 }

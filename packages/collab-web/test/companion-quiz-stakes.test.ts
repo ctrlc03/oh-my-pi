@@ -149,6 +149,10 @@ describe("a quiz for a high-stakes session", () => {
 		await h.quizzes.idle();
 		expect(h.launches[0]!.prompt).toContain("### src/runtime.ts (added)");
 		expect(h.launches[0]!.prompt).not.toContain("### src/store.ts");
+		// Mostly the changes, with about a quarter design and understanding questions, about the new changes only.
+		expect(h.launches[0]!.prompt).toContain("about a quarter (25 %)");
+		expect(h.launches[0]!.prompt).toContain("never more than a third");
+		expect(h.launches[0]!.prompt).toContain("these questions concern the new changes only");
 		expect(h.quizzes.summary(id)).toMatchObject({
 			status: "ready",
 			stakes: { delta: true, passed: false },
@@ -160,6 +164,25 @@ describe("a quiz for a high-stakes session", () => {
 			passMark: 90,
 		});
 		expect(await git(repo, "for-each-ref", "refs/omp-blueprint/maps/stakes")).toBe("");
+	});
+
+	it("mixes in design and understanding questions of the changes, grounded in the session, and leaves the pass rule alone", async () => {
+		const h = harness("mix");
+		const { id } = await h.quizzes.createForStakes({
+			cwd: repo,
+			sessionId: "01a12fa5-758e-7595-b768-bb9462d6e44e",
+			head: { commit: second },
+			base: { commit: first },
+			stakes: stakesOf(false, second, first),
+		});
+		await h.quizzes.idle();
+		const prompt = h.launches[0]!.prompt;
+		expect(prompt).toContain("about a quarter (25 %)");
+		expect(prompt).toContain("These questions concern the changes below");
+		expect(prompt).not.toContain("new changes only");
+		expect(h.quizzes.summary(id)).toMatchObject({ about: "changes", focus: "mixed", stakes: { delta: false } });
+		const answer = await h.quizzes.get(id);
+		expect(answer.stakes).toMatchObject({ passMark: 90 });
 	});
 
 	it("asks the companion at every answer, and records the attempt that passed", async () => {

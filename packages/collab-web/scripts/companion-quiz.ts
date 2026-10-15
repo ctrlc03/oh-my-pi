@@ -1,14 +1,18 @@
 /**
  * "Quiz me" for the companion's `quiz-*` requests: questions that test whether the user understood a set of code
- * changes (a branch or working tree against the default branch, or the pull requests of a stack, one part each). The
- * wire contract is `@oh-my-pi/pi-wire/quiz`.
+ * changes (a branch or working tree against the default branch, or the pull requests of a stack, one part each), or
+ * the topic, design and implementation of a session (its conversation, the files in its folder and the topic's general
+ * background), for a folder that is a git repository or not. The wire contract is `@oh-my-pi/pi-wire/quiz`.
  *
  * Writing the questions reuses what architecture maps are built from: refs resolve to commits and are held under private
  * refs (./companion-blueprint-git), a restricted read-only omp session in a throw-away checkout writes JSON to one result
- * file (./companion-agent), and every citation is verified against its commit (./companion-citations, via
- * ./companion-quiz-verify). The session is given each part's numbered diff (./companion-quiz-diff), the title and
- * description of each pull request (read-only `gh`, ./companion-quiz-stack) and, when a session id is given, a digest of
- * that session's conversation (./companion-quiz-digest) so it can ask why things were done.
+ * file (./companion-agent), and every citation is verified (./companion-citations, via ./companion-quiz-verify): code
+ * against its commit, or against the file as it was copied for a folder that is not a repository (./companion-quiz-folder;
+ * the cited files are stored with the quiz), a quoted message against the session's file (./companion-quiz-session). The
+ * session is given each part's numbered diff (./companion-quiz-diff), the title and description of each pull request
+ * (read-only `gh`, ./companion-quiz-stack), or the folder's files, and, when a session id is given, a digest of that
+ * session's conversation (./companion-quiz-digest) so it can ask why things were done. What the questions lean on is
+ * the request's focus; the quiz of a high-stakes session also mixes in design and understanding questions.
  *
  * Grading never reaches a device before the answer: the rubric and the right choices stay in the stored document
  * (./companion-quiz-store). A choice is graded here; an open answer by one small headless model call
@@ -19,15 +23,20 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { BlueprintCommit, BlueprintExcerpt, BlueprintExcerptRef } from "@oh-my-pi/pi-wire/blueprint";
 import {
+	QUIZ_DEFAULT_FOCUS,
+	QUIZ_FOCUSES,
 	QUIZ_MAX_ANSWER_CHARS,
 	QUIZ_MAX_PARTS,
 	type Quiz,
 	type QuizAnswerRecord,
 	type QuizAttempt,
 	type QuizCreate,
+	type QuizFocus,
+	type QuizFolder,
 	type QuizGetAnswer,
 	type QuizStackPr,
 	type QuizStackSource,
+	type QuizSubject,
 	type QuizSummary,
 	type QuizVerdict,
 	QUIZ_VERSION,
@@ -49,16 +58,17 @@ import {
 import {
 	addWorktree,
 	defaultBranch,
+	holdCommit,
 	pruneLeftoverWorktrees,
 	readBlob,
 	removeWorktreeDir,
-	type RepoInfo,
 	repoInfo,
 	resolveTarget,
+	snapshotWorkingTree,
 } from "./companion-blueprint-git";
 import { splitLines } from "./companion-excerpt";
 import { headlessRunner, type RunOmp } from "./companion-headless";
-import { buildQuizBrief, DEFAULT_QUIZ_MAX_COST_USD } from "./companion-quiz-agent";
+import { buildQuizBrief, buildTopicBrief, DEFAULT_QUIZ_MAX_COST_USD } from "./companion-quiz-agent";
 import {
 	DEFAULT_GRADE_MODEL,
 	GRADE_TIMEOUT_MS,
@@ -70,11 +80,21 @@ import {
 	renderExcerpts,
 } from "./companion-quiz-grade";
 import { detectStack, ghPrSource, type PrSource } from "./companion-quiz-stack";
+import {
+	copyFolderFiles,
+	type FolderInfo,
+	folderInfo,
+	hasCode,
+	listFolderFiles,
+	MAX_STORED_CHARS,
+	readFolderFile,
+} from "./companion-quiz-folder";
 import { createQuizStore, type QuizDoc, type QuizDocStakes } from "./companion-quiz-store";
 import { type ParsedQuestion, parseQuizOutput, verifyQuiz } from "./companion-quiz-verify";
 import {
 	briefParts,
 	Cancelled,
+	type CodeSubject,
 	checkSessionId,
 	createRunSlots,
 	errorText,
@@ -87,6 +107,7 @@ import {
 	pullRequestNumbers,
 	readDigest,
 	releaseParts,
+	type ResolvedPart,
 	resolveParts,
 	type Run,
 	verifiedRefs,
@@ -96,6 +117,49 @@ import {
 const MAX_CONCURRENT_RUNS = 2;
 /** Of the spending limit, what the question-writing session may use; grading gets the rest and whatever it leaves. */
 const GENERATION_SHARE = 0.75;
+/** What a request for a quiz with no code to ask about says. */
+const NO_CODE_ERROR = "Implementation questions need code, and this folder has none.";
+/** How a focus reads in a list row. */
+const FOCUS_LABEL: Record<QuizFocus, string> = {
+	mixed: "Mixed",
+	understanding: "Understanding",
+	design: "Design",
+	implementation: "Implementation",
+};
+
+/** What a run was asked to write, as {@link Job} (the changes it is about) plus what the questions lean on. */
+interface QuizJob extends Job {
+	about: QuizSubject;
+	focus: QuizFocus;
+	/** A quiz on a session's topic: the folder it reads (the changes fields of the job are unused). */
+	topic?: FolderInfo;
+	/** The quiz of a high-stakes session: it mixes in design and understanding questions; `delta` when it covers only the new changes. */
+	stakes?: { delta: boolean };
+}
+
+/** @throws Error "invalid subject" for anything but a subject. */
+function parseSubject(value: unknown): QuizSubject {
+	if (value === undefined) return "changes";
+	if (value !== "changes" && value !== "session") throw new Error("invalid subject");
+	return value;
+}
+
+/** @throws Error "invalid focus" for anything but a focus. */
+function parseFocus(value: unknown): QuizFocus {
+	if (value === undefined) return QUIZ_DEFAULT_FOCUS;
+	const focus = QUIZ_FOCUSES.find(candidate => candidate === value);
+	if (focus === undefined) throw new Error("invalid focus");
+	return focus;
+}
+
+/** A stored quiz as far as reading code goes: its commits, and the files stored with a quiz on a folder that is not a repository. */
+function codeOf(doc: QuizDoc): CodeSubject {
+	return {
+		repo: doc.quiz.repo,
+		parts: doc.quiz.parts,
+		...(doc.files ? { documents: new Map(Object.entries(doc.files)) } : {}),
+	};
+}
 
 export interface QuizDeps {
 	/** `<agent dir>/quizzes`: the index and the quizzes. */
@@ -158,6 +222,8 @@ export interface Quizzes {
 	excerpt(id: string, part: number, refs: readonly BlueprintExcerptRef[]): Promise<(BlueprintExcerpt | null)[]>;
 	remove(id: string): Promise<void>;
 	stack(cwd: string, pr: number): Promise<{ stack: QuizStackPr[]; source: QuizStackSource }>;
+	/** What a quiz on the topic of the session in `cwd` can draw on (git or not, code or not, how many files). */
+	folder(cwd: string): Promise<QuizFolder>;
 	/** Mark runs in flight as interrupted and end their sessions. */
 	shutdown(): Promise<void>;
 	/** Resolves when no run is in flight. */
@@ -237,44 +303,91 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 		return doc;
 	}
 
-	async function execute(run: Run, job: Job): Promise<void> {
+	/** The one part of a quiz on a session's topic: the folder's working tree snapshotted into a commit, or the folder's files as they are. */
+	async function topicParts(run: Run, job: QuizJob, topic: FolderInfo): Promise<ResolvedPart[]> {
+		const title = "The topic of the session";
+		if (!topic.git)
+			return [{ title, head: { commit: "folder", subject: "The folder's files when the quiz was made" } }];
+		const commit = await snapshotWorkingTree(topic.checkout);
+		await holdCommit(job.root, `${run.id}/p0`, "head", commit);
+		run.held = 1;
+		return [{ title, head: { commit, ref: "@worktree", subject: "Working tree" } }];
+	}
+
+	async function execute(run: Run, job: QuizJob): Promise<void> {
 		const agent = deps.agent;
 		if (agent === null) throw new Error("This computer cannot run the question-writing session (tmux is missing).");
 		const runDir = path.join(workDir, run.id);
 		await slots.acquire();
-		let checkoutDir: string | undefined;
+		let worktreeDir: string | undefined;
 		try {
-			const parts = await resolveParts({ prSource, progress }, run, job);
+			const topic = job.topic;
+			const parts = topic ? await topicParts(run, job, topic) : await resolveParts({ prSource, progress }, run, job);
 			if (run.cancelled) throw new Cancelled();
 			const last = parts[parts.length - 1]!;
 			const warnings: string[] = [];
+			// A conversation is cited by a quiz on a topic, a high-stakes one (its design questions) or one leaning on ideas.
+			const citeSession =
+				topic !== undefined || job.stakes !== undefined || job.focus === "understanding" || job.focus === "design";
 
-			await progress(run, "Reading the changes");
-			const briefs = await briefParts(job.root, parts, job.subject, warnings, "questions");
-			const digest = await readDigest(deps.sessionsDir, job.sessionId, warnings, "questions");
+			await progress(run, topic ? "Reading the folder" : "Reading the changes");
+			const briefs = topic ? [] : await briefParts(job.root, parts, job.subject, warnings, "questions");
+			const files = topic ? await listFolderFiles(topic) : [];
+			const code = hasCode(files);
+			if (topic && job.focus === "implementation" && !code) throw new Error(NO_CODE_ERROR);
+			const digest = await readDigest(deps.sessionsDir, job.sessionId, warnings, "questions", {
+				ids: citeSession,
+				without: topic ? "the folder's files and general background" : undefined,
+			});
+			if (topic && files.length === 0 && digest === null)
+				throw new Error(
+					"There is nothing to quiz on: the session's conversation could not be read and its folder has no files.",
+				);
 
 			if (run.cancelled) throw new Cancelled();
 			const folder = agentFolderName("Quiz", job.name, job.subject);
-			checkoutDir = path.join(runDir, "head", folder);
-			await progress(run, "Checking out the code");
-			await addWorktree(job.root, checkoutDir, last.head.commit);
+			const checkoutDir = path.join(runDir, "head", folder);
+			if (topic && !topic.git) {
+				await progress(run, "Copying the folder's files");
+				await copyFolderFiles(topic.checkout, files, checkoutDir);
+			} else {
+				await progress(run, "Checking out the code");
+				await addWorktree(job.root, checkoutDir, last.head.commit);
+				worktreeDir = checkoutDir;
+			}
 			const outFile = await prepareOutputFile(outDir, run.id);
 			const overlayPath = path.join(overlayDir, `${run.id}.yml`);
 			const generationLimit = Math.round(job.maxCostUsd * GENERATION_SHARE * 1000) / 1000;
-			const prompt = buildQuizBrief({
-				repo: job.name,
-				subject: job.subject,
-				checkout: job.prs
-					? parts.length > 1
-						? "the head of the last pull request of the stack"
-						: "the head of the pull request"
-					: "the changed code (its new version)",
-				outFile,
-				maxCostUsd: generationLimit,
-				stack: parts.length > 1,
-				parts: briefs,
-				digest: digest ?? undefined,
-			});
+			const prompt = topic
+				? buildTopicBrief({
+						repo: job.name,
+						checkout: topic.git
+							? "a throw-away checkout of the folder's working tree as it is now"
+							: "a copy of the folder's text files as they are now",
+						outFile,
+						maxCostUsd: generationLimit,
+						focus: job.focus,
+						code,
+						files,
+						digest: digest ?? undefined,
+					})
+				: buildQuizBrief({
+						repo: job.name,
+						subject: job.subject,
+						checkout: job.prs
+							? parts.length > 1
+								? "the head of the last pull request of the stack"
+								: "the head of the pull request"
+							: "the changed code (its new version)",
+						outFile,
+						maxCostUsd: generationLimit,
+						stack: parts.length > 1,
+						parts: briefs,
+						digest: digest ?? undefined,
+						focus: job.focus,
+						stakes: job.stakes,
+						sessionCites: citeSession,
+					});
 			await progress(run, "Starting the question-writing session");
 			const ran = await runAgentToFile({
 				agent,
@@ -293,7 +406,12 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 				cancelled: () => run.cancelled,
 				started: async instanceId => {
 					run.instanceId = instanceId;
-					await update(run, { instanceId, progress: "The agent is reading the changes and writing questions" });
+					await update(run, {
+						instanceId,
+						progress: topic
+							? "The agent is reading the folder and writing questions"
+							: "The agent is reading the changes and writing questions",
+					});
 				},
 				log,
 			});
@@ -304,36 +422,63 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 					`The agent did not write the quiz: ${agentFailureReason(outcome, costUsd, generationLimit, "the questions")}.`,
 				);
 
-			await progress(run, "Checking every citation against the commit");
+			await progress(run, topic ? "Checking every citation" : "Checking every citation against the commit");
 			let parsed: ParsedQuestion[];
 			try {
-				parsed = parseQuizOutput(parseAgentJson(outcome.text), parts.length, warnings);
+				parsed = parseQuizOutput(parseAgentJson(outcome.text), parts.length, warnings, {
+					background: topic !== undefined && job.focus !== "implementation",
+				});
 			} catch (err) {
 				throw new Error(
 					`The agent's quiz could not be used (${err instanceof SyntaxError ? "its file was not valid JSON" : errorText(err).replace(/[.\s]+$/, "")}).`,
 				);
 			}
-			const commits = parts.map(part => ({ head: part.head.commit, base: part.base.commit }));
+			const commits = parts.map(part => ({ head: part.head.commit, base: part.base?.commit }));
+			// Files of a folder that is not a repository, read once from the copy the agent saw; the cited ones are stored.
+			const copied = new Map<string, string[]>();
+			let copiedChars = 0;
 			const verified = await verifyQuiz(
 				parsed,
 				{
 					lines: async (part, side, file) => {
-						const text = await readBlob(job.root, commits[part]![side], file);
+						if (topic && !topic.git) {
+							if (side === "base") return null;
+							const lines = await readFolderFile(checkoutDir, file);
+							if (lines === null) return null;
+							if (!copied.has(file)) {
+								const chars = lines.reduce((sum, line) => sum + line.length + 1, 0);
+								if (copiedChars + chars > MAX_STORED_CHARS) return null;
+								copiedChars += chars;
+								copied.set(file, lines);
+							}
+							return lines;
+						}
+						const commit = commits[part]![side];
+						if (commit === undefined) return null;
+						const text = await readBlob(job.root, commit, file);
 						return text === null ? null : splitLines(text);
 					},
+					entries: digest?.entries,
 				},
 				run.id,
 			);
 			warnings.push(...verified.warnings);
 			if (verified.questions.length === 0)
-				throw new Error("None of the agent's questions held up against the code.");
+				throw new Error(
+					topic
+						? "None of the agent's questions held up against the folder and the conversation."
+						: "None of the agent's questions held up against the code.",
+				);
 			for (const [index] of parts.entries()) {
 				if (!verified.questions.some(question => question.part === index))
 					warnings.push(`Part ${index + 1} has no questions: the agent wrote none that held up.`);
 			}
 			log(
-				`quiz ${run.id}: ${verified.questions.length} questions; citations ${verified.stats.verified} verified, ${verified.stats.moved} moved, ${verified.stats.dropped} dropped; ${verified.stats.questionsDropped} questions dropped`,
+				`quiz ${run.id}: ${verified.questions.length} questions; citations ${verified.stats.verified} verified, ${verified.stats.moved} moved, ${verified.stats.dropped} dropped; conversation citations ${verified.stats.session.verified} verified, ${verified.stats.session.dropped} dropped; ${verified.stats.questionsDropped} questions dropped`,
 			);
+			const storedFiles: Record<string, string[]> = {};
+			for (const question of verified.questions)
+				for (const ref of question.refs) if (copied.has(ref.path)) storedFiles[ref.path] = copied.get(ref.path)!;
 
 			const createdAt = store.get(run.id)?.createdAt ?? deps.now();
 			const quiz: Quiz = {
@@ -344,6 +489,8 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 				createdAt,
 				...(model ? { model } : {}),
 				...(digest && job.sessionId ? { sessionId: job.sessionId } : {}),
+				about: job.about,
+				focus: job.focus,
 				parts: parts.map((part, index) => ({
 					index,
 					title: part.title,
@@ -358,7 +505,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 							}
 						: {}),
 					head: part.head,
-					base: part.base,
+					...(part.base ? { base: part.base } : {}),
 				})),
 				questions: verified.questions,
 				warnings,
@@ -380,6 +527,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 				maxCostUsd: job.maxCostUsd,
 				generationCostUsd: costUsd ?? 0,
 				gradingCostUsd: 0,
+				...(Object.keys(storedFiles).length > 0 ? { files: storedFiles } : {}),
 				...(stakesByRun.has(run.id) ? { stakes: stakesByRun.get(run.id) } : {}),
 			};
 			await progress(run, "Saving the quiz");
@@ -391,7 +539,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 		} finally {
 			slots.release();
 			stakesByRun.delete(run.id);
-			if (checkoutDir) await removeWorktreeDir(job.root, checkoutDir).catch(() => undefined);
+			if (worktreeDir) await removeWorktreeDir(job.root, worktreeDir).catch(() => undefined);
 			await fs.rm(runDir, { recursive: true, force: true }).catch(() => undefined);
 		}
 	}
@@ -418,18 +566,26 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 			attempt.finishedAt = now;
 	}
 
-	/** Register a run for an already resolved change and start writing its questions. */
+	/** Register a run for an already resolved subject and start writing its questions. */
 	async function launch(
-		info: RepoInfo,
-		plan: { target?: Job["target"]; prs?: number[]; title: string; subject: string },
+		info: { root: string; name: string; github?: string },
+		plan: {
+			target?: Job["target"];
+			prs?: number[];
+			title: string;
+			subject: string;
+			about: QuizSubject;
+			focus: QuizFocus;
+			topic?: FolderInfo;
+		},
 		parsed: RunRequest,
 		sessionId: string | undefined,
 		stakes: QuizDocStakes | undefined,
 	): Promise<{ id: string }> {
-		const { target, prs, title, subject } = plan;
+		const { target, prs, title, subject, about, focus, topic } = plan;
 		const id = store.newId();
 		const run: Run = { id, cancelled: false, held: 0, done: Promise.resolve() };
-		const job: Job = {
+		const job: QuizJob = {
 			root: info.root,
 			name: info.name,
 			github: info.github,
@@ -440,6 +596,10 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 			sessionId,
 			maxCostUsd: parsed.maxCostUsd,
 			model: parsed.model,
+			about,
+			focus,
+			topic,
+			stakes: stakes ? { delta: stakes.delta } : undefined,
 		};
 		await store.put({
 			id,
@@ -450,6 +610,8 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 			status: "running",
 			progress: "Waiting to start",
 			maxCostUsd: parsed.maxCostUsd,
+			about,
+			focus,
 			...(sessionId ? { sessionId } : {}),
 			...(stakes ? { stakes: { delta: stakes.delta, passed: false } } : {}),
 		});
@@ -481,20 +643,42 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 		},
 
 		async list(cwd) {
-			const root = cwd === undefined ? undefined : (await repoInfo(cwd)).root;
+			const root = cwd === undefined ? undefined : (await folderInfo(cwd)).root;
 			return store
 				.list()
 				.filter(quiz => root === undefined || quiz.repoRoot === root)
 				.sort((a, b) => b.createdAt - a.createdAt);
 		},
 
+		async folder(cwd) {
+			const info = await folderInfo(checkRunRequest({ cwd }, DEFAULT_QUIZ_MAX_COST_USD).cwd);
+			const files = await listFolderFiles(info);
+			return { git: info.git, code: hasCode(files), files: files.length, name: info.name };
+		},
+
 		async create(request) {
 			const parsed = checkRunRequest(request, DEFAULT_QUIZ_MAX_COST_USD);
-			const prs = pullRequestNumbers(request);
+			const about = parseSubject(request.subject);
+			const focus = parseFocus(request.focus);
 			checkSessionId(request.sessionId);
 			if (deps.agent === null)
 				throw new Error("This computer cannot run the question-writing session (tmux is missing).");
 
+			if (about === "session") {
+				if (request.sessionId === undefined) throw new Error("A quiz on a session's topic needs the session.");
+				const topic = await folderInfo(parsed.cwd);
+				if (focus === "implementation" && !hasCode(await listFolderFiles(topic))) throw new Error(NO_CODE_ERROR);
+				const subject = focus === "mixed" ? "Session topic" : `Session topic · ${FOCUS_LABEL[focus]}`;
+				return await launch(
+					topic,
+					{ title: `${topic.name} · topic`, subject, about, focus, topic },
+					parsed,
+					request.sessionId,
+					undefined,
+				);
+			}
+
+			const prs = pullRequestNumbers(request);
 			const info = await repoInfo(parsed.cwd);
 			let target: Job["target"];
 			let title: string;
@@ -513,7 +697,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 				subject = `${resolved.label} vs ${baseName}`;
 				title = `${info.name} @ ${subject}`;
 			}
-			return await launch(info, { target, prs, title, subject }, parsed, request.sessionId, undefined);
+			return await launch(info, { target, prs, title, subject, about, focus }, parsed, request.sessionId, undefined);
 		},
 
 		async createForStakes(input) {
@@ -526,7 +710,13 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 			const subject = input.stakes.delta ? "the new changes" : `worktree vs ${baseName}`;
 			const title = `${info.name} · high stakes · ${subject}`;
 			const target: Job["target"] = { head: input.head, base: input.base, label: "worktree" };
-			return await launch(info, { target, title, subject }, parsed, input.sessionId, input.stakes);
+			return await launch(
+				info,
+				{ target, title, subject, about: "changes", focus: QUIZ_DEFAULT_FOCUS },
+				parsed,
+				input.sessionId,
+				input.stakes,
+			);
 		},
 
 		summary(id) {
@@ -580,7 +770,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 						throw new Error(
 							`This quiz has used up its spending limit ($${doc.maxCostUsd.toFixed(2)}), so open answers cannot be graded. Multiple-choice questions still can be.`,
 						);
-					const excerpts = await partExcerpts(doc.quiz, question.part, question.refs);
+					const excerpts = await partExcerpts(codeOf(doc), question.part, question.refs);
 					let graded: GradeOpenResult;
 					try {
 						graded = await gradeOpen({
@@ -593,6 +783,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 								partTitle: doc.quiz.parts[question.part]?.title ?? "",
 								rubric: key.rubric,
 								excerpts: renderExcerpts(excerpts),
+								explanation: key.explanation,
 								answer: text,
 							},
 						});
@@ -604,7 +795,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 						throw new Error(`The answer could not be graded: ${errorText(err).replace(/[.\s]+$/, "")}.`);
 					}
 					doc.gradingCostUsd += graded.costUsd ?? 0;
-					const refs = await verifiedRefs(doc.quiz, question.part, graded.grade.refs);
+					const refs = await verifiedRefs(codeOf(doc), question.part, graded.grade.refs);
 					verdict = {
 						kind: graded.grade.kind,
 						explanation: graded.grade.explanation,
@@ -657,7 +848,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 
 		async excerpt(id, part, refs) {
 			const doc = await readReady(id);
-			return await partExcerpts(doc.quiz, part, refs);
+			return await partExcerpts(codeOf(doc), part, refs);
 		},
 
 		async remove(id) {

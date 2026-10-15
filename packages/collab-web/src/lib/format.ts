@@ -68,6 +68,25 @@ export function fmtBytes(n: number): string {
 	return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Decimal sizes, as Finder shows free space: "812 MB", "4.4 GB", "89 GB", "1.2 TB". */
+export function fmtGb(bytes: number): string {
+	if (!Number.isFinite(bytes) || bytes < 0) return "0 MB";
+	if (bytes < 1e9) return `${Math.round(bytes / 1e6)} MB`;
+	if (bytes < 1e10) return `${(bytes / 1e9).toFixed(1)} GB`;
+	if (bytes < 1e12) return `${Math.round(bytes / 1e9)} GB`;
+	return `${(bytes / 1e12).toFixed(1)} TB`;
+}
+
+/** How long something has sat: "12 min", "3 h", "2 days". */
+export function fmtAge(ms: number): string {
+	if (!Number.isFinite(ms) || ms < 60_000) return "under a minute";
+	const min = Math.floor(ms / 60_000);
+	if (min < 60) return `${min} min`;
+	const hours = Math.floor(min / 60);
+	if (hours < 48) return `${hours} h`;
+	return `${Math.floor(hours / 24)} days`;
+}
+
 /** `dir/` (with trailing slash, or empty) and file name of a path. */
 export function splitPath(path: string): { dir: string; base: string } {
 	const at = path.lastIndexOf("/");

@@ -160,7 +160,7 @@ export function InboxSheet({ computers, onOpenHost, onClose }: InboxSheetProps):
 	);
 
 	return (
-		<Sheet label="Inbox" onClose={onClose}>
+		<Sheet label="Inbox" size="wide" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Inbox</div>
 				<span className="sh-stats-head-actions">

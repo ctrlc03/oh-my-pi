@@ -160,6 +160,8 @@ export interface SubjectPickerProps<Extra extends string> {
 	extraChoices?: readonly { value: Extra; label: string }[];
 	/** Offer the choice between a pull request's whole stack and the pull request alone (default true); false for a use that takes one pull request. */
 	stacks?: boolean;
+	/** Offer the session's changes, a branch and a pull request (default true); false for a folder that is not a git repository. */
+	builtIn?: boolean;
 	/** Called when the choice changes, so a form can clear its error. */
 	onChoose?(): void;
 }
@@ -174,6 +176,7 @@ export function SubjectPicker<Extra extends string = never>({
 	summaryLabel,
 	used,
 	extraChoices = [],
+	builtIn = true,
 	stacks = true,
 	onChoose,
 }: SubjectPickerProps<Extra>): ReactNode {
@@ -183,7 +186,7 @@ export function SubjectPicker<Extra extends string = never>({
 	const loading = refs.status === "loading";
 	const cwd = pick.options.cwd;
 	const choices: { value: QuizSubject["kind"] | Extra; label: string }[] = [
-		...BUILT_IN_CHOICES.filter(item => item.value !== "changes" || pick.canChanges),
+		...(builtIn ? BUILT_IN_CHOICES.filter(item => item.value !== "changes" || pick.canChanges) : []),
 		...extraChoices,
 	];
 	return (

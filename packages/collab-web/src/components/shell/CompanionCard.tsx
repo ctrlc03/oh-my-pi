@@ -33,6 +33,7 @@ import { applyOpenIntent } from "../../lib/inbox";
 import { withoutPersonal } from "../../lib/personal";
 import { extractLink } from "../../lib/rooms";
 import { AgentChip } from "./AgentChip";
+import { DiskNote } from "./DiskNote";
 import { AgentsEntry } from "./AgentsSheet";
 import { FanoutChip, FanoutGroups } from "./FanoutSheet";
 import { InboxEntry } from "./InboxSheet";
@@ -178,6 +179,7 @@ export function CompanionCard({
 				</span>
 			</div>
 			{live && <PowerNote power={snap.power} />}
+			{live && <DiskNote disk={snap.disk} />}
 			{client &&
 				(snap.phase === "unpaired" ? (
 					<div className="sh-companion-offline">

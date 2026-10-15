@@ -17,6 +17,7 @@ export interface QuizScreenProps {
 	currentInstanceId: string | null;
 	onOpenHost(instanceId: string): Promise<void>;
 	editor?: QuizPlayProps["editor"];
+	session?: QuizPlayProps["session"];
 	/** Start another quiz about the same subject; null when it cannot be done from here. */
 	onNewQuiz: ((quiz: Quiz) => void) | null;
 	onHistory(): void;
@@ -50,6 +51,7 @@ export function QuizScreen({
 	currentInstanceId,
 	onOpenHost,
 	editor,
+	session,
 	onNewQuiz,
 	onHistory,
 	onClose,
@@ -109,6 +111,7 @@ export function QuizScreen({
 			client={client}
 			summary={summary}
 			editor={editor}
+			session={session}
 			onNewQuiz={onNewQuiz}
 			onHistory={onHistory}
 			onClose={onClose}
@@ -217,6 +220,7 @@ function ReadyQuiz({
 	client,
 	summary,
 	editor,
+	session,
 	onNewQuiz,
 	onHistory,
 	onClose,
@@ -224,6 +228,7 @@ function ReadyQuiz({
 	client: CompanionClient;
 	summary: QuizSummary;
 	editor?: QuizPlayProps["editor"];
+	session?: QuizPlayProps["session"];
 	onNewQuiz: ((quiz: Quiz) => void) | null;
 	onHistory(): void;
 	onClose(): void;
@@ -239,6 +244,7 @@ function ReadyQuiz({
 				stakes={state.value.stakes}
 				costUsd={summary.costUsd}
 				editor={editor}
+				session={session}
 				onNewQuiz={onNewQuiz}
 				onHistory={onHistory}
 				onClose={onClose}

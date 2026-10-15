@@ -22,7 +22,7 @@ async function until(done: () => boolean): Promise<void> {
 describe("the mock quiz companion", () => {
 	it("advertises quizzes and answers only quiz requests", () => {
 		const { mock } = setup();
-		expect(mock.capabilities).toEqual({ canQuiz: true });
+		expect(mock.capabilities).toEqual({ canQuiz: true, canQuizTopic: true });
 		expect(mock.handles({ t: "quiz-list", reqId: 1 })).toBe(true);
 		expect(mock.handles({ t: "blueprint-list", reqId: 1 })).toBe(false);
 		mock.stop();

@@ -1,15 +1,17 @@
 /**
  * Checks a quiz before it is stored (see ./companion-quiz): the agent's JSON is parsed into questions with unknown
- * fields stripped, every citation is checked against the commit of the part it belongs to (the rules of
- * ./companion-citations), and a question left without a citation is dropped, so a stored quiz never shows code that is
- * not there. Pure over a file reader, so the rules are testable without git.
+ * fields stripped, every citation is checked (code against the commit of the part it belongs to, by the rules of
+ * ./companion-citations; a quote of the conversation against the session's messages, by ./companion-quiz-session), and a
+ * question left without a citation is dropped, so a stored quiz never shows code or a message that is not there. A
+ * question of general background knowledge (topic quizzes only) cites nothing and is kept only with an explanation.
+ * Pure over a file reader, so the rules are testable without git.
  *
  * The answer key (the rubric of an open question, the right choice of a choice question) is split off here: it is
  * stored beside the quiz and reaches a device only inside the verdict of an answered question.
  */
 
 import type { BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
-import type { QuizChoice, QuizQuestion } from "@oh-my-pi/pi-wire/quiz";
+import type { QuizChoice, QuizQuestion, QuizSessionRef } from "@oh-my-pi/pi-wire/quiz";
 import { isRecord } from "../src/tool-render/util";
 import {
 	type CitationStats,
@@ -20,6 +22,8 @@ import {
 	str,
 	Warnings,
 } from "./companion-citations";
+import type { DigestEntry } from "./companion-quiz-digest";
+import { checkSessionCites, parseSessionCites, type SessionCite } from "./companion-quiz-session";
 import { seeded } from "./companion-seed";
 
 const MAX_PROMPT_CHARS = 700;
@@ -43,7 +47,7 @@ export interface QuizKey {
 	rubric?: { points: string[]; misconceptions: string[]; modelAnswer?: string };
 	/** Choice questions: the id of the right choice. */
 	answer?: string;
-	/** Choice questions: why the right choice is right and the tempting one is not. */
+	/** Choice questions: why the right choice is right and the tempting one is not. Background questions of either kind: the facts the answer rests on. */
 	explanation?: string;
 }
 
@@ -56,6 +60,10 @@ export interface ParsedQuestion {
 	reminder?: string;
 	topic: string;
 	refs: BlueprintRef[];
+	/** Citations of the session's conversation. */
+	session: SessionCite[];
+	/** General background knowledge: cites nothing, carries an `explanation`. */
+	background?: boolean;
 	rubric?: { points: string[]; misconceptions: string[]; modelAnswer?: string };
 	/** Choice questions: the options as written, and the index of the right one. */
 	choices?: string[];
@@ -89,13 +97,25 @@ function answerIndex(value: unknown, choices: readonly string[]): number | undef
 	return exact === -1 ? undefined : exact;
 }
 
+/** What a quiz of this kind lets the agent write. */
+export interface ParseOptions {
+	/** General background questions are kept. Default: no, a question must cite the code or the conversation. */
+	background?: boolean;
+}
+
 /**
  * The questions in the agent's JSON: `{ parts: [{ part: 1, questions: [...] }] }`, or a flat `{ questions: [{ part: 1, … }] }`;
  * parts are numbered from 1 as in the brief. Questions that cannot be used (no prompt, an open one without a rubric, a
- * choice one without a clear right answer, a part that does not exist) are left out and reported in `warnings`.
+ * choice one without a clear right answer, a background one without an explanation, a part that does not exist) are left
+ * out and reported in `warnings`.
  * @throws Error when the JSON is not an object or holds no question at all.
  */
-export function parseQuizOutput(raw: unknown, partCount: number, warnings: string[]): ParsedQuestion[] {
+export function parseQuizOutput(
+	raw: unknown,
+	partCount: number,
+	warnings: string[],
+	options: ParseOptions = {},
+): ParsedQuestion[] {
 	if (!isRecord(raw)) throw new Error("The agent's file is not a JSON object.");
 	const found: { part: unknown; value: unknown }[] = [];
 	if (Array.isArray(raw.parts)) {
@@ -136,12 +156,25 @@ export function parseQuizOutput(raw: unknown, partCount: number, warnings: strin
 			continue;
 		}
 		const topic = str(value.topic, MAX_TOPIC_CHARS) ?? prompt.slice(0, MAX_TOPIC_CHARS);
+		const explanation = str(value.explanation, MAX_EXPLANATION_CHARS);
+		const background = options.background === true && (value.background === true || value.source === "background");
+		if (background && explanation === undefined) {
+			log.add(
+				"background",
+				`Skipped the background question "${prompt.slice(0, 60)}": it has no explanation of the facts it rests on.`,
+				n => `Skipped ${n} more background questions without an explanation.`,
+			);
+			continue;
+		}
 		const common = {
 			part,
 			prompt,
 			topic,
 			...(str(value.reminder, MAX_REMINDER_CHARS) ? { reminder: str(value.reminder, MAX_REMINDER_CHARS) } : {}),
-			refs: parseRefs(value.refs),
+			refs: background ? [] : parseRefs(value.refs),
+			session: background ? [] : parseSessionCites(value.session),
+			...(background ? { background: true } : {}),
+			...(explanation ? { explanation } : {}),
 		};
 		const choiceTexts = Array.isArray(value.choices)
 			? value.choices
@@ -168,9 +201,6 @@ export function parseQuizOutput(raw: unknown, partCount: number, warnings: strin
 				kind: "choice",
 				choices: choiceTexts,
 				answer: index,
-				...(str(value.explanation, MAX_EXPLANATION_CHARS)
-					? { explanation: str(value.explanation, MAX_EXPLANATION_CHARS) }
-					: {}),
 			});
 		} else {
 			const rubric = isRecord(value.rubric) ? value.rubric : { points: value.rubric };
@@ -207,10 +237,14 @@ export function parseQuizOutput(raw: unknown, partCount: number, warnings: strin
 export interface QuizVerifyIo {
 	/** Lines of a file at the commit of `part` (its head, or its base for `side: "base"`); null when it is missing, binary or too large. */
 	lines(part: number, side: Side, path: string): Promise<string[] | null>;
+	/** The messages of the session by entry id, to check conversation citations against; absent when the conversation could not be read. */
+	entries?: ReadonlyMap<string, DigestEntry>;
 }
 
 export interface QuizVerifyStats extends CitationStats {
 	questionsDropped: number;
+	/** Conversation citations that held and that were dropped. */
+	session: { verified: number; dropped: number };
 }
 
 /**
@@ -225,7 +259,13 @@ export async function verifyQuiz(
 	options: { readConcurrency?: number } = {},
 ): Promise<{ questions: QuizQuestion[]; keys: Record<string, QuizKey>; warnings: string[]; stats: QuizVerifyStats }> {
 	const log = new Warnings();
-	const stats: QuizVerifyStats = { verified: 0, moved: 0, dropped: 0, questionsDropped: 0 };
+	const stats: QuizVerifyStats = {
+		verified: 0,
+		moved: 0,
+		dropped: 0,
+		questionsDropped: 0,
+		session: { verified: 0, dropped: 0 },
+	};
 	const ordered = [...parsed].sort((a, b) => a.part - b.part);
 	const questions: QuizQuestion[] = [];
 	const keys: Record<string, QuizKey> = {};
@@ -240,11 +280,12 @@ export async function verifyQuiz(
 		for (const question of ofPart) {
 			const where = `part ${part + 1}, question "${question.prompt.slice(0, 50)}"`;
 			const refs = checkCitations(question.refs, where, ref => ref.side ?? "head", files, stats, log);
-			if (refs.length === 0) {
+			const session: QuizSessionRef[] = checkSessionCites(question.session, io.entries, where, stats.session, log);
+			if (refs.length === 0 && session.length === 0 && !question.background) {
 				stats.questionsDropped++;
 				log.add(
 					"uncited",
-					`Dropped the question "${question.prompt.slice(0, 60)}" (part ${part + 1}): ${question.refs.length === 0 ? "it cites no code" : "none of its citations held"}.`,
+					`Dropped the question "${question.prompt.slice(0, 60)}" (part ${part + 1}): ${question.refs.length === 0 && question.session.length === 0 ? "it cites nothing" : "none of its citations held"}.`,
 					n => `${n} more questions were dropped for lack of a citation.`,
 				);
 				continue;
@@ -263,7 +304,10 @@ export async function verifyQuiz(
 					...(question.explanation ? { explanation: question.explanation } : {}),
 				};
 			} else if (question.rubric) {
-				keys[id] = { rubric: question.rubric };
+				keys[id] = {
+					rubric: question.rubric,
+					...(question.background && question.explanation ? { explanation: question.explanation } : {}),
+				};
 			}
 			questions.push({
 				id,
@@ -273,6 +317,8 @@ export async function verifyQuiz(
 				...(question.reminder ? { reminder: question.reminder } : {}),
 				topic: question.topic,
 				refs,
+				...(session.length > 0 ? { session } : {}),
+				...(question.background ? { background: true } : {}),
 				...(choices ? { choices } : {}),
 			});
 		}

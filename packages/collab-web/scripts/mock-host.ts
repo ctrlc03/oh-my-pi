@@ -2,7 +2,7 @@
  * Offline mock collab host: starts the local relay, opens a room as host, and
  * serves the canned fixture session to any collab-web guest that joins.
  *
- *   bun scripts/mock-host.ts [--port 7466] [--local-relay [PORT]] [--many-models] [--agent <id>] [--stakes-markers <file>]
+ *   bun scripts/mock-host.ts [--port 7466] [--local-relay [PORT]] [--many-models] [--agent <id>] [--stakes-markers <file>] [--topic]
  *
  * Prints a full join link (guests may prompt and run session controls) and a
  * view link (read-only). Replays a scripted streaming turn on every guest
@@ -10,6 +10,9 @@
  * fetch-transcript with byte slices of the fixture JSONL, and handles
  * `session-cmd` (model / thinking switches, compact, rename) — exactly the frames a
  * real `omp /collab` host emits.
+ *
+ * `--topic` serves a session without a project instead: a short talk about statistics on encrypted data (scripts/fixture-topic.ts)
+ * in a scratch folder, the one the mock quiz's topic quizzes cite (pair it with `mock-companion.ts --topic`).
  *
  * A writer's prompt `fail` plays a short turn whose one tool call fails, to see how the app shows a failure.
  *
@@ -67,6 +70,7 @@ import {
 	type ScriptedStep,
 	subagentTranscriptJsonl,
 } from "./fixture";
+import { topicEntries, topicHeader } from "./fixture-topic";
 import { type LocalRelay, startLocalRelay } from "./local-relay";
 import { MockCache } from "./mock-cache";
 import { MockApprovals } from "./mock-approvals";
@@ -254,7 +258,8 @@ const mockApprovals = new MockApprovals({
 	guestsCanSaveProject: process.env.MOCK_GUESTS_SAVE_APPROVALS === "1",
 	foreign: mockAgent ? { permission: () => permission } : undefined,
 });
-const entries: SessionEntry[] = [...fixtureEntries];
+const entries: SessionEntry[] = argv.includes("--topic") ? topicEntries() : [...fixtureEntries];
+const sessionHeader = argv.includes("--topic") ? topicHeader() : fixtureHeader;
 const agents: AgentSnapshot[] = fixtureAgents.map(agent => ({ ...agent }));
 const transcriptBytes = new TextEncoder().encode(subagentTranscriptJsonl);
 const transcriptDecoder = new TextDecoder();
@@ -290,7 +295,7 @@ let replayQueue: ScriptedStep[] = [];
 let replayTimer: Timer | null = null;
 let tick = 0;
 let shuttingDown = false;
-let sessionName = fixtureHeader.title;
+let sessionName = sessionHeader.title;
 
 // ── sealed transport (see ./foreign/room-host) ───────────────────────────────
 
@@ -312,7 +317,7 @@ function buildState(): SessionState {
 		followUpIds: followUps.map(followUp => followUp.id),
 		redoTurns: liveRedoSteps().length,
 		sessionName,
-		cwd: fixtureHeader.cwd,
+		cwd: sessionHeader.cwd,
 		model: currentModel,
 		thinkingLevel,
 		profile,
@@ -441,7 +446,7 @@ function handleHello(peer: RoomPeer, hello: HelloFrame): void {
 		// The mock does not resume deltas: its live entry ids restart at `live-1` with every run.
 		{ ...hello, resume: undefined },
 		{
-			header: fixtureHeader,
+			header: sessionHeader,
 			state: buildState(),
 			agents: agents.map(agent => ({ ...agent })),
 			models: offeredModels.map(model => ({

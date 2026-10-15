@@ -220,3 +220,35 @@ describe("sessionDigest", () => {
 		expect(digest?.text).toContain("Assistant: Renamed the paired setters");
 	});
 });
+
+describe("a digest with entry ids", () => {
+	const message = (id: string, role: string, text: string) =>
+		JSON.stringify({
+			type: "message",
+			id,
+			message: { role, content: role === "user" ? text : [{ type: "text", text }] },
+		});
+
+	it("marks each message with its entry id, one turn per assistant message, and returns the messages by id", async () => {
+		const file = path.join(tmp, "ids.jsonl");
+		await Bun.write(
+			file,
+			`${[
+				message("aa11bb22", "user", "Why CKKS?"),
+				message("cc33dd44", "assistant", "It is approximate."),
+				message("ee55ff66", "assistant", "And it packs many slots."),
+				message("x1", "user", "ids this short are not entry ids"),
+			].join("\n")}\n`,
+		);
+		const digest = await sessionDigest(file, 10_000, { ids: true });
+		expect(digest?.text).toBe(
+			"[#aa11bb22] User: Why CKKS?\n\n[#cc33dd44] Assistant: It is approximate.\n\n[#ee55ff66] Assistant: And it packs many slots.\n\nUser: ids this short are not entry ids",
+		);
+		expect([...(digest?.entries?.keys() ?? [])]).toEqual(["aa11bb22", "cc33dd44", "ee55ff66"]);
+		expect(digest?.entries?.get("cc33dd44")).toEqual({ role: "assistant", text: "It is approximate." });
+		// Without ids the digest is as it always was.
+		const plain = await sessionDigest(file, 10_000);
+		expect(plain?.text).not.toContain("[#");
+		expect(plain?.entries).toBeUndefined();
+	});
+});

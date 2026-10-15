@@ -9,6 +9,12 @@
  * question is answered. A choice is graded by the key, an open answer by keywords (right with two thirds of a
  * question's points found, partly with a third); an answer of `/fail` fails grading once and `/limit` hits the spending
  * limit, to see how the app shows both. Every folder of the computer counts as a folder of the one fixture repository.
+ *
+ * Topic quizzes (`quiz-create` with `subject: "session"`, `focus`, and `quiz-folder`; capability `canQuizTopic`): a canned quiz on
+ * statistics with fully homomorphic encryption, whose questions cite the conversation of the session ./fixture-topic holds (served
+ * by `mock-host.ts --topic`), the files `notes/design.md` and `src/stats.py` (read through `quiz-excerpt` like any citation) or
+ * nothing (general background). A folder under a `scratch` directory is a session without a project: no git, no code, so
+ * the implementation focus is refused; any other folder is the fixture repository.
  */
 
 import type { BlueprintCommit, BlueprintExcerpt, BlueprintExcerptRef, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
@@ -17,16 +23,27 @@ import type {
 	QuizAnswerRecord,
 	QuizAttempt,
 	QuizCreate,
+	QuizFocus,
+	QuizFolder,
 	QuizPart,
 	QuizQuestion,
+	QuizSessionRef,
 	QuizStackPr,
 	QuizSummary,
 	QuizVerdict,
 } from "@oh-my-pi/pi-wire/quiz";
-import { QUIZ_MAX_ANSWER_CHARS, QUIZ_VERSION, scoreAttempt } from "@oh-my-pi/pi-wire/quiz";
+import {
+	QUIZ_DEFAULT_FOCUS,
+	QUIZ_FOCUSES,
+	QUIZ_MAX_ANSWER_CHARS,
+	QUIZ_VERSION,
+	scoreAttempt,
+} from "@oh-my-pi/pi-wire/quiz";
 import type { QuizStakes } from "@oh-my-pi/pi-wire/stakes";
 import type { CompanionReply, CompanionRequest } from "../src/lib/companion";
+import { SCRATCH_DIR, scratchLabel } from "../src/lib/scratch";
 import { excerptOf as readExcerpt } from "./companion-excerpt";
+import { TOPIC_CWD, TOPIC_SESSION_ID, topicMessage } from "./fixture-topic";
 
 export const MOCK_QUIZ_ROOT = "/work/interfold";
 const OTHER_ROOT = "/work/acme-shop";
@@ -458,9 +475,77 @@ pub fn select(nodes: &[String], e3_id: E3id, seed: u64, threshold: usize) -> Com
 `,
 };
 
+const NOTES = "notes/design.md";
+const STATS = "src/stats.py";
+
+/**
+ * The files of the session without a project (and, for a topic quiz of a git folder, of its working tree): what a topic
+ * quiz cites besides the conversation. A folder that is not a git repository has these stored with the quiz.
+ */
+const TOPIC_FILES: Record<string, string> = {
+	[NOTES]: `# Encrypted salary statistics
+
+## Goal
+The server computes the mean and variance of a salary column and never sees a salary.
+
+## Scheme
+CKKS, not BFV. Salaries carry cents and the mean is wanted to two decimals, so an error near 1e-6 is acceptable.
+BFV would need the cents scaled to integers and a larger plaintext modulus to hold the sums.
+
+## Parameters
+- Ring dimension 8192 (4096 slots). 16384 would double every ciphertext for no gain at this depth.
+- Coefficient modulus bits 60, 40, 40, 60: two usable levels.
+- Scale 2^40.
+
+## Noise budget
+One multiplication (the square for the variance) uses one level. The second level is headroom.
+Additions are nearly free. Dividing by n would cost a level, so the client divides.
+
+## Protocol
+1. The client encrypts the column and sends it with the public context.
+2. The server returns the encrypted sum and the encrypted sum of squares.
+3. The client decrypts, divides by n and computes variance = E[x^2] - E[x]^2.
+`,
+	[STATS]: `"""Encrypted mean and variance of a column with CKKS (TenSEAL)."""
+
+import tenseal as ts
+
+POLY_MODULUS = 8192
+COEFF_BITS = [60, 40, 40, 60]
+SCALE = 2**40
+
+
+def make_context() -> ts.Context:
+    ctx = ts.context(ts.SCHEME_TYPE.CKKS, POLY_MODULUS, coeff_mod_bit_sizes=COEFF_BITS)
+    ctx.global_scale = SCALE
+    # sum() rotates the slots, which needs Galois keys.
+    ctx.generate_galois_keys()
+    return ctx
+
+
+def encrypt_column(ctx: ts.Context, values: list[float]) -> ts.CKKSVector:
+    return ts.ckks_vector(ctx, values)
+
+
+def encrypted_stats(column: ts.CKKSVector) -> tuple[ts.CKKSVector, ts.CKKSVector]:
+    """The server's half: the sum and the sum of squares, one multiplication in all."""
+    total = column.sum()
+    squares = column.square().sum()
+    return total, squares
+
+
+def decrypt_stats(total: ts.CKKSVector, squares: ts.CKKSVector, n: int) -> tuple[float, float]:
+    """The client's half: divide by n here, where it costs no level."""
+    mean = total.decrypt()[0] / n
+    variance = squares.decrypt()[0] / n - mean * mean
+    return mean, variance
+`,
+};
+
 function sourceOf(path: string, side: Side): string | undefined {
 	const files = side === "base" ? BASE_FILES : HEAD_FILES;
-	return Object.hasOwn(files, path) ? files[path] : undefined;
+	if (Object.hasOwn(files, path)) return files[path];
+	return side === "head" && Object.hasOwn(TOPIC_FILES, path) ? TOPIC_FILES[path] : undefined;
 }
 
 /** A citation of the first line of `path` holding `token`. */
@@ -474,7 +559,7 @@ export function cite(path: string, token: string, side: Side = "head"): Blueprin
 	return ref;
 }
 
-const LANGUAGES: Record<string, string> = { rs: "rust", toml: "ini" };
+const LANGUAGES: Record<string, string> = { rs: "rust", toml: "ini", py: "python", md: "markdown" };
 
 /** The code a ref cites, cut the way the real companion cuts it (default window, or the range the ref asks for). */
 export function excerptOf(ref: BlueprintExcerptRef, commit: BlueprintCommit | undefined): BlueprintExcerpt | null {
@@ -798,6 +883,315 @@ const PARTS: { pr: QuizStackPr; commit: string; specs: QuestionSpec[] }[] = [
 	},
 ];
 
+/** A passage of a message of the session ./fixture-topic holds, checked to be in it like the real companion checks one. */
+function said(entry: string, quote: string): QuizSessionRef {
+	const message = topicMessage(entry);
+	if (message === undefined) throw new Error(`mock quiz: no message ${entry} in the session`);
+	if (!message.text.replace(/\s+/g, " ").includes(quote))
+		throw new Error(`mock quiz: ${entry} does not say "${quote}"`);
+	return { entry, role: message.role, quote };
+}
+
+/** What a topic question leans on; a question of `implementation` cites the code, so a folder without code has none. */
+type TopicLean = Exclude<QuizFocus, "mixed">;
+
+interface TopicSpec extends QuestionSpec {
+	leans: TopicLean;
+	/** Asked by a quiz of the default (`mixed`) focus. */
+	mixed: boolean;
+}
+
+/**
+ * The questions of a topic quiz about statistics on encrypted data, the session ./fixture-topic and the files above:
+ * understanding (two of them general background, none cited), design (cited in the conversation and the notes) and
+ * implementation (cited in the code). Every kind of citation is here: the conversation, a file and none.
+ */
+const TOPIC_SPECS: TopicSpec[] = [
+	{
+		leans: "understanding",
+		mixed: true,
+		question: {
+			kind: "choice",
+			prompt: "What does the noise budget of a homomorphic ciphertext tell you?",
+			topic: "Noise budget",
+			refs: [],
+			background: true,
+			choices: [
+				{ id: "a", text: "How many bits of the plaintext the server can learn" },
+				{ id: "b", text: "How much more computation the ciphertext can take before decryption returns garbage" },
+				{ id: "c", text: "How many ciphertexts one key may encrypt" },
+				{ id: "d", text: "How large the ciphertext is in bytes" },
+			],
+		},
+		secret: {
+			kind: "choice",
+			answer: "b",
+			explanation:
+				"Every operation adds noise to a ciphertext, multiplications far more than additions. The budget is what is left before the noise swamps the message and decryption fails.",
+			refs: [],
+		},
+	},
+	{
+		leans: "understanding",
+		mixed: false,
+		question: {
+			kind: "open",
+			prompt: "CKKS results are approximate. Why is that acceptable for statistics, and when is it not?",
+			topic: "Approximate arithmetic",
+			refs: [],
+			background: true,
+		},
+		secret: {
+			kind: "open",
+			points: [
+				{
+					text: "The error is tiny next to the data, like floating-point rounding, so a mean or a variance is still right to the digits anyone needs.",
+					keywords: ["small", "tiny", "rounding", "floating", "negligible"],
+				},
+				{
+					text: "It is not acceptable where a result must be exact: money to the cent in a ledger, identifiers, equality tests.",
+					keywords: ["exact", "equal", "ledger", "identifier", "id", "money"],
+				},
+				{
+					text: "The error grows with every operation, so the depth of the computation has to be budgeted.",
+					keywords: ["grow", "accumulate", "depth", "multiplication", "budget"],
+				},
+			],
+			explanation:
+				"CKKS treats the noise of the encryption as part of the number's rounding error, the way a float does. That suits means, variances and model scores. It does not suit anything that must be exact, and the error grows with each multiplication, so plan the depth.",
+			refs: [],
+		},
+	},
+	{
+		leans: "understanding",
+		mixed: true,
+		question: {
+			kind: "open",
+			prompt:
+				"After two CKKS ciphertexts are multiplied their scale is squared. What brings it back, and what does that cost?",
+			reminder:
+				"A CKKS ciphertext carries a scale: the factor a real number was multiplied by to become an integer.",
+			topic: "Rescaling",
+			refs: [],
+			session: [said("t02", "a rescale step drops one prime from the modulus chain")],
+		},
+		secret: {
+			kind: "open",
+			points: [
+				{ text: "A rescale step divides the scale back down.", keywords: ["rescale", "rescaling", "divide"] },
+				{
+					text: "It drops one prime from the modulus chain, which uses up one level.",
+					keywords: ["prime", "level", "modulus chain", "chain"],
+				},
+				{
+					text: "The chain is finite, so it limits how many multiplications in a row the parameters allow.",
+					keywords: ["finite", "limit", "depth", "run out", "in a row"],
+				},
+			],
+			explanation:
+				"A rescale divides the ciphertext by the prime at the end of the modulus chain and so brings the scale back near its original value. The prime is gone afterwards: one level used. A chain of n primes allows about n-1 multiplications in a row.",
+			refs: [cite(NOTES, "Coefficient modulus bits")],
+		},
+	},
+	{
+		leans: "understanding",
+		mixed: true,
+		question: {
+			kind: "choice",
+			prompt: "How many multiplications in a row do the parameters in the design notes allow?",
+			topic: "Modulus chain",
+			refs: [cite(NOTES, "Coefficient modulus bits")],
+			choices: [
+				{ id: "a", text: "One" },
+				{ id: "b", text: "Two" },
+				{ id: "c", text: "Four" },
+				{ id: "d", text: "As many as fit in memory" },
+			],
+		},
+		secret: {
+			kind: "choice",
+			answer: "b",
+			explanation:
+				"The notes list two usable levels. The variance needs one of them for the square; the other is headroom.",
+			refs: [cite(NOTES, "One multiplication")],
+		},
+	},
+	{
+		leans: "design",
+		mixed: true,
+		question: {
+			kind: "choice",
+			prompt: "Why did the session pick CKKS rather than BFV for the salary column?",
+			topic: "Choosing a scheme",
+			refs: [],
+			session: [
+				said("t03", "I only need the mean to a couple of decimals"),
+				said("t04", "An error around one part in a million is far below a cent"),
+			],
+			choices: [
+				{ id: "a", text: "CKKS is faster for every workload" },
+				{
+					id: "b",
+					text: "A tiny error is fine for a mean to a couple of decimals, and BFV would need the cents scaled into large integers",
+				},
+				{ id: "c", text: "BFV cannot add ciphertexts" },
+				{ id: "d", text: "CKKS results are exact, unlike BFV's" },
+			],
+		},
+		secret: {
+			kind: "choice",
+			answer: "b",
+			explanation:
+				"The trade was exactness for cost: an error of about one part in a million is far below a cent, and CKKS works on real numbers directly instead of cents scaled into big integers.",
+			refs: [cite(NOTES, "CKKS, not BFV")],
+		},
+	},
+	{
+		leans: "design",
+		mixed: true,
+		question: {
+			kind: "open",
+			prompt: "The server returns the sum, not the mean. What was the reasoning, and what did it buy?",
+			topic: "Where to divide",
+			refs: [],
+			session: [
+				said("t05", "Should the server divide the sum by the number of rows"),
+				said("t06", "Dividing by n is a multiplication by 1/n, which spends a level"),
+			],
+		},
+		secret: {
+			kind: "open",
+			points: [
+				{
+					text: "Dividing by n is a multiplication by 1/n, so it would spend a level of the chain.",
+					keywords: ["multiplication", "multiply", "level", "spends", "costs"],
+				},
+				{
+					text: "n is not a secret, so the client can divide after decrypting at no cost.",
+					keywords: ["not a secret", "public", "client", "after decrypt"],
+				},
+				{
+					text: "A shorter chain allows a smaller ring dimension: smaller ciphertexts and faster operations.",
+					keywords: ["shorter", "smaller", "faster", "ring", "chain"],
+				},
+			],
+			explanation:
+				"The server only adds and squares. The division by n, a multiplication by a plaintext, would use a level for something the client does for free after decrypting. Keeping the chain short is what allowed the smaller ring dimension.",
+			refs: [cite(NOTES, "Dividing by n")],
+		},
+	},
+	{
+		leans: "design",
+		mixed: false,
+		question: {
+			kind: "open",
+			prompt:
+				"The notes keep the ring dimension at 8192 rather than 16384. What does that save, and what does it cost?",
+			topic: "Ring dimension",
+			refs: [cite(NOTES, "Ring dimension 8192")],
+		},
+		secret: {
+			kind: "open",
+			points: [
+				{
+					text: "Ciphertexts are half the size and every operation is faster.",
+					keywords: ["half", "smaller", "faster", "size", "speed"],
+				},
+				{
+					text: "There are fewer slots (4096), so a longer column needs several ciphertexts.",
+					keywords: ["slot", "4096", "several", "more ciphertexts", "batch"],
+				},
+			],
+			explanation:
+				"The ring dimension fixes both the size of a ciphertext and the number of values it packs. 8192 gives 4096 slots, enough per ciphertext here, at half the cost of 16384; a longer table is split across ciphertexts.",
+			refs: [cite(NOTES, "Ring dimension 8192")],
+		},
+	},
+	{
+		leans: "implementation",
+		mixed: true,
+		question: {
+			kind: "choice",
+			prompt: "Which constant decides how many multiplications in a row the computation can afford?",
+			topic: "Modulus chain",
+			refs: [cite(STATS, "COEFF_BITS = [60")],
+			choices: [
+				{ id: "a", text: "`POLY_MODULUS`, the ring dimension" },
+				{ id: "b", text: "`COEFF_BITS`, the primes of the modulus chain" },
+				{ id: "c", text: "`SCALE`, the factor numbers are multiplied by" },
+				{ id: "d", text: "None: the loop in `encrypted_stats` checks it at run time" },
+			],
+		},
+		secret: {
+			kind: "choice",
+			answer: "b",
+			explanation:
+				"Each prime between the first and the last is one level; a multiplication rescales and uses one up.",
+			refs: [cite(STATS, "COEFF_BITS = [60")],
+		},
+	},
+	{
+		leans: "implementation",
+		mixed: true,
+		question: {
+			kind: "open",
+			prompt: "Where does `encrypted_stats` multiply, and where is the division by n done instead?",
+			topic: "One multiplication",
+			refs: [cite(STATS, "column.square()"), cite(STATS, "decrypt()[0] / n")],
+		},
+		secret: {
+			kind: "open",
+			points: [
+				{
+					text: "`square()` is the only multiplication, so the computation uses one level.",
+					keywords: ["square", "only multiplication", "one level", "once"],
+				},
+				{
+					text: "The division by n is in `decrypt_stats`, on the client, after decrypting.",
+					keywords: ["decrypt_stats", "client", "after decrypt", "decrypt"],
+				},
+				{
+					text: "The variance is the mean of the squares minus the square of the mean.",
+					keywords: ["mean of the squares", "e[x^2]", "minus the square", "mean * mean", "squares"],
+				},
+			],
+			explanation:
+				"`column.square()` is the single multiplication. `decrypt_stats` divides both decrypted sums by n and takes the variance as the mean of the squares minus the square of the mean, in plain floats.",
+			refs: [cite(STATS, "column.square()")],
+		},
+	},
+	{
+		leans: "implementation",
+		mixed: false,
+		question: {
+			kind: "choice",
+			prompt: "Why does `make_context` call `generate_galois_keys`?",
+			topic: "Galois keys",
+			refs: [cite(STATS, "generate_galois_keys")],
+			choices: [
+				{ id: "a", text: "To let the server decrypt the sum" },
+				{ id: "b", text: "`sum()` rotates the slots, and a rotation needs a Galois key" },
+				{ id: "c", text: "To set the scale of the ciphertexts" },
+				{ id: "d", text: "To make the ciphertexts smaller" },
+			],
+		},
+		secret: {
+			kind: "choice",
+			answer: "b",
+			explanation:
+				"Adding the slots of one ciphertext together means rotating it and adding the rotations; each rotation is a key switch with a Galois key.",
+			refs: [cite(STATS, "Galois keys")],
+		},
+	},
+];
+
+/** The topic questions a quiz of `focus` asks of a folder (`code`: it has source code), in the order they are asked. */
+function topicSpecsFor(focus: QuizFocus, code: boolean): TopicSpec[] {
+	return TOPIC_SPECS.filter(
+		spec => (focus === "mixed" ? spec.mixed : spec.leans === focus) && (code || spec.leans !== "implementation"),
+	);
+}
+
 function questionsOf(
 	parts: { specs: QuestionSpec[] }[],
 	first = 1,
@@ -848,7 +1242,9 @@ export function gradeAnswer(secret: Secret, given: { text?: string; choice?: str
 			? "That covers it."
 			: kind === "partly"
 				? `You have part of it. What is missing: ${missing.map(point => point.text).join(" ")}`
-				: "That is not what the code does.";
+				: secret.refs.length === 0
+					? "That misses the idea."
+					: "That is not what the code does.";
 	return {
 		kind,
 		explanation: `${lead}\n\n${secret.explanation}`,
@@ -857,6 +1253,85 @@ export function gradeAnswer(secret: Secret, given: { text?: string; choice?: str
 		graded: "model",
 	};
 }
+
+const NO_CODE = "Implementation questions need code, and this folder has none.";
+const FOCUS_LABELS: Record<QuizFocus, string> = {
+	mixed: "Mixed",
+	understanding: "Understanding",
+	design: "Design",
+	implementation: "Implementation",
+};
+
+/** A session without a project works in a folder under a `scratch` directory. */
+function isScratch(cwd: string): boolean {
+	return cwd.split("/").includes(SCRATCH_DIR);
+}
+
+/** What a topic quiz can draw on in `cwd`: a scratch folder is no git repository and holds notes only; any other folder is the fixture repository. */
+export function mockQuizFolder(cwd: string): QuizFolder {
+	if (isScratch(cwd))
+		return {
+			git: false,
+			code: false,
+			files: 1,
+			name: scratchLabel(cwd) ?? cwd.split("/").filter(Boolean).pop() ?? cwd,
+		};
+	return {
+		git: true,
+		code: true,
+		files: Object.keys(HEAD_FILES).length + Object.keys(TOPIC_FILES).length,
+		name: "interfold",
+	};
+}
+
+/** The list row's words for a quiz on a session's topic. */
+function topicSummary(focus: QuizFocus): Pick<QuizSummary, "subject" | "about" | "focus"> {
+	return { subject: `Session topic · ${FOCUS_LABELS[focus]}`, about: "session", focus };
+}
+
+/** The quiz on the topic of the session ./fixture-topic holds, for the folder `cwd`, as the companion would write it: refused for the implementation focus when the folder has no code. */
+function topicQuizOf(
+	id: string,
+	createdAt: number,
+	cwd: string,
+	focus: QuizFocus,
+	sessionId: string | undefined,
+): { quiz: Quiz; secrets: Map<string, Secret> } {
+	const folder = mockQuizFolder(cwd);
+	if (focus === "implementation" && !folder.code) throw new Error(NO_CODE);
+	const { questions, secrets } = questionsOf([{ specs: topicSpecsFor(focus, folder.code) }]);
+	const quiz: Quiz = {
+		v: QUIZ_VERSION,
+		id,
+		title: `${folder.name} · session topic`,
+		repo: { root: folder.git ? MOCK_QUIZ_ROOT : cwd, name: folder.name },
+		createdAt,
+		model: "anthropic/claude-sonnet-5-5",
+		about: "session",
+		focus,
+		parts: [
+			{
+				index: 0,
+				title: "Statistics on encrypted data",
+				head: folder.git
+					? { commit: "e41b09d7a2c8135f6b0e94a7d3c15882f60b7d19", ref: "@worktree" }
+					: { commit: "folder" },
+			},
+		],
+		questions,
+		warnings: [],
+	};
+	if (sessionId !== undefined) quiz.sessionId = sessionId;
+	return { quiz, secrets };
+}
+
+const TOPIC_STAGES = [
+	"Reading the conversation of the session",
+	"Reading the files of the folder",
+	"Writing the questions (3 of 8)",
+	"Writing the questions (8 of 8)",
+	"Checking every citation",
+];
 
 const STAGES = [
 	"Reading the changes",
@@ -879,7 +1354,7 @@ export interface MockQuizStakes {
 
 export interface MockQuiz {
 	/** Fields the mock companion's `hosts` frame needs for the app to offer quizzes. */
-	capabilities: { canQuiz: true };
+	capabilities: { canQuiz: true; canQuizTopic: true };
 	/** Make a ready quiz of {@link STAKES_QUESTIONS} choice questions (`a` is right in each) for a high-stakes session's push, with an open first attempt. */
 	addStakesQuiz(id: string, sessionId: string, delta: boolean): void;
 	handles(request: CompanionRequest): boolean;
@@ -1127,6 +1602,23 @@ export function createMockQuiz(options: {
 			),
 		]);
 	}
+	// A quiz on the topic of the session without a project, one question answered: its folder's list and a verdict of a background question.
+	{
+		const built = topicQuizOf("qz-topic", now - HOUR, TOPIC_CWD, "understanding", TOPIC_SESSION_ID);
+		const given = { choice: "b" };
+		const answers: Record<string, QuizAnswerRecord> = {
+			q1: { ...given, verdict: gradeAnswer(built.secrets.get("q1")!, given), at: now - HOUR + 60_000 },
+		};
+		readyStored(built, { ...topicSummary("understanding"), sessionId: TOPIC_SESSION_ID, costUsd: 0.21 }, [
+			attemptOf(
+				built.quiz,
+				"a1",
+				now - HOUR,
+				built.quiz.questions.map(q => q.id),
+				answers,
+			),
+		]);
+	}
 
 	const push = (id: string): void => options.onChanged(id);
 
@@ -1135,10 +1627,15 @@ export function createMockQuiz(options: {
 		stored: StoredQuiz,
 		request: QuizCreate,
 		finish: () => { quiz: Quiz; secrets: Map<string, Secret> },
+		topic = false,
 	): void => {
 		let stage = 0;
 		const { summary } = stored;
-		const stages = request.sessionId === undefined ? STAGES.filter(name => !name.includes("conversation")) : STAGES;
+		const stages = topic
+			? TOPIC_STAGES
+			: request.sessionId === undefined
+				? STAGES.filter(name => !name.includes("conversation"))
+				: STAGES;
 		summary.status = "running";
 		summary.instanceId = options.instanceId;
 		summary.progress = stages[0];
@@ -1262,7 +1759,7 @@ export function createMockQuiz(options: {
 	};
 
 	return {
-		capabilities: { canQuiz: true },
+		capabilities: { canQuiz: true, canQuizTopic: true },
 		addStakesQuiz,
 		handles: request => request.t.startsWith("quiz-"),
 		stop() {
@@ -1271,14 +1768,46 @@ export function createMockQuiz(options: {
 		async answer(request): Promise<CompanionReply> {
 			switch (request.t) {
 				case "quiz-list": {
-					// Every folder of the mock computer is a folder of the fixture repository.
+					// Every folder of the mock computer is a folder of the fixture repository, but a session's scratch folder is its own.
 					const rows = [...quizzes.values()]
 						.map(stored => withStakes(stored.summary))
-						.filter(summary => request.cwd === undefined || summary.repoRoot === MOCK_QUIZ_ROOT)
+						.filter(
+							summary =>
+								request.cwd === undefined ||
+								summary.repoRoot === (isScratch(request.cwd) ? request.cwd : MOCK_QUIZ_ROOT),
+						)
 						.sort((a, b) => b.createdAt - a.createdAt);
 					return { t: "quiz-list", reqId: request.reqId, quizzes: rows };
 				}
 				case "quiz-create": {
+					const focus = request.focus ?? QUIZ_DEFAULT_FOCUS;
+					if (!QUIZ_FOCUSES.includes(focus)) throw new Error(`Unknown focus ${String(focus)}.`);
+					if (request.subject === "session") {
+						if (request.sessionId === undefined)
+							throw new Error("A quiz on a session's topic needs the session.");
+						const topicId = `qz-new-${++counter}`;
+						const built = topicQuizOf(topicId, Date.now(), request.cwd, focus, request.sessionId);
+						const summary: QuizSummary = {
+							id: topicId,
+							title: built.quiz.title,
+							repoRoot: built.quiz.repo.root,
+							...topicSummary(focus),
+							createdAt: built.quiz.createdAt,
+							status: "running",
+							maxCostUsd: request.maxCostUsd ?? 1,
+							sessionId: request.sessionId,
+						};
+						const stored: StoredQuiz = {
+							summary,
+							quiz: null,
+							secrets: new Map(),
+							attempts: [],
+							failedOnce: false,
+						};
+						quizzes.set(topicId, stored);
+						run(stored, request, () => built, true);
+						return { t: "quiz-create", reqId: request.reqId, id: topicId };
+					}
 					const id = `qz-new-${++counter}`;
 					const parts =
 						request.stack !== undefined
@@ -1302,13 +1831,17 @@ export function createMockQuiz(options: {
 						maxCostUsd: request.maxCostUsd ?? 1,
 					};
 					if (request.sessionId !== undefined) summary.sessionId = request.sessionId;
+					if (request.focus !== undefined) summary.focus = request.focus;
 					const stored: StoredQuiz = { summary, quiz: null, secrets: new Map(), attempts: [], failedOnce: false };
 					quizzes.set(id, stored);
-					run(stored, request, () =>
-						parts.length > 0
-							? stackQuiz(id, summary.title, parts, Date.now())
-							: changesQuiz(id, Date.now(), request.sessionId),
-					);
+					run(stored, request, () => {
+						const built =
+							parts.length > 0
+								? stackQuiz(id, summary.title, parts, Date.now())
+								: changesQuiz(id, Date.now(), request.sessionId);
+						if (request.focus !== undefined) built.quiz.focus = request.focus;
+						return built;
+					});
 					return { t: "quiz-create", reqId: request.reqId, id };
 				}
 				case "quiz-get": {
@@ -1412,6 +1945,8 @@ export function createMockQuiz(options: {
 					push(request.id);
 					return { t: "quiz-delete", reqId: request.reqId };
 				}
+				case "quiz-folder":
+					return { t: "quiz-folder", reqId: request.reqId, folder: mockQuizFolder(request.cwd) };
 				case "quiz-stack":
 					return { t: "quiz-stack", reqId: request.reqId, ...stackFor(request.pr) };
 				default:
@@ -1429,4 +1964,9 @@ export function mockStackPrs(): QuizStackPr[] {
 /** The fixture's questions with their hidden parts, for tests of grading. */
 export function mockQuestionSpecs(): QuestionSpec[] {
 	return PARTS.flatMap(part => part.specs);
+}
+
+/** The topic quiz's questions with their hidden parts, for tests of grading. */
+export function mockTopicSpecs(): QuestionSpec[] {
+	return [...TOPIC_SPECS];
 }

@@ -163,6 +163,8 @@ export interface SettleCleanup {
 	recordSession(sessionId: string, folder: string): Promise<void>;
 	/** The companion is about to start a sandboxed session in `folder`: no worktree inside or above it is ever cleaned again. */
 	recordSandboxed(folder: string): Promise<void>;
+	/** Ids of the sessions the companion started or resumed in this worktree (symlinks resolved), ended ones included. */
+	sessionsIn(tree: string): string[];
 	/** The latest result of each worktree that still exists, newest first. */
 	results(): Promise<SettleCleanupResult[]>;
 }
@@ -283,6 +285,9 @@ export function createSettleCleanup(options: SettleCleanupOptions): SettleCleanu
 			const kept = state.sandboxed.filter((known, i) => alive[i] && known !== resolved);
 			state = { ...state, sandboxed: [...kept, resolved].slice(-MAX_SANDBOXED) };
 			await persist();
+		},
+		sessionsIn(tree) {
+			return Object.entries(state.sessions).flatMap(([id, folder]) => (folder === tree ? [id] : []));
 		},
 		async results() {
 			const alive = await Promise.all(

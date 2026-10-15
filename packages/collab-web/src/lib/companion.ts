@@ -32,6 +32,7 @@ import type {
 } from "@oh-my-pi/pi-wire/personal";
 import type {
 	QuizAttempt,
+	QuizFolder,
 	QuizGetAnswer,
 	QuizRequest,
 	QuizStackPr,
@@ -39,6 +40,7 @@ import type {
 	QuizSummary,
 	QuizVerdict,
 } from "@oh-my-pi/pi-wire/quiz";
+import type { DiskGuardSettings, DiskHealth, DiskReply, DiskRequest, DiskState } from "@oh-my-pi/pi-wire/disk";
 import type {
 	StakesChangedFrame,
 	StakesReply,
@@ -84,6 +86,10 @@ const GIT_SETTINGS_TIMEOUT_MS = 60_000;
 const FANOUT_MODELS_TIMEOUT_MS = 45_000;
 /** Usage and session listings may wait on a stats sync of every session file. */
 const USAGE_TIMEOUT_MS = 60_000;
+/** Measuring the sizes of build output on a slow disk is the longest wait the companion asks for. */
+const DISK_SCAN_TIMEOUT_MS = 180_000;
+/** Deleting tens of gigabytes of small files takes minutes. */
+const DISK_CLEAN_TIMEOUT_MS = 900_000;
 /** Commits wait on hooks and checkout. */
 const GIT_WRITE_TIMEOUT_MS = 60_000;
 /** Pushes and pull requests talk to the remote. */
@@ -1134,6 +1140,8 @@ export type CompanionRequest =
 	| BakeoffRequest
 	/** High-stakes sessions (needs `canHighStakes`); see `@oh-my-pi/pi-wire/stakes`. */
 	| StakesRequest
+	/** The disk guard (needs `canDiskGuard`); see `@oh-my-pi/pi-wire/disk`. */
+	| DiskRequest
 	/** The Personal agent (needs `canPersonal`); see `@oh-my-pi/pi-wire/personal`. */
 	| PersonalRequest;
 
@@ -1159,6 +1167,8 @@ export type CompanionReply =
 			canBlueprint?: boolean;
 			/** The companion can write, grade and store quizzes on code changes (`quiz-*` requests). */
 			canQuiz?: boolean;
+			/** The companion can also write quizzes on a session's topic, design and implementation (`subject: "session"`, `focus`, `quiz-folder`). */
+			canQuizTopic?: boolean;
 			/** The companion can gate pushes and pull requests behind a quiz (`stakes-*` requests, `highStakes` on a host). */
 			canHighStakes?: boolean;
 			/** The companion can write, argue and store sparring sessions (`spar-*` requests). */
@@ -1215,6 +1225,10 @@ export type CompanionReply =
 			transcribe?: TranscribeInfo;
 			/** Power of the computer; absent off macOS and from companions that predate it. */
 			power?: CompanionPower;
+			/** The companion watches free disk space and answers the `disk-*` requests; see `@oh-my-pi/pi-wire/disk`. */
+			canDiskGuard?: boolean;
+			/** A watched volume is below the limit now; absent while all have room and from companions that predate the guard. */
+			disk?: DiskHealth;
 	  }
 	| { t: "link"; reqId: number; url: string }
 	/** `token`: the credentials issued to a device that paired with an invite; absent when it authenticated with its own. */
@@ -1302,9 +1316,11 @@ export type CompanionReply =
 	| { t: "quiz-excerpt"; reqId: number; excerpts: (BlueprintExcerpt | null)[] }
 	| { t: "quiz-delete"; reqId: number }
 	| { t: "quiz-stack"; reqId: number; stack: QuizStackPr[]; source: QuizStackSource }
+	| { t: "quiz-folder"; reqId: number; folder: QuizFolder }
 	/** Pushed to every authenticated device when a quiz's summary changes (progress, done, failed, answered); carries no `reqId`. */
 	| { t: "quiz-changed"; id: string }
 	| StakesReply
+	| DiskReply
 	/** Pushed to every authenticated device when a session's high-stakes state changed (mode, pass, quiz); carries no `reqId`. */
 	| StakesChangedFrame
 	| { t: "spar-list"; reqId: number; spars: SparSummary[] }
@@ -1441,6 +1457,8 @@ export interface CompanionSnapshot {
 	canBlueprint: boolean;
 	/** The companion can write, grade and store quizzes on code changes. */
 	canQuiz: boolean;
+	/** The companion can also write quizzes on a session's topic, design and implementation. */
+	canQuizTopic: boolean;
 	/** The companion can gate pushes and pull requests behind a quiz. */
 	canHighStakes: boolean;
 	/** The companion can write, argue and store sparring sessions on code changes and designs. */
@@ -1497,6 +1515,10 @@ export interface CompanionSnapshot {
 	transcribe: TranscribeInfo | null;
 	/** Power of the computer, while the companion reports it. */
 	power: CompanionPower | null;
+	/** The companion watches free disk space and cleans build output (`disk-*` requests). */
+	canDiskGuard: boolean;
+	/** A watched volume is below the limit now; null while all have room, or on a companion without the guard. */
+	disk: DiskHealth | null;
 	/** Web Push application server key, once the companion has listed hosts. */
 	vapidKey: string | null;
 	/** Why the room is unreachable while `offline`; why this device is refused while `unpaired`. */
@@ -1546,6 +1568,7 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	canPr: false,
 	canBlueprint: false,
 	canQuiz: false,
+	canQuizTopic: false,
 	canHighStakes: false,
 	canSpar: false,
 	canBakeoff: false,
@@ -1575,6 +1598,8 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	hiddenRev: null,
 	transcribe: null,
 	power: null,
+	canDiskGuard: false,
+	disk: null,
 	vapidKey: null,
 	error: null,
 };
@@ -1949,6 +1974,22 @@ export class CompanionClient {
 		return reply;
 	}
 
+	/** The disk guard's settings, the watched volumes' free space and the recent cleans; `settings` replaces the settings first (needs `canDiskGuard`). */
+	async diskGuard(settings?: DiskGuardSettings): Promise<DiskState> {
+		const { t: _t, reqId: _reqId, ...state } = await this.#call({ t: "disk-guard", settings }, "disk-guard");
+		return state;
+	}
+
+	/** The worktrees whose build output could be cleaned, with sizes and why some are skipped; measures sizes, so allow it time (needs `canDiskGuard`). */
+	async diskScan(): Promise<Extract<DiskReply, { t: "disk-scan" }>> {
+		return await this.#call({ t: "disk-scan" }, "disk-scan", DISK_SCAN_TIMEOUT_MS);
+	}
+
+	/** Clean the build output of the picked worktrees now, whether or not auto-clean is on; the companion refuses a worktree that is busy or no longer a candidate (needs `canDiskGuard`). */
+	async diskClean(paths: string[]): Promise<Extract<DiskReply, { t: "disk-clean" }>> {
+		return await this.#call({ t: "disk-clean", paths }, "disk-clean", DISK_CLEAN_TIMEOUT_MS);
+	}
+
 	/** Models the computer can run, for a fan-out (needs `canFanout`). */
 	async requestFanoutModels(): Promise<FanoutModel[]> {
 		return (await this.#call({ t: "fanout-models" }, "fanout-models", FANOUT_MODELS_TIMEOUT_MS)).models;
@@ -2312,6 +2353,7 @@ export class CompanionClient {
 				canPr: frame.canPr ?? false,
 				canBlueprint: frame.canBlueprint ?? false,
 				canQuiz: frame.canQuiz ?? false,
+				canQuizTopic: frame.canQuizTopic ?? false,
 				canHighStakes: frame.canHighStakes ?? false,
 				canSpar: frame.canSpar ?? false,
 				canBakeoff: frame.canBakeoff ?? false,
@@ -2341,6 +2383,8 @@ export class CompanionClient {
 				hiddenRev: frame.hiddenRev ?? null,
 				transcribe: frame.transcribe ?? null,
 				power: frame.power ?? null,
+				canDiskGuard: frame.canDiskGuard ?? false,
+				disk: frame.disk ?? null,
 				vapidKey: frame.vapidKey,
 				error: null,
 			});

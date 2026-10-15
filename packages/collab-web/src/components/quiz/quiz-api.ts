@@ -2,6 +2,7 @@ import type { BlueprintExcerpt, BlueprintExcerptRef } from "@oh-my-pi/pi-wire/bl
 import type {
 	QuizAttempt,
 	QuizCreate,
+	QuizFolder,
 	QuizGetAnswer,
 	QuizStackPr,
 	QuizStackSource,
@@ -20,6 +21,8 @@ const ANSWER_TIMEOUT_MS = 120_000;
 const EXCERPT_TIMEOUT_MS = 90_000;
 /** Finding a stack reads branches and, for pull requests, `gh`. */
 const STACK_TIMEOUT_MS = 45_000;
+/** Looking at a folder counts its files. */
+const FOLDER_TIMEOUT_MS = 30_000;
 
 /** Citations asked for in one `quiz-excerpt` request, so no single request holds the connection for long. */
 export const QUIZ_EXCERPT_BATCH = 200;
@@ -96,4 +99,9 @@ export async function getQuizStack(
 ): Promise<{ stack: QuizStackPr[]; source: QuizStackSource }> {
 	const { stack, source } = await client.requestQuiz({ t: "quiz-stack", cwd, pr }, STACK_TIMEOUT_MS);
 	return { stack, source };
+}
+
+/** What a topic quiz of the folder can draw on: whether it is a git repository, whether it holds code, how many files. Needs `canQuizTopic`. */
+export async function getQuizFolder(client: CompanionClient, cwd: string): Promise<QuizFolder> {
+	return (await client.requestQuiz({ t: "quiz-folder", cwd }, FOLDER_TIMEOUT_MS)).folder;
 }

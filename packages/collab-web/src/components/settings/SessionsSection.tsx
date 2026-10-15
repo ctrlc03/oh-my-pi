@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { DEVICE_ORG } from "../../lib/org-storage";
 import { AutoSettlePanel } from "../shell/OrgMenu";
 import { WorktreeSettings } from "../shell/WorktreeSettings";
+import { DiskSettings } from "../shell/DiskSettings";
 import { StakesSettings } from "../shell/StakesSettings";
 import type { SettingsEnv } from "./env";
 import { ComputerGate, SettingsGroup } from "./SettingsRows";
@@ -31,6 +32,11 @@ export function SessionsSection({ env }: { env: SettingsEnv }): ReactNode {
 						<ComputerGate computer={computer}>{client => <WorktreeSettings client={client} />}</ComputerGate>
 					</SettingsGroup>
 				)}
+				{computer.snap.canDiskGuard && (
+					<SettingsGroup title="Disk space">
+						<ComputerGate computer={computer}>{client => <DiskSettings client={client} />}</ComputerGate>
+					</SettingsGroup>
+				)}
 				{computer.snap.canHighStakes && (
 					<SettingsGroup title="High-stakes quizzes">
 						<ComputerGate computer={computer}>{client => <StakesSettings client={client} />}</ComputerGate>
@@ -50,6 +56,13 @@ export function SessionsSection({ env }: { env: SettingsEnv }): ReactNode {
 						<SettingsGroup nested title="Git worktrees">
 							<ComputerGate computer={computer} named>
 								{client => <WorktreeSettings client={client} computerName={computer.name} />}
+							</ComputerGate>
+						</SettingsGroup>
+					)}
+					{computer.snap.canDiskGuard && (
+						<SettingsGroup nested title="Disk space">
+							<ComputerGate computer={computer} named>
+								{client => <DiskSettings client={client} computerName={computer.name} />}
 							</ComputerGate>
 						</SettingsGroup>
 					)}

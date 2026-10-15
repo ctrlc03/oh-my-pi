@@ -135,6 +135,83 @@
 	background: color-mix(in srgb, var(--err) 14%, transparent);
 }
 
+.qz-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.qz-chip-background {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft);
+}
+
+/* The messages of the session a question cites: who wrote it and the passage, with a way to find it in the transcript. */
+.qz-quotes {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.qz-quote {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+	padding: 8px 12px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-left: 3px solid var(--fg-faint);
+	border-radius: var(--radius);
+}
+
+.qz-quote[data-role="user"] {
+	border-left-color: var(--accent);
+}
+
+.qz-quote-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.qz-quote-role {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font: 600 11px / 18px var(--font-ui);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--fg-muted);
+}
+
+.qz-quote-show {
+	height: 26px;
+	padding: 0 9px;
+	font-size: 12px;
+}
+
+.qz-quote-text {
+	margin: 0;
+	font-size: 13.5px;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.qz-form .sh-segment:disabled {
+	cursor: default;
+	opacity: 0.55;
+}
+
 /* The Quizzes | Sparring switch (offered when the companion can spar); the Sparring list has the same strip as `.sp-tabs`. */
 .qz-tabs {
 	align-self: flex-start;
@@ -1029,6 +1106,14 @@ label.qz-choice:hover {
 		min-height: 0;
 	}
 
+	/* A question with nothing to show beside it (background knowledge) keeps one readable column. */
+	.qz-scroll-question .qz-split-solo {
+		grid-template-columns: minmax(0, 760px);
+		grid-template-areas:
+			"prompt"
+			"answer";
+	}
+
 	.qz-scroll-question .qz-prompt-area {
 		grid-area: prompt;
 		max-height: calc(var(--view-h) * 0.38);
@@ -1062,6 +1147,10 @@ label.qz-choice:hover {
 	}
 
 	.qz-form-body .sh-input {
+		min-height: 44px;
+	}
+
+	.qz-quote-show {
 		min-height: 44px;
 	}
 

@@ -34,6 +34,8 @@ export interface QuizPlayProps {
 	stakes?: QuizStakes;
 	/** Opens a cited line of the checkout on screen when it is this quiz's repository; absent when the quiz is not about that checkout. */
 	editor?: { root: string; open(path: string, line?: number): void };
+	/** The session open on screen, when it is on this quiz's computer: a citation of its conversation can be shown there. */
+	session?: { id: string; show(entry: string): void };
 	/** Back to the new-quiz form about this quiz's subject; null when there is none to offer. */
 	onNewQuiz: ((quiz: Quiz) => void) | null;
 	/** Back to the list of quizzes. */
@@ -54,6 +56,7 @@ export function QuizPlay({
 	costUsd,
 	stakes: loadedStakes,
 	editor,
+	session,
 	onNewQuiz,
 	onHistory,
 	onClose,
@@ -89,6 +92,7 @@ export function QuizPlay({
 		(part, refs) => getQuizExcerpts(client, quiz.id, part, refs),
 		[client, quiz.id],
 	);
+	const onShowEntry = session !== undefined && session.id === quiz.sessionId ? session.show : undefined;
 	const openInEditor =
 		editor !== undefined && editor.root === quiz.repo.root
 			? (ref: BlueprintRef) => editor.open(`${editor.root}/${ref.path}`, ref.line)
@@ -167,6 +171,7 @@ export function QuizPlay({
 					<QuestionView
 						key={`${attempt.id}:${question.id}`}
 						code={{ excerpts, cache, openInEditor }}
+						onShowEntry={onShowEntry}
 						quiz={quiz}
 						question={question}
 						position={positionOf(questions, at)}

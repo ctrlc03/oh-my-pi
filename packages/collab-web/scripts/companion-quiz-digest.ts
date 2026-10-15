@@ -13,6 +13,14 @@ import { isRecord } from "../src/tool-render/util";
 export interface DigestTurn {
 	role: "user" | "assistant";
 	text: string;
+	/** The id of the session entry the turn is, set when the turns are read per entry ({@link DigestOptions.ids}). */
+	id?: string;
+}
+
+/** A message of the conversation as it is in the session file, by entry id, for checking a quote of it. */
+export interface DigestEntry {
+	role: "user" | "assistant";
+	text: string;
 }
 
 export interface Digest {
@@ -21,6 +29,16 @@ export interface Digest {
 	turns: number;
 	/** Turns left out to fit the budget. */
 	omitted: number;
+	/** With {@link DigestOptions.ids}: every message of the conversation by entry id, whole (the digest may have clipped it). */
+	entries?: ReadonlyMap<string, DigestEntry>;
+}
+
+export interface DigestOptions {
+	/**
+	 * Read the conversation per session entry and mark each message with its entry id (`[#<id>] User: …`), so a question
+	 * can cite a message and the citation be checked. Without it, an assistant's text between two prompts is one turn.
+	 */
+	ids?: boolean;
 }
 
 /** A long user prompt is cut to about this many characters: the head and the tail carry the intent. */
@@ -32,6 +50,8 @@ const SUMMARY_PREFIX = "Earlier in the session (summary): ";
 /** Lines longer than this (a tool result with a file in it) are skipped without parsing. */
 const MAX_LINE_CHARS = 8 * 1024 * 1024;
 const REMINDER_RE = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
+/** What an entry id of a session file looks like. */
+const ENTRY_ID_RE = /^[0-9A-Za-z_-]{4,64}$/;
 
 function clean(text: string): string {
 	return text
@@ -55,10 +75,15 @@ function textOf(content: unknown): string {
 /** Builds the turns from entries fed in file order, so a big file never has to be held whole. */
 class TurnCollector {
 	readonly turns: DigestTurn[] = [];
+	readonly #ids: boolean;
 	/** The summary of the latest compaction that came before any turn: earlier history the file no longer holds. */
 	#summary: string | null = null;
 	/** The assistant turn being built: consecutive assistant text between two user prompts. */
 	#assistant: string[] = [];
+
+	constructor(ids: boolean) {
+		this.#ids = ids;
+	}
 
 	push(entry: unknown): void {
 		if (!isRecord(entry)) return;
@@ -69,22 +94,25 @@ class TurnCollector {
 			return;
 		}
 		if (entry.type === "custom_message") {
-			if (entry.customType === "collab-prompt" && entry.attribution === "user") this.#user(textOf(entry.content));
+			if (entry.customType === "collab-prompt" && entry.attribution === "user")
+				this.#user(textOf(entry.content), entry.id);
 			return;
 		}
 		if (entry.type !== "message" || !isRecord(entry.message)) return;
-		if (entry.message.role === "user") this.#user(textOf(entry.message.content));
+		if (entry.message.role === "user") this.#user(textOf(entry.message.content), entry.id);
 		else if (entry.message.role === "assistant") {
 			const text = clean(textOf(entry.message.content));
-			if (text) this.#assistant.push(text);
+			if (!text) return;
+			if (this.#ids) this.turns.push({ role: "assistant", text, ...idOf(entry.id) });
+			else this.#assistant.push(text);
 		}
 	}
 
-	#user(raw: string): void {
+	#user(raw: string, id: unknown): void {
 		const text = clean(raw);
 		if (!text) return;
 		this.#flush();
-		this.turns.push({ role: "user", text });
+		this.turns.push({ role: "user", text, ...(this.#ids ? idOf(id) : {}) });
 	}
 
 	#flush(): void {
@@ -100,14 +128,18 @@ class TurnCollector {
 	}
 }
 
+function idOf(id: unknown): { id?: string } {
+	return typeof id === "string" && ENTRY_ID_RE.test(id) ? { id } : {};
+}
+
 /**
  * The conversation of a session as turns, oldest first: user prompts and, between them, the assistant's text joined
- * into one turn. A compaction summary becomes an assistant turn ("Earlier in the session (summary): …") only when no
- * turn comes before the compaction in the file, that is when the history it replaced is gone; a file that still holds
- * every turn is read as it is.
+ * into one turn (or, with {@link DigestOptions.ids}, one turn per message). A compaction summary becomes an assistant
+ * turn ("Earlier in the session (summary): …") only when no turn comes before the compaction in the file, that is when
+ * the history it replaced is gone; a file that still holds every turn is read as it is.
  */
-export function extractTurns(entries: readonly unknown[]): DigestTurn[] {
-	const collector = new TurnCollector();
+export function extractTurns(entries: readonly unknown[], options: DigestOptions = {}): DigestTurn[] {
+	const collector = new TurnCollector(options.ids === true);
 	for (const entry of entries) collector.push(entry);
 	return collector.finish();
 }
@@ -115,7 +147,7 @@ export function extractTurns(entries: readonly unknown[]): DigestTurn[] {
 // ── render ───────────────────────────────────────────────────────────────────
 
 function label(turn: DigestTurn): string {
-	return turn.role === "user" ? "User: " : "Assistant: ";
+	return `${turn.id === undefined ? "" : `[#${turn.id}] `}${turn.role === "user" ? "User: " : "Assistant: "}`;
 }
 
 /** `text` cut to at most `limit` characters: the head and the tail stay, the middle becomes a marker. */
@@ -207,10 +239,15 @@ export function renderDigest(turns: readonly DigestTurn[], budgetChars: number):
 
 /**
  * The digest of the session file at `file`, or null when it cannot be read or holds no conversation. The file is
- * streamed line by line (they can be tens of megabytes); a line that is not JSON, or is huge, is skipped.
+ * streamed line by line (they can be tens of megabytes); a line that is not JSON, or is huge, is skipped. With
+ * {@link DigestOptions.ids} the digest also holds the whole messages by entry id.
  */
-export async function sessionDigest(file: string, budgetChars: number): Promise<Digest | null> {
-	const collector = new TurnCollector();
+export async function sessionDigest(
+	file: string,
+	budgetChars: number,
+	options: DigestOptions = {},
+): Promise<Digest | null> {
+	const collector = new TurnCollector(options.ids === true);
 	try {
 		const decoder = new TextDecoder();
 		let pending = "";
@@ -245,5 +282,9 @@ export async function sessionDigest(file: string, budgetChars: number): Promise<
 	const turns = collector.finish();
 	if (turns.length === 0) return null;
 	const digest = renderDigest(turns, budgetChars);
-	return digest.turns === 0 ? null : digest;
+	if (digest.turns === 0) return null;
+	if (options.ids !== true) return digest;
+	const entries = new Map<string, DigestEntry>();
+	for (const turn of turns) if (turn.id !== undefined) entries.set(turn.id, { role: turn.role, text: turn.text });
+	return { ...digest, entries };
 }

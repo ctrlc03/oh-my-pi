@@ -66,6 +66,8 @@ export interface HeaderBarProps {
 	onOpenCodemap: (() => void) | null;
 	/** Architecture maps of the session's repository; null unless the paired computer can make them. */
 	onOpenArchitecture: (() => void) | null;
+	/** A quiz on this session's topic, design and implementation; null unless the paired computer writes those and a session is open. */
+	onQuizTopic: (() => void) | null;
 	/** A changes map of this session's edits; null unless maps can be made and files changed. */
 	onMapChanges: (() => void) | null;
 	/** This repository's quizzes, with *New quiz* on this session's changes; null unless this computer writes quizzes. */
@@ -141,6 +143,7 @@ export const HeaderBar = memo(function HeaderBar({
 	onOpenArchitecture,
 	onMapChanges,
 	onOpenQuizzes,
+	onQuizTopic,
 	onOpenSparring,
 	onOpenBakeoff,
 	onOpenPane,
@@ -416,6 +419,13 @@ export const HeaderBar = memo(function HeaderBar({
 						(() => {
 							setSheetOpen(false);
 							onOpenQuizzes();
+						})
+					}
+					onQuizTopic={
+						onQuizTopic &&
+						(() => {
+							setSheetOpen(false);
+							onQuizTopic();
 						})
 					}
 					onOpenSparring={

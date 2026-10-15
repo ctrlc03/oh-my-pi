@@ -261,6 +261,9 @@ describeE2e("a high-stakes session", () => {
 			// Only the new file was handed to the question writer.
 			const brief = h.stub.requests.findLast(request => request.transcript.includes("src/bye.ts"))!;
 			expect(brief.transcript).not.toContain("src/greet.ts (added)");
+			// With a quarter design and understanding questions about those changes mixed in.
+			expect(brief.transcript).toContain("about a quarter (25 %)");
+			expect(brief.transcript).toContain("the new changes only");
 			await take(made.id, 2);
 			expect(await stakes()).toMatchObject({ covered: true, passed: { delta: true } });
 			await h.client.pushBranch(instanceId);

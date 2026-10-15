@@ -21,7 +21,7 @@ import { fmtCost, relTime } from "../../lib/format";
 import { type ClientTarget, featureTargets, useStableTargets } from "../../lib/stable-targets";
 import { useRequest } from "../../lib/use-request";
 import { deleteQuiz, listQuizzes } from "./quiz-api";
-import { folderName, groupByRepo, rowStatus } from "./quiz-flow";
+import { aboutTags, folderName, groupByRepo, rowStatus } from "./quiz-flow";
 
 export interface QuizListProps {
 	computers: readonly ComputerHandle[];
@@ -294,6 +294,11 @@ function QuizRow({ quiz, client, canWatch, onOpen, onOpenHost, onChanged }: Quiz
 						{status.kind === "score" && <CircleCheck size={11} aria-hidden="true" />}
 						{status.text}
 					</span>
+					{aboutTags(quiz).map(tag => (
+						<span key={tag} className="qz-tag">
+							{tag}
+						</span>
+					))}
 					{quiz.stakes !== undefined && (
 						<span className="qz-tag" data-kind="stakes">
 							<ShieldAlert size={11} aria-hidden="true" /> High stakes

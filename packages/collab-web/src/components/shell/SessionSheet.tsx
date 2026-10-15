@@ -93,6 +93,8 @@ export interface SessionSheetProps {
 	onMapChanges: (() => void) | null;
 	/** This repository's quizzes, with *New quiz* on this session's changes; null unless this computer writes quizzes. */
 	onOpenQuizzes: (() => void) | null;
+	/** A quiz on this session's topic, design and implementation; null unless this computer writes those and a session is open. */
+	onQuizTopic: (() => void) | null;
 	/** This repository's sparring sessions, with *Spar with this change* on this session's changes; null unless this computer can spar. */
 	onOpenSparring: (() => void) | null;
 	/** This repository's bake-offs, with *Bake off these changes* on this session's changes; null unless this computer can run bake-offs. */
@@ -166,6 +168,7 @@ export function SessionSheet({
 	onOpenArchitecture,
 	onMapChanges,
 	onOpenQuizzes,
+	onQuizTopic,
 	onOpenSparring,
 	onOpenBakeoff,
 	onOpenPane,
@@ -681,6 +684,17 @@ export function SessionSheet({
 						<dd>
 							<button type="button" className="sh-sheet-link" onClick={onOpenQuizzes}>
 								This repository's quizzes
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
+				{onQuizTopic && (
+					<div className="sh-sheet-row">
+						<dt>Topic quiz</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onQuizTopic}>
+								Quiz me on this session
 								<ChevronRight size={14} />
 							</button>
 						</dd>

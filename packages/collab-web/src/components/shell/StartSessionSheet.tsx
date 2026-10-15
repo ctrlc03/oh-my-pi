@@ -2,6 +2,7 @@ import {
 	ChevronLeft,
 	CircleCheck,
 	FolderOpen,
+	FolderSearch,
 	FolderPlus,
 	GitBranch,
 	GitCompareArrows,
@@ -38,6 +39,7 @@ import { AgentChip } from "./AgentChip";
 import { AgentPicker } from "./AgentPicker";
 import { AgentsSheet } from "./AgentsSheet";
 import { ComputerPicker, useStartComputer } from "./ComputerPicker";
+import { FolderBrowser } from "./FolderBrowser";
 import { FanoutCompareSheet, FanoutPicker } from "./FanoutSheet";
 import { Sheet } from "./Sheet";
 
@@ -102,6 +104,7 @@ export function StartSessionSheet({
 	const canSandbox = computer?.snap.canSandbox ?? false;
 	const canFanout = computer?.snap.canFanout ?? false;
 	const canScratch = computer?.snap.canScratch ?? false;
+	const canBrowseFolders = computer?.snap.canBrowseFolders ?? false;
 	const canBackgroundStart = computer?.snap.canBackgroundStart ?? false;
 	const canForeign = computer?.snap.canForeign ?? false;
 	const canHighStakes = computer?.snap.canHighStakes ?? false;
@@ -118,6 +121,7 @@ export function StartSessionSheet({
 		initial === undefined ? null : { cwd: initial.cwd, lastActive: 0, sessions: [] },
 	);
 	const [starting, setStarting] = useState<StartTarget | null>(null);
+	const [browsing, setBrowsing] = useState(false);
 	const [sandboxed, setSandboxed] = useState(false);
 	const [highStakes, setHighStakes] = useState(false);
 	const [worktree, setWorktree] = useState(false);
@@ -142,6 +146,7 @@ export function StartSessionSheet({
 		if (shownComputer.current === computerId) return;
 		shownComputer.current = computerId;
 		setFolder(null);
+		setBrowsing(false);
 		setAgent(null);
 		setModel("");
 		setFan(false);
@@ -280,13 +285,18 @@ export function StartSessionSheet({
 	return (
 		<Sheet label="Start a session" onClose={onClose}>
 			<div className="sh-sheet-head">
-				{folder !== null && starting === null ? (
-					<button type="button" className="sh-btn sh-btn-icon" onClick={() => setFolder(null)} aria-label="Back">
+				{(folder !== null || browsing) && starting === null ? (
+					<button
+						type="button"
+						className="sh-btn sh-btn-icon"
+						onClick={() => (folder !== null ? setFolder(null) : setBrowsing(false))}
+						aria-label="Back"
+					>
 						<ChevronLeft size={16} />
 					</button>
 				) : null}
 				<div className="sh-sheet-title sh-start-title">
-					{folder === null ? "Start a session" : folderLabel(folder.cwd)}
+					{folder !== null ? folderLabel(folder.cwd) : browsing ? "Choose a folder" : "Start a session"}
 				</div>
 				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 					<X size={16} />
@@ -294,7 +304,7 @@ export function StartSessionSheet({
 			</div>
 			{openElsewhere.notice}
 			{error && <div className="sh-connect-error">{error}</div>}
-			{folder === null && starting === null && (
+			{folder === null && starting === null && !browsing && (
 				<ComputerPicker computers={computers} feature="start" value={computerId} onChange={setComputerId} />
 			)}
 			{starting === null && runs.length > 0 && (
@@ -340,8 +350,22 @@ export function StartSessionSheet({
 						appears in {where === "your computer" ? "your computer's" : `${where}'s`} list when it is ready.
 					</div>
 				</div>
+			) : browsing && folder === null ? (
+				<FolderBrowser
+					client={client}
+					onPick={picked => {
+						setBrowsing(false);
+						setFolder(picked);
+					}}
+				/>
 			) : folder === null ? (
-				<FolderList state={state} canScratch={canScratch} onPick={setFolder} onRetry={reload} />
+				<FolderList
+					state={state}
+					canScratch={canScratch}
+					onPick={setFolder}
+					onBrowse={canBrowseFolders ? () => setBrowsing(true) : undefined}
+					onRetry={reload}
+				/>
 			) : (
 				<div className="sh-start-form" onKeyDown={onFormKey}>
 					{folder.cwd === NO_PROJECT && (
@@ -538,35 +562,54 @@ export function FolderList({
 	state,
 	canScratch,
 	onPick,
+	onBrowse,
 	onRetry,
 }: {
 	state: RequestState<RecentFolder[]>;
 	/** The companion can start a session without a project. */
 	canScratch: boolean;
 	onPick(folder: RecentFolder): void;
+	/** Open the folder browser; absent when the companion cannot list its folders. */
+	onBrowse?(): void;
 	onRetry(): void;
 }): ReactNode {
-	const noProject = canScratch ? (
-		<section className="sh-switch-section" aria-label="No project">
-			<ul className="sh-recents-list">
-				<li className="sh-recent">
-					<button type="button" className="sh-recent-join" onClick={() => onPick(NO_PROJECT_FOLDER)}>
-						<span className="sh-recent-title">
-							<FolderPlus size={14} />
-							<span className="sh-recent-name">No project</span>
-						</span>
-						<span className="sh-recent-meta">
-							<span className="sh-recent-cwd">A fresh folder for one-off work</span>
-						</span>
-					</button>
-				</li>
-			</ul>
-		</section>
-	) : null;
+	const other =
+		canScratch || onBrowse !== undefined ? (
+			<section className="sh-switch-section" aria-label="Other places">
+				<ul className="sh-recents-list">
+					{canScratch && (
+						<li className="sh-recent">
+							<button type="button" className="sh-recent-join" onClick={() => onPick(NO_PROJECT_FOLDER)}>
+								<span className="sh-recent-title">
+									<FolderPlus size={14} />
+									<span className="sh-recent-name">No project</span>
+								</span>
+								<span className="sh-recent-meta">
+									<span className="sh-recent-cwd">A fresh folder for one-off work</span>
+								</span>
+							</button>
+						</li>
+					)}
+					{onBrowse !== undefined && (
+						<li className="sh-recent">
+							<button type="button" className="sh-recent-join" onClick={onBrowse}>
+								<span className="sh-recent-title">
+									<FolderSearch size={14} />
+									<span className="sh-recent-name">Choose another folder…</span>
+								</span>
+								<span className="sh-recent-meta">
+									<span className="sh-recent-cwd">Any folder on the computer</span>
+								</span>
+							</button>
+						</li>
+					)}
+				</ul>
+			</section>
+		) : null;
 	if (state.status === "loading") {
 		return (
 			<>
-				{noProject}
+				{other}
 				<div className="sh-companion-empty sh-file-status">
 					<LoaderCircle size={14} className="sh-spin" /> Loading folders…
 				</div>
@@ -576,7 +619,7 @@ export function FolderList({
 	if (state.status === "error") {
 		return (
 			<>
-				{noProject}
+				{other}
 				<div className="sh-tree-error">
 					<div className="sh-connect-error">{state.message}</div>
 					<button type="button" className="sh-btn" onClick={onRetry}>
@@ -589,14 +632,14 @@ export function FolderList({
 	if (state.value.length === 0) {
 		return (
 			<>
-				{noProject}
+				{other}
 				<div className="sh-companion-empty">No folders yet. Run omp once in a project to list it here.</div>
 			</>
 		);
 	}
 	return (
 		<>
-			{noProject}
+			{other}
 			<section className="sh-switch-section" aria-label="Folders">
 				<h2 className="sh-recents-title">Pick a folder</h2>
 				<ul className="sh-recents-list">

@@ -135,6 +135,12 @@
 	cursor: move;
 }
 
+/* Until one of the big sheets is moved, a wide one opens centred, like Settings; a saved frame's inline style wins. */
+.sh-sheet.sh-sheet-wide.sh-sheet-movable {
+	right: auto;
+	left: calc(50% - min(360px, calc(var(--view-w) * 0.5 - 12px)));
+}
+
 /* While a sheet is dragged: no text selection under the pointer. */
 html[data-sheet-drag] {
 	user-select: none;

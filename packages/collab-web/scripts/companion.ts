@@ -139,6 +139,7 @@ import {
 } from "./companion-codemap";
 import { collectDiag, recordRelayEvent, recordRequestError } from "./companion-diag";
 import { readFileChunk } from "./companion-download";
+import { browseFolders, checkStartFolder } from "./companion-browse";
 import { findFileSessions, repoRelativeFocus } from "./companion-file-sessions";
 import { fileVersions, listTree, writeRepoFile } from "./companion-files";
 import { git, gitDiff, gitSnapshot, isInside, readRepoFile, repoRoot } from "./companion-git";
@@ -1181,6 +1182,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canSearch: true,
 		canScratch: extras.canStart,
 		canBackgroundStart: extras.canStart,
+		canBrowseFolders: extras.canStart,
 		canForeign: extras.canStart,
 		sessionOrgRev: sessionOrg.file().rev,
 		canOrderSessions: true,
@@ -1261,7 +1263,7 @@ interface ForeignStart {
  * a detached host process (`./foreign/host-main.ts`) in the same kind of tmux session, listed like any other host.
  */
 async function startSession(
-	cwd: unknown,
+	requestedCwd: unknown,
 	resume: unknown,
 	sandboxed: unknown,
 	worktree: { branch?: unknown } | undefined,
@@ -1279,7 +1281,7 @@ async function startSession(
 	highStakes?: string,
 ): Promise<string> {
 	if (
-		typeof cwd !== "string" ||
+		typeof requestedCwd !== "string" ||
 		(resume !== undefined && typeof resume !== "string") ||
 		(sandboxed !== undefined && typeof sandboxed !== "boolean") ||
 		(force !== undefined && typeof force !== "boolean") ||
@@ -1289,6 +1291,8 @@ async function startSession(
 		throw new Error("invalid request");
 	}
 	if (resume !== undefined && !SAFE_ID_RE.test(resume)) throw new Error("invalid session id");
+	// A new session needs a folder that exists (`~` and typos are settled here, before tmux); a resumed one keeps the folder its session recorded.
+	const cwd = resume === undefined ? await checkStartFolder(requestedCwd, os.homedir()) : requestedCwd;
 	const plan = await planForeignStart(
 		{
 			agent: foreign?.agent,
@@ -1994,6 +1998,13 @@ room.onFrame = (frame, fromPeer) => {
 				t: "folders",
 				reqId: frame.reqId,
 				folders: await recentFoldersAll(),
+			}));
+			return;
+		case "browse-folders":
+			respond(frame.reqId, async () => ({
+				t: "folder-listing",
+				reqId: frame.reqId,
+				listing: await browseFolders(frame, { home: os.homedir() }),
 			}));
 			return;
 		case "schedules":

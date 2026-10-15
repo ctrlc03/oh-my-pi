@@ -130,6 +130,80 @@
 	margin-top: -4px;
 }
 
+/* ---- choose another folder (FolderBrowser) ---- */
+/* Display-less wrapper like the start form: the sheet's column and gap lay it out. */
+.sh-browse {
+	display: contents;
+}
+
+.sh-browse > * {
+	flex-shrink: 0;
+}
+
+.sh-browse-bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sh-browse-path {
+	flex: 1;
+	min-width: 0;
+}
+
+.sh-browse-actions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.sh-browse-hidden {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	font-size: 13px;
+	color: var(--fg-muted);
+	cursor: pointer;
+}
+
+.sh-browse-hidden input {
+	flex: none;
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	accent-color: var(--accent);
+}
+
+/* A folder with hundreds of subfolders scrolls inside the sheet, so the path and *Use this folder* stay in reach. */
+.sh-browse-list {
+	max-height: min(calc(var(--viewport-height, var(--view-h)) * 0.5), 420px);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.sh-browse-recover {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+@media (any-pointer: coarse) {
+	.sh-browse-path {
+		min-height: 44px;
+	}
+
+	.sh-browse-hidden {
+		min-height: 44px;
+	}
+
+	.sh-browse-hidden input {
+		width: 20px;
+		height: 20px;
+	}
+}
+
 /* Sessions started without leaving the sheet. */
 .sh-start-runs {
 	display: flex;

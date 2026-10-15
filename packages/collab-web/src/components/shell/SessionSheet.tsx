@@ -245,7 +245,7 @@ export function SessionSheet({
 	};
 
 	return (
-		<Sheet label="session details" onClose={onClose}>
+		<Sheet label="session details" size="wide" onClose={onClose}>
 			{renaming === null ? (
 				<div className="sh-sheet-head">
 					<div className="sh-sheet-title">{title}</div>

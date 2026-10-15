@@ -552,6 +552,28 @@ export interface RecentFolder {
 	sessions: { id: string; title: string | null; lastActive: number; agent?: AgentRef }[];
 }
 
+/** A folder one level below the one being browsed. */
+export interface BrowsedFolder {
+	/** The folder's name: the last segment of `path`. */
+	name: string;
+	/** The absolute path; a symlink to a folder is listed under its own path, not the one it points to. */
+	path: string;
+	/** The folder holds a `.git` entry. */
+	git: boolean;
+}
+
+/** What `browse-folders` answers: the folders directly inside one folder of the computer. */
+export interface FolderListing {
+	/** The folder listed, as an absolute path. */
+	path: string;
+	/** Its parent; null at the root. */
+	parent: string | null;
+	/** Subfolders sorted without regard to case; hidden ones only when they were asked for. */
+	folders: BrowsedFolder[];
+	/** There were more folders than the companion lists in one answer, or it ran out of time reading them. */
+	truncated: boolean;
+}
+
 export type UsageRange = "24h" | "7d" | "30d" | "90d" | "all";
 
 /** Token and spend totals from the omp stats database, for every session on the computer. */
@@ -973,6 +995,11 @@ export type CompanionRequest =
 	/** `path` is absolute or relative to the session cwd; it must resolve inside the repository (or cwd). */
 	| { t: "file"; reqId: number; instanceId: string; path: string }
 	| { t: "folders"; reqId: number }
+	/**
+	 * The folders directly inside `path` (needs `canBrowseFolders`): absent means the computer's home folder, `~` is the home folder
+	 * and a path that is not absolute is read from it; hidden ones (a leading dot) only when `hidden` is set; answered with `folder-listing`.
+	 */
+	| { t: "browse-folders"; reqId: number; path?: string; hidden?: boolean }
 	/** Scheduled runs (needs `canSchedule`): the whole list. */
 	| { t: "schedules"; reqId: number }
 	/** Create (no `schedule.id`) or replace a scheduled run; answered with `schedule`. */
@@ -981,7 +1008,8 @@ export type CompanionRequest =
 	/** Start a scheduled run now, whatever its timetable says; answered with `schedule` once it hosts (an error when it did not start). */
 	| { t: "schedule-run-now"; reqId: number; id: string }
 	/**
-	 * Start omp in `cwd` (resuming session `resume` when given), hosting with control access;
+	 * Start omp in `cwd` (resuming session `resume` when given), hosting with control access; a new session's `cwd` must be a folder
+	 * that exists (`~` is the home folder, a path that is not absolute is read from it), else the request is refused;
 	 * `sandboxed`: file read/search/edit tools only, with writes confined to `cwd` (needs `canSandbox`);
 	 * `worktree` (new sessions inside a git repository only): run on a new branch in its own git worktree.
 	 * `scratch` (new sessions only, needs `canScratch`): run in a fresh folder under the computer's omp config dir instead of `cwd`
@@ -1205,6 +1233,8 @@ export type CompanionReply =
 			canScratch?: boolean;
 			/** `start` takes `prompt` (delivered at launch) and tells simultaneous starts in one folder apart: sessions can be started in the background. */
 			canBackgroundStart?: boolean;
+			/** The companion answers `browse-folders`: any folder on the computer can be browsed to start a session in. */
+			canBrowseFolders?: boolean;
 			/** The companion can run vendor agents beside omp (`agents`, `start` with `agent`). */
 			canForeign?: boolean;
 			/** The companion serves the `personal-*` requests (the Personal agent); see `@oh-my-pi/pi-wire/personal`. */
@@ -1256,6 +1286,8 @@ export type CompanionReply =
 	/** In the order of the request's paths; null for a file that is missing or unreadable. */
 	| { t: "file-versions"; reqId: number; versions: (string | null)[] }
 	| { t: "folders"; reqId: number; folders: RecentFolder[] }
+	/** The folders of `path`, answering `browse-folders`. */
+	| { t: "folder-listing"; reqId: number; listing: FolderListing }
 	| { t: "schedules"; reqId: number; schedules: Schedule[] }
 	/** One schedule as stored: answers `schedule-save` and `schedule-run-now`. */
 	| { t: "schedule"; reqId: number; schedule: Schedule }
@@ -1495,6 +1527,8 @@ export interface CompanionSnapshot {
 	canScratch: boolean;
 	/** The companion can start sessions in the background (`start` with `prompt`). */
 	canBackgroundStart: boolean;
+	/** The companion can list the folders of any folder on the computer (`browse-folders`), for starting a session anywhere. */
+	canBrowseFolders: boolean;
 	/** The companion can run vendor agents beside omp: `start` takes `agent`, and the `agents` requests work. */
 	canForeign: boolean;
 	/** The companion serves the `personal-*` requests (the Personal agent). */
@@ -1588,6 +1622,7 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	canSearch: false,
 	canScratch: false,
 	canBackgroundStart: false,
+	canBrowseFolders: false,
 	canForeign: false,
 	canPersonal: false,
 	personalRev: null,
@@ -1881,6 +1916,15 @@ export class CompanionClient {
 
 	async requestFolders(): Promise<RecentFolder[]> {
 		return (await this.#call({ t: "folders" }, "folders")).folders;
+	}
+
+	/**
+	 * The folders directly inside `path` (the computer's home folder when absent; `~` and a path that is not absolute are read from it),
+	 * hidden ones only with `hidden` (needs `canBrowseFolders`).
+	 * @throws Error when the path does not exist, is not a folder or cannot be read.
+	 */
+	async requestBrowseFolders(path?: string, hidden?: boolean): Promise<FolderListing> {
+		return (await this.#call({ t: "browse-folders", path, hidden }, "folder-listing")).listing;
 	}
 
 	/** Scheduled runs on the computer (needs `canSchedule`). */
@@ -2373,6 +2417,7 @@ export class CompanionClient {
 				canSearch: frame.canSearch ?? false,
 				canScratch: frame.canScratch ?? false,
 				canBackgroundStart: frame.canBackgroundStart ?? false,
+				canBrowseFolders: frame.canBrowseFolders ?? false,
 				canForeign: frame.canForeign ?? false,
 				canPersonal: frame.canPersonal ?? false,
 				personalRev: frame.personalRev ?? null,

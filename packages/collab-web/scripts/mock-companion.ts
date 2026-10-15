@@ -34,7 +34,8 @@
  * canned too: a finished design one with a split verdict, one without a second opinion, a finished implementation one, one still
  * running and a failed one; new ones from the form tick to a finished verdict. `--bakeoff-judge native|local|endpoint|fallback|none|unreachable`
  * (default `endpoint`) is what the second opinion would use, and `--bakeoff-stage-ms` slows the ticks. `run-targets` lists a canned test
- * and benchmark for the bake-off form. Every other request is refused. Ctrl+C stops it.
+ * and benchmark for the bake-off form. `browse-folders` (Start session → Choose another folder…) runs the real browsing code over a throw-away
+ * home folder in `<--dir>/home` (./mock-start). Every other request is refused. Ctrl+C stops it.
  *
  * `--personal fresh|enabled` (default `off`: nothing is advertised or answered, as before) adds the Personal agent (./mock-personal): `fresh`
  * is advertised and not set up (Settings → Personal agent → Set up), `enabled` is set up with sample memories, About you, proposals,

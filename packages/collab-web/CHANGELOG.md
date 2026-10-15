@@ -185,6 +185,7 @@
 
 ### Fixed
 
+- A quiz failed outright with "The agent's quiz could not be used (its file was not valid JSON)" when the question-writing agent made one slip, such as a stray closing brace. The agent now gets one more session, told what was wrong, on what is left of the writing share; only a second rejected file fails the quiz.
 - The Quizzes | Sparring switch on the quiz list is styled and marks the current tab, as the Sparring list's switch does.
 - The Changes sheet's title ("Agent edits") was squeezed into a column of single letters on a phone once its header held *Quiz me* and *Spar with this change*; the actions now drop to a row of their own when they do not fit beside the title.
 - A quiz or a *Map what changed* map of a session that runs in its own worktree diffed the repository's main checkout instead: whatever branch and uncommitted files were there, not the session's. The working tree (and the checked-out branch, when no branch is named) now comes from the session's own checkout, and the title names its branch (*feature-x (working tree) vs main*). The branch picker of a new map marks that checkout's branch as current.

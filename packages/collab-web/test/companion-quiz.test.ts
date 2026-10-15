@@ -113,7 +113,13 @@ interface Harness {
 
 function harness(
 	name: string,
-	options: { file?: unknown; gradeFails?: boolean; prSource?: (root: string) => PrSource } = {},
+	options: {
+		file?: unknown;
+		/** The exact text the agent writes on each launch in turn (the last one repeats); overrides `file`. */
+		texts?: string[];
+		gradeFails?: boolean;
+		prSource?: (root: string) => PrSource;
+	} = {},
 ): Harness {
 	const changes: string[] = [];
 	const launches: AgentLaunch[] = [];
@@ -148,7 +154,11 @@ function harness(
 		agent: {
 			start: async launch => {
 				launches.push(launch);
-				await fs.writeFile(launch.outFile, JSON.stringify(options.file ?? QUIZ_FILE));
+				const texts = options.texts;
+				await fs.writeFile(
+					launch.outFile,
+					texts ? texts[Math.min(launches.length, texts.length) - 1]! : JSON.stringify(options.file ?? QUIZ_FILE),
+				);
 				return "agent-1";
 			},
 			hosts: async () => [{ instanceId: "agent-1", sessionId: "s-1", model: "stub/stub-model", busy: false }],
@@ -377,6 +387,33 @@ describe("a quiz run", () => {
 		expect(summary!.error).toContain("None of the agent's questions held up");
 		await expect(h.quizzes.get(id)).rejects.toThrow(/failed/);
 		expect(await git(repo, "for-each-ref", `refs/omp-blueprint/maps/${id}`)).toBe("");
+	});
+
+	it("asks the agent once more, saying what was wrong, when its file is not valid JSON", async () => {
+		// The last question closed twice (`}}` for `}`), as a real Opus run wrote it.
+		const valid = JSON.stringify(QUIZ_FILE);
+		const broken = `${valid.slice(0, -4)}}${valid.slice(-4)}`;
+		expect(() => JSON.parse(broken)).toThrow();
+		const h = harness("run5b", { texts: [broken, JSON.stringify(QUIZ_FILE)] });
+		const { id } = await h.quizzes.create({ cwd: repo, ref: "feature/typestate", base: "main" });
+		await h.quizzes.idle();
+		const [summary] = await h.quizzes.list(repo);
+		expect(summary).toMatchObject({ id, status: "ready", questionCount: 2 });
+		// Both sessions are paid for, and the second one only gets what the first left of the question-writing share.
+		expect(summary!.costUsd).toBeCloseTo(0.8, 6);
+		expect(h.launches.map(launch => launch.maxCostUsd)).toEqual([0.75, 0.35]);
+		expect(h.launches[0]!.prompt).not.toContain("rejected");
+		expect(h.launches[1]!.prompt).toContain("The file you wrote last time was rejected: it is not valid JSON");
+	});
+
+	it("fails with the reason after the second file is rejected too", async () => {
+		const h = harness("run5c", { texts: ["{not json"] });
+		const { id } = await h.quizzes.create({ cwd: repo, ref: "feature/typestate", base: "main" });
+		await h.quizzes.idle();
+		const [summary] = await h.quizzes.list(repo);
+		expect(summary).toMatchObject({ id, status: "failed" });
+		expect(summary!.error).toBe("The agent's quiz could not be used (its file was not valid JSON).");
+		expect(h.launches).toHaveLength(2);
 	});
 
 	it("refuses requests a device must not be able to make", async () => {

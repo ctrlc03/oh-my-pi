@@ -117,6 +117,8 @@ import {
 const MAX_CONCURRENT_RUNS = 2;
 /** Of the spending limit, what the question-writing session may use; grading gets the rest and whatever it leaves. */
 const GENERATION_SHARE = 0.75;
+/** Below this much left of the question-writing share (USD), a rejected file is not worth a second session. */
+const MIN_RETRY_USD = 0.05;
 /** What a request for a quiz with no code to ask about says. */
 const NO_CODE_ERROR = "Implementation questions need code, and this folder has none.";
 /** How a focus reads in a list row. */
@@ -388,50 +390,71 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 						stakes: job.stakes,
 						sessionCites: citeSession,
 					});
-			await progress(run, "Starting the question-writing session");
-			const ran = await runAgentToFile({
-				agent,
-				launch: {
-					cwd: checkoutDir,
-					prompt,
-					maxCostUsd: generationLimit,
-					model: job.model,
-					outFile,
-					overlayPath,
-					overlayYaml: restrictedOverlayYaml(outFile, READONLY_AGENT_TOOLS),
-					tools: READONLY_AGENT_TOOLS,
-				},
-				watch: deps.watch,
-				now: deps.now,
-				cancelled: () => run.cancelled,
-				started: async instanceId => {
-					run.instanceId = instanceId;
-					await update(run, {
-						instanceId,
-						progress: topic
-							? "The agent is reading the folder and writing questions"
-							: "The agent is reading the changes and writing questions",
-					});
-				},
-				log,
-			});
-			const { outcome, model, costUsd } = ran;
-			if (outcome.kind === "cancelled") throw new Cancelled();
-			if (outcome.kind !== "done")
-				throw new Error(
-					`The agent did not write the quiz: ${agentFailureReason(outcome, costUsd, generationLimit, "the questions")}.`,
+			// A file that does not parse or does not fit the format gets one more session, told what was wrong, on what is
+			// left of the question-writing share: one stray brace should not cost the whole quiz.
+			let parsed: ParsedQuestion[] | undefined;
+			let model: string | undefined;
+			let costUsd = 0;
+			let note: string | undefined;
+			for (let attempt = 0; parsed === undefined; attempt++) {
+				const limit = Math.round((generationLimit - costUsd) * 1000) / 1000;
+				await progress(
+					run,
+					note === undefined
+						? "Starting the question-writing session"
+						: "The agent's file could not be used; asking it to write the file again",
 				);
-
-			await progress(run, topic ? "Checking every citation" : "Checking every citation against the commit");
-			let parsed: ParsedQuestion[];
-			try {
-				parsed = parseQuizOutput(parseAgentJson(outcome.text), parts.length, warnings, {
-					background: topic !== undefined && job.focus !== "implementation",
+				const ran = await runAgentToFile({
+					agent,
+					launch: {
+						cwd: checkoutDir,
+						prompt: note === undefined ? prompt : `${prompt}\n\n${note}`,
+						maxCostUsd: limit,
+						model: job.model,
+						outFile,
+						overlayPath,
+						overlayYaml: restrictedOverlayYaml(outFile, READONLY_AGENT_TOOLS),
+						tools: READONLY_AGENT_TOOLS,
+					},
+					watch: deps.watch,
+					now: deps.now,
+					cancelled: () => run.cancelled,
+					started: async instanceId => {
+						run.instanceId = instanceId;
+						await update(run, {
+							instanceId,
+							progress: topic
+								? "The agent is reading the folder and writing questions"
+								: "The agent is reading the changes and writing questions",
+						});
+					},
+					log,
 				});
-			} catch (err) {
-				throw new Error(
-					`The agent's quiz could not be used (${err instanceof SyntaxError ? "its file was not valid JSON" : errorText(err).replace(/[.\s]+$/, "")}).`,
-				);
+				const { outcome } = ran;
+				model = ran.model ?? model;
+				costUsd += ran.costUsd ?? 0;
+				if (outcome.kind === "cancelled") throw new Cancelled();
+				if (outcome.kind !== "done")
+					throw new Error(
+						`The agent did not write the quiz: ${agentFailureReason(outcome, ran.costUsd, limit, "the questions")}.`,
+					);
+
+				await progress(run, topic ? "Checking every citation" : "Checking every citation against the commit");
+				const found: string[] = [];
+				try {
+					parsed = parseQuizOutput(parseAgentJson(outcome.text), parts.length, found, {
+						background: topic !== undefined && job.focus !== "implementation",
+					});
+					warnings.push(...found);
+				} catch (err) {
+					const reason = errorText(err).replace(/[.\s]+$/, "");
+					log(`quiz ${run.id}: the agent's file was rejected (attempt ${attempt + 1}): ${reason}`);
+					if (attempt > 0 || generationLimit - costUsd < MIN_RETRY_USD)
+						throw new Error(
+							`The agent's quiz could not be used (${err instanceof SyntaxError ? "its file was not valid JSON" : reason}).`,
+						);
+					note = `The file you wrote last time was rejected: ${err instanceof SyntaxError ? `it is not valid JSON (${reason})` : reason}. Write the whole file again, fixed, in the format above, and check that every bracket and brace is closed exactly once.`;
+				}
 			}
 			const commits = parts.map(part => ({ head: part.head.commit, base: part.base?.commit }));
 			// Files of a folder that is not a repository, read once from the copy the agent saw; the cited ones are stored.
@@ -525,7 +548,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 				keys: verified.keys,
 				attempts: [attempt],
 				maxCostUsd: job.maxCostUsd,
-				generationCostUsd: costUsd ?? 0,
+				generationCostUsd: costUsd,
 				gradingCostUsd: 0,
 				...(Object.keys(storedFiles).length > 0 ? { files: storedFiles } : {}),
 				...(stakesByRun.has(run.id) ? { stakes: stakesByRun.get(run.id) } : {}),

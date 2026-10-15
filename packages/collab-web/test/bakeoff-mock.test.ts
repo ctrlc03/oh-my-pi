@@ -57,19 +57,21 @@ describe("the mock bake-off companion", () => {
 
 	it("advertises bake-offs and answers only bakeoff requests", () => {
 		const { mock } = setup();
-		expect(mock.capabilities).toEqual({ canBakeoff: true });
+		expect(mock.capabilities).toEqual({ canBakeoff: true, canBakeoffPatch: true, canBakeoffFolder: true });
 		expect(mock.handles({ t: "bakeoff-list", reqId: 1 })).toBe(true);
 		expect(mock.handles({ t: "spar-list", reqId: 1 })).toBe(false);
 		mock.stop();
 	});
 
-	it("lists the five canned bake-offs in the folder's repository with their statuses", async () => {
+	it("lists the six canned bake-offs of the folder's repository with their statuses, and the seventh under the scratch folder", async () => {
 		const { mock, ask } = setup();
 		const all = (await ask({ t: "bakeoff-list" }, "bakeoff-list")).bakeoffs;
 		const byId = new Map(all.map(item => [item.id, item]));
 		expect(all.map(item => item.id).sort()).toEqual([
 			"bk-mock-failed",
+			"bk-mock-folder",
 			"bk-mock-impl",
+			"bk-mock-impl-pruned",
 			"bk-mock-nojudge",
 			"bk-mock-running",
 			"bk-mock-split",
@@ -629,6 +631,61 @@ describe("the mock bake-off companion", () => {
 		const quiet = pushed.length;
 		vi.advanceTimersByTime(100);
 		expect(pushed.length).toBe(quiet);
+	});
+
+	it("marks which entries of an implementation can still be exported, and gives a patch for those that can", async () => {
+		const { mock, ask, get } = setup();
+		const kept = await get("bk-mock-impl");
+		expect(kept.entries.map(entry => entry.patch)).toEqual([{ ok: true }, { ok: true }, { ok: true }, { ok: true }]);
+		const patch = (await ask({ t: "bakeoff-patch", id: "bk-mock-impl", entry: "A" }, "bakeoff-patch")).patch;
+		expect(patch).toContain("diff --git a/crates/evm/src/provider_cache.rs b/crates/evm/src/provider_cache.rs");
+		const original = (await ask({ t: "bakeoff-patch", id: "bk-mock-impl", entry: "C" }, "bakeoff-patch")).patch;
+		expect(original).toContain("GIT binary patch");
+
+		const pruned = await get("bk-mock-impl-pruned");
+		expect(pruned.entries.map(entry => [entry.label, entry.patch?.ok])).toEqual([
+			["A", false],
+			["B", false],
+			["C", true],
+			["D", true],
+		]);
+		await expect(ask({ t: "bakeoff-patch", id: "bk-mock-impl-pruned", entry: "A" })).rejects.toThrow(
+			"no longer kept",
+		);
+		await expect(ask({ t: "bakeoff-patch", id: "bk-mock-impl-pruned", entry: "D" })).rejects.toThrow(
+			"larger than 5 MB",
+		);
+		await expect(ask({ t: "bakeoff-patch", id: "bk-mock-impl", entry: "Z" })).rejects.toThrow("no such entry");
+		await expect(ask({ t: "bakeoff-patch", id: "bk-mock-split", entry: "A" })).rejects.toThrow(
+			"Only an implementation has code to export.",
+		);
+		expect((await get("bk-mock-split")).entries.every(entry => entry.patch === undefined)).toBe(true);
+		mock.stop();
+	});
+
+	it("lists a scratch folder's bake-offs under it alone, says it is no git repository, and refuses an implementation there", async () => {
+		const { mock, ask, get, create } = setup();
+		const scratch = "/work/config/scratch/2026-10-14-fhe-statistics-ab12cd";
+		const here = (await ask({ t: "bakeoff-list", cwd: scratch }, "bakeoff-list")).bakeoffs;
+		expect(here.map(item => item.id)).toEqual(["bk-mock-folder"]);
+		expect(here[0]!.repoRoot).toBe(scratch);
+		expect(await get("bk-mock-folder")).toMatchObject({ folder: true, mode: "design" });
+		expect((await ask({ t: "bakeoff-folder", cwd: scratch }, "bakeoff-folder")).folder).toMatchObject({
+			git: false,
+			files: 2,
+		});
+		expect((await ask({ t: "bakeoff-folder", cwd: MOCK_QUIZ_ROOT }, "bakeoff-folder")).folder.git).toBe(true);
+		await expect(create({ cwd: scratch, mode: "implementation" })).rejects.toThrow("not a git repository");
+		const started = await create({ cwd: scratch, doc: { path: "notes/design.md" } });
+		const made = await get(started.id);
+		expect(made).toMatchObject({ folder: true, mode: "design" });
+		expect((await ask({ t: "bakeoff-list", cwd: scratch }, "bakeoff-list")).bakeoffs).toHaveLength(2);
+		expect(
+			(await ask({ t: "bakeoff-list", cwd: MOCK_QUIZ_ROOT }, "bakeoff-list")).bakeoffs.some(
+				item => item.id === started.id,
+			),
+		).toBe(false);
+		mock.stop();
 	});
 
 	it("refuses other requests", async () => {

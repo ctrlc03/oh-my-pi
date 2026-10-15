@@ -10,6 +10,7 @@ import {
 	PinOff,
 	Timer,
 	TimerOff,
+	Trash2,
 	X,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -61,134 +62,156 @@ export interface OrgMenuProps {
 	onArrange(): void;
 	onSelect(): void;
 	onClose(): void;
+	/** Delete the session (after a confirmation); null where this session or its computer cannot. */
+	onDelete: (() => void) | null;
 }
 
-/** One session's menu: pin, move, snooze, settle, auto-settle, and the modes that change several at a time. */
+/** One session's menu, in its sheet. */
 export function OrgMenu(props: OrgMenuProps): ReactNode {
-	const { status, place, now } = props;
-	const [snoozing, setSnoozing] = useState(false);
 	return (
 		<Sheet label={`organise ${props.title}`} onClose={props.onClose}>
 			<SheetHead title={props.title} onClose={props.onClose} />
-			<div className="sh-org-menu">
-				{snoozing ? (
-					<SnoozeList
-						choices={snoozeChoices(now, props.limitResetAt)}
-						onPick={choice => props.onAct({ type: "snooze", until: choice.until }, `Snoozed ${props.title}`)}
-					/>
-				) : props.ended ? (
-					<>
+			<OrgMenuBody {...props} />
+		</Sheet>
+	);
+}
+
+/** The items of one session's menu: pin, move, snooze, settle, auto-settle, delete, and the modes that change several at a time. */
+export function OrgMenuBody(props: OrgMenuProps): ReactNode {
+	const { status, place, now } = props;
+	const [snoozing, setSnoozing] = useState(false);
+	return (
+		<div className="sh-org-menu">
+			{snoozing ? (
+				<SnoozeList
+					choices={snoozeChoices(now, props.limitResetAt)}
+					onPick={choice => props.onAct({ type: "snooze", until: choice.until }, `Snoozed ${props.title}`)}
+				/>
+			) : props.ended ? (
+				<>
+					<button
+						type="button"
+						className="sh-btn sh-org-menu-item"
+						onClick={() => props.onAct({ type: "unsettle" }, `Moved ${props.title} back`)}
+					>
+						<ArchiveRestore size={15} />
+						<span className="sh-org-menu-text">
+							Move back to active
+							<span className="sh-org-menu-hint">It ended when it settled; this resumes it</span>
+						</span>
+					</button>
+					<div className="sh-org-menu-sep" role="separator" />
+					<button type="button" className="sh-btn sh-org-menu-item" onClick={props.onSelect}>
+						<ListChecks size={15} /> Select…
+					</button>
+					{props.onDelete !== null && <DeleteItem onDelete={props.onDelete} />}
+				</>
+			) : (
+				<>
+					{status === "pinned" ? (
+						<button
+							type="button"
+							className="sh-btn sh-org-menu-item"
+							onClick={() => props.onAct({ type: "unpin" }, `Unpinned ${props.title}`)}
+						>
+							<PinOff size={15} /> Unpin
+						</button>
+					) : (
+						<button
+							type="button"
+							className="sh-btn sh-org-menu-item"
+							onClick={() => props.onAct({ type: "pin" }, `Pinned ${props.title}`)}
+						>
+							<Pin size={15} /> Pin to top
+						</button>
+					)}
+					{place !== null && place.index > 0 && (
+						<button
+							type="button"
+							className="sh-btn sh-org-menu-item"
+							onClick={() => props.onMove(place.index - 1)}
+						>
+							<ArrowUp size={15} /> Move up
+						</button>
+					)}
+					{place !== null && place.index < place.count - 1 && (
+						<button
+							type="button"
+							className="sh-btn sh-org-menu-item"
+							onClick={() => props.onMove(place.index + 1)}
+						>
+							<ArrowDown size={15} /> Move down
+						</button>
+					)}
+					{status === "snoozed" ? (
+						<button
+							type="button"
+							className="sh-btn sh-org-menu-item"
+							onClick={() => props.onAct({ type: "wake" }, `Woke ${props.title}`)}
+						>
+							<Moon size={15} /> Wake now
+						</button>
+					) : (
+						<button type="button" className="sh-btn sh-org-menu-item" onClick={() => setSnoozing(true)}>
+							<Moon size={15} /> Snooze…
+						</button>
+					)}
+					{status === "settled" ? (
 						<button
 							type="button"
 							className="sh-btn sh-org-menu-item"
 							onClick={() => props.onAct({ type: "unsettle" }, `Moved ${props.title} back`)}
 						>
-							<ArchiveRestore size={15} />
+							<ArchiveRestore size={15} /> Move back to active
+						</button>
+					) : (
+						<button
+							type="button"
+							className="sh-btn sh-org-menu-item"
+							onClick={() => props.onAct({ type: "settle" }, `Settled ${props.title}`)}
+						>
+							<Archive size={15} /> Settle
+						</button>
+					)}
+					{props.autoSettle !== null && (
+						<button
+							type="button"
+							className="sh-btn sh-org-menu-item"
+							onClick={() => props.onAct({ type: "autosettle", on: !props.autoSettle }, "")}
+						>
+							{props.autoSettle ? <Timer size={15} /> : <TimerOff size={15} />}
 							<span className="sh-org-menu-text">
-								Move back to active
-								<span className="sh-org-menu-hint">It ended when it settled; this resumes it</span>
+								Auto-settle: {props.autoSettle ? "on" : "off"}
+								<span className="sh-org-menu-hint">
+									{props.autoSettle
+										? "Idle and pull request rules may settle it"
+										: "Kept out of the idle and pull request rules"}
+								</span>
 							</span>
 						</button>
-						<div className="sh-org-menu-sep" role="separator" />
-						<button type="button" className="sh-btn sh-org-menu-item" onClick={props.onSelect}>
-							<ListChecks size={15} /> Select…
-						</button>
-					</>
-				) : (
-					<>
-						{status === "pinned" ? (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onAct({ type: "unpin" }, `Unpinned ${props.title}`)}
-							>
-								<PinOff size={15} /> Unpin
-							</button>
-						) : (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onAct({ type: "pin" }, `Pinned ${props.title}`)}
-							>
-								<Pin size={15} /> Pin to top
-							</button>
-						)}
-						{place !== null && place.index > 0 && (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onMove(place.index - 1)}
-							>
-								<ArrowUp size={15} /> Move up
-							</button>
-						)}
-						{place !== null && place.index < place.count - 1 && (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onMove(place.index + 1)}
-							>
-								<ArrowDown size={15} /> Move down
-							</button>
-						)}
-						{status === "snoozed" ? (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onAct({ type: "wake" }, `Woke ${props.title}`)}
-							>
-								<Moon size={15} /> Wake now
-							</button>
-						) : (
-							<button type="button" className="sh-btn sh-org-menu-item" onClick={() => setSnoozing(true)}>
-								<Moon size={15} /> Snooze…
-							</button>
-						)}
-						{status === "settled" ? (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onAct({ type: "unsettle" }, `Moved ${props.title} back`)}
-							>
-								<ArchiveRestore size={15} /> Move back to active
-							</button>
-						) : (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onAct({ type: "settle" }, `Settled ${props.title}`)}
-							>
-								<Archive size={15} /> Settle
-							</button>
-						)}
-						{props.autoSettle !== null && (
-							<button
-								type="button"
-								className="sh-btn sh-org-menu-item"
-								onClick={() => props.onAct({ type: "autosettle", on: !props.autoSettle }, "")}
-							>
-								{props.autoSettle ? <Timer size={15} /> : <TimerOff size={15} />}
-								<span className="sh-org-menu-text">
-									Auto-settle: {props.autoSettle ? "on" : "off"}
-									<span className="sh-org-menu-hint">
-										{props.autoSettle
-											? "Idle and pull request rules may settle it"
-											: "Kept out of the idle and pull request rules"}
-									</span>
-								</span>
-							</button>
-						)}
-						<div className="sh-org-menu-sep" role="separator" />
-						<button type="button" className="sh-btn sh-org-menu-item" onClick={props.onArrange}>
-							<GripVertical size={15} /> Arrange sessions
-						</button>
-						<button type="button" className="sh-btn sh-org-menu-item" onClick={props.onSelect}>
-							<ListChecks size={15} /> Select…
-						</button>
-					</>
-				)}
-			</div>
-		</Sheet>
+					)}
+					<div className="sh-org-menu-sep" role="separator" />
+					<button type="button" className="sh-btn sh-org-menu-item" onClick={props.onArrange}>
+						<GripVertical size={15} /> Arrange sessions
+					</button>
+					<button type="button" className="sh-btn sh-org-menu-item" onClick={props.onSelect}>
+						<ListChecks size={15} /> Select…
+					</button>
+					{props.onDelete !== null && <DeleteItem onDelete={props.onDelete} />}
+				</>
+			)}
+		</div>
+	);
+}
+
+function DeleteItem({ onDelete }: { onDelete(): void }): ReactNode {
+	return (
+		<>
+			<div className="sh-org-menu-sep" role="separator" />
+			<button type="button" className="sh-btn sh-org-menu-item sh-org-menu-danger" onClick={onDelete}>
+				<Trash2 size={15} /> Delete…
+			</button>
+		</>
 	);
 }
 

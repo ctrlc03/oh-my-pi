@@ -1,0 +1,100 @@
+/* ---- deleting sessions: the confirm dialog and the Undo toast ---- */
+.sh-delete {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.sh-delete-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+.sh-delete-body {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.sh-delete-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 0;
+	padding-left: 18px;
+	font-size: 13.5px;
+}
+
+.sh-delete-note {
+	font-size: 13px;
+	color: var(--fg-muted);
+}
+
+.sh-delete-worktree {
+	padding: 10px 12px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+}
+
+.sh-delete-folder {
+	font-size: 12px;
+	overflow-wrap: anywhere;
+}
+
+/* Over the sheets (z-index 70+) and the sidebar drawer, so the Undo is reachable wherever the delete began. */
+.sh-delete-toast {
+	position: fixed;
+	bottom: calc(16px + var(--safe-bottom));
+	left: 50%;
+	z-index: 80;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	width: min(420px, calc(var(--view-w) - 24px));
+	transform: translateX(-50%);
+	padding: 8px 10px;
+	font-size: 13px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow-float);
+}
+
+.sh-delete-toast-main {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.sh-delete-toast-msg {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.sh-delete-toast-note {
+	color: var(--fg-muted);
+	overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+	/* Above the composer and its quick-reply row, as the other toasts are. */
+	.sh-delete-toast {
+		bottom: calc(124px + var(--safe-bottom));
+	}
+}
+
+@media (any-pointer: coarse) {
+	.sh-delete .sh-btn,
+	.sh-delete-toast .sh-btn,
+	.sh-delete-body .sh-org-check {
+		min-height: 44px;
+	}
+
+	.sh-delete .sh-btn-icon,
+	.sh-delete-toast .sh-btn-icon {
+		min-width: 44px;
+	}
+}

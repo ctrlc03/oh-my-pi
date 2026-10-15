@@ -64,8 +64,10 @@ import {
 	verifyWriteup,
 } from "./companion-bakeoff-write";
 import { addWorktree, readBlob, removeWorktreeDir, snapshotWorkingTree, holdCommit } from "./companion-blueprint-git";
+import { normalizeRepoPath } from "./companion-citations";
 import { splitLines } from "./companion-excerpt";
 import { partDiff } from "./companion-quiz-diff";
+import { copyFolderFiles, MAX_STORED_CHARS, readFolderFile } from "./companion-quiz-folder";
 import { Cancelled, errorText, type Run } from "./companion-review-base";
 
 // ── what the engine gives the stages ─────────────────────────────────────────
@@ -134,6 +136,11 @@ export interface BakeoffRun extends Run {
 	stops: Set<string>;
 	/** The whole run was stopped by the person: it ends `failed` with what it made kept. */
 	stopped: boolean;
+	/**
+	 * A bake-off of a folder that is not a git repository: the copy of the folder's text files every entry reads (one
+	 * folder, made when the run started), the files in it, and the characters of cited files stored so far.
+	 */
+	folder?: { dir: string; files: string[]; stored: number };
 	/** The session working on each entry (or on the review: `review`), to stop it. */
 	sessions: Map<string, string>;
 }
@@ -329,6 +336,40 @@ function linesAt(root: string, commit: string): (file: string) => Promise<string
 	};
 }
 
+/**
+ * Put the code the entries are about at `dir`. A repository's: a checkout of `commit` (`how: "checkout"`, a designer's
+ * own tree) or the commit exported without history. A folder's: a copy of its files as they were when the run started.
+ */
+async function placeCode(ctx: Ctx, dir: string, commit: string, how: "checkout" | "export"): Promise<void> {
+	const { run, doc } = ctx;
+	if (run.folder !== undefined) await copyFolderFiles(run.folder.dir, run.folder.files, dir);
+	else if (how === "checkout") await addWorktree(doc.bakeoff.repo.root, dir, commit);
+	else await exportCommit(doc.bakeoff.repo.root, commit, dir);
+}
+
+/**
+ * Lines of a file of the code the entries are about, for checking citations: of `commit`, or of the folder's copy. Lines
+ * a citation of a folder read are kept in the document (up to {@link MAX_STORED_CHARS}), since no commit holds them.
+ */
+function codeLines(ctx: Ctx, commit: string): (file: string) => Promise<string[] | null> {
+	const { run, doc } = ctx;
+	const folder = run.folder;
+	if (folder === undefined) return linesAt(doc.bakeoff.repo.root, commit);
+	return async file => {
+		const lines = await readFolderFile(folder.dir, file);
+		const key = normalizeRepoPath(file);
+		if (lines === null || key === undefined) return null;
+		doc.files ??= {};
+		if (doc.files[key] === undefined) {
+			const chars = lines.reduce((sum, line) => sum + line.length + 1, 0);
+			if (folder.stored + chars > MAX_STORED_CHARS) return null;
+			folder.stored += chars;
+			doc.files[key] = lines;
+		}
+		return lines;
+	};
+}
+
 // ── entries: design mode ─────────────────────────────────────────────────────
 
 /**
@@ -366,7 +407,7 @@ async function designOne(ctx: Ctx, entry: BakeoffEntry, limit: number): Promise<
 		entry.label,
 		agentFolderName("Bake-off design", doc.bakeoff.repo.name, `entry ${entry.label}`),
 	);
-	await addWorktree(root, dir, doc.commits.original);
+	await placeCode(ctx, dir, doc.commits.original, "checkout");
 	try {
 		const scrub = await scrubberOf(ctx);
 		const metrics = doc.bakeoff.metrics;
@@ -386,7 +427,10 @@ async function designOne(ctx: Ctx, entry: BakeoffEntry, limit: number): Promise<
 					subject: doc.commits.base
 						? "the change in the problem statement"
 						: "the design in the problem statement",
-					checkout: "the code the design is about",
+					checkout:
+						ctx.run.folder === undefined
+							? "the code the design is about"
+							: "a copy of the folder's text files as they are now",
 					outFile,
 					maxCostUsd: limit,
 					problem: doc.problem,
@@ -404,7 +448,7 @@ async function designOne(ctx: Ctx, entry: BakeoffEntry, limit: number): Promise<
 			accept: async text => {
 				const warnings: string[] = [];
 				const parsed = parseWriteup(parseAgentJson(text), ids);
-				const writeup = await verifyWriteup(parsed, linesAt(root, doc.commits.original), warnings);
+				const writeup = await verifyWriteup(parsed, codeLines(ctx, doc.commits.original), warnings);
 				doc.bakeoff.warnings.push(...warnings.map(warning => `Entry ${entry.label}: ${warning}`));
 				return scrubWriteup(writeup, text => scrub(text).text);
 			},
@@ -428,7 +472,8 @@ async function designOne(ctx: Ctx, entry: BakeoffEntry, limit: number): Promise<
 		entry.instanceId = undefined;
 		await ctx.save();
 	} finally {
-		await removeWorktreeDir(root, dir).catch(() => undefined);
+		if (ctx.run.folder === undefined) await removeWorktreeDir(root, dir).catch(() => undefined);
+		else await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
 	}
 }
 
@@ -657,7 +702,6 @@ function writerModel(bakeoff: Bakeoff): string | undefined {
 
 async function writeOne(ctx: Ctx, entry: BakeoffEntry, limit: number): Promise<void> {
 	const { doc } = ctx;
-	const root = doc.bakeoff.repo.root;
 	const commit = commitOf(doc, entry);
 	const metrics = doc.bakeoff.metrics;
 	const ids = metrics.map(metric => metric.id);
@@ -673,7 +717,7 @@ async function writeOne(ctx: Ctx, entry: BakeoffEntry, limit: number): Promise<v
 		entry.label,
 		agentFolderName("Bake-off write-up", doc.bakeoff.repo.name, `entry ${entry.label}`),
 	);
-	await exportCommit(root, commit, dir);
+	await placeCode(ctx, dir, commit, "export");
 	const scrub = await scrubberOf(ctx);
 	const body = await originalBody(ctx, commit);
 	const result = await fileTask(ctx, {
@@ -701,7 +745,7 @@ async function writeOne(ctx: Ctx, entry: BakeoffEntry, limit: number): Promise<v
 		accept: async text => {
 			const warnings: string[] = [];
 			const parsed = parseWriteup(parseAgentJson(text), ids);
-			const writeup = await verifyWriteup(parsed, linesAt(root, commit), warnings);
+			const writeup = await verifyWriteup(parsed, codeLines(ctx, commit), warnings);
 			doc.bakeoff.warnings.push(...warnings.map(warning => `Entry ${entry.label}: ${warning}`));
 			return scrubWriteup(writeup, text => scrub(text).text);
 		},
@@ -769,7 +813,7 @@ async function reviewPass(ctx: Ctx, pass: 0 | 1, entries: BakeoffEntry[], limit:
 	);
 	await fs.rm(cwd, { recursive: true, force: true });
 	await fs.mkdir(cwd, { recursive: true });
-	if (design) await exportCommit(root, doc.commits.original, path.join(cwd, "code"));
+	if (design) await placeCode(ctx, path.join(cwd, "code"), doc.commits.original, "export");
 
 	const share = Math.max(8_000, Math.floor(120_000 / entries.length));
 	const rendered = new Map<string, string>();
@@ -803,7 +847,7 @@ async function reviewPass(ctx: Ctx, pass: 0 | 1, entries: BakeoffEntry[], limit:
 		lines: async (label, file) => {
 			if (design && file === "design.md") return splitLines(rendered.get(label) ?? "");
 			const entry = entryOf(doc.bakeoff, label);
-			return linesAt(root, commitOf(doc, entry))(file);
+			return codeLines(ctx, commitOf(doc, entry))(file);
 		},
 	};
 	const metrics = doc.bakeoff.metrics;
@@ -1031,6 +1075,18 @@ export function selfPreferenceOf(bakeoff: Bakeoff): string[] {
 		.map(entry => entry.label);
 }
 
+/** The paths the citations of a finished bake-off name: its write-ups, the reviewer's findings and its verdicts. */
+function citedPaths(bakeoff: Bakeoff): Set<string> {
+	const cited = new Set<string>();
+	for (const entry of bakeoff.entries) for (const ref of entry.writeup?.refs ?? []) cited.add(ref.path);
+	const result = bakeoff.result;
+	if (result === undefined) return cited;
+	for (const finding of result.findings) for (const ref of finding.refs ?? []) cited.add(ref.path);
+	for (const verdict of [result.verdict, ...(result.passes ?? []).map(pass => pass.verdict)])
+		for (const match of verdict.matchAll(/(?<![\w/])[A-E]\/([^\s`@]+)@\d+@/g)) cited.add(match[1]!);
+	return cited;
+}
+
 /** Review and judge, then the result: the last two stages, which "Review again" repeats. */
 export async function finishStages(ctx: Ctx): Promise<void> {
 	const { doc } = ctx;
@@ -1044,6 +1100,11 @@ export async function finishStages(ctx: Ctx): Promise<void> {
 	const outcome = await judgeStage(ctx, entries);
 	check(ctx);
 	doc.bakeoff.result = buildResult(doc, reviewed, outcome, entries, selfPreferenceOf(doc.bakeoff));
+	// A folder has no commit to read the cited files from later: only the ones the result cites stay in the document.
+	if (doc.files !== undefined) {
+		const cited = citedPaths(doc.bakeoff);
+		doc.files = Object.fromEntries(Object.entries(doc.files).filter(([file]) => cited.has(file)));
+	}
 	for (const entry of entries)
 		if (entry.status === "waiting" || entry.status === "writing-up" || entry.status === "working")
 			entry.status = "ready";

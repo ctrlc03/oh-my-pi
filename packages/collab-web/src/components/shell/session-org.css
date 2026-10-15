@@ -38,6 +38,25 @@
 	border-radius: 999px;
 }
 
+/* "Delete 3 settled sessions…" on the Settled header: quiet until hovered, red like the other destructive buttons. */
+.sh-org-bulk {
+	flex: none;
+	padding: 2px 6px;
+	font: inherit;
+	font-size: 12px;
+	letter-spacing: normal;
+	text-transform: none;
+	color: var(--err);
+	background: transparent;
+	border: 0;
+	border-radius: var(--radius);
+	cursor: pointer;
+}
+
+.sh-org-bulk:hover {
+	background: color-mix(in srgb, var(--err) 12%, transparent);
+}
+
 /* A press and hold opens the menu: no text selection or system callout meanwhile. */
 .sh-org-row {
 	-webkit-touch-callout: none;
@@ -355,6 +374,10 @@
 	gap: 10px;
 }
 
+.sh-org-menu-danger {
+	color: var(--err);
+}
+
 .sh-org-settings-body {
 	display: flex;
 	flex-direction: column;
@@ -405,6 +428,10 @@
 	}
 
 	.sh-org-check {
+		min-height: 44px;
+	}
+
+	.sh-org-bulk {
 		min-height: 44px;
 	}
 }

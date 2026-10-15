@@ -2,6 +2,7 @@ import type { BakeoffSummary } from "@oh-my-pi/pi-wire/bakeoff";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { type ComputerHandle, computerById } from "../../lib/computers";
+import { isProjectless } from "../../lib/start-session";
 import { Sheet } from "../shell/Sheet";
 import { StartSessionSheet } from "../shell/StartSessionSheet";
 import "../architecture/architecture.css";
@@ -9,8 +10,10 @@ import "../quiz/quiz.css";
 import { BakeoffList } from "./BakeoffList";
 import { BakeoffScreen } from "./BakeoffScreen";
 import { NewBakeoffForm } from "./NewBakeoffForm";
+import { isGitFolder } from "./bakeoff-flow";
 import type { BakeoffJoins, BakeoffStart, BakeoffSubject, BakeoffTarget } from "./bakeoff-types";
 import { designMarkdown } from "./bakeoff-result-flow";
+import { useBakeoffFolder } from "./use-bakeoff-folder";
 import "./bakeoff.css";
 import "./bakeoff-result.css";
 
@@ -82,7 +85,13 @@ export function BakeoffSheet({
 	/** *Start a session from this design* is open over the bake-off: where it starts and what it first says. */
 	const [session, setSession] = useState<{ computerId: string; cwd: string; prompt: string } | null>(null);
 	const home = (): void => setScreen({ kind: "home" });
-	const changes = sessionTarget({ kind: "changes" });
+	// A folder that is not a git repository has no changes to compare: the form opens on a design document.
+	const owner = computerById(computers, computerId);
+	const canFolder = owner?.snap.canBakeoffFolder === true;
+	const folder = useBakeoffFolder(owner?.client ?? null, cwd ?? "", canFolder && cwd !== null && !isProjectless(cwd));
+	const fresh = sessionTarget(
+		cwd !== null && !isGitFolder(cwd, canFolder, folder) ? { kind: "doc" } : { kind: "changes" },
+	);
 
 	if (screen.kind === "new") {
 		return (
@@ -164,7 +173,7 @@ export function BakeoffSheet({
 				onOpen={(bakeoffComputerId, bakeoff) =>
 					setScreen({ kind: "bakeoff", computerId: bakeoffComputerId, id: bakeoff.id, hint: bakeoff })
 				}
-				onNew={changes === null ? null : () => setScreen({ kind: "new", target: changes })}
+				onNew={fresh === null ? null : () => setScreen({ kind: "new", target: fresh })}
 				onOpenHost={async (hostComputerId, host) => {
 					await onOpenHost(hostComputerId, host);
 					onClose();

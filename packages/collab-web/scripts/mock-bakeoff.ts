@@ -10,6 +10,13 @@
  * the test script, one has uncommitted changes); `bk-mock-running`, a design bake-off part way through its entries whose
  * progress ticks until it turns ready; and `bk-mock-failed`, a design bake-off whose review failed (Review again works).
  *
+ * What a person takes out: the implementation bake-offs answer `bakeoff-patch` with a canned patch per entry (one carries a
+ * binary file) and mark `entries[].patch` on `bakeoff-get` (capability `canBakeoffPatch`). `bk-mock-impl-pruned` has lost
+ * the code of three challengers (its patch buttons are off, with the reason) and its entry D's patch is over the size cap.
+ * `bk-mock-folder` is a finished design bake-off of the scratch folder of the session without a project (`fhe-statistics`,
+ * run `mock-companion.ts --topic`): a folder that is not a git repository lists and starts design bake-offs only
+ * (`canBakeoffFolder`, `bakeoff-folder`), reading the notes of ./mock-quiz's topic files.
+ *
  * A bake-off started from the form (`bakeoff-create`) is checked by the real engine's rules (`checkBakeoffCreate`), then
  * ticks through its stages and turns ready with a verdict built from the request's models and metrics: the entries
  * go waiting, working, writing-up, ready one at a time (an implementation: working, ready, then facts and write-ups), then
@@ -29,6 +36,7 @@ import type {
 	BakeoffEntryStatus,
 	BakeoffFacts,
 	BakeoffFinding,
+	BakeoffFolder,
 	BakeoffJudgeInfo,
 	BakeoffJudgeState,
 	BakeoffMetric,
@@ -42,11 +50,12 @@ import type {
 	BakeoffTakeResult,
 	BakeoffWriteup,
 } from "@oh-my-pi/pi-wire/bakeoff";
-import { BAKEOFF_LABELS, BAKEOFF_VERSION, isMeasuredMetric } from "@oh-my-pi/pi-wire/bakeoff";
+import { BAKEOFF_LABELS, BAKEOFF_MAX_PATCH_BYTES, BAKEOFF_VERSION, isMeasuredMetric } from "@oh-my-pi/pi-wire/bakeoff";
 import type { BlueprintExcerpt, BlueprintExcerptRef, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
 import type { CompanionReply, CompanionRequest, RunTarget } from "../src/lib/companion";
 import { checkBakeoffCreate } from "./companion-bakeoff";
-import { cite, excerptOf, MOCK_QUIZ_ROOT } from "./mock-quiz";
+import { TOPIC_CWD } from "./fixture-topic";
+import { cite, excerptOf, MOCK_QUIZ_ROOT, mockQuizFolder, NOTES, STATS, TOPIC_FILES } from "./mock-quiz";
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -188,6 +197,61 @@ const DESIGN_IDEAS: Idea[] = [
 		refs: [cite(BUS, "impl Actor for EventBus"), cite(ER, "bus: Addr<EventBus>")],
 		strength: "It fits how the rest of the crate already passes work around.",
 		weakness: "It turns a cheap lookup into a message round trip.",
+	},
+];
+
+/** The ideas of design entries for a folder that is not a repository: the first is the pasted design's, the others the challengers'. */
+const FOLDER_IDEAS: Idea[] = [
+	{
+		summary: "The server returns the sum and the sum of squares; the client divides and takes the variance.",
+		approach:
+			"Keep the protocol of the notes. The server adds the column and adds its squares, which costs one multiplication, and the client decrypts and divides by n.\n\nNothing is divided under encryption, so no level is spent on it.",
+		tradeoffs: ["Uses one of the two levels", "The client does a little arithmetic"],
+		risks: ["A column longer than the slot count needs several ciphertexts"],
+		migration: "Nothing to migrate: this is the design the notes describe.",
+		metrics: {
+			simplicity: "Two server operations and a client that divides.",
+			performance: "One multiplication, so a level to spare.",
+			"fewer-parts": "No new parts.",
+			"migration-risk": "Nothing runs yet, so there is nothing to roll back.",
+		},
+		refs: [cite(NOTES, "Dividing by n would cost a level"), cite(STATS, "def encrypted_stats")],
+		strength: "It spends the single multiplication on the square and keeps a level for headroom.",
+		weakness: "The client must know n, which the server never sees.",
+	},
+	{
+		summary: "The server also divides, by multiplying with the plain 1/n.",
+		approach:
+			"Send n in the clear and let the server multiply the sums by 1/n, so the client decrypts the mean and the variance directly.\n\nThe two multiplications use both levels.",
+		tradeoffs: ["The client has nothing to compute", "Both levels are spent"],
+		risks: ["No headroom left if the parameters ever shrink", "n is no longer private from the server"],
+		migration: "The server gains a step; the client loses one.",
+		metrics: {
+			simplicity: "The client is trivial, and the server does one more thing.",
+			performance: "A second multiplication, and no level left.",
+			"fewer-parts": "Moves a step from the client to the server.",
+			"migration-risk": "Nothing runs yet.",
+		},
+		refs: [cite(NOTES, "One multiplication"), cite(STATS, "def decrypt_stats")],
+		strength: "The client side shrinks to a decrypt.",
+		weakness: "It uses up the headroom the notes keep on purpose.",
+	},
+	{
+		summary: "BFV with the cents scaled to integers.",
+		approach:
+			"Scale every salary to cents and use BFV, which is exact, with a plaintext modulus large enough to hold the sums.\n\nThe mean is then exact up to the final division on the client.",
+		tradeoffs: ["Exact sums, no approximation error", "A larger plaintext modulus and larger ciphertexts"],
+		risks: ["The modulus must be chosen for the largest sum, and growing the column may overflow it"],
+		migration: "The context and the encoding change; the protocol does not.",
+		metrics: {
+			simplicity: "Another scheme to learn, though the protocol is the same.",
+			performance: "Larger ciphertexts than CKKS for the same column.",
+			"fewer-parts": "Adds a scaling step on both sides.",
+			"migration-risk": "Nothing runs yet, but the notes would have to be rewritten.",
+		},
+		refs: [cite(NOTES, "BFV would need the cents scaled")],
+		strength: "It removes the approximation the notes accept.",
+		weakness: "It needs a modulus the notes already rejected as too large.",
 	},
 ];
 
@@ -545,6 +609,11 @@ interface Spec {
 	maxCostUsd?: number;
 	/** The reviewed branch of the original, for an implementation. */
 	ref?: string;
+	/** A bake-off of a folder that is not a git repository: its path, as the list files it. */
+	folder?: true;
+	root?: string;
+	/** For an implementation: whether the code of the entries is still kept (`kept`, the default) or was pruned. */
+	code?: "kept" | "pruned";
 }
 
 const stageAt = (stage: BakeoffStage): number => STAGE_ORDER.indexOf(stage);
@@ -616,6 +685,10 @@ function build(spec: Spec): Bakeoff {
 		bakeoff.start = "original";
 		bakeoff.group = `fo-${spec.id}`;
 	}
+	if (spec.folder) {
+		bakeoff.folder = true;
+		bakeoff.repo = { root: spec.root!, name: folderOf(spec.root!).name };
+	}
 	if (spec.instructions !== undefined) bakeoff.instructions = spec.instructions;
 	if (spec.stage === "done")
 		bakeoff.result = resultFor({ entries, ideas, metrics: spec.metrics, reviewer: spec.reviewer, plan: spec.plan });
@@ -627,7 +700,7 @@ function summaryOf(spec: Spec, bakeoff: Bakeoff): BakeoffSummary {
 	const summary: BakeoffSummary = {
 		id: spec.id,
 		title: spec.title,
-		repoRoot: MOCK_QUIZ_ROOT,
+		repoRoot: spec.root ?? MOCK_QUIZ_ROOT,
 		subject: spec.subject,
 		createdAt: spec.createdAt,
 		status: spec.status,
@@ -638,6 +711,107 @@ function summaryOf(spec: Spec, bakeoff: Bakeoff): BakeoffSummary {
 	if (spec.progress !== undefined) summary.progress = spec.progress;
 	if (spec.error !== undefined) summary.error = spec.error;
 	return summary;
+}
+
+// ── what can be taken out ────────────────────────────────────────────────────
+
+const GONE = "The code of this entry is no longer kept on this computer, so there is nothing to export.";
+/** The entry of the pruned bake-off whose patch is over the cap. */
+const OVERSIZE_LABEL = "D";
+
+/** The folder a mock companion finds at `cwd`: a scratch folder is no git repository and holds the notes of its session. */
+function folderOf(cwd: string): BakeoffFolder {
+	const found = mockQuizFolder(cwd);
+	return { git: found.git, files: found.git ? 0 : Object.keys(TOPIC_FILES).length, name: found.name };
+}
+
+/** The root a bake-off of `cwd` is listed under: the fixture repository, or the scratch folder itself. */
+const rootOf = (cwd: string): string => (folderOf(cwd).git ? MOCK_QUIZ_ROOT : cwd);
+
+/** Whether an entry's code can still be exported, as `bakeoff-get` tells; absent for a design and before the entries were made. */
+function patchStateOf(item: Stored, entry: BakeoffEntry): BakeoffEntry["patch"] {
+	if (item.bakeoff.mode !== "implementation" || stageAt(item.bakeoff.stage) < stageAt("facts")) return undefined;
+	return item.spec.code === "pruned" && entry.kind === "challenger" && entry.label !== OVERSIZE_LABEL
+		? { ok: false, reason: GONE }
+		: { ok: true };
+}
+
+/** A file added, as `git diff --binary --full-index` writes it. */
+function added(path: string, lines: string[], mode = "100644"): string {
+	return [
+		`diff --git a/${path} b/${path}`,
+		`new file mode ${mode}`,
+		`index ${"0".repeat(40)}..${"b".repeat(40)}`,
+		"--- /dev/null",
+		`+++ b/${path}`,
+		`@@ -0,0 +1,${lines.length} @@`,
+		...lines.map(line => `+${line}`),
+		"",
+	].join("\n");
+}
+
+/** One hunk that replaces `removed` with `inserted` between lines of context. */
+function changed(
+	path: string,
+	at: number,
+	lead: string[],
+	removed: string[],
+	inserted: string[],
+	trail: string[],
+): string {
+	return [
+		`diff --git a/${path} b/${path}`,
+		`index ${"a".repeat(40)}..${"c".repeat(40)} 100644`,
+		`--- a/${path}`,
+		`+++ b/${path}`,
+		`@@ -${at},${lead.length + removed.length + trail.length} +${at},${lead.length + inserted.length + trail.length} @@`,
+		...lead.map(line => ` ${line}`),
+		...removed.map(line => `-${line}`),
+		...inserted.map(line => `+${line}`),
+		...trail.map(line => ` ${line}`),
+		"",
+	].join("\n");
+}
+
+/** A 12-byte file as `git diff --binary` carries it. */
+const BINARY_HUNK = [
+	"diff --git a/docs/replay-flow.png b/docs/replay-flow.png",
+	"new file mode 100644",
+	`index ${"0".repeat(40)}..de37cb671741b5c50fcca24abb963423d1d399f2`,
+	"GIT binary patch",
+	"literal 12",
+	"TcmeAS@N;MQ|BsQ0p`j4~9qt5h",
+	"",
+	"literal 0",
+	"HcmV?d00001",
+	"",
+	"",
+].join("\n");
+
+/** The patch an implementation entry would give: its change to the provider cache, a test, and for one idea a picture. */
+function patchText(entry: EntrySpec): string {
+	const at = IMPL_IDEAS.indexOf(entry.idea);
+	const note = `// ${entry.idea.summary}`;
+	return [
+		changed(
+			PC,
+			12,
+			["use tokio::sync::RwLock;", ""],
+			["pub struct ProviderCache {", "    providers: HashMap<u64, Provider>,"],
+			[note, "pub struct ProviderCache {", "    providers: RwLock<HashMap<u64, Provider>>,"],
+			["}", ""],
+		),
+		added("crates/evm/tests/provider_cache.rs", [
+			"use evm::ProviderCache;",
+			"",
+			"#[tokio::test]",
+			`async fn variant_${at}_shares_one_connection_per_chain() {`,
+			"    let cache = ProviderCache::default();",
+			"    assert!(cache.get(1).await.is_ok());",
+			"}",
+		]),
+		...(at === 0 ? [BINARY_HUNK] : []),
+	].join("");
 }
 
 // ── canned bake-offs ─────────────────────────────────────────────────────────
@@ -685,7 +859,7 @@ interface Stored {
 
 export interface MockBakeoff {
 	/** Fields the mock companion's `hosts` frame needs for the app to offer design bake-offs. */
-	capabilities: { canBakeoff: true };
+	capabilities: { canBakeoff: true; canBakeoffPatch: true; canBakeoffFolder: true };
 	handles(request: CompanionRequest): boolean;
 	/** Answers are promises like the real companion's, though nothing here waits. */
 	answer(request: CompanionRequest): Promise<CompanionReply>;
@@ -985,6 +1159,66 @@ export function createMockBakeoff(options: {
 		});
 	}
 
+	// A finished implementation bake-off whose worktrees were removed and whose snapshots were pruned: only the original's
+	// code is still on this computer, and the patch of one more is too large to send.
+	{
+		const entries = [
+			ready("A", "challenger", IMPL_IDEAS[1]!, "anthropic/claude-haiku-5"),
+			ready("B", "challenger", IMPL_IDEAS[2]!, "openai/gpt-mini"),
+			ready("C", "original", IMPL_IDEAS[0]!),
+			ready("D", "challenger", IMPL_IDEAS[3]!, "google/gemini-flash"),
+		];
+		put({
+			id: "bk-mock-impl-pruned",
+			title: "interfold · feature/provider-cache vs main",
+			subject: "feature/provider-cache vs main",
+			createdAt: now - 2 * DAY,
+			mode: "implementation",
+			ref: "feature/provider-cache",
+			code: "pruned",
+			metrics: [SIMPLICITY, LINES],
+			reviewer: REVIEWER,
+			judge: "off",
+			entries,
+			stage: "done",
+			status: "ready",
+			plan: planOf(entries, {
+				order: ["A", "C", "D", "B"],
+				judgeNote: "No second opinion: it was turned off.",
+				unsure: [],
+			}),
+		});
+	}
+
+	// A finished design bake-off of a folder that is not a git repository: the notes of the session without a project.
+	{
+		const entries = [
+			ready("A", "original", FOLDER_IDEAS[0]!),
+			ready("B", "challenger", FOLDER_IDEAS[1]!, "anthropic/claude-haiku-5"),
+			ready("C", "challenger", FOLDER_IDEAS[2]!, "openai/gpt-mini"),
+		];
+		put({
+			id: "bk-mock-folder",
+			title: `${folderOf(TOPIC_CWD).name} · ${NOTES}`,
+			subject: NOTES,
+			createdAt: now - 4 * HOUR,
+			mode: "design",
+			folder: true,
+			root: TOPIC_CWD,
+			metrics: [SIMPLICITY, PERFORMANCE],
+			reviewer: REVIEWER,
+			judge: "off",
+			entries,
+			stage: "done",
+			status: "ready",
+			plan: planOf(entries, {
+				order: ["B", "A", "C"],
+				judgeNote: "No second opinion: it was turned off.",
+				unsure: ["Whether the cents survive the scaling for salaries above a million."],
+			}),
+		});
+	}
+
 	// A design bake-off part way through: three of its entries at different points, and the rest of the steps still to run.
 	{
 		const entries: EntrySpec[] = [
@@ -1101,7 +1335,7 @@ export function createMockBakeoff(options: {
 	};
 
 	return {
-		capabilities: { canBakeoff: true },
+		capabilities: { canBakeoff: true, canBakeoffPatch: true, canBakeoffFolder: true },
 		handles: request => request.t.startsWith("bakeoff-"),
 		stop() {
 			for (const item of all.values()) clearInterval(item.timer);
@@ -1109,10 +1343,11 @@ export function createMockBakeoff(options: {
 		async answer(request): Promise<CompanionReply> {
 			switch (request.t) {
 				case "bakeoff-list": {
-					// Every folder of the mock computer is a folder of the fixture repository.
+					// Every folder of the mock computer is a folder of the fixture repository, except a scratch folder.
+					const root = request.cwd === undefined ? undefined : rootOf(request.cwd);
 					const rows = [...all.values()]
 						.map(item => ({ ...item.summary }))
-						.filter(row => request.cwd === undefined || row.repoRoot === MOCK_QUIZ_ROOT)
+						.filter(row => root === undefined || row.repoRoot === root)
 						.sort((a, b) => b.createdAt - a.createdAt);
 					return { t: "bakeoff-list", reqId: request.reqId, bakeoffs: rows };
 				}
@@ -1120,10 +1355,11 @@ export function createMockBakeoff(options: {
 					return { t: "bakeoff-judge", reqId: request.reqId, judge: judgeInfo(judgeFlag) };
 				case "bakeoff-create": {
 					const { t: _t, reqId: _reqId, ...body } = request;
-					const checked = checkBakeoffCreate(body);
+					const folder = !folderOf(body.cwd ?? "").git;
+					const checked = checkBakeoffCreate(body, folder);
 					const id = `bk-new-${++counter}`;
 					const impl = checked.mode === "implementation";
-					const pool = impl ? IMPL_IDEAS : DESIGN_IDEAS;
+					const pool = folder ? FOLDER_IDEAS : impl ? IMPL_IDEAS : DESIGN_IDEAS;
 					const labels = BAKEOFF_LABELS.slice(0, checked.models.length + 1);
 					// The original takes a different letter each time, as the real draw does.
 					const originalAt = counter % labels.length;
@@ -1139,7 +1375,7 @@ export function createMockBakeoff(options: {
 							label: challengerLabels[at]!,
 							kind: "challenger",
 							model,
-							idea: pool[at + 1]!,
+							idea: pool[1 + (at % (pool.length - 1))]!,
 							status: "waiting",
 						})),
 					].sort((a, b) => a.label.localeCompare(b.label));
@@ -1176,8 +1412,8 @@ export function createMockBakeoff(options: {
 					});
 					const created = put({
 						id,
-						title: `interfold · ${docName ?? subject}`,
-						subject,
+						title: `${folder ? folderOf(body.cwd!).name : REPO.name} · ${docName ?? subject}`,
+						subject: folder ? (docName ?? "a design") : subject,
 						createdAt: Date.now(),
 						mode: checked.mode,
 						metrics: checked.metrics,
@@ -1189,13 +1425,39 @@ export function createMockBakeoff(options: {
 						plan,
 						maxCostUsd: checked.maxCostUsd,
 						ref: checked.ref,
+						...(folder ? { folder: true as const, root: body.cwd! } : {}),
+						...(impl ? { code: "kept" as const } : {}),
 						...(checked.instructions === undefined ? {} : { instructions: checked.instructions }),
 					});
 					run(created, stepsFor(created));
 					return { t: "bakeoff-create", reqId: request.reqId, id };
 				}
-				case "bakeoff-get":
-					return { t: "bakeoff-get", reqId: request.reqId, bakeoff: structuredClone(stored(request.id).bakeoff) };
+				case "bakeoff-get": {
+					const bakeoff = structuredClone(stored(request.id).bakeoff);
+					for (const entry of bakeoff.entries) {
+						const patch = patchStateOf(stored(request.id), entry);
+						if (patch !== undefined) entry.patch = patch;
+					}
+					return { t: "bakeoff-get", reqId: request.reqId, bakeoff };
+				}
+				case "bakeoff-patch": {
+					const item = stored(request.id);
+					const entry = entryNamed(item.bakeoff, request.entry);
+					const state = patchStateOf(item, entry);
+					if (state === undefined) throw new Error("Only an implementation has code to export.");
+					if (!state.ok) throw new Error(state.reason);
+					if (item.spec.code === "pruned" && entry.label === OVERSIZE_LABEL)
+						throw new Error(
+							`The patch is larger than ${BAKEOFF_MAX_PATCH_BYTES / (1024 * 1024)} MB, so it is not offered. Take this entry and read its worktree instead.`,
+						);
+					return {
+						t: "bakeoff-patch",
+						reqId: request.reqId,
+						patch: patchText(item.spec.entries.find(spec => spec.label === entry.label)!),
+					};
+				}
+				case "bakeoff-folder":
+					return { t: "bakeoff-folder", reqId: request.reqId, folder: folderOf(request.cwd) };
 				case "bakeoff-excerpt": {
 					const item = stored(request.id);
 					entryNamed(item.bakeoff, request.entry);

@@ -185,7 +185,8 @@ import {
 	sessionFileCost,
 } from "./companion-sessions";
 import { COMPANION_RUN_DIR } from "./companion-sandbox";
-import { createSettleCleanup, loadSettleState, saveSettleState } from "./companion-settle";
+import { companionWorktree, createSettleCleanup, loadSettleState, saveSettleState } from "./companion-settle";
+import { createSessionDelete, TRASH_PURGE_EVERY_MS } from "./companion-delete";
 import { createDiskGuard, loadDiskFile, saveDiskFile } from "./companion-disk";
 import { createSessionLister } from "./companion-list";
 import { preferredRelayPort, startCompanionRelay } from "./companion-local-relay";
@@ -859,6 +860,9 @@ const unapprovedSettles = new Set<string>();
 
 const settleStatePath = path.join(path.dirname(statePath), "collab-companion-settle.json");
 
+/** Runs the work of one session one at a time: its settle cleanup, ending it when it settles, and deleting it (see ./companion-delete). */
+const sessionLock = createKeyedLock();
+
 /** Runs the user's cleanup command in a worktree when its session settles; see ./companion-settle. */
 const settleCleanup = createSettleCleanup({
 	initial: await loadSettleState(settleStatePath),
@@ -876,6 +880,7 @@ const settleCleanup = createSettleCleanup({
 		console.error(`companion: ${root} has a .omp/worktree-settle that is not approved; it was not run`);
 	},
 	onError: err => console.error(`companion: worktree settle cleanup failed: ${errorText(err)}`),
+	guard: sessionLock,
 });
 
 /**
@@ -925,29 +930,35 @@ const sessionOrg = createSessionOrg({
 	onChange: () => void refresh(),
 	// Never awaited: a cleanup command must not hold up the settle (or the sync that carried it).
 	onSettled: sessions => void settleCleanup.run(sessions),
-	endSession: async (session, stillWanted) => {
-		const target = await companionTmuxSession(session.instanceId);
-		// Hand-started sessions are never touched.
-		if (target === null) return true;
-		// The cleanup runs once this session is gone from the listing, and finds its worktree only through what was recorded.
-		const sandboxed = [...knownHosts, ...knownIdle].some(
-			s => s.instanceId === session.instanceId && s.sandboxed === true,
-		);
-		await settleCleanup
-			.recordSession(session.sessionId, session.cwd)
-			.catch(err => console.error(`companion: remembering session ${session.sessionId} failed: ${errorText(err)}`));
-		if (sandboxed)
+	endSession: (session, stillWanted) =>
+		// One at a time per session, with its settle cleanup and its deletion.
+		sessionLock(session.sessionId, async () => {
+			const target = await companionTmuxSession(session.instanceId);
+			// Hand-started sessions are never touched.
+			if (target === null) return true;
+			// The cleanup runs once this session is gone from the listing, and finds its worktree only through what was recorded.
+			const sandboxed = [...knownHosts, ...knownIdle].some(
+				s => s.instanceId === session.instanceId && s.sandboxed === true,
+			);
 			await settleCleanup
-				.recordSandboxed(session.cwd)
-				.catch(err => console.error(`companion: remembering sandboxed ${session.cwd} failed: ${errorText(err)}`));
-		// Everything above awaited: look again at a fresh listing, so an un-settle or a prompt sent meanwhile wins.
-		await loadSessions();
-		const now = [...knownHosts, ...knownIdle].find(s => s.instanceId === session.instanceId);
-		if (now === undefined || now.busy !== false || ("inputRequired" in now && now.inputRequired)) return false;
-		if (!stillWanted()) return false;
-		await killTmuxSession(target.tmux, target.name);
-		return true;
-	},
+				.recordSession(session.sessionId, session.cwd)
+				.catch(err =>
+					console.error(`companion: remembering session ${session.sessionId} failed: ${errorText(err)}`),
+				);
+			if (sandboxed)
+				await settleCleanup
+					.recordSandboxed(session.cwd)
+					.catch(err =>
+						console.error(`companion: remembering sandboxed ${session.cwd} failed: ${errorText(err)}`),
+					);
+			// Everything above awaited: look again at a fresh listing, so an un-settle or a prompt sent meanwhile wins.
+			await loadSessions();
+			const now = [...knownHosts, ...knownIdle].find(s => s.instanceId === session.instanceId);
+			if (now === undefined || now.busy !== false || ("inputRequired" in now && now.inputRequired)) return false;
+			if (!stillWanted()) return false;
+			await killTmuxSession(target.tmux, target.name);
+			return true;
+		}),
 	onError: err => console.error(`companion: session organisation failed: ${errorText(err)}`),
 	exempt: sessionId => personal.exempt(sessionId),
 });
@@ -1166,6 +1177,8 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canHighStakes: extras.canStart,
 		canSpar: extras.canStart,
 		canBakeoff: extras.canStart,
+		canBakeoffPatch: extras.canStart,
+		canBakeoffFolder: extras.canStart,
 		canEdit: true,
 		canPreview: previewChrome !== null,
 		// Reading issues and pull requests needs the same signed-in gh as opening one.
@@ -1188,6 +1201,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canOrderSessions: true,
 		canEndOnSettle: true,
 		canHideMessages: true,
+		canDeleteSessions: true,
 		hiddenRev: hiddenMessages.file().rev,
 		transcribe: extras.transcribe ?? undefined,
 		power: power ?? undefined,
@@ -1534,6 +1548,55 @@ async function stopSession(instanceId: string): Promise<void> {
 	if (target === null) throw new Error("only sessions the companion started can be ended from here");
 	await killTmuxSession(target.tmux, target.name);
 }
+
+/**
+ * Deleting omp sessions into a trash that keeps them for 7 days, with *Undo* (`session-delete`, `session-restore`); see
+ * ./companion-delete. Runs under the same per-session lock as settling and ending a session.
+ */
+const sessionDelete = createSessionDelete({
+	sessionsDir,
+	trashDir: path.join(configDir, "agent", "collab-trash"),
+	prWatchDir: path.join(configDir, "run", "pr-watch"),
+	protectedDirs: () => personal.sessionDirs().slice(1),
+	now: Date.now,
+	lock: sessionLock,
+	isPersonal: sessionId =>
+		personal.exempt(sessionId) ||
+		knownHosts.some(host => host.sessionId === sessionId && personal.isPersonalHost(host)),
+	live: async () => {
+		const { hosts, idle } = await loadSessions();
+		return [...hosts, ...idle].map(session => ({ instanceId: session.instanceId, sessionId: session.sessionId }));
+	},
+	startedHere: async instanceId => (await companionTmuxSession(instanceId)) !== null,
+	stop: stopSession,
+	holders: async (sessionId, file) => (await findSessionHolders(sessionId, file, [])).length,
+	org: sessionOrg,
+	hidden: hiddenMessages,
+	settle: settleCleanup,
+	worktree: async sessionId => {
+		const folder = settleCleanup.worktreeOf(sessionId);
+		return folder === null
+			? null
+			: ((await companionWorktree(folder, worktreeLocations(gitFlow, worktreesDir)))?.path ?? null);
+	},
+	removeWorktree: async tree => {
+		// A fresh list: never remove a checkout a running omp works in.
+		await loadSessions();
+		await removeWorktree(
+			tree,
+			worktreeLocations(gitFlow, worktreesDir),
+			[...knownHosts, ...knownIdle].map(session => session.cwd),
+		);
+	},
+	forgetSearch: file => sessionSearch.forget(file),
+	onError: err => console.error(`companion: deleting a session left a record behind: ${errorText(err)}`),
+});
+const purgeTrash = (): void =>
+	void sessionDelete
+		.purge()
+		.catch(err => console.error(`companion: emptying the session trash failed: ${errorText(err)}`));
+purgeTrash();
+setInterval(purgeTrash, TRASH_PURGE_EVERY_MS).unref();
 
 /** Read-only sessions the companion starts for architecture maps and quizzes. */
 const agentRunner: AgentRunner = {
@@ -2200,6 +2263,29 @@ room.onFrame = (frame, fromPeer) => {
 				return { t: "hidden-messages", reqId: frame.reqId, sessionId: frame.sessionId, doc, rev };
 			});
 			return;
+		case "session-delete-plan":
+			respond(frame.reqId, async () => ({
+				t: "session-delete-plan",
+				reqId: frame.reqId,
+				plans: await sessionDelete.plan(frame.sessionIds),
+			}));
+			return;
+		case "session-delete":
+			respond(frame.reqId, async () => {
+				const results = await sessionDelete.delete(frame.sessionIds, frame.removeWorktree);
+				const deleted = results.filter(result => result.status !== "refused").length;
+				if (deleted > 0) console.log(`companion: ${new Date().toISOString()} deleted ${deleted} session(s)`);
+				void refresh();
+				return { t: "session-delete", reqId: frame.reqId, results };
+			});
+			return;
+		case "session-restore":
+			respond(frame.reqId, async () => {
+				const sessionId = await sessionDelete.restore(frame.trashId);
+				void refresh();
+				return { t: "session-restore", reqId: frame.reqId, sessionId };
+			});
+			return;
 		case "session-search":
 			respond(frame.reqId, async () => {
 				const { results, truncated } = await sessionSearch.search(frame.query, frame.limit);
@@ -2557,6 +2643,18 @@ room.onFrame = (frame, fromPeer) => {
 			respond(frame.reqId, async () => {
 				await bakeoffs.review(frame.id);
 				return { t: "bakeoff-review", reqId: frame.reqId };
+			});
+			return;
+		case "bakeoff-patch":
+			respond(frame.reqId, async () => {
+				if (typeof frame.entry !== "string") throw new Error("invalid entry");
+				return { t: "bakeoff-patch", reqId: frame.reqId, patch: await bakeoffs.patch(frame.id, frame.entry) };
+			});
+			return;
+		case "bakeoff-folder":
+			respond(frame.reqId, async () => {
+				if (typeof frame.cwd !== "string") throw new Error("invalid folder");
+				return { t: "bakeoff-folder", reqId: frame.reqId, folder: await bakeoffs.folder(frame.cwd) };
 			});
 			return;
 		case "bakeoff-delete":

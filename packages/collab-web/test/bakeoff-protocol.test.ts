@@ -42,6 +42,8 @@ const REQUESTS = {
 	"bakeoff-take": { t: "bakeoff-take", reqId: 7, id: "b1", entry: "A", removeOthers: true },
 	"bakeoff-delete": { t: "bakeoff-delete", reqId: 8, id: "b1" },
 	"bakeoff-review": { t: "bakeoff-review", reqId: 9, id: "b1" },
+	"bakeoff-patch": { t: "bakeoff-patch", reqId: 10, id: "b1", entry: "A" },
+	"bakeoff-folder": { t: "bakeoff-folder", reqId: 11, cwd: "/notes" },
 } satisfies { [T in BakeoffRequest["t"]]: Extract<CompanionRequest, { t: T }> };
 
 const REPLIES = {
@@ -53,13 +55,15 @@ const REPLIES = {
 	"bakeoff-take": { t: "bakeoff-take", reqId: 7, result: { removed: [], skipped: [] } },
 	"bakeoff-delete": { t: "bakeoff-delete", reqId: 8 },
 	"bakeoff-review": { t: "bakeoff-review", reqId: 9 },
+	"bakeoff-patch": { t: "bakeoff-patch", reqId: 10, patch: "diff --git a/x b/x\n" },
+	"bakeoff-folder": { t: "bakeoff-folder", reqId: 11, folder: { git: false, files: 3, name: "notes" } },
 	"bakeoff-changed": { t: "bakeoff-changed", id: "b1" },
 } satisfies { [T in Exclude<BakeoffReply["t"], "bakeoff-get">]: Extract<CompanionReply, { t: T }> };
 
 describe("the bake-off wire modules in the app's protocol", () => {
 	it("has a sample request for every bake-off request type, as the app would send it", () => {
 		for (const [type, sample] of Object.entries(REQUESTS)) expect(sample.t).toBe(type as keyof typeof REQUESTS);
-		expect(Object.keys(REQUESTS)).toHaveLength(9);
+		expect(Object.keys(REQUESTS)).toHaveLength(11);
 	});
 
 	it("has a sample reply for every bake-off reply type; only the push carries no reqId", () => {

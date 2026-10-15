@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { DashboardStats, SessionSummary } from "@oh-my-pi/omp-stats/shared-types";
 import type { CompanionHost, CompanionIdleSession } from "../src/lib/companion";
 import {
@@ -9,6 +12,7 @@ import {
 	projectNames,
 	reshapeUsage,
 	sessionIdOfFile,
+	withTranscripts,
 } from "../scripts/companion-stats";
 
 const HOUR = 3_600_000;
@@ -116,6 +120,26 @@ describe("session identity", () => {
 		]);
 		expect(names.get("-Documents-zk-app")).toBe("/home/u/Documents/zk-app");
 		expect(names.get("/tmp-work/")).toBe("/tmp/work");
+	});
+});
+
+describe("withTranscripts", () => {
+	it("drops the sessions whose transcript is gone, keeping the order of the rest", async () => {
+		const rows = [summary("/s/-p/1_a.jsonl"), summary("/s/-p/2_b.jsonl"), summary("/s/-p/3_c.jsonl")];
+		const kept = await withTranscripts(rows, async file => !file.includes("_b."));
+		expect(kept.map(row => row.file)).toEqual(["/s/-p/1_a.jsonl", "/s/-p/3_c.jsonl"]);
+	});
+
+	it("asks the file system by default", async () => {
+		const folder = await fs.mkdtemp(path.join(os.tmpdir(), "stats-transcripts-"));
+		try {
+			const here = path.join(folder, "1_a.jsonl");
+			await fs.writeFile(here, "{}\n");
+			const kept = await withTranscripts([summary(here), summary(path.join(folder, "2_b.jsonl"))]);
+			expect(kept.map(row => row.file)).toEqual([here]);
+		} finally {
+			await fs.rm(folder, { recursive: true, force: true });
+		}
 	});
 });
 

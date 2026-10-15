@@ -44,6 +44,7 @@ import { RunSheet } from "./components/shell/RunSheet";
 import { ScreensSheet } from "./components/shell/ScreensSheet";
 import { SearchBar } from "./components/shell/SearchBar";
 import { DesktopBridge } from "./components/shell/DesktopBridge";
+import { type DeletedSessions, DeleteHost, useDeleteSessions } from "./components/shell/DeleteSessions";
 import { SessionAlert } from "./components/shell/SessionAlert";
 import { SessionsSheet } from "./components/shell/SessionsSheet";
 import { SessionsSidebar } from "./components/shell/SessionsSidebar";
@@ -121,6 +122,7 @@ import { PersonalContext, usePersonalProvider } from "./lib/use-personal";
 import { useHostRecovery } from "./lib/use-host-recovery";
 import { useGuestSnapshot } from "./lib/use-guest";
 import { DEVICE_ORG } from "./lib/org-storage";
+import { deleteOffered, isDeletableSession } from "./lib/session-delete";
 import { type SessionOrgs, useSessionOrgs } from "./lib/use-session-org";
 import type { ToolRenderHost } from "./tool-render";
 import "./components/shell/shell.css";
@@ -218,6 +220,16 @@ export function App(): ReactNode {
 	}, []);
 
 	const forget = useCallback((roomId: string): void => setRooms(forgetRoom(roomId)), []);
+
+	// Sessions were deleted: forget the rooms they were remembered by, and leave the one on screen if it was among them.
+	const sessionsDeleted = useCallback(
+		(done: DeletedSessions): void => {
+			for (const roomId of done.roomIds) forgetRoom(roomId);
+			if (done.closeOpen) leave();
+			else setRooms(loadRooms());
+		},
+		[leave],
+	);
 
 	const rejoin = useCallback((): void => {
 		const last = lastLinkRef.current;
@@ -408,48 +420,50 @@ export function App(): ReactNode {
 
 	return (
 		<PersonalContext.Provider value={personal}>
-			<UpdateBar />
-			<Tooltip />
-			<FixItHost computers={computers} onOpenHost={openHost} onOpenLink={openLink} />
-			{!client || !link ? (
-				<ConnectScreen
-					error={connectError}
-					rooms={rooms}
-					computers={computers}
-					onConnect={next => {
-						resumedRef.current = false;
-						connect(next);
-					}}
-					onForget={forget}
-					onPair={pair}
-					onOpenHost={openHost}
-					onRemoveComputer={removeComputer}
-				/>
-			) : (
-				<Session
-					key={link}
-					client={client}
-					link={link}
-					openedHint={opened?.link === link ? opened : null}
-					computers={computers}
-					orgs={orgs}
-					onPair={pair}
-					rooms={rooms}
-					onLeave={leave}
-					onRejoin={rejoin}
-					onRemember={remember}
-					onRoomGone={roomGone}
-					onRoomReplaced={replaceRoom}
-					onOpenHost={openHost}
-					beside={beside}
-					onOpenLink={openLink}
-				/>
-			)}
-			<PetHost client={client} hosts={allHosts} hostsLive={anyLive} />
-			<DesktopBridge computers={computers} onOpen={openDesktopSession} />
-			<SettingsHost env={settingsEnv} />
-			<ZoomHost />
-			<PersonalRoutes computers={computers} onOpenHost={openHost} />
+			<DeleteHost computers={computers} orgs={orgs} onDeleted={sessionsDeleted}>
+				<UpdateBar />
+				<Tooltip />
+				<FixItHost computers={computers} onOpenHost={openHost} onOpenLink={openLink} />
+				{!client || !link ? (
+					<ConnectScreen
+						error={connectError}
+						rooms={rooms}
+						computers={computers}
+						onConnect={next => {
+							resumedRef.current = false;
+							connect(next);
+						}}
+						onForget={forget}
+						onPair={pair}
+						onOpenHost={openHost}
+						onRemoveComputer={removeComputer}
+					/>
+				) : (
+					<Session
+						key={link}
+						client={client}
+						link={link}
+						openedHint={opened?.link === link ? opened : null}
+						computers={computers}
+						orgs={orgs}
+						onPair={pair}
+						rooms={rooms}
+						onLeave={leave}
+						onRejoin={rejoin}
+						onRemember={remember}
+						onRoomGone={roomGone}
+						onRoomReplaced={replaceRoom}
+						onOpenHost={openHost}
+						beside={beside}
+						onOpenLink={openLink}
+					/>
+				)}
+				<PetHost client={client} hosts={allHosts} hostsLive={anyLive} />
+				<DesktopBridge computers={computers} onOpen={openDesktopSession} />
+				<SettingsHost env={settingsEnv} />
+				<ZoomHost />
+				<PersonalRoutes computers={computers} onOpenHost={openHost} />
+			</DeleteHost>
 		</PersonalContext.Provider>
 	);
 }
@@ -738,6 +752,19 @@ function Session({
 
 	// The live name first: the header carries the session file's title as of joining, so a rename would not show.
 	const title = snap.state?.sessionName ?? snap.header?.title ?? "session";
+	// Deleting the open session needs its computer to delete sessions, and an omp session that is not the Personal agent's.
+	const requestDelete = useDeleteSessions()?.request ?? null;
+	const deleteComputerId = computer !== null && deleteOffered(computer.snap) ? computer.id : null;
+	const isOmpSession = isDeletableSession({ agent: snap.agent ?? undefined, personal: hostRow?.personal });
+	const deleteSession = useMemo(() => {
+		if (requestDelete === null || deleteComputerId === null || sessionId === null || !isOmpSession) return null;
+		return () =>
+			requestDelete({
+				computerId: deleteComputerId,
+				sessions: [{ sessionId, title, roomIds: roomId === null ? [] : [roomId] }],
+				openSessionId: sessionId,
+			});
+	}, [requestDelete, deleteComputerId, sessionId, isOmpSession, title, roomId]);
 	useEffect(() => {
 		document.title = `${title} · omp collab`;
 	}, [title]);
@@ -1335,6 +1362,7 @@ function Session({
 				railOpen={railOpen}
 				onToggleRail={toggleRail}
 				onLeave={onLeave}
+				onDeleteSession={deleteSession}
 				searchOpen={search !== null}
 				onToggleSearch={toggleSearch}
 				onToggleSidebar={canShowSidebar ? toggleSidebar : null}

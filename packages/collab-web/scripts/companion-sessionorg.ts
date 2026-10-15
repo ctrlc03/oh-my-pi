@@ -9,12 +9,14 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import {
+	applyOrg,
 	autoSettleIdle,
 	autoSettlePr,
 	DAY_MS,
 	emptyOrg,
 	mergeOrg,
 	type OrgDoc,
+	type OrgEntry,
 	parseOrg,
 	pruneOrg,
 	sameOrg,
@@ -188,12 +190,31 @@ export interface SettledSession {
 	at: number;
 }
 
+/** What the organiser holds of one session: the sidebar entry and its bookkeeping. */
+export interface OrgRecord {
+	/** The entry in the document; null when the session had none (it was shown as active). */
+	entry: OrgEntry | null;
+	activity?: number;
+	settled?: number;
+	ending?: number;
+}
+
 export interface SessionOrg {
 	file(): OrgFile;
 	/** Merge a device's document into the computer's; resolves with the result and its revision. */
 	sync(remote: OrgDoc): Promise<{ doc: OrgDoc; rev: number }>;
 	/** Observe the listing, then apply the auto-settle rules. */
 	tick(sessions: readonly OrgSession[]): Promise<void>;
+	/** What the organiser holds of `sessionId` now. */
+	record(sessionId: string): OrgRecord;
+	/**
+	 * Take deleted sessions out of the organisation: their entries go back to default (a tombstone every device merges
+	 * in, so the row is gone everywhere), and the activity, settle and end-on-settle bookkeeping is dropped. Persisted,
+	 * and the devices are told (the revision moves).
+	 */
+	forget(sessionIds: readonly string[]): Promise<void>;
+	/** Put records taken by {@link SessionOrg.forget} back (an undone deletion), their entries newer than the tombstones. A settle that was already handled is not reported again. */
+	unforget(records: Readonly<Record<string, OrgRecord>>): Promise<void>;
 }
 
 export function createSessionOrg(options: SessionOrgOptions): SessionOrg {
@@ -339,8 +360,57 @@ export function createSessionOrg(options: SessionOrgOptions): SessionOrg {
 		}
 	};
 
+	const recordOf = (sessionId: string): OrgRecord => ({
+		entry: Object.hasOwn(file.doc.entries, sessionId) ? file.doc.entries[sessionId] : null,
+		activity: Object.hasOwn(file.activity, sessionId) ? file.activity[sessionId] : undefined,
+		settled: Object.hasOwn(file.settled, sessionId) ? file.settled[sessionId] : undefined,
+		ending: Object.hasOwn(file.ending, sessionId) ? file.ending[sessionId] : undefined,
+	});
+
+	const without = (times: Readonly<Record<string, number>>, ids: readonly string[]): Record<string, number> => {
+		const kept = { ...times };
+		for (const id of ids) delete kept[id];
+		return kept;
+	};
+
 	return {
 		file: () => file,
+		record: recordOf,
+		async forget(sessionIds) {
+			let doc = file.doc;
+			// Only a session that has an entry needs a tombstone; one shown as active has nothing to merge away.
+			for (const id of sessionIds)
+				if (Object.hasOwn(doc.entries, id))
+					doc = applyOrg(doc, id, { type: "restore", entry: null }, options.now());
+			file = {
+				doc,
+				rev: file.rev + 1,
+				activity: without(file.activity, sessionIds),
+				settled: without(file.settled, sessionIds),
+				ending: without(file.ending, sessionIds),
+			};
+			await persist();
+			options.onChange();
+		},
+		async unforget(records) {
+			let doc = file.doc;
+			const settled = { ...file.settled };
+			const ending = { ...file.ending };
+			const activity = { ...file.activity };
+			const now = options.now();
+			for (const [id, record] of Object.entries(records)) {
+				if (record.entry !== null) {
+					doc = applyOrg(doc, id, { type: "restore", entry: record.entry }, now);
+					const at = doc.entries[id].at;
+					if (record.settled !== undefined) settled[id] = at;
+					if (record.ending !== undefined) ending[id] = at;
+				}
+				if (record.activity !== undefined) activity[id] = record.activity;
+			}
+			file = { doc, rev: file.rev + 1, activity, settled, ending };
+			await persist();
+			options.onChange();
+		},
 		async sync(remote) {
 			const now = options.now();
 			await adopt(pruneOrg(mergeOrg(file.doc, remote), now));

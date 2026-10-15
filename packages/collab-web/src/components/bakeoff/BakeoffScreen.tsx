@@ -4,6 +4,7 @@ import {
 	ChevronLeft,
 	CircleAlert,
 	Copy,
+	Download,
 	Eye,
 	EyeOff,
 	LoaderCircle,
@@ -11,6 +12,7 @@ import {
 	MessageSquarePlus,
 	RefreshCw,
 	RotateCcw,
+	Share2,
 	Square,
 	Swords,
 	Trash2,
@@ -21,8 +23,9 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { computerById, type ComputerHandle } from "../../lib/computers";
 import type { CompanionClient } from "../../lib/companion";
+import { saveBlob } from "../../lib/download";
 import { relTime } from "../../lib/format";
-import { copyText } from "../../lib/share";
+import { copyText, shareMarkdown } from "../../lib/share";
 import { useRequest } from "../../lib/use-request";
 import type { ExportedExcerpt } from "../architecture/blueprint-model";
 import type { ExcerptCache } from "../quiz/QuizCode";
@@ -35,21 +38,30 @@ import {
 	deleteBakeoff,
 	getBakeoff,
 	getBakeoffExcerpts,
+	getBakeoffPatch,
 	listBakeoffs,
 	reviewBakeoffAgain,
 	stopBakeoff,
 	takeBakeoff,
 } from "./bakeoff-api";
+import { bakeoffReport, loadReportExcerpts, reportCitations } from "./bakeoff-report";
 import type { BakeoffJoins } from "./bakeoff-types";
 import {
+	canMapEntry,
 	canReviewAgain,
+	canSparEntry,
 	canTake,
+	collectPatches,
+	combinedPatchFileName,
 	costLine,
 	designMarkdown,
 	entryName,
 	INELIGIBLE_NOTE,
-	isReviewable,
+	leftOutLine,
+	patchControls,
+	patchFileName,
 	rankRows,
+	reportFileName,
 	reviewAgainNote,
 	runState,
 	stageCostLine,
@@ -165,6 +177,7 @@ type Busy = "stop" | "delete" | "review" | "take";
 
 function LoadedScreen({
 	client,
+	computers,
 	computerId,
 	id,
 	hint,
@@ -187,6 +200,10 @@ function LoadedScreen({
 	const [taking, setTaking] = useState<BakeoffEntry | null>(null);
 	const [takeDone, setTakeDone] = useState<{ label: string; result: BakeoffTakeResult | undefined } | null>(null);
 	const [copied, setCopied] = useState<"copied" | "failed" | null>(null);
+	// What the Report group or an entry's patch buttons are doing now, by key; one at a time, since each is a download.
+	const [working, setWorking] = useState<string | null>(null);
+	const [exportNote, setExportNote] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+	const [patchNote, setPatchNote] = useState<{ label: string; tone: "ok" | "err"; text: string } | null>(null);
 	const cache = useMemo<ExcerptCache>(() => new Map(), []);
 	const code = useMemo<BakeoffCodeAccess>(
 		() => ({
@@ -305,43 +322,183 @@ function LoadedScreen({
 		});
 	};
 
+	const canPatch = computerById(computers, computerId)?.snap.canBakeoffPatch === true;
+
+	const exportReport = async (how: "copy" | "share" | "download"): Promise<void> => {
+		setWorking(`report-${how}`);
+		setExportNote(null);
+		try {
+			// Models are in the report whatever *Show models* says: judging is over, so the report is the record.
+			const { shown } = reportCitations(bakeoff);
+			const excerpts = await loadReportExcerpts(code, shown);
+			const text = bakeoffReport({ bakeoff, subject: summary?.subject, excerpts });
+			const name = reportFileName(bakeoff);
+			if (how === "copy")
+				setExportNote(
+					(await copyText(text))
+						? { tone: "ok", text: "Copied the report to the clipboard." }
+						: { tone: "err", text: "The browser would not copy it." },
+				);
+			else {
+				const saved =
+					how === "share"
+						? await shareMarkdown(bakeoff.title, text, name)
+						: await saveBlob(new Blob([text], { type: "text/markdown" }), name);
+				if (saved !== "cancelled")
+					setExportNote({ tone: "ok", text: `${saved === "shared" ? "Shared" : "Saved"} ${name}.` });
+			}
+		} catch (err) {
+			setExportNote({ tone: "err", text: errorText(err) });
+		} finally {
+			setWorking(null);
+		}
+	};
+
+	const exportPatch = async (target: BakeoffEntry, how: "download" | "copy"): Promise<void> => {
+		setWorking(`patch-${how}-${target.label}`);
+		setPatchNote(null);
+		const say = (tone: "ok" | "err", text: string): void => setPatchNote({ label: target.label, tone, text });
+		try {
+			const patch = await getBakeoffPatch(client, id, target.label);
+			const name = patchFileName(bakeoff, target);
+			if (patch === "") say("err", "This entry changes nothing, so its patch is empty.");
+			else if (how === "copy") {
+				if (await copyText(patch)) say("ok", "Copied the patch to the clipboard.");
+				else say("err", "The browser would not copy it.");
+			} else {
+				const saved = await saveBlob(new Blob([patch], { type: "text/x-diff" }), name);
+				if (saved !== "cancelled") say("ok", `${saved === "shared" ? "Shared" : "Saved"} ${name}.`);
+			}
+		} catch (err) {
+			say("err", errorText(err));
+		} finally {
+			setWorking(null);
+		}
+	};
+
+	const patchableCount = bakeoff.entries.filter(item => {
+		const controls = patchControls(bakeoff, item, canPatch);
+		return controls.show && controls.disabledReason === null;
+	}).length;
+
+	// One file for every entry: the app has no zip writer, and several downloads from one tap are blocked or prompt in
+	// browsers and become several share sheets on a phone, so a single file is the one-tap option.
+	const exportAllPatches = async (): Promise<void> => {
+		setWorking("patches");
+		setExportNote(null);
+		try {
+			const done = await collectPatches(bakeoff, label => getBakeoffPatch(client, id, label));
+			const left = leftOutLine(done.leftOut);
+			if (done.patch === null) {
+				setExportNote({ tone: "err", text: left ?? "No entry had a patch to export." });
+				return;
+			}
+			const name = combinedPatchFileName(bakeoff);
+			const saved = await saveBlob(new Blob([done.patch], { type: "text/x-diff" }), name);
+			const said =
+				saved === "cancelled"
+					? null
+					: `${saved === "shared" ? "Shared" : "Saved"} ${name} with ${done.included.map(label => `Entry ${label}`).join(", ")}.`;
+			const text = [said, left].filter(part => part !== null).join(" ");
+			if (text !== "") setExportNote({ tone: left === null ? "ok" : "err", text });
+		} catch (err) {
+			setExportNote({ tone: "err", text: errorText(err) });
+		} finally {
+			setWorking(null);
+		}
+	};
+
+	const patchButtons = entry === undefined ? null : patchControls(bakeoff, entry, canPatch);
+	const patchReason = patchButtons?.disabledReason ?? null;
+	const patchReasonId = entry === undefined ? undefined : `bo-patch-reason-${entry.label}`;
+	const patchDisabled = working !== null || patchReason !== null;
 	const actions =
 		entry === undefined || result === undefined ? null : (
-			<div className="bo-actions" role="group" aria-label="What to do with this entry">
-				{bakeoff.mode === "design" && entry.writeup !== undefined && (
-					<button
-						type="button"
-						className="sh-btn"
-						onClick={() =>
-							void copyText(designMarkdown(bakeoff, entry)).then(ok => setCopied(ok ? "copied" : "failed"))
-						}
-					>
-						<Copy size={14} /> Copy design
-					</button>
-				)}
-				{bakeoff.mode === "design" && entry.writeup !== undefined && joins.startFromDesign !== undefined && (
-					<button
-						type="button"
-						className="sh-btn"
-						onClick={() => joins.startFromDesign?.(computerId, bakeoff, entry)}
-					>
-						<MessageSquarePlus size={14} /> Start a session from this design
-					</button>
-				)}
-				{bakeoff.mode === "implementation" &&
-					entry.path !== undefined &&
-					isReviewable(entry) &&
-					joins.mapEntry !== undefined && (
+			<>
+				<div className="bo-actions" role="group" aria-label="What to do with this entry">
+					{bakeoff.mode === "design" && entry.writeup !== undefined && (
+						<button
+							type="button"
+							className="sh-btn"
+							onClick={() =>
+								void copyText(designMarkdown(bakeoff, entry)).then(ok => setCopied(ok ? "copied" : "failed"))
+							}
+						>
+							<Copy size={14} /> Copy design
+						</button>
+					)}
+					{bakeoff.mode === "design" && entry.writeup !== undefined && joins.startFromDesign !== undefined && (
+						<button
+							type="button"
+							className="sh-btn"
+							onClick={() => joins.startFromDesign?.(computerId, bakeoff, entry)}
+						>
+							<MessageSquarePlus size={14} /> Start a session from this design
+						</button>
+					)}
+					{canMapEntry(bakeoff, entry) && joins.mapEntry !== undefined && (
 						<button type="button" className="sh-btn" onClick={() => joins.mapEntry?.(computerId, bakeoff, entry)}>
 							<MapIcon size={14} /> Map this entry
 						</button>
 					)}
-				{isReviewable(entry) && joins.sparEntry !== undefined && (
-					<button type="button" className="sh-btn" onClick={() => joins.sparEntry?.(computerId, bakeoff, entry)}>
-						<Swords size={14} /> Spar with this entry
-					</button>
+					{canSparEntry(bakeoff, entry) && joins.sparEntry !== undefined && (
+						<button
+							type="button"
+							className="sh-btn"
+							onClick={() => joins.sparEntry?.(computerId, bakeoff, entry)}
+						>
+							<Swords size={14} /> Spar with this entry
+						</button>
+					)}
+					{patchButtons?.show === true && (
+						<>
+							<button
+								type="button"
+								className="sh-btn"
+								disabled={patchDisabled}
+								aria-describedby={patchReason === null ? undefined : patchReasonId}
+								onClick={() => void exportPatch(entry, "download")}
+							>
+								{working === `patch-download-${entry.label}` ? (
+									<LoaderCircle size={14} className="sh-spin" />
+								) : (
+									<Download size={14} />
+								)}{" "}
+								Download patch
+							</button>
+							<button
+								type="button"
+								className="sh-btn"
+								disabled={patchDisabled}
+								aria-describedby={patchReason === null ? undefined : patchReasonId}
+								onClick={() => void exportPatch(entry, "copy")}
+							>
+								{working === `patch-copy-${entry.label}` ? (
+									<LoaderCircle size={14} className="sh-spin" />
+								) : (
+									<Copy size={14} />
+								)}{" "}
+								Copy patch
+							</button>
+						</>
+					)}
+				</div>
+				{patchReason !== null && (
+					<p className="bo-hint" id={patchReasonId}>
+						{patchReason}
+					</p>
 				)}
-			</div>
+				{patchNote?.label === entry.label &&
+					(patchNote.tone === "err" ? (
+						<div className="bo-alert" role="alert">
+							<span>{patchNote.text}</span>
+						</div>
+					) : (
+						<p className="bo-note" role="status">
+							{patchNote.text}
+						</p>
+					))}
+			</>
 		);
 
 	const taken = result?.taken === undefined ? null : `Entry ${result.taken}`;
@@ -473,6 +630,89 @@ function LoadedScreen({
 						<p className="bo-hint">
 							Deleting does not remove any worktree. Remove those from the entry you take.
 						</p>
+					)}
+					{result !== undefined && (
+						<div className="bo-report">
+							<div className="bo-actions" role="group" aria-label="Export this bake-off">
+								<button
+									type="button"
+									className="sh-btn"
+									disabled={working !== null}
+									onClick={() => void exportReport("copy")}
+								>
+									{working === "report-copy" ? (
+										<LoaderCircle size={14} className="sh-spin" />
+									) : (
+										<Copy size={14} />
+									)}{" "}
+									Copy report
+								</button>
+								{typeof navigator.share === "function" && (
+									<button
+										type="button"
+										className="sh-btn"
+										disabled={working !== null}
+										onClick={() => void exportReport("share")}
+									>
+										{working === "report-share" ? (
+											<LoaderCircle size={14} className="sh-spin" />
+										) : (
+											<Share2 size={14} />
+										)}{" "}
+										Share
+									</button>
+								)}
+								<button
+									type="button"
+									className="sh-btn"
+									disabled={working !== null}
+									onClick={() => void exportReport("download")}
+								>
+									{working === "report-download" ? (
+										<LoaderCircle size={14} className="sh-spin" />
+									) : (
+										<Download size={14} />
+									)}{" "}
+									Download .md
+								</button>
+								{patchableCount > 0 && (
+									<button
+										type="button"
+										className="sh-btn"
+										disabled={working !== null}
+										onClick={() => void exportAllPatches()}
+									>
+										{working === "patches" ? (
+											<LoaderCircle size={14} className="sh-spin" />
+										) : (
+											<Download size={14} />
+										)}{" "}
+										Download all patches
+									</button>
+								)}
+							</div>
+							{working !== null && working.startsWith("report-") && (
+								<p className="bo-status" role="status">
+									<LoaderCircle size={14} className="sh-spin" /> Building the report…
+								</p>
+							)}
+							{working === "patches" && (
+								<p className="bo-status" role="status">
+									<LoaderCircle size={14} className="sh-spin" /> Collecting the patches…
+								</p>
+							)}
+							{working === null &&
+								exportNote !== null &&
+								(exportNote.tone === "err" ? (
+									<div className="bo-alert" role="alert">
+										<span>{exportNote.text}</span>
+									</div>
+								) : (
+									<p className="bo-note" role="status">
+										{exportNote.text}
+									</p>
+								))}
+						</div>
 					)}
 				</section>
 				{result === undefined ? (

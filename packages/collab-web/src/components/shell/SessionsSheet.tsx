@@ -8,10 +8,12 @@ import { fmtCost, fmtTokens, relTime, shortenPath } from "../../lib/format";
 import { setJumpIntent } from "../../lib/jump-intent";
 import { extractLink } from "../../lib/rooms";
 import { MIN_QUERY_CHARS, searchable } from "../../lib/search-terms";
+import { deletableOverview } from "../../lib/session-delete";
 import { useRequest } from "../../lib/use-request";
 import { AgentChip } from "./AgentChip";
 import { AgentsEntry } from "./AgentsSheet";
 import { ComputerChip } from "./ComputerChip";
+import { useDeleteSessions } from "./DeleteSessions";
 import { MessageSearch } from "./MessageSearch";
 import { useOpenElsewhere } from "./OpenElsewhere";
 import { Sheet } from "./Sheet";
@@ -128,6 +130,15 @@ export function SessionsSheet({
 		return { rows, failures };
 	}, [targetIds, q]);
 	const { state, reload } = useRequest(load);
+	// Sessions deleted or put back (from here or the Undo of the toast) change the list.
+	const deleter = useDeleteSessions();
+	const deleteRev = deleter?.rev ?? 0;
+	const seenRev = useRef(deleteRev);
+	useEffect(() => {
+		if (seenRev.current === deleteRev) return;
+		seenRev.current = deleteRev;
+		reload();
+	}, [deleteRev, reload]);
 	// Keep the previous list on screen (dimmed) while a new search loads.
 	const shown = useRef<Combined | null>(null);
 	if (state.status === "ready") shown.current = state.value;
@@ -504,6 +515,18 @@ export function SessionsSheet({
 											}
 											onShare={instanceId => run(session.sessionId, () => share(computer, instanceId))}
 											onResume={() => run(session.sessionId, force => resume(computer, session, force))}
+											onDelete={
+												deleter !== null && deletableOverview(computer, session)
+													? () =>
+															deleter.request({
+																computerId: computer.id,
+																sessions: [
+																	{ sessionId: session.sessionId, title: session.title ?? "Untitled" },
+																],
+																openSessionId: currentSessionId ?? null,
+															})
+													: undefined
+											}
 										/>
 									))}
 								</ul>
@@ -527,6 +550,8 @@ export interface SessionRowProps {
 	onOpen(instanceId: string): void;
 	onShare(instanceId: string): void;
 	onResume(): void;
+	/** Delete the session (after a confirmation); absent where it cannot be deleted. */
+	onDelete?: () => void;
 }
 
 export function SessionRow({
@@ -538,6 +563,7 @@ export function SessionRow({
 	onOpen,
 	onShare,
 	onResume,
+	onDelete,
 }: SessionRowProps): ReactNode {
 	const { instanceId } = session;
 	const working = busy === session.sessionId;
@@ -592,6 +618,17 @@ export function SessionRow({
 			{session.live === undefined && canStart && (
 				<button type="button" className="sh-btn sh-idle-share" onClick={onResume} disabled={busy !== null}>
 					{spinner ?? <Play size={14} />} Resume
+				</button>
+			)}
+			{onDelete !== undefined && (
+				<button
+					type="button"
+					className="sh-btn sh-btn-icon"
+					onClick={onDelete}
+					disabled={busy !== null}
+					aria-label={`Delete ${session.title ?? "Untitled"}`}
+				>
+					<Trash2 size={15} />
 				</button>
 			)}
 		</li>

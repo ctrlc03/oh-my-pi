@@ -195,6 +195,21 @@
 	color: var(--fg-muted);
 }
 
+/* ---- the report and patches ---- */
+.bo-report {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding-top: 10px;
+	border-top: 1px solid var(--border);
+}
+
+.bo-report .bo-note,
+.bo-report .bo-status,
+.bo-hint[id^="bo-patch-reason-"] {
+	overflow-wrap: anywhere;
+}
+
 /* ---- entry cards ---- */
 .bo-grid {
 	display: grid;

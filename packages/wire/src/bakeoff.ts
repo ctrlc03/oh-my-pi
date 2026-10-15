@@ -12,6 +12,10 @@
  * against the commit of the entry it belongs to before it is stored. In the reviewer's own text a citation carries
  * its entry: `A/path@line@token`.
  *
+ * What a person takes out of a finished bake-off: the report is built from the data here (the app needs nothing more
+ * for it), an implementation entry's code comes as a patch (`bakeoff-patch`, `canBakeoffPatch`). A bake-off may also be
+ * about a folder that is not a git repository (`Bakeoff.folder`, `bakeoff-folder`, `canBakeoffFolder`): design mode only.
+ *
  * Shared by the companion (which runs, judges and stores bake-offs) and the web app (which starts and reads them).
  * Pure JSON shapes, plus the rules both sides use (presets, labels, budgets).
  */
@@ -37,6 +41,8 @@ export const BAKEOFF_LABELS = "ABCDE";
 export const BAKEOFF_JUDGE_DIGEST_CHARS = 6_000;
 /** A total that differs by this much between two entries is a margin the judge cannot overturn. */
 export const BAKEOFF_MARGIN = 0.15;
+/** Largest patch `bakeoff-patch` returns, bytes: a bigger change is taken from its worktree or branch instead. */
+export const BAKEOFF_MAX_PATCH_BYTES = 5 * 1024 * 1024;
 
 export type BakeoffMode = "design" | "implementation";
 export type BakeoffPreset = "simplicity" | "performance" | "fewer-parts" | "migration-risk" | "lines-changed";
@@ -169,6 +175,11 @@ export interface BakeoffEntry {
 	flags: string[];
 	costUsd?: number;
 	error?: string;
+	/**
+	 * Implementation mode, once the entry's code was snapshotted: whether it can be exported as a patch against the base,
+	 * and why not when it cannot. Absent from a companion without `canBakeoffPatch`.
+	 */
+	patch?: { ok: true } | { ok: false; reason: string };
 }
 
 export type BakeoffStage = "preparing" | "entries" | "facts" | "writeups" | "review" | "judge" | "done";
@@ -272,6 +283,12 @@ export interface Bakeoff {
 	judge: "auto" | "off";
 	/** What each stage has cost so far, USD. */
 	costs: { entries: number; writeups: number; review: number; judge: number };
+	/**
+	 * The subject is a folder that is not a git repository (needs `canBakeoffFolder`): design mode only, from a design
+	 * document. The entries read a copy of the folder's text files, and the files its citations name are stored with
+	 * the bake-off, since there is no commit to read them from.
+	 */
+	folder?: true;
 }
 
 /** One row of the bake-off list. */
@@ -309,7 +326,26 @@ export type BakeoffRequest =
 	| { t: "bakeoff-take"; reqId: number; id: string; entry: string; removeOthers?: boolean; discardDirty?: boolean }
 	| { t: "bakeoff-delete"; reqId: number; id: string }
 	/** Run the review and the judge again on the entries of a bake-off whose review or judge pass failed. */
-	| { t: "bakeoff-review"; reqId: number; id: string };
+	| { t: "bakeoff-review"; reqId: number; id: string }
+	/**
+	 * The code of an implementation entry as `git diff --binary` against the base: text that `git apply` takes onto a
+	 * checkout of the base (needs `canBakeoffPatch`). The device names the entry by its label, never a path or a commit.
+	 * Refused when the entry made no code, when the commit its code was kept under is gone, or when the patch is larger
+	 * than {@link BAKEOFF_MAX_PATCH_BYTES}.
+	 */
+	| { t: "bakeoff-patch"; reqId: number; id: string; entry: string }
+	/** Whether `cwd` is a git repository and how many files a bake-off of a folder could read there (needs `canBakeoffFolder`). */
+	| { t: "bakeoff-folder"; reqId: number; cwd: string };
+
+/** What a bake-off of a folder can draw on. */
+export interface BakeoffFolder {
+	/** The folder is inside a git repository that has a commit. */
+	git: boolean;
+	/** Text files a bake-off can read there (counted up to a limit); 0 for a repository, which is read through git. */
+	files: number;
+	/** Short name of the folder: the repository's, a scratch folder's label, or its last path part. */
+	name: string;
+}
 
 /** What a `bakeoff-take` of an implementation answers: what the keep did to the other worktrees. */
 export interface BakeoffTakeResult {
@@ -327,6 +363,8 @@ export type BakeoffReply =
 	| { t: "bakeoff-take"; reqId: number; result?: BakeoffTakeResult }
 	| { t: "bakeoff-delete"; reqId: number }
 	| { t: "bakeoff-review"; reqId: number }
+	| { t: "bakeoff-patch"; reqId: number; patch: string }
+	| { t: "bakeoff-folder"; reqId: number; folder: BakeoffFolder }
 	/** Pushed to every authenticated device when a bake-off's summary changes; carries no `reqId`. */
 	| { t: "bakeoff-changed"; id: string };
 

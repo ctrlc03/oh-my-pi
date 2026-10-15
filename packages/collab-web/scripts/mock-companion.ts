@@ -6,7 +6,7 @@
  *
  *   bun scripts/mock-companion.ts [--port 7468] [--web http://localhost:3000/] [--dir /tmp/mock-companion] [--session-link <room link>]
  *                                 [--machine <name>] [--hosts 1,2,3] [--session-id <id>]
- *                                 [--personal fresh|enabled] [--personal-login ready|missing] [--stakes on|off] [--stakes-on 7,9] [--disk on|off]
+ *                                 [--personal fresh|enabled] [--personal-login ready|missing] [--stakes on|off] [--stakes-on 7,9] [--disk on|off] [--delete on|off]
  *
  * `--machine` names the computer and gives its sessions ids of their own (the way two real computers never share a session id,
  * though their processes may share an instance id: `inst-1` here and there); `--hosts` lists only those fixture sessions
@@ -93,6 +93,7 @@ import { createMockStakes } from "./mock-stakes";
 import { createMockStart } from "./mock-start";
 import { createMockSettle } from "./mock-settle";
 import { createMockDisk } from "./mock-disk";
+import { createMockDelete } from "./mock-delete";
 
 const POLL_MS = 3000;
 const argv = Bun.argv.slice(2);
@@ -182,6 +183,7 @@ const settle = await createMockSettle({ dir, hosts });
 /** Sessions the mock ended when they settled: they stay listed as ended, which the app resumes from. */
 const ended: CompanionHost[] = [];
 
+const orgExisted = await Bun.file(orgPath).exists();
 const sessionOrg = createSessionOrg({
 	now: Date.now,
 	initial: await loadOrgFile(orgPath),
@@ -206,6 +208,27 @@ const hiddenMessages = createHiddenMessages({
 	save: file => saveHiddenFile(hiddenPath, file),
 	onChange: () => broadcast(),
 });
+
+/**
+ * Deleting sessions (./mock-delete), on unless `--delete off` (a companion that predates it: no capability, no Delete). It adds sample sessions that
+ * show each answer: a running one it started, one started in a terminal (refused), two in worktrees (one clean, one with uncommitted
+ * changes) and five settled ones; a fresh state directory starts with those five settled.
+ */
+const deleteFlag = flag("--delete", "on");
+if (deleteFlag !== "on" && deleteFlag !== "off") throw new Error("--delete takes on or off");
+const deletion =
+	deleteFlag === "on"
+		? createMockDelete({
+				hosts,
+				idle,
+				ended,
+				sessionOrg,
+				hidden: hiddenMessages,
+				prefix: machine ? `${machine}-` : "",
+				samples: only.length === 0,
+			})
+		: undefined;
+if (deletion !== undefined && only.length === 0 && !orgExisted) await sessionOrg.sync(deletion.sampleOrg(Date.now()));
 
 /** The vendor agents and their sessions: live ones are in `hosts`, ended ones are listed and resumed from here. */
 const foreign = createMockForeign({ hosts });
@@ -275,6 +298,7 @@ const MOCK_PRS: GithubItem[] = (
 /** The all-sessions list and message search, over canned sessions. */
 const search = createMockSearch(hosts, () => [
 	...foreign.searchable(),
+	...(deletion?.listed() ?? []),
 	...ended.map(host => ({
 		overview: {
 			sessionId: host.sessionId,
@@ -409,6 +433,7 @@ function hostsFrame(): CompanionReply {
 		...bakeoff.capabilities,
 		...foreign.capabilities,
 		...settle.capabilities,
+		...deletion?.capabilities,
 		...stakes.capabilities,
 		...disk?.hostsFields(),
 		...personal?.capabilities(),
@@ -544,6 +569,15 @@ socket.onFrame = (frame, fromPeer) => {
 		);
 	else if (disk?.handles(frame))
 		void disk.answer(frame).then(
+			reply => socket.send(reply, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
+	else if (deletion?.handles(frame))
+		void deletion.answer(frame).then(
 			reply => socket.send(reply, fromPeer),
 			(err: unknown) =>
 				socket.send(

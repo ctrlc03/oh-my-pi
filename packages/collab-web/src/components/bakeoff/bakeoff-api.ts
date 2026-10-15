@@ -2,6 +2,7 @@ import type { BlueprintExcerpt, BlueprintExcerptRef } from "@oh-my-pi/pi-wire/bl
 import type {
 	Bakeoff,
 	BakeoffCreate,
+	BakeoffFolder,
 	BakeoffJudgeInfo,
 	BakeoffSummary,
 	BakeoffTakeResult,
@@ -18,6 +19,10 @@ const JUDGE_TIMEOUT_MS = 60_000;
 const EXCERPT_TIMEOUT_MS = 90_000;
 /** Stopping ends model runs and their processes. */
 const STOP_TIMEOUT_MS = 60_000;
+/** A patch is one `git diff` of kept commits. */
+const PATCH_TIMEOUT_MS = 120_000;
+/** Looking at a folder counts its files. */
+const FOLDER_TIMEOUT_MS = 60_000;
 /** Taking an implementation merges a worktree and may remove the others. */
 const TAKE_TIMEOUT_MS = 180_000;
 
@@ -87,4 +92,14 @@ export async function reviewBakeoffAgain(client: CompanionClient, id: string): P
 /** Delete a bake-off; a running one is stopped first. */
 export async function deleteBakeoff(client: CompanionClient, id: string): Promise<void> {
 	await client.requestBakeoff({ t: "bakeoff-delete", id }, BAKEOFF_TIMEOUT_MS);
+}
+
+/** An implementation entry's code as a patch against the base (`git apply` takes it). Needs `canBakeoffPatch`; rejects with the reason when the code is gone or too large. */
+export async function getBakeoffPatch(client: CompanionClient, id: string, entry: string): Promise<string> {
+	return (await client.requestBakeoff({ t: "bakeoff-patch", id, entry }, PATCH_TIMEOUT_MS)).patch;
+}
+
+/** Whether `cwd` is a git repository, and how many files a bake-off of a folder could read there. Needs `canBakeoffFolder`. */
+export async function getBakeoffFolder(client: CompanionClient, cwd: string): Promise<BakeoffFolder> {
+	return (await client.requestBakeoff({ t: "bakeoff-folder", cwd }, FOLDER_TIMEOUT_MS)).folder;
 }

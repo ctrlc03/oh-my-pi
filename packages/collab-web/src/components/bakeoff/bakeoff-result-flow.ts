@@ -118,11 +118,27 @@ export function runState(
 	return bakeoff?.result ? "ready" : "running";
 }
 
-/** Review again is allowed when the run failed in the review or the second opinion and two entries can still be compared (the companion's rule). */
+/**
+ * Review again is allowed when the run failed in the review or the second opinion and two entries can still be compared
+ * (the companion's rule). A bake-off of a folder that is not a git repository has no checkout to read the code from
+ * again, so the review cannot be repeated.
+ */
 export function canReviewAgain(status: "running" | "ready" | "failed", bakeoff: Bakeoff): boolean {
-	if (status !== "failed") return false;
+	if (status !== "failed" || bakeoff.folder === true) return false;
 	if (bakeoff.stage !== "review" && bakeoff.stage !== "judge") return false;
 	return bakeoff.entries.filter(isReviewable).length >= 2;
+}
+
+/** A map of an entry's code needs its worktree: an implementation entry the bake-off still holds, never a folder's design. */
+export function canMapEntry(bakeoff: Bakeoff, entry: BakeoffEntry): boolean {
+	return (
+		bakeoff.mode === "implementation" && bakeoff.folder !== true && entry.path !== undefined && isReviewable(entry)
+	);
+}
+
+/** A spar over an entry reads the code in a checkout, which a folder that is not a git repository does not have. */
+export function canSparEntry(bakeoff: Bakeoff, entry: BakeoffEntry): boolean {
+	return bakeoff.folder !== true && isReviewable(entry);
 }
 
 /** What Review again costs, said before it is tapped. */
@@ -603,30 +619,179 @@ export function takeLines(result: BakeoffTakeResult | undefined, reveal: boolean
 
 // ── the design as Markdown ───────────────────────────────────────────────────
 
-/** The write-up of an entry as Markdown, for Copy design and for the first message of a session started from it. */
-export function designMarkdown(bakeoff: Pick<Bakeoff, "title" | "metrics">, entry: BakeoffEntry): string {
+/**
+ * The sections of an entry's write-up as Markdown, headed at `level` (`2` is `##`), without a title. `text` is applied to
+ * every piece the designer wrote, so a caller that nests the design in a larger document can demote its headings.
+ */
+export function designBody(
+	bakeoff: Pick<Bakeoff, "metrics">,
+	entry: BakeoffEntry,
+	level = 2,
+	text: (written: string) => string = written => written,
+): string {
 	const writeup = entry.writeup;
-	const out: string[] = [`# ${bakeoff.title}`, ""];
-	if (writeup === undefined) {
-		out.push("This entry has no write-up.");
-		return `${out.join("\n")}\n`;
-	}
-	out.push("## Summary", "", writeup.summary.trim(), "");
-	out.push("## Approach", "", writeup.approach.trim(), "");
+	if (writeup === undefined) return "This entry has no write-up.";
+	const head = (name: string): string => `${"#".repeat(level)} ${name}`;
+	const out: string[] = [head("Summary"), "", text(writeup.summary.trim()), ""];
+	out.push(head("Approach"), "", text(writeup.approach.trim()), "");
 	if (writeup.diagram !== undefined && writeup.diagram.trim() !== "")
-		out.push("## Diagram", "", diagramMarkdown(writeup.diagram), "");
-	if (writeup.tradeoffs.length > 0) out.push("## Trade-offs", "", ...writeup.tradeoffs.map(item => `- ${item}`), "");
-	if (writeup.risks.length > 0) out.push("## Risks", "", ...writeup.risks.map(item => `- ${item}`), "");
-	if (writeup.migration.trim() !== "") out.push("## Migration", "", writeup.migration.trim(), "");
+		out.push(head("Diagram"), "", diagramMarkdown(writeup.diagram), "");
+	if (writeup.tradeoffs.length > 0)
+		out.push(head("Trade-offs"), "", ...writeup.tradeoffs.map(item => `- ${text(item)}`), "");
+	if (writeup.risks.length > 0) out.push(head("Risks"), "", ...writeup.risks.map(item => `- ${text(item)}`), "");
+	if (writeup.migration.trim() !== "") out.push(head("Migration"), "", text(writeup.migration.trim()), "");
 	const evidence = Object.entries(writeup.metrics);
 	if (evidence.length > 0)
 		out.push(
-			"## What matters",
+			head("What matters"),
 			"",
-			...evidence.map(([id, line]) => `- **${metricLabel(bakeoff.metrics, id)}**: ${line}`),
+			...evidence.map(([id, line]) => `- **${metricLabel(bakeoff.metrics, id)}**: ${text(line)}`),
 			"",
 		);
 	if (writeup.refs.length > 0)
-		out.push("## Code", "", ...writeup.refs.map(ref => `- \`${ref.path}:${ref.line}\` (${ref.token})`), "");
-	return `${out.join("\n").replace(/\n+$/, "")}\n`;
+		out.push(head("Code"), "", ...writeup.refs.map(ref => `- \`${ref.path}:${ref.line}\` (${ref.token})`), "");
+	return out.join("\n").replace(/\n+$/, "");
+}
+
+/** The write-up of an entry as Markdown, for Copy design and for the first message of a session started from it. */
+export function designMarkdown(bakeoff: Pick<Bakeoff, "title" | "metrics">, entry: BakeoffEntry): string {
+	return `# ${bakeoff.title}\n\n${designBody(bakeoff, entry)}\n`;
+}
+
+// ── taking the result out: file names, patches ───────────────────────────────
+
+/** Lowercase ASCII words of a title, so every file system takes the name; empty when the title has none. */
+function titleSlug(title: string): string {
+	return title
+		.normalize("NFKD")
+		.replace(/[\u0300-\u036f]/g, "")
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "")
+		.slice(0, 60)
+		.replace(/-+$/, "");
+}
+
+/** `faster-queue-bake-off.md`. Only the title and a fixed word: the report may name models, its file name never does. */
+export function reportFileName(bakeoff: Pick<Bakeoff, "title">): string {
+	const slug = titleSlug(bakeoff.title);
+	return slug === "" ? "bake-off.md" : `${slug}-bake-off.md`;
+}
+
+/** `faster-queue-entry-b.patch`: the entry's label, never its model. */
+export function patchFileName(bakeoff: Pick<Bakeoff, "title">, entry: Pick<BakeoffEntry, "label">): string {
+	return `${titleSlug(bakeoff.title) || "bake-off"}-entry-${entry.label.toLowerCase()}.patch`;
+}
+
+/** `faster-queue-patches.patch`: every exported entry in one file. */
+export function combinedPatchFileName(bakeoff: Pick<Bakeoff, "title">): string {
+	return `${titleSlug(bakeoff.title) || "bake-off"}-patches.patch`;
+}
+
+export interface PatchControls {
+	/** Whether the entry gets Download patch and Copy patch at all. */
+	show: boolean;
+	/** Why both are disabled, in the companion's words; null when they work. */
+	disabledReason: string | null;
+}
+
+/**
+ * The patch buttons of an entry: shown on a finished implementation bake-off when the companion can export patches. An
+ * entry the companion says cannot be exported keeps them, disabled, with the reason; one it says nothing about (an
+ * older companion's) keeps them enabled, and the companion's refusal is shown if there is one.
+ */
+export function patchControls(
+	bakeoff: Pick<Bakeoff, "mode" | "result">,
+	entry: Pick<BakeoffEntry, "patch">,
+	canPatch: boolean,
+): PatchControls {
+	if (!canPatch || bakeoff.mode !== "implementation" || bakeoff.result === undefined)
+		return { show: false, disabledReason: null };
+	return { show: true, disabledReason: entry.patch?.ok === false ? entry.patch.reason : null };
+}
+
+/** The entries as the combined patch lists them: the ranking best first, then any entry the ranking leaves out, by label. */
+export function patchOrder(bakeoff: Pick<Bakeoff, "entries" | "result">): BakeoffEntry[] {
+	const ranked = bakeoff.result === undefined ? [] : rankRows(bakeoff.result).map(row => row.label);
+	const byLabel = new Map(bakeoff.entries.map(entry => [entry.label, entry]));
+	const ordered = ranked.flatMap(label => byLabel.get(label) ?? []);
+	const rest = bakeoff.entries.filter(entry => !ranked.includes(entry.label));
+	return [...ordered, ...rest.sort((a, b) => a.label.localeCompare(b.label))];
+}
+
+const PATCH_BANNER = [
+	"# These patches are ALTERNATIVES: each entry below is one way to do the same task, against the same base.",
+	"# Do not apply this whole file. Split it at the `# ===== Entry` lines and give one entry's part to `git apply`.",
+];
+
+/** `# ===== Entry A (rank 1, taken) =====`: labels only, never a model. */
+function patchSeparator(bakeoff: Pick<Bakeoff, "result">, label: string): string {
+	const row = bakeoff.result === undefined ? undefined : rankRows(bakeoff.result).find(item => item.label === label);
+	const parts = [row === undefined ? "not ranked" : `rank ${rankText(row)}`];
+	if (row?.taken === true) parts.push("taken");
+	return `# ===== Entry ${label} (${parts.join(", ")}) =====`;
+}
+
+/**
+ * One file with the patch of every entry in `patches` (by label), the winner first, a separator block before each and a
+ * banner that says they are alternatives. Not a zip: the app has no zip writer, and several downloads from one tap are
+ * blocked or prompt in browsers and become several share sheets on a phone, so a single file is the one-tap option.
+ */
+export function combinedPatch(
+	bakeoff: Pick<Bakeoff, "entries" | "result">,
+	patches: ReadonlyMap<string, string>,
+): string {
+	const entries = patchOrder(bakeoff).filter(entry => patches.has(entry.label));
+	const out: string[] = [
+		...PATCH_BANNER,
+		`# Entries in this file: ${entries.map(entry => entry.label).join(", ")}`,
+		"",
+	];
+	for (const entry of entries) {
+		const patch = patches.get(entry.label)!;
+		out.push(patchSeparator(bakeoff, entry.label), "");
+		out.push(patch === "" ? "# (this entry changes nothing)" : patch.endsWith("\n") ? patch.slice(0, -1) : patch, "");
+	}
+	return out.join("\n");
+}
+
+export interface LeftOut {
+	label: string;
+	reason: string;
+}
+
+/** `Left out: Entry C (reason), Entry D (reason)`; null when nothing was left out. */
+export function leftOutLine(leftOut: readonly LeftOut[]): string | null {
+	if (leftOut.length === 0) return null;
+	return `Left out: ${leftOut.map(item => `Entry ${item.label} (${item.reason})`).join(", ")}`;
+}
+
+/**
+ * Fetch the patch of every entry that can be exported, one after another (the companion makes each with a `git diff`),
+ * and join them. `patch` is null when none could be fetched.
+ */
+export async function collectPatches(
+	bakeoff: Pick<Bakeoff, "mode" | "result" | "entries">,
+	fetchPatch: (label: string) => Promise<string>,
+): Promise<{ patch: string | null; included: string[]; leftOut: LeftOut[] }> {
+	const patches = new Map<string, string>();
+	const leftOut: LeftOut[] = [];
+	for (const entry of patchOrder(bakeoff)) {
+		const { show, disabledReason } = patchControls(bakeoff, entry, true);
+		if (!show) continue;
+		if (disabledReason !== null) {
+			leftOut.push({ label: entry.label, reason: disabledReason });
+			continue;
+		}
+		try {
+			patches.set(entry.label, await fetchPatch(entry.label));
+		} catch (err) {
+			leftOut.push({ label: entry.label, reason: err instanceof Error ? err.message : String(err) });
+		}
+	}
+	return {
+		patch: patches.size === 0 ? null : combinedPatch(bakeoff, patches),
+		included: [...patches.keys()],
+		leftOut,
+	};
 }

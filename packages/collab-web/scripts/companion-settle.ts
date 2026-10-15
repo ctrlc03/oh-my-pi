@@ -42,6 +42,14 @@ export interface SettleState {
 	sandboxed: string[];
 }
 
+/** What the settle cleanup remembers of one session. */
+export interface SettleRecord {
+	/** The worktree the companion started or resumed it in; null when none. */
+	worktree: string | null;
+	/** The cleanup results that name this session. */
+	results: SettleCleanupResult[];
+}
+
 const RESULT_STATUSES = ["ok", "failed", "timeout", "skipped"];
 
 function parseResult(raw: unknown): SettleCleanupResult | null {
@@ -153,6 +161,11 @@ export interface SettleCleanupOptions {
 	/** A repository has a `.omp/worktree-settle` that was not run because the user has not approved it. */
 	onUnapproved(root: string): void;
 	onError(err: unknown): void;
+	/**
+	 * Runs the work for one session's settle (and, in the companion, its deletion) one at a time. Absent: no
+	 * serialisation (tests that need none).
+	 */
+	guard?<T>(sessionId: string, work: () => Promise<T>): Promise<T>;
 	timeoutMs?: number;
 }
 
@@ -163,6 +176,16 @@ export interface SettleCleanup {
 	recordSession(sessionId: string, folder: string): Promise<void>;
 	/** The companion is about to start a sandboxed session in `folder`: no worktree inside or above it is ever cleaned again. */
 	recordSandboxed(folder: string): Promise<void>;
+	/** The worktree (symlinks resolved) the companion recorded for this session; null when it did not run in one. */
+	worktreeOf(sessionId: string): string | null;
+	/** A cleanup command is running in this worktree right now. */
+	cleaning(tree: string): boolean;
+	/** What is remembered of a session: its worktree and the cleanup results that name it. */
+	record(sessionId: string): SettleRecord;
+	/** Forget a deleted session: its recorded worktree and its cleanup results. */
+	forget(sessionId: string): Promise<void>;
+	/** Remember a session again as {@link SettleCleanup.record} reported it (an undone deletion). */
+	restore(sessionId: string, record: SettleRecord): Promise<void>;
 	/** Ids of the sessions the companion started or resumed in this worktree (symlinks resolved), ended ones included. */
 	sessionsIn(tree: string): string[];
 	/** The latest result of each worktree that still exists, newest first. */
@@ -245,6 +268,13 @@ export function createSettleCleanup(options: SettleCleanupOptions): SettleCleanu
 		}
 	};
 
+	const guard = options.guard ?? (<T>(_sessionId: string, work: () => Promise<T>): Promise<T> => work());
+
+	const sessionRecord = (sessionId: string): SettleRecord => ({
+		worktree: Object.hasOwn(state.sessions, sessionId) ? state.sessions[sessionId] : null,
+		results: state.results.filter(r => r.sessionId === sessionId),
+	});
+
 	return {
 		async run(sessions) {
 			if (sessions.length === 0) return;
@@ -257,8 +287,12 @@ export function createSettleCleanup(options: SettleCleanupOptions): SettleCleanu
 			);
 			const queue = [...sessions];
 			const worker = async (): Promise<void> => {
-				for (let next = queue.shift(); next !== undefined; next = queue.shift())
-					await clean(next, listed, sandboxedNow).catch(err => options.onError(err));
+				for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+					const session = next;
+					await guard(session.sessionId, () => clean(session, listed, sandboxedNow)).catch(err =>
+						options.onError(err),
+					);
+				}
 			};
 			await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
 		},
@@ -288,6 +322,27 @@ export function createSettleCleanup(options: SettleCleanupOptions): SettleCleanu
 		},
 		sessionsIn(tree) {
 			return Object.entries(state.sessions).flatMap(([id, folder]) => (folder === tree ? [id] : []));
+		},
+		worktreeOf(sessionId) {
+			return Object.hasOwn(state.sessions, sessionId) ? state.sessions[sessionId] : null;
+		},
+		cleaning: tree => running.has(tree),
+		record: sessionRecord,
+		async forget(sessionId) {
+			const { [sessionId]: _gone, ...sessions } = state.sessions;
+			state = { ...state, sessions, results: state.results.filter(r => r.sessionId !== sessionId) };
+			await persist();
+		},
+		async restore(sessionId, saved) {
+			const results = [...state.results, ...saved.results.filter(r => !state.results.some(k => k.path === r.path))];
+			const sessions =
+				saved.worktree === null || Object.hasOwn(state.sessions, sessionId)
+					? state.sessions
+					: Object.fromEntries(
+							Object.entries({ ...state.sessions, [sessionId]: saved.worktree }).slice(-MAX_SESSIONS),
+						);
+			state = { ...state, sessions, results: results.slice(0, MAX_RESULTS) };
+			await persist();
 		},
 		async results() {
 			const alive = await Promise.all(

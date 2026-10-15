@@ -303,13 +303,28 @@ export async function readSpend(
 	return { dailyUsd, sessions };
 }
 
+/**
+ * The summaries whose transcript is still on disk. omp's stats database only ever adds rows (a session's numbers stay
+ * when its file is deleted, so spend history stays true), but a session whose conversation is gone is not a session
+ * to list, open or resume: a deleted one (see ./companion-delete) must not show in *All sessions* or under Settled.
+ */
+export async function withTranscripts(
+	summaries: readonly SessionSummary[],
+	exists: (file: string) => Promise<boolean> = file => Bun.file(file).exists(),
+): Promise<SessionSummary[]> {
+	const present = await Promise.all(summaries.map(summary => exists(summary.file)));
+	return summaries.filter((_, i) => present[i]);
+}
+
 export async function sessionOverview(
 	request: { limit?: unknown; q?: unknown },
 	live: { hosts: readonly CompanionHost[]; idle: readonly CompanionIdleSession[] },
 ): Promise<SessionOverview[]> {
 	await syncGate.run();
 	const q = typeof request.q === "string" ? request.q.trim().slice(0, MAX_QUERY_LENGTH) : "";
-	return mergeLive(await listSessionSummaries(clampSessionLimit(request.limit), q || undefined), live);
+	// Everything the database holds up to the cap, then the ones that still have a file: gone sessions must not use up the limit.
+	const summaries = await withTranscripts(await listSessionSummaries(MAX_SESSION_LIMIT, q || undefined));
+	return mergeLive(summaries.slice(0, clampSessionLimit(request.limit)), live);
 }
 
 /**

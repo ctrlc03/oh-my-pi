@@ -38,6 +38,8 @@ export interface HeaderBarProps {
 	railOpen: boolean;
 	onToggleRail(): void;
 	onLeave(): void;
+	/** Delete the open session (after a confirmation); null unless its computer can and it is an omp session. */
+	onDeleteSession: (() => void) | null;
 	searchOpen: boolean;
 	onToggleSearch(): void;
 	/** Toggles the sessions sidebar; null when there is nothing to list. */
@@ -124,6 +126,7 @@ export const HeaderBar = memo(function HeaderBar({
 	railOpen,
 	onToggleRail,
 	onLeave,
+	onDeleteSession,
 	searchOpen,
 	onToggleSearch,
 	onToggleSidebar,
@@ -499,6 +502,7 @@ export const HeaderBar = memo(function HeaderBar({
 					canWatchPr={canWatchPr}
 					exportMarkdown={exportMarkdown}
 					onLeave={onLeave}
+					onDelete={onDeleteSession}
 					onClose={closeSheet}
 				/>
 			)}

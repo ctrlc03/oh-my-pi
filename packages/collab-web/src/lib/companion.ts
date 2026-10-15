@@ -603,6 +603,26 @@ export interface UsageReport {
 	byProject: { folder: string; cost: number; requests: number; tokens: number }[];
 }
 
+/** What a deletion asks of one session beforehand: whether it can go, and whether a worktree the companion made for it can go too. */
+export interface SessionDeletePlan {
+	sessionId: string;
+	/** Plain reason the session cannot be deleted from here; absent when it can. */
+	refused?: string;
+	/** The session ran in a worktree the companion made, which still exists (the folder *Also remove its worktree* would remove). */
+	worktree?: string;
+	/** A session the companion started that is still running: deleting it ends it first. */
+	running?: boolean;
+}
+
+/** What became of one session of a `session-delete` request. */
+export type SessionDeleteResult =
+	/** Moved to the companion's trash; `trashId` restores it (`session-restore`). `worktree: "removed"` when its worktree went too (that is not undoable). */
+	| { sessionId: string; status: "deleted"; trashId: string; worktree?: "removed" }
+	/** Deleted, but the worktree was asked to go and stays; `reason` says why (uncommitted changes, another session's folder, a command running). */
+	| { sessionId: string; status: "worktreeKept"; trashId: string; reason: string }
+	/** Nothing was deleted; `reason` is plain text for the person (started in a terminal and still running, the Personal agent's session, not found). */
+	| { sessionId: string; status: "refused"; reason: string };
+
 /** One omp session from the session store, with its totals (subagents folded in). */
 export interface SessionOverview {
 	sessionId: string;
@@ -1086,6 +1106,12 @@ export type CompanionRequest =
 	| { t: "session-org"; reqId: number; doc?: OrgDoc }
 	/** Merge `doc` (the device's hidden messages of the session, when given) into the computer's, last writer winning per message id; answered with the merged document (needs `canHideMessages`). */
 	| { t: "hidden-messages"; reqId: number; sessionId: string; doc?: HiddenDoc }
+	/** What deleting these omp sessions would do: per session, whether it can and whether its worktree can go too; answered with `session-delete-plan` (needs `canDeleteSessions`). */
+	| { t: "session-delete-plan"; reqId: number; sessionIds: string[] }
+	/** Delete omp sessions: the conversation, its subagents and artifacts, the sidebar entry and the hidden-message marks move to the companion's trash for 7 days, and a running session the companion started is ended first. `removeWorktree` also removes the worktree the companion made (never forced). Answered with `session-delete` (needs `canDeleteSessions`). */
+	| { t: "session-delete"; reqId: number; sessionIds: string[]; removeWorktree?: boolean }
+	/** Put a deleted session back from the trash (the id `session-delete` answered with); refused when its files' place is taken. Answered with `session-restore` (needs `canDeleteSessions`). */
+	| { t: "session-restore"; reqId: number; trashId: string }
 	/** The session's terminal: the screen of the tmux pane running it, plus recent scrollback. */
 	| { t: "pane"; reqId: number; instanceId: string }
 	/** Sessions that changed `path` (absolute, or relative to the repository root) in the session's repository; answered with `sessions`. */
@@ -1203,6 +1229,10 @@ export type CompanionReply =
 			canSpar?: boolean;
 			/** The companion can run, review and store design bake-offs (`bakeoff-*` requests). */
 			canBakeoff?: boolean;
+			/** The companion can export an implementation entry's code as a patch (`bakeoff-patch`). */
+			canBakeoffPatch?: boolean;
+			/** The companion can run design bake-offs on a folder that is not a git repository (`bakeoff-folder`). */
+			canBakeoffFolder?: boolean;
 			/** The companion can list and edit files of a session's repository. */
 			canEdit?: boolean;
 			/** The companion can screenshot local pages (it found Chrome or another Chromium browser). */
@@ -1251,6 +1281,8 @@ export type CompanionReply =
 			canHideMessages?: boolean;
 			/** Revision of the computer's hidden messages (any session); present with `canHideMessages`. A new number means fetch the open session's again. */
 			hiddenRev?: number;
+			/** The companion can delete omp sessions (`session-delete-plan`, `session-delete`, `session-restore`). */
+			canDeleteSessions?: boolean;
 			/** The companion can transcribe voice recordings, and with which model; absent when it cannot. */
 			transcribe?: TranscribeInfo;
 			/** Power of the computer; absent off macOS and from companions that predate it. */
@@ -1309,6 +1341,9 @@ export type CompanionReply =
 	| { t: "session-search"; reqId: number; results: SessionSearchHit[]; truncated: boolean }
 	| { t: "session-org"; reqId: number; doc: OrgDoc; rev: number }
 	| { t: "hidden-messages"; reqId: number; sessionId: string; doc: HiddenDoc; rev: number }
+	| { t: "session-delete-plan"; reqId: number; plans: SessionDeletePlan[] }
+	| { t: "session-delete"; reqId: number; results: SessionDeleteResult[] }
+	| { t: "session-restore"; reqId: number; sessionId: string }
 	| { t: "pane"; reqId: number; pane: PaneCapture }
 	| { t: "codemap"; reqId: number; view: CodemapView }
 	| { t: "codemap-search"; reqId: number; hits: CodemapNode[] }
@@ -1497,6 +1532,10 @@ export interface CompanionSnapshot {
 	canSpar: boolean;
 	/** The companion can run, review and store design bake-offs. */
 	canBakeoff: boolean;
+	/** The companion can export an implementation entry's code as a patch. */
+	canBakeoffPatch: boolean;
+	/** The companion can run design bake-offs on a folder that is not a git repository. */
+	canBakeoffFolder: boolean;
 	/** The companion can list and edit files of a session's repository. */
 	canEdit: boolean;
 	/** The companion can screenshot local pages. */
@@ -1543,6 +1582,8 @@ export interface CompanionSnapshot {
 	canEndOnSettle: boolean;
 	/** The computer keeps the messages hidden from the chat, per session, so every device shows the same ones. */
 	canHideMessages: boolean;
+	/** The computer can delete omp sessions and restore them from its trash; older ones show no *Delete*. */
+	canDeleteSessions: boolean;
 	/** Revision of the computer's hidden messages; null when it keeps none (older companions). A new number means refetch. */
 	hiddenRev: number | null;
 	/** Voice input on the computer; null when the companion cannot transcribe. */
@@ -1606,6 +1647,8 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	canHighStakes: false,
 	canSpar: false,
 	canBakeoff: false,
+	canBakeoffPatch: false,
+	canBakeoffFolder: false,
 	canCodemap: false,
 	canEdit: false,
 	canPreview: false,
@@ -1630,6 +1673,7 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	canOrderSessions: false,
 	canEndOnSettle: false,
 	canHideMessages: false,
+	canDeleteSessions: false,
 	hiddenRev: null,
 	transcribe: null,
 	power: null,
@@ -2097,6 +2141,36 @@ export class CompanionClient {
 		return { doc: reply.doc, rev: reply.rev };
 	}
 
+	/** What deleting these sessions would do (needs `canDeleteSessions`). */
+	async planSessionDelete(sessionIds: readonly string[]): Promise<SessionDeletePlan[]> {
+		return (
+			await this.#call(
+				{ t: "session-delete-plan", sessionIds: [...sessionIds] },
+				"session-delete-plan",
+				USAGE_TIMEOUT_MS,
+			)
+		).plans;
+	}
+
+	/** Delete omp sessions into the companion's trash, ending the running ones it started first; one answer per session, in order (needs `canDeleteSessions`). */
+	async deleteSessions(
+		sessionIds: readonly string[],
+		opts: { removeWorktree?: boolean } = {},
+	): Promise<SessionDeleteResult[]> {
+		return (
+			await this.#call(
+				{ t: "session-delete", sessionIds: [...sessionIds], removeWorktree: opts.removeWorktree },
+				"session-delete",
+				GIT_WRITE_TIMEOUT_MS,
+			)
+		).results;
+	}
+
+	/** Put a deleted session back from the trash; rejects with the reason when it cannot (needs `canDeleteSessions`). */
+	async restoreSession(trashId: string): Promise<string> {
+		return (await this.#call({ t: "session-restore", trashId }, "session-restore", GIT_WRITE_TIMEOUT_MS)).sessionId;
+	}
+
 	/** Code map around `focus`; the first request for a repository indexes it, so allow it time. */
 	async requestCodemap(instanceId: string, focus: CodemapFocus, flow?: CodemapFlowDirection): Promise<CodemapView> {
 		return (await this.#call({ t: "codemap", instanceId, focus, flow }, "codemap", CODEMAP_TIMEOUT_MS)).view;
@@ -2401,6 +2475,8 @@ export class CompanionClient {
 				canHighStakes: frame.canHighStakes ?? false,
 				canSpar: frame.canSpar ?? false,
 				canBakeoff: frame.canBakeoff ?? false,
+				canBakeoffPatch: frame.canBakeoffPatch ?? false,
+				canBakeoffFolder: frame.canBakeoffFolder ?? false,
 				canCodemap: frame.canCodemap ?? false,
 				canEdit: frame.canEdit ?? false,
 				canPreview: frame.canPreview ?? false,
@@ -2425,6 +2501,7 @@ export class CompanionClient {
 				canOrderSessions: frame.canOrderSessions ?? false,
 				canEndOnSettle: frame.canEndOnSettle ?? false,
 				canHideMessages: frame.canHideMessages ?? false,
+				canDeleteSessions: frame.canDeleteSessions ?? false,
 				hiddenRev: frame.hiddenRev ?? null,
 				transcribe: frame.transcribe ?? null,
 				power: frame.power ?? null,

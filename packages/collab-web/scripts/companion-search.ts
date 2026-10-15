@@ -245,6 +245,8 @@ export interface SessionSearch {
 	search(query: unknown, limit?: unknown): Promise<SearchOutcome>;
 	/** Forget every cached file. */
 	clear(): void;
+	/** Forget the cached text of one file (a deleted session's). */
+	forget(file: string): void;
 }
 
 export function createSessionSearch(options: SessionSearchOptions): SessionSearch {
@@ -279,6 +281,7 @@ export function createSessionSearch(options: SessionSearchOptions): SessionSearc
 			cache.clear();
 			cachedChars = 0;
 		},
+		forget,
 		async search(rawQuery, rawLimit) {
 			const terms = parseQuery(rawQuery);
 			const limit =

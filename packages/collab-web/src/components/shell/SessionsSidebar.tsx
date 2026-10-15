@@ -6,11 +6,13 @@ import type { CompanionHost, CompanionIdleSession, PairingLink, SessionOverview 
 import { withoutPersonal } from "../../lib/personal";
 import { DEVICE_ORG } from "../../lib/org-storage";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
+import { deleteOffered } from "../../lib/session-delete";
 import { endedSettledKeys, matchRooms } from "../../lib/session-org";
 import { useEndedSettled } from "../../lib/use-ended-settled";
 import { roomOwner, type SessionOrgControl, type SessionOrgs } from "../../lib/use-session-org";
 import type { BesideControl } from "../../lib/use-split";
 import { AddComputer } from "./AddComputer";
+import { useDeleteSessions } from "./DeleteSessions";
 import { PowerNote } from "./CompanionCard";
 import { FanoutGroups } from "./FanoutSheet";
 import { InboxEntry } from "./InboxSheet";
@@ -117,6 +119,7 @@ function ComputerGroup({
 	// Sessions that ended while settled (the computer ends them when they settle, if asked) stay under Settled.
 	const ended = useEndedSettled(client, live, endedSettledKeys(org.doc, liveIds));
 	const openElsewhere = useOpenElsewhere();
+	const deleter = useDeleteSessions();
 
 	/** Resume an ended session with the all-sessions list's own request, then open it when `open`; false (with the reason shown) when it did not come back. */
 	const resumeEnded = async (session: SessionOverview, openIt: boolean, force = false): Promise<boolean> => {
@@ -237,6 +240,11 @@ function ComputerGroup({
 				ended={ended}
 				canResume={snap.canStart && live}
 				onResumeEnded={resumeEnded}
+				onDelete={
+					deleter !== null && deleteOffered(snap)
+						? sessions => deleter.request({ computerId: computer.id, sessions, openSessionId: currentSessionId })
+						: null
+				}
 			/>
 			{openElsewhere.notice}
 			{shown && <div className="sh-connect-error">{shown}</div>}
@@ -320,6 +328,7 @@ function DeviceGroup({
 				ended={[]}
 				canResume={false}
 				onResumeEnded={() => Promise.resolve(false)}
+				onDelete={null}
 			/>
 			{error && <div className="sh-connect-error">{error}</div>}
 		</>

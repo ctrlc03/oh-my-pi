@@ -14,12 +14,24 @@ import {
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CompanionClient } from "../../lib/companion";
-import { type ComputerHandle, unavailableReason } from "../../lib/computers";
+import { type ComputerHandle, computerById, unavailableReason } from "../../lib/computers";
 import { relTime } from "../../lib/format";
 import { type ClientTarget, featureTargets, useStableTargets } from "../../lib/stable-targets";
+import { isProjectless } from "../../lib/start-session";
 import { useRequest } from "../../lib/use-request";
 import { deleteBakeoff, listBakeoffs } from "./bakeoff-api";
-import { costText, entryCountText, groupByRepo, modeWord, rankText, repoName, rowStatus } from "./bakeoff-flow";
+import {
+	costText,
+	entryCountText,
+	friendlyListError,
+	groupByRepo,
+	isGitFolder,
+	modeWord,
+	rankText,
+	repoName,
+	rowStatus,
+} from "./bakeoff-flow";
+import { useBakeoffFolder } from "./use-bakeoff-folder";
 
 export interface BakeoffListProps {
 	computers: readonly ComputerHandle[];
@@ -108,6 +120,14 @@ export function BakeoffList({
 	const loading = state.status === "loading";
 	const groups = listing === null ? [] : groupEntries(listing.entries);
 	const headed = cwd === null || groups.length > 1;
+	// The session's folder, when it is not a git repository: scratch folders are known to be, others are looked at.
+	const owner = computerById(computers, computerId);
+	const folder = useBakeoffFolder(
+		owner?.client ?? null,
+		cwd ?? "",
+		owner?.snap.canBakeoffFolder === true && cwd !== null && !isProjectless(cwd),
+	);
+	const inFolder = cwd !== null && !isGitFolder(cwd, true, folder);
 
 	return (
 		<>
@@ -141,16 +161,21 @@ export function BakeoffList({
 					<span className="sh-dot" aria-hidden="true" /> {several ? `${computer.name}: ${reason}` : reason}
 				</div>
 			))}
-			{listing?.failures.map(failure => (
-				<div key={failure.target.id} className="sh-tree-error">
-					<div className="sh-connect-error">
-						{several ? `${failure.target.name}: ${failure.message}` : failure.message}
+			{listing?.failures.map(failure => {
+				const canFolder = computerById(computers, failure.target.id)?.snap.canBakeoffFolder === true;
+				// An old companion cannot take a plain folder: that is said in words, and trying again would not change it.
+				const message = friendlyListError(failure.message, canFolder);
+				return (
+					<div key={failure.target.id} className="sh-tree-error">
+						<div className="sh-connect-error">{several ? `${failure.target.name}: ${message}` : message}</div>
+						{message === failure.message && (
+							<button type="button" className="sh-btn" onClick={reload}>
+								<RefreshCw size={14} /> Retry
+							</button>
+						)}
 					</div>
-					<button type="button" className="sh-btn" onClick={reload}>
-						<RefreshCw size={14} /> Retry
-					</button>
-				</div>
-			))}
+				);
+			})}
 			<div className="bo-home-scroll">
 				{listing === null ? (
 					loading && (
@@ -163,7 +188,9 @@ export function BakeoffList({
 					targets.length > 0 && (
 						<div className="bo-home-empty">
 							<GitCompareArrows size={28} aria-hidden="true" />
-							<p>No bake-offs yet{cwd !== null ? " for this repository" : ""}.</p>
+							<p>
+								No bake-offs yet{cwd === null ? "" : inFolder ? " for this folder" : " for this repository"}.
+							</p>
 							<p className="bo-home-muted">
 								Several models each try to do better than a design or your changes, and a reviewer ranks them
 								without knowing who wrote what.

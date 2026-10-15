@@ -38,6 +38,11 @@ export interface BakeoffDoc {
 	held: string[];
 	/** The design document the entries answer, when there is one. */
 	document?: { name?: string; text: string };
+	/**
+	 * A bake-off of a folder that is not a git repository: the lines of the files its citations name, as read from the
+	 * copy the entries read, by path. There is no commit to read them from afterwards.
+	 */
+	files?: Record<string, string[]>;
 }
 
 export type BakeoffStore = DocStore<BakeoffSummary, BakeoffDoc>;

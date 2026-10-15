@@ -13,6 +13,7 @@ import {
 	BAKEOFF_MIN_CHALLENGERS,
 	BAKEOFF_PRESETS,
 	type BakeoffCreate,
+	type BakeoffFolder,
 	type BakeoffJudgeInfo,
 	type BakeoffMetric,
 	type BakeoffMode,
@@ -21,6 +22,7 @@ import {
 } from "@oh-my-pi/pi-wire/bakeoff";
 import { parseForeignSelector } from "../../lib/fanout";
 import { fmtCost } from "../../lib/format";
+import { isProjectless } from "../../lib/start-session";
 import { parseLimit } from "../quiz/quiz-flow";
 import type { BakeoffDocInput, BakeoffSubject } from "./bakeoff-types";
 
@@ -32,6 +34,21 @@ export const BAKEOFF_MAX_GOAL_CHARS = 2_000;
 export const BAKEOFF_MAX_REGEX_CHARS = 200;
 /** The limit field's starting text. */
 export const DEFAULT_LIMIT = String(BAKEOFF_DEFAULT_MAX_COST_USD);
+
+// ── a folder that is not a git repository ────────────────────────────────────
+
+/** Whether a folder is known to be a git repository: assumed unless it is a scratch folder or the companion said otherwise. Only a companion that runs bake-offs on a folder can handle one that is not. */
+export function isGitFolder(cwd: string, canFolder: boolean, folder: BakeoffFolder | null): boolean {
+	return !canFolder || (!isProjectless(cwd) && folder?.git !== false);
+}
+
+const OLD_COMPANION_FOLDER =
+	"Bake-offs need a git repository here, and this computer's companion cannot make them for a plain folder yet. Update omp on that computer.";
+
+/** What a failed list or start says, in plain words: a companion that cannot do a folder answers a folder with "not a git repository". Any other message is kept. */
+export function friendlyListError(message: string, canFolder: boolean): string {
+	return !canFolder && /not a git repository/i.test(message) ? OLD_COMPANION_FOLDER : message;
+}
 
 // ── what matters ─────────────────────────────────────────────────────────────
 
@@ -275,6 +292,8 @@ export interface BakeoffFormValues {
 	bench: BenchChoice | null;
 	/** The spending-limit field as typed. */
 	limit: string;
+	/** The folder is not a git repository ({@link isGitFolder}): only a design from a document is made there. */
+	folder?: boolean;
 }
 
 /** Whether the subject and the person's choices already say what the challengers should solve. */
@@ -286,11 +305,13 @@ export function statesGoal(
 	return values.subject.kind === "changes" && values.sessionId !== null && values.useConversation;
 }
 
-/** Why a path cannot be a file of the repository, in plain words; null when it can. */
-function pathProblem(path: string): string | null {
+/** Why a path cannot be a file of the repository (or of the folder), in plain words; null when it can. */
+function pathProblem(path: string, folder: boolean): string | null {
 	if (path === "") return "Name the file of the design.";
 	if (path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:/.test(path) || path.split(/[\\/]/).includes(".."))
-		return "The design's file must be inside the repository: give its path from the repository's root.";
+		return folder
+			? "The design's file must be inside the folder: give its path from the folder's top."
+			: "The design's file must be inside the repository: give its path from the repository's root.";
 	return null;
 }
 
@@ -298,18 +319,23 @@ function pathProblem(path: string): string | null {
 export function validateBakeoff(values: BakeoffFormValues): string[] {
 	const problems: string[] = [];
 	const { subject, doc, mode } = values;
+	const folder = values.folder === true;
 	if (values.cwd === "") problems.push("There is no repository to compare in.");
+	if (folder && subject.kind !== "doc")
+		problems.push("This folder is not a git repository, so there are no changes to compare: give a design document.");
 	if (subject.kind === "branch" && subject.name.trim() === "") problems.push("Pick a branch.");
 	if (subject.kind === "doc" && doc === null) problems.push("Add the design: paste it or name a file.");
 	if (doc !== null) {
 		if (doc.source === "file") {
-			const problem = pathProblem(doc.path.trim());
+			const problem = pathProblem(doc.path.trim(), folder);
 			if (problem !== null) problems.push(problem);
 		} else if (doc.text.trim() === "") problems.push("The design is empty.");
 		else if (doc.text.trim().length > BAKEOFF_MAX_DOC_CHARS)
 			problems.push(`The design is longer than ${BAKEOFF_MAX_DOC_CHARS.toLocaleString("en-US")} characters.`);
 	}
-	if (mode === "implementation" && subject.kind === "doc")
+	if (mode === "implementation" && folder)
+		problems.push("An implementation needs a git repository, and this folder is not one: compare a design instead.");
+	else if (mode === "implementation" && subject.kind === "doc")
 		problems.push(
 			"An implementation needs a change to start from: pick this session's changes, a branch or a pull request.",
 		);

@@ -475,14 +475,14 @@ pub fn select(nodes: &[String], e3_id: E3id, seed: u64, threshold: usize) -> Com
 `,
 };
 
-const NOTES = "notes/design.md";
-const STATS = "src/stats.py";
+export const NOTES = "notes/design.md";
+export const STATS = "src/stats.py";
 
 /**
  * The files of the session without a project (and, for a topic quiz of a git folder, of its working tree): what a topic
  * quiz cites besides the conversation. A folder that is not a git repository has these stored with the quiz.
  */
-const TOPIC_FILES: Record<string, string> = {
+export const TOPIC_FILES: Record<string, string> = {
 	[NOTES]: `# Encrypted salary statistics
 
 ## Goal

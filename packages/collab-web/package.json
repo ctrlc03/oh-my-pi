@@ -35,6 +35,7 @@
     "prepack": "bun run build",
     "test": "bun test --parallel",
     "e2e:personal": "OMP_E2E_PERSONAL=1 bun test test/e2e-personal --timeout 600000",
+    "e2e:delete": "OMP_E2E_PERSONAL=1 bun test test/e2e-delete --timeout 600000",
     "e2e:stakes": "OMP_E2E_PERSONAL=1 bun test test/e2e-stakes --timeout 600000",
     "e2e:topic": "OMP_E2E_PERSONAL=1 bun test test/e2e-topic --timeout 600000",
     "check": "oxlint . && oxfmt --check --no-error-on-unmatched-pattern 'src/**/*.{ts,tsx}' '{test,bench,examples,scripts}/**/*.ts' '*.ts' && bun run check:types",

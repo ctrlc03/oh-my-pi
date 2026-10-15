@@ -59,12 +59,39 @@ export interface HiddenMessages {
 	file(): HiddenFile;
 	/** Merge a device's document of one session into the computer's; resolves with the result and the revision. */
 	sync(sessionId: unknown, remote: HiddenDoc): Promise<{ doc: HiddenDoc; rev: number }>;
+	/** The hidden-message marks of a session, or null when it has none. */
+	doc(sessionId: string): HiddenDoc | null;
+	/** Drop a deleted session's marks; persisted, and the devices are told. */
+	forget(sessionId: string): Promise<void>;
+	/** Put a deleted session's marks back (an undone deletion), merged with anything marked since. */
+	restore(sessionId: string, doc: HiddenDoc): Promise<void>;
 }
 
 export function createHiddenMessages(options: HiddenMessagesOptions): HiddenMessages {
 	let file = options.initial;
 	let saving: Promise<void> = Promise.resolve();
+	const publish = async (sessions: HiddenStore): Promise<void> => {
+		file = { rev: file.rev + 1, sessions };
+		const snapshot = file;
+		saving = saving.catch(() => {}).then(() => options.save(snapshot));
+		await saving;
+		options.onChange();
+	};
 	return {
+		doc: sessionId => (Object.hasOwn(file.sessions, sessionId) ? file.sessions[sessionId]! : null),
+		async forget(sessionId) {
+			if (!Object.hasOwn(file.sessions, sessionId)) return;
+			const { [sessionId]: _old, ...rest } = file.sessions;
+			await publish(rest);
+		},
+		async restore(sessionId, doc) {
+			if (!isHiddenKey(sessionId)) throw new Error("invalid session id");
+			const current = Object.hasOwn(file.sessions, sessionId) ? file.sessions[sessionId]! : emptyHidden();
+			const merged = mergeHidden(current, doc);
+			if (Object.keys(merged.entries).length === 0) return;
+			const { [sessionId]: _old, ...rest } = file.sessions;
+			await publish(limitStore({ ...rest, [sessionId]: merged }));
+		},
 		file: () => file,
 		async sync(sessionId, remote) {
 			if (!isHiddenKey(sessionId)) throw new Error("invalid session id");

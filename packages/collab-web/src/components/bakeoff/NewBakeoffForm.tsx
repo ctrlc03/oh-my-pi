@@ -15,6 +15,7 @@ import { fanoutModelLabel, groupModelsByAgent } from "../../lib/agents";
 import type { RunTarget } from "../../lib/companion";
 import { type ComputerHandle, computerById, saveLastComputer, unavailableReason } from "../../lib/computers";
 import type { FanoutModel } from "../../lib/fanout";
+import { isProjectless } from "../../lib/start-session";
 import { type RequestState, useRequest } from "../../lib/use-request";
 import { parseLimit } from "../quiz/quiz-flow";
 import { SubjectPicker, useSubjectPick } from "../shell/SubjectPicker";
@@ -28,6 +29,8 @@ import {
 	DEFAULT_LIMIT,
 	estimateBakeoffCost,
 	estimateText,
+	friendlyListError,
+	isGitFolder,
 	judgeOnByDefault,
 	type JudgeView,
 	judgeView,
@@ -45,6 +48,7 @@ import {
 	customId,
 } from "./bakeoff-flow";
 import type { BakeoffDocInput, BakeoffTarget } from "./bakeoff-types";
+import { useBakeoffFolder } from "./use-bakeoff-folder";
 
 export interface NewBakeoffFormProps {
 	computers: readonly ComputerHandle[];
@@ -81,16 +85,22 @@ export function NewBakeoffForm({ computers, target, onBack, onStarted, onClose }
 	const ids = useId();
 	const computer = computerById(computers, target.computerId);
 	const client = computer?.client ?? null;
-	const startsOnDoc = target.subject.kind === "doc";
+	const canFolder = computer?.snap.canBakeoffFolder === true;
+	// Whether the folder is a git repository: a scratch folder is known not to be, any other is asked of the computer.
+	const folderInfo = useBakeoffFolder(client, target.cwd, canFolder && !isProjectless(target.cwd));
+	const git = isGitFolder(target.cwd, canFolder, folderInfo);
+	const startsOnDoc = target.subject.kind === "doc" || !git;
+	// A folder that is not a repository has no branches or pull requests: the picker is given no connection to ask with.
 	const pick = useSubjectPick<"doc">({
-		client,
+		client: git ? client : null,
 		cwd: target.cwd,
 		sessionId: target.sessionId,
 		subject: target.subject.kind === "doc" ? { kind: "changes" } : target.subject,
 		extra: ["doc"],
 		startOn: startsOnDoc ? "doc" : undefined,
 	});
-	const { choice } = pick;
+	// The folder turned out not to be a repository after the form opened: the design document is all that is left.
+	const choice = git ? pick.choice : "doc";
 	const [attach, setAttach] = useState(target.doc !== undefined && !startsOnDoc);
 	const [source, setSource] = useState<BakeoffDocInput["source"]>(target.doc?.source ?? "paste");
 	const [name, setName] = useState(target.doc?.source === "paste" ? target.doc.name : "");
@@ -133,7 +143,7 @@ export function NewBakeoffForm({ computers, target, onBack, onStarted, onClose }
 				? { kind: "unreachable", message: `The judge model could not be checked: ${judgeState.message}` }
 				: judgeView(null);
 
-	const wantsDoc = choice === "doc" || attach;
+	const wantsDoc = choice === "doc" || (git && attach);
 	const overLimit = text.length > BAKEOFF_MAX_DOC_CHARS;
 	const conversationOffered = target.sessionId !== null && (choice === "changes" || choice === "doc");
 
@@ -196,6 +206,7 @@ export function NewBakeoffForm({ computers, target, onBack, onStarted, onClose }
 		test: implementation ? testChoice : null,
 		bench: implementation ? benchChoice : null,
 		limit,
+		folder: !git,
 	};
 
 	const modelList = modelsRequest.state.status === "ready" ? modelsRequest.state.value : [];
@@ -233,7 +244,7 @@ export function NewBakeoffForm({ computers, target, onBack, onStarted, onClose }
 			saveLastComputer(target.computerId);
 			onStarted(target.computerId, id);
 		} catch (err) {
-			setError(errorText(err));
+			setError(friendlyListError(errorText(err), canFolder));
 			setStarting(false);
 		}
 	};
@@ -256,16 +267,23 @@ export function NewBakeoffForm({ computers, target, onBack, onStarted, onClose }
 			</div>
 			<h2 className="bo-form-title">New bake-off</h2>
 			<div className="bo-form-body">
-				<SubjectPicker
-					pick={pick}
-					label="What to start from"
-					summaryLabel="What the challengers will try to beat"
-					used="compared"
-					extraChoices={EXTRA_CHOICES}
-					stacks={false}
-					onChoose={() => setError(null)}
-				/>
-				{choice !== "doc" && (
+				{git ? (
+					<SubjectPicker
+						pick={pick}
+						label="What to start from"
+						summaryLabel="What the challengers will try to beat"
+						used="compared"
+						extraChoices={EXTRA_CHOICES}
+						stacks={false}
+						onChoose={() => setError(null)}
+					/>
+				) : (
+					<span className="sh-field-hint">
+						This folder is not a git repository, so there are no changes to compare. Each challenger writes a
+						design from your document and reads a copy of the folder's text files.
+					</span>
+				)}
+				{git && choice !== "doc" && (
 					<label className="bo-form-check">
 						<input type="checkbox" checked={attach} onChange={e => setAttach(e.target.checked)} />
 						<span>
@@ -296,7 +314,7 @@ export function NewBakeoffForm({ computers, target, onBack, onStarted, onClose }
 								className={source === "file" ? "sh-segment sh-segment-on" : "sh-segment"}
 								onClick={() => setSource("file")}
 							>
-								File in the repository
+								{git ? "File in the repository" : "File in the folder"}
 							</button>
 						</div>
 						{source === "paste" ? (
@@ -336,7 +354,11 @@ export function NewBakeoffForm({ computers, target, onBack, onStarted, onClose }
 									value={path}
 									onChange={e => setPath(e.target.value)}
 								/>
-								<span className="sh-field-hint">A file of this repository, read as the original has it.</span>
+								<span className="sh-field-hint">
+									{git
+										? "A file of this repository, read as the original has it."
+										: "A text file of this folder."}
+								</span>
 							</>
 						)}
 					</div>
@@ -355,33 +377,35 @@ export function NewBakeoffForm({ computers, target, onBack, onStarted, onClose }
 					</label>
 				)}
 
-				<div className="sh-field">
-					<span className="sh-field-label" id={`${ids}-mode`}>
-						What each challenger produces
-					</span>
-					<div className="sh-segmented" role="radiogroup" aria-labelledby={`${ids}-mode`}>
-						{MODES.map(item => {
-							const blocked = item.value === "implementation" && implementationReason !== null;
-							return (
-								<button
-									key={item.value}
-									type="button"
-									role="radio"
-									aria-checked={mode === item.value}
-									disabled={blocked}
-									className={mode === item.value ? "sh-segment sh-segment-on" : "sh-segment"}
-									onClick={() => setChosenMode(item.value)}
-								>
-									{item.label}
-								</button>
-							);
-						})}
+				{git && (
+					<div className="sh-field">
+						<span className="sh-field-label" id={`${ids}-mode`}>
+							What each challenger produces
+						</span>
+						<div className="sh-segmented" role="radiogroup" aria-labelledby={`${ids}-mode`}>
+							{MODES.map(item => {
+								const blocked = item.value === "implementation" && implementationReason !== null;
+								return (
+									<button
+										key={item.value}
+										type="button"
+										role="radio"
+										aria-checked={mode === item.value}
+										disabled={blocked}
+										className={mode === item.value ? "sh-segment sh-segment-on" : "sh-segment"}
+										onClick={() => setChosenMode(item.value)}
+									>
+										{item.label}
+									</button>
+								);
+							})}
+						</div>
+						<span className="sh-field-hint">{MODES.find(item => item.value === mode)!.hint}</span>
+						{implementationReason !== null && (
+							<span className="sh-field-hint bo-form-why">Implementation is off: {implementationReason}</span>
+						)}
 					</div>
-					<span className="sh-field-hint">{MODES.find(item => item.value === mode)!.hint}</span>
-					{implementationReason !== null && (
-						<span className="sh-field-hint bo-form-why">Implementation is off: {implementationReason}</span>
-					)}
-				</div>
+				)}
 
 				{implementation && (
 					<div className="sh-field">

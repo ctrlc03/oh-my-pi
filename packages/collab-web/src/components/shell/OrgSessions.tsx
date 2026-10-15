@@ -28,6 +28,7 @@ import {
 	statusOf,
 	wakeLabel,
 } from "../../lib/session-org";
+import { type DeleteTarget, deleteSettledLabel, isDeletableSession } from "../../lib/session-delete";
 import type { SessionOrgControl } from "../../lib/use-session-org";
 import { OrgMenu, OrgSnoozeSheet } from "./OrgMenu";
 import { isWorking, itemTitle, OrgRow, type OrgItem, type OrgMode } from "./OrgRow";
@@ -68,6 +69,11 @@ export interface OrgSessionsProps {
 	 * opened or moved back to active; shows its own error when it fails.
 	 */
 	onResumeEnded(session: SessionOverview, open: boolean): Promise<boolean>;
+	/**
+	 * Delete omp sessions of this computer (after a confirmation); null where the computer cannot. Vendor agents'
+	 * sessions, rooms and the Personal agent's session never offer it.
+	 */
+	onDelete: ((sessions: DeleteTarget[]) => void) | null;
 }
 
 /** One undo for the last change, however many sessions it touched: the entries as they were. */
@@ -166,6 +172,14 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 		...(settledOpen ? keysOf(sections.settled) : []),
 	];
 	const menuItem = menu === null ? undefined : items.find(item => item.key === menu);
+	/** What deleting the row names; null where the row cannot be deleted. */
+	const deletion = (item: OrgItem): DeleteTarget | null => {
+		if (props.onDelete === null || item.kind === "room") return null;
+		const source = item.kind === "host" ? item.host : item.session;
+		if (!isDeletableSession(source)) return null;
+		const roomIds = (twins.get(source.sessionId) ?? []).map(twin => twin.roomId);
+		return { sessionId: source.sessionId, title: itemTitle(item), roomIds };
+	};
 	const pickedKeys = shown.filter(key => picked.has(key));
 	const titleOf = (key: string): string => {
 		const item = items.find(candidate => candidate.key === key);
@@ -358,6 +372,8 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 	};
 
 	const settledCount = sections.settled.length;
+	/** The settled sessions that can be deleted together (those on screen or folded away alike). */
+	const settledDeletable = sections.settled.flatMap(item => deletion(item) ?? []);
 	const allPickedPinned = pickedKeys.length > 0 && pickedKeys.every(key => statusOf(doc, key, now) === "pinned");
 	const allPickedSettled = pickedKeys.length > 0 && pickedKeys.every(key => statusOf(doc, key, now) === "settled");
 	const anyPickedSnoozed = pickedKeys.some(key => statusOf(doc, key, now) === "snoozed");
@@ -365,6 +381,7 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 	const anyPickedEnded = endedOf(pickedKeys).length > 0;
 
 	const menuStatus = menuItem === undefined ? "active" : statusOf(doc, menuItem.key, now);
+	const menuDeletion = menuItem === undefined ? null : deletion(menuItem);
 	const menuPlace =
 		menuItem === undefined
 			? null
@@ -400,6 +417,11 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 							Settled
 							{settledCount > 0 && <span className="sh-org-count">{settledCount}</span>}
 						</button>
+						{settledDeletable.length > 0 && (
+							<button type="button" className="sh-org-bulk" onClick={() => props.onDelete?.(settledDeletable)}>
+								{deleteSettledLabel(settledDeletable.length)}
+							</button>
+						)}
 					</h3>
 					{settledOpen && settledCount > 0 && (
 						<ul className="sh-recents-list">{sections.settled.map(item => row(item, "settled"))}</ul>
@@ -517,6 +539,14 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 						setMenu(null);
 					}}
 					onClose={() => setMenu(null)}
+					onDelete={
+						menuDeletion === null
+							? null
+							: () => {
+									setMenu(null);
+									props.onDelete?.([menuDeletion]);
+								}
+					}
 				/>
 			)}
 			{snoozingPicked && (

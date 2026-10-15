@@ -26,6 +26,7 @@ import {
 	type Bakeoff,
 	type BakeoffCreate,
 	type BakeoffEntry,
+	type BakeoffFolder,
 	type BakeoffJudgeInfo,
 	type BakeoffMetric,
 	type BakeoffSummary,
@@ -59,7 +60,10 @@ import {
 	repoInfo,
 	resolveTarget,
 } from "./companion-blueprint-git";
-import { readExcerpts } from "./companion-excerpt";
+import { assertRangeBudget, excerptOf, MAX_EXCERPT_REFS, readExcerpts } from "./companion-excerpt";
+import { normalizeRepoPath } from "./companion-citations";
+import { entryPatch, patchStates } from "./companion-bakeoff-patch";
+import { copyFolderFiles, type FolderInfo, folderInfo, listFolderFiles, readFolderFile } from "./companion-quiz-folder";
 import { ghPrSource } from "./companion-quiz-stack";
 import {
 	Cancelled,
@@ -83,6 +87,10 @@ const MAX_REGEX_CHARS = 200;
 const MAX_LABEL_CHARS = 60;
 const MAX_PATH_CHARS = 500;
 const CUSTOM_ID_RE = /^custom:\d+$/;
+/** The commit of a folder's bake-off: a placeholder, as a topic quiz of a folder has (`{ commit: "folder" }`). */
+const FOLDER_COMMIT = "folder";
+const NOT_GIT_NOTE =
+	"A folder that is not a git repository has no changes, branches, pull requests or worktrees: only a design bake-off from a design document can be made there.";
 
 // ── the request ──────────────────────────────────────────────────────────────
 
@@ -135,7 +143,7 @@ function checkTarget(value: unknown, what: string): { target: string; detail?: s
 }
 
 /** A path of the repository: relative, inside it, without NUL. */
-function checkRepoPath(value: unknown): string {
+function checkRepoPath(value: unknown, folder: boolean): string {
 	if (
 		typeof value !== "string" ||
 		value === "" ||
@@ -144,7 +152,11 @@ function checkRepoPath(value: unknown): string {
 		path.isAbsolute(value) ||
 		value.split(/[\\/]/).includes("..")
 	)
-		throw new Error("The design document's path must be a file inside the repository.");
+		throw new Error(
+			folder
+				? "The design document's path must be a text file inside the folder."
+				: "The design document's path must be a file inside the repository.",
+		);
 	return value;
 }
 
@@ -178,10 +190,15 @@ export interface CheckedCreate {
  * is not a selector (or a vendor agent where blindness needs an omp model), a metric that does not exist, an input that
  * is missing or too long, a test or benchmark in design mode, a spending limit that is not a positive number.
  */
-export function checkBakeoffCreate(request: Partial<BakeoffCreate>): CheckedCreate {
+export function checkBakeoffCreate(request: Partial<BakeoffCreate>, folder = false): CheckedCreate {
 	const parsed = checkRunRequest(request, BAKEOFF_DEFAULT_MAX_COST_USD);
 	const { mode } = request;
 	if (mode !== "design" && mode !== "implementation") throw new Error("invalid mode");
+	if (
+		folder &&
+		(mode !== "design" || request.pr !== undefined || parsed.ref !== undefined || parsed.base !== undefined)
+	)
+		throw new Error(NOT_GIT_NOTE);
 	const pr = request.pr === undefined ? undefined : positiveInt(request.pr, "pull request");
 	if (pr !== undefined && (parsed.ref !== undefined || request.sessionId !== undefined))
 		throw new Error("Name a pull request or a branch, not both.");
@@ -190,7 +207,7 @@ export function checkBakeoffCreate(request: Partial<BakeoffCreate>): CheckedCrea
 	if (request.doc !== undefined) {
 		if (typeof request.doc !== "object" || request.doc === null) throw new Error("invalid design document");
 		if ("path" in request.doc) {
-			doc = { path: checkRepoPath(request.doc.path) };
+			doc = { path: checkRepoPath(request.doc.path, folder) };
 		} else {
 			const { text, name } = request.doc;
 			if (typeof text !== "string" || text.trim() === "") throw new Error("The design document is empty.");
@@ -201,9 +218,15 @@ export function checkBakeoffCreate(request: Partial<BakeoffCreate>): CheckedCrea
 			doc = { text, ...(name !== undefined ? { name } : {}) };
 		}
 	}
-	const change = pr !== undefined || parsed.ref !== undefined || sessionId !== undefined;
+	// A folder that is not a repository has no change to start from: a conversation only says why the design is wanted.
+	const change = !folder && (pr !== undefined || parsed.ref !== undefined || sessionId !== undefined);
 	if (mode === "implementation" && !change) throw new Error("Pick the change that the challengers improve on.");
-	if (mode === "design" && !change && !doc) throw new Error("Pick a change or a design document to start from.");
+	if (mode === "design" && !change && !doc)
+		throw new Error(
+			folder
+				? "Add a design document: paste it, or name a text file of the folder."
+				: "Pick a change or a design document to start from.",
+		);
 	if (
 		request.instructions !== undefined &&
 		(typeof request.instructions !== "string" || request.instructions.length > BAKEOFF_MAX_INSTRUCTIONS_CHARS)
@@ -288,6 +311,10 @@ export interface Bakeoffs {
 		discardDirty?: boolean;
 	}): Promise<BakeoffTakeResult | undefined>;
 	remove(id: string): Promise<void>;
+	/** An implementation entry's code as a patch against the base (`git apply` takes it). */
+	patch(id: string, entry: string): Promise<string>;
+	/** Whether `cwd` is a git repository, and how many files a bake-off of the folder could read. */
+	folder(cwd: string): Promise<BakeoffFolder>;
 	/** Run the review and the judge again after they failed. */
 	review(id: string): Promise<void>;
 	/** Mark runs in flight as interrupted and end their sessions. */
@@ -299,6 +326,25 @@ export interface Bakeoffs {
 /** What a run was asked, resolved at the request. */
 interface BakeoffJob extends Job {
 	request: CheckedCreate;
+	/** The folder the bake-off is about, when it is not a git repository. */
+	folder?: FolderInfo;
+}
+
+/**
+ * The excerpts of a folder's bake-off: read from the files stored with it, since nothing else holds them once the run is
+ * over. Null for a ref no stored file has.
+ */
+function folderExcerpts(doc: BakeoffDoc, refs: readonly BlueprintExcerptRef[]): (BlueprintExcerpt | null)[] {
+	if (refs.length > MAX_EXCERPT_REFS) throw new Error("too many references");
+	assertRangeBudget(refs);
+	return refs.map(ref => {
+		const file = normalizeRepoPath(ref?.path);
+		const lines = file === undefined ? undefined : doc.files?.[file];
+		const line = typeof ref?.line === "number" && Number.isSafeInteger(ref.line) ? ref.line : 0;
+		return file === undefined || lines === undefined
+			? null
+			: excerptOf(lines, { path: file, line, from: ref.from, to: ref.to }, "head", FOLDER_COMMIT);
+	});
 }
 
 export function createBakeoffs(deps: BakeoffDeps): Bakeoffs {
@@ -402,7 +448,14 @@ export function createBakeoffs(deps: BakeoffDeps): Bakeoffs {
 		let head: string;
 		let base: string | undefined;
 		let pr: { title: string; body?: string } | undefined;
-		if (job.prs || job.target) {
+		if (job.folder) {
+			// No commit to read: every entry reads one copy of the folder's text files, made now.
+			await update(run, { progress: "Copying the folder's files" });
+			const dir = path.join(dirs.work, run.id, "folder");
+			const copied = await copyFolderFiles(job.folder.checkout, await listFolderFiles(job.folder), dir);
+			run.folder = { dir, files: copied, stored: 0 };
+			head = FOLDER_COMMIT;
+		} else if (job.prs || job.target) {
 			const [part] = await resolveParts(
 				{ prSource, progress: (r, text) => update(run, { progress: text }) },
 				run,
@@ -421,6 +474,13 @@ export function createBakeoffs(deps: BakeoffDeps): Bakeoffs {
 		if (request.doc) {
 			if ("text" in request.doc) {
 				document = { text: request.doc.text, ...(request.doc.name ? { name: request.doc.name } : {}) };
+			} else if (job.folder) {
+				const lines = await readFolderFile(run.folder!.dir, request.doc.path);
+				if (lines === null) throw new Error(`There is no text file ${request.doc.path} in the folder.`);
+				const text = lines.join("\n");
+				if (text.length > BAKEOFF_MAX_DOC_CHARS)
+					throw new Error(`${request.doc.path} is longer than ${BAKEOFF_MAX_DOC_CHARS} characters.`);
+				document = { text, name: request.doc.path };
 			} else {
 				const text = await readBlob(job.root, head, request.doc.path);
 				if (text === null)
@@ -444,7 +504,11 @@ export function createBakeoffs(deps: BakeoffDeps): Bakeoffs {
 			);
 		const problem = problemText({
 			// Neutral: a branch's name would tell the reviewer which entry is the original.
-			subject: base ? "one change to the repository" : "a design for the repository",
+			subject: job.folder
+				? "a design for a folder of files"
+				: base
+					? "one change to the repository"
+					: "a design for the repository",
 			goal: request.goal,
 			doc: document,
 			pr,
@@ -486,6 +550,7 @@ export function createBakeoffs(deps: BakeoffDeps): Bakeoffs {
 			writer: request.writer,
 			judge: request.judge,
 			costs: { entries: 0, writeups: 0, review: 0, judge: 0 },
+			...(job.folder ? { folder: true as const } : {}),
 		};
 		return {
 			v: BAKEOFF_VERSION,
@@ -633,7 +698,7 @@ export function createBakeoffs(deps: BakeoffDeps): Bakeoffs {
 		},
 
 		async list(cwd) {
-			const root = cwd === undefined ? undefined : (await repoInfo(cwd)).root;
+			const root = cwd === undefined ? undefined : (await folderInfo(cwd)).root;
 			return store
 				.list()
 				.filter(item => root === undefined || item.repoRoot === root)
@@ -644,7 +709,7 @@ export function createBakeoffs(deps: BakeoffDeps): Bakeoffs {
 			if (!deps.openJudge) return { state: "none", reason: "No judge model is set up on this computer." };
 			let opened: OpenedJudge | undefined;
 			try {
-				const root = cwd === undefined ? process.cwd() : (await repoInfo(cwd)).root;
+				const root = cwd === undefined ? process.cwd() : (await folderInfo(cwd)).root;
 				opened = await deps.openJudge(root, () => undefined);
 				return await describeSecondOpinion(opened.describe, opened.judge, opened.price);
 			} catch (err) {
@@ -655,16 +720,21 @@ export function createBakeoffs(deps: BakeoffDeps): Bakeoffs {
 		},
 
 		async create(request) {
-			const checked = checkBakeoffCreate(request);
+			const { cwd } = checkRunRequest(request, BAKEOFF_DEFAULT_MAX_COST_USD);
+			const topic = await folderInfo(cwd);
+			const checked = checkBakeoffCreate(request, !topic.git);
 			if (deps.agent === null)
 				throw new Error("This computer cannot run the sessions of a bake-off (tmux is missing).");
 			if (checked.mode === "implementation" && deps.fanout === null)
 				throw new Error("This computer cannot start the sessions of an implementation bake-off (tmux is missing).");
 			checkNoneRunning();
-			const info = await repoInfo(checked.cwd);
+			const info = topic.git ? await repoInfo(checked.cwd) : topic;
 			let target: Job["target"];
 			let subject: string;
-			if (checked.pr !== undefined) {
+			const docName = checked.doc && "name" in checked.doc && checked.doc.name ? checked.doc.name : "a design";
+			if (!topic.git) {
+				subject = docName;
+			} else if (checked.pr !== undefined) {
 				subject = `PR #${checked.pr}`;
 			} else if (checked.ref !== undefined || checked.sessionId !== undefined) {
 				const resolved = await resolveTarget(info.root, {
@@ -675,7 +745,7 @@ export function createBakeoffs(deps: BakeoffDeps): Bakeoffs {
 				target = resolved;
 				subject = `${resolved.label} vs ${resolved.base?.ref ?? resolved.base?.commit.slice(0, 8) ?? "the base"}`;
 			} else {
-				subject = checked.doc && "name" in checked.doc && checked.doc.name ? checked.doc.name : "a design";
+				subject = docName;
 			}
 			const title = `${info.name} · ${subject}`;
 			const id = store.newId();
@@ -690,6 +760,7 @@ export function createBakeoffs(deps: BakeoffDeps): Bakeoffs {
 				sessionId: checked.sessionId,
 				maxCostUsd: checked.maxCostUsd,
 				request: checked,
+				...(topic.git ? {} : { folder: topic }),
 			};
 			await store.put({
 				id,
@@ -710,14 +781,34 @@ export function createBakeoffs(deps: BakeoffDeps): Bakeoffs {
 		},
 
 		async get(id) {
-			return (await readDoc(id)).bakeoff;
+			const doc = await readDoc(id);
+			const states = await patchStates(doc);
+			if (states.size === 0) return doc.bakeoff;
+			return {
+				...doc.bakeoff,
+				entries: doc.bakeoff.entries.map(entry => {
+					const patch = states.get(entry.label);
+					return patch === undefined ? entry : { ...entry, patch };
+				}),
+			};
 		},
 
 		async excerpt(id, label, refs) {
 			const doc = await readDoc(id);
 			const entry = doc.bakeoff.entries.find(candidate => candidate.label === label);
 			if (!entry) throw new Error("There is no such entry.");
+			if (doc.bakeoff.folder) return folderExcerpts(doc, refs);
 			return readExcerpts(doc.bakeoff.repo.root, { head: commitOf(doc, entry) }, refs);
+		},
+
+		async patch(id, label) {
+			return await entryPatch(await readDoc(id), label);
+		},
+
+		async folder(cwd) {
+			const info = await folderInfo(checkRunRequest({ cwd }, BAKEOFF_DEFAULT_MAX_COST_USD).cwd);
+			const files = info.git ? [] : await listFolderFiles(info);
+			return { git: info.git, files: files.length, name: info.name };
 		},
 
 		async stop(id, label) {
@@ -781,6 +872,10 @@ export function createBakeoffs(deps: BakeoffDeps): Bakeoffs {
 				if (!summary || summary.status !== "failed")
 					throw new Error("Only a bake-off whose review failed can be reviewed again.");
 				const doc = await readDoc(id);
+				if (doc.bakeoff.folder)
+					throw new Error(
+						"A bake-off of a folder cannot be reviewed again: the folder's files are only read while it runs.",
+					);
 				if (doc.bakeoff.stage !== "review" && doc.bakeoff.stage !== "judge")
 					throw new Error("This bake-off did not fail in the review, so there is nothing to review again.");
 				if (reviewable(doc).length < 2) throw new Error("Fewer than two entries are left to compare.");

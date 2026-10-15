@@ -13,6 +13,7 @@ import {
 	Redo2,
 	Rows3,
 	Share2,
+	Trash2,
 	Undo2,
 	X,
 } from "lucide-react";
@@ -115,6 +116,8 @@ export interface SessionSheetProps {
 	screenCount: number;
 	onOpenScreens(): void;
 	onLeave(): void;
+	/** Delete this session (after a confirmation); null unless its computer can delete sessions and this is an omp session. */
+	onDelete: (() => void) | null;
 	onClose(): void;
 	/** The paired computer can show this session's git working tree. */
 	workingTree: boolean;
@@ -189,6 +192,7 @@ export function SessionSheet({
 	canWatchPr,
 	exportMarkdown,
 	onLeave,
+	onDelete,
 	onClose,
 }: SessionSheetProps): ReactNode {
 	useOverrides();
@@ -856,6 +860,18 @@ export function SessionSheet({
 			<button type="button" className="sh-btn sh-sheet-leave" onClick={onLeave}>
 				<LogOut size={15} /> Leave session
 			</button>
+			{onDelete !== null && (
+				<button
+					type="button"
+					className="sh-btn sh-sheet-leave"
+					onClick={() => {
+						onClose();
+						onDelete();
+					}}
+				>
+					<Trash2 size={15} /> Delete session…
+				</button>
+			)}
 		</Sheet>
 	);
 }

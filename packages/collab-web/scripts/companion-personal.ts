@@ -6,6 +6,7 @@
  * - `companion-personal-events`: normalise, sign and file events for the live session;
  * - `companion-personal-{inbox,spend,settings,sources}`: inbox/proposals/digests, spend alerts, settings frames, MCP poll jobs;
  * - `companion-personal-{memory,review,backup}`: the memory frames, the nightly review, backups;
+ * - `companion-personal-chat`: chat-tree mode's files (the session's `status.json`, the first-start note);
  * - this file: the shared {@link PersonalDeps}, the run state, keep-alive, rollover, the request dispatch and the hosts-frame marks.
  *
  * Nothing runs until the owner sets Personal up and turns it on: with Personal never set up, no file under the
@@ -22,19 +23,21 @@ import type {
 	PersonalChanged,
 	PersonalChangeKind,
 	PersonalEventRecord,
+	PersonalMemoryMode,
 	PersonalReply,
 	PersonalRequest,
 	PersonalRunState,
 	PersonalSettings,
 	PersonalStatus,
 } from "@oh-my-pi/pi-wire/personal";
-import { PERSONAL_LOGIN_COMMAND } from "@oh-my-pi/pi-wire/personal";
+import { PERSONAL_DEFAULTS, PERSONAL_LOGIN_COMMAND } from "@oh-my-pi/pi-wire/personal";
 import type { PersonalEvent, PersonalIpcReply, PersonalIpcRequest } from "@oh-my-pi/pi-wire/personal-ipc";
 import { PERSONAL_PROFILE } from "@oh-my-pi/pi-wire/personal-ipc";
 import type { Schedule } from "@oh-my-pi/pi-wire/schedule";
 import { SCHEDULE_IPC_FILE } from "@oh-my-pi/pi-wire/schedule";
 import type { CompanionHost } from "../src/lib/companion";
 import { createPersonalBackup } from "./companion-personal-backup";
+import { chatHasMessages, NOTE_CONTROL_PREFIX, noteChunks, readChatTreeStatus } from "./companion-personal-chat";
 import { createPersonalEvents, type EventDraft } from "./companion-personal-events";
 import { createPersonalInbox } from "./companion-personal-inbox";
 import { createPersonalMemoryFrames } from "./companion-personal-memory";
@@ -235,9 +238,14 @@ export interface KeepAliveInput {
 	nextStartAt: number;
 	rolloverDue: boolean;
 	contextFull: boolean;
+	/** Chat-tree mode is configured: the daily time never ends the session (its view bounds the context; the chat carries continuity). */
+	chatTree: boolean;
+	/** The live session was launched in another memory mode than the configured one: restarting it makes the switch. */
+	modeMismatch: boolean;
 }
 
-export type KeepAliveAction = "none" | "start" | "rollover";
+/** `renew` starts a fresh omp session in chat-tree mode (no handoff, the chat is kept); `rollover` restarts with a handoff or a mode change. */
+export type KeepAliveAction = "none" | "start" | "rollover" | "renew";
 
 /** What one poll should do about the Personal session. */
 export function keepAliveDecision(input: KeepAliveInput): KeepAliveAction {
@@ -245,7 +253,10 @@ export function keepAliveDecision(input: KeepAliveInput): KeepAliveAction {
 	if (input.live === null)
 		return !input.stopped && input.loginReady && input.now >= input.nextStartAt ? "start" : "none";
 	const idle = input.live.busy === false && !input.live.inputRequired;
-	return idle && (input.rolloverDue || input.contextFull) ? "rollover" : "none";
+	if (!idle) return "none";
+	if (input.modeMismatch) return "rollover";
+	if (input.chatTree) return input.contextFull ? "renew" : "none";
+	return input.rolloverDue || input.contextFull ? "rollover" : "none";
 }
 
 const ROLLOVER_REQUEST = [
@@ -282,6 +293,8 @@ const EVENTS_PAGE = 50;
 const EVENTS_MAX_PAGE = 200;
 const EVENT_MAINTAIN_MS = 30_000;
 const CONTEXT_CHECK_MS = 60_000;
+/** The chat's numbers reach the app's status at most this often. */
+const CHAT_STATUS_PUSH_MS = 5_000;
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -298,8 +311,8 @@ export interface Personal {
 	tick(hosts: readonly CompanionHost[]): Promise<void>;
 	/** The hosts with the Personal session marked `personal: true`. */
 	markHosts(hosts: CompanionHost[]): CompanionHost[];
-	/** `canPersonal` / `personalRev` for the hosts frame. */
-	hostsFields(canServe: boolean): { canPersonal?: true; personalRev?: number };
+	/** `canPersonal` / `canPersonalChatTree` / `personalRev` for the hosts frame. */
+	hostsFields(canServe: boolean): { canPersonal?: true; canPersonalChatTree?: true; personalRev?: number };
 	/** Personal is on: the companion keeps polling even with no device connected. */
 	enabled(): boolean;
 	/** The session is the Personal agent's: session organisation leaves it alone. */
@@ -330,6 +343,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 	const stores = openPersonalStores(paths);
 	const about = createAboutStore(paths, now);
 	const settings = (): PersonalSettings => state.read().settings;
+	const mode = (): PersonalMemoryMode => settings().memoryMode ?? PERSONAL_DEFAULTS.memoryMode;
 	const enabled = (): boolean => state.read().setUp && state.read().enabled;
 	const onError = (err: unknown): void => console.error(`companion: personal agent: ${errorText(err)}`);
 
@@ -341,6 +355,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 		webUrl: env.webUrl,
 		localRelayUrl: env.localRelayUrl,
 		limits: () => settings().limits,
+		memoryMode: mode,
 	});
 
 	/** Work started and not finished (a revision being saved, a start, a backup): {@link Personal.idle} waits for it. */
@@ -480,13 +495,41 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 	const adopt = async (host: CompanionHost): Promise<void> => {
 		const recorded = state.read().session;
 		if (recorded?.sessionId === host.sessionId && recorded.instanceId === host.instanceId) return;
-		const generation = recorded?.sessionId === host.sessionId ? recorded.generation : state.read().generation + 1;
+		const known = recorded?.sessionId === host.sessionId;
+		const generation = known ? recorded.generation : state.read().generation + 1;
 		await state.update(s => ({
 			...s,
-			session: { sessionId: host.sessionId, instanceId: host.instanceId, startedAt: host.startedAt, generation },
+			// A session started by hand is taken to be in the mode configured now: a restart would not change that.
+			session: {
+				sessionId: host.sessionId,
+				instanceId: host.instanceId,
+				startedAt: host.startedAt,
+				generation,
+				mode: known ? recorded.mode : mode(),
+			},
 			generation: Math.max(s.generation, generation),
 		}));
 		changed(["status"]);
+	};
+
+	/** The memory mode a live session was launched with; null when the record is not about that session yet. */
+	const launchedMode = (host: CompanionHost): PersonalMemoryMode | null => {
+		const recorded = state.read().session;
+		return recorded?.sessionId === host.sessionId ? (recorded.mode ?? PERSONAL_DEFAULTS.memoryMode) : null;
+	};
+
+	/** The handoff note of the recall session that ended becomes the endless chat's first message: owner-signed `control` events the session logs as `note`s, never a turn. */
+	const deliverChatNote = async (note: string): Promise<void> => {
+		const at = now();
+		for (const [index, chunk] of noteChunks(note).entries()) {
+			await events.enqueueOwner({
+				source: "companion",
+				kind: "control",
+				title: "Handoff note",
+				body: `${NOTE_CONTROL_PREFIX}${chunk}`,
+				at: at + index,
+			});
+		}
 	};
 
 	/** Poll the listing until `done` says yes (or `ms` passed). */
@@ -525,10 +568,17 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 		if (!(await loginReady())) throw new Error(`The Personal agent has no login: run ${PERSONAL_LOGIN_COMMAND}`);
 		const tmux = await launcher.findTmux();
 		if (tmux === null) throw new Error("tmux is not installed on this computer");
+		const target = mode();
 		const recorded = state.read().session;
 		const handoff = state.read().handoff;
+		// The first start of the endless chat takes the stored note as its first message; once it has messages the note is stale.
+		const chatNote = target === "chat-tree" && handoff !== null && !(await chatHasMessages(paths)) ? handoff : null;
+		// A recall session resumes unless a note waits for it; any session starts anew when the memory mode changed.
 		const recordedFile =
-			recorded !== null && handoff === null && failures < FAILED_AFTER
+			recorded !== null &&
+			(target === "chat-tree" || handoff === null) &&
+			(recorded.mode ?? PERSONAL_DEFAULTS.memoryMode) === target &&
+			failures < FAILED_AFTER
 				? await findSessionFile(paths.sessionsDir, recorded.sessionId)
 				: null;
 		const resume = recordedFile === null || recorded === null ? undefined : recorded.sessionId;
@@ -541,7 +591,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 			localRelayUrl: env.localRelayUrl(),
 			cwd: paths.workspace,
 			resume,
-			prompt: resume === undefined && handoff !== null ? handoffPrompt(handoff) : undefined,
+			prompt: target === "recall" && resume === undefined && handoff !== null ? handoffPrompt(handoff) : undefined,
 			keepEnded: true,
 			profile: { name: PERSONAL_PROFILE, overlayYaml: profile.overlayText("live") },
 		});
@@ -570,9 +620,10 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 						instanceId: host.instanceId,
 						startedAt: host.startedAt,
 						generation,
+						mode: target,
 					},
 					generation: Math.max(s.generation, generation),
-					handoff: null,
+					handoff: chatNote === null ? null : s.handoff,
 					stopped: false,
 					rolloverDay: pastRollover ? today : s.rolloverDay,
 					error: undefined,
@@ -582,6 +633,13 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 				failureAlerted = false;
 				nextStartAt = 0;
 				live = host;
+				if (chatNote !== null) {
+					// The stored note stays until every piece is in the inbox; a failed hand-over keeps it for the next start (while the chat is still empty).
+					await deliverChatNote(chatNote).then(
+						() => state.update(s => ({ ...s, handoff: s.handoff === chatNote ? null : s.handoff })),
+						onError,
+					);
+				}
 				changed(["status"]);
 				return;
 			}
@@ -630,38 +688,50 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 
 	const start = (): Promise<void> => exclusive("starting", launchOrFail);
 
-	/** Ask for a handoff note, read it, have the session exit, start the next session with the note as its first prompt. */
-	const rollover = (): Promise<void> =>
+	/**
+	 * Restart the live session. A recall session is asked for a handoff note first and the next one starts with it as
+	 * its first prompt. A chat-tree session is not: the chat holds everything, so it restarts at once and, unless the
+	 * memory mode changed, resumes its omp session; the chat continues either way. `fresh` (a full context in chat-tree
+	 * mode) starts a new omp session instead, with no handoff and no first prompt: `personal-chat/` is untouched.
+	 */
+	const rollover = (fresh = false): Promise<void> =>
 		exclusive("rollover", async () => {
 			const host = live;
 			if (host === null) {
 				await launchOrFail();
 				return;
 			}
+			const running = launchedMode(host) ?? mode();
 			const idle = await waitFor(timing.replyWaitMs, async () => {
 				const current = await hostNow(host.sessionId);
 				return current !== null && current.busy === false && !current.inputRequired ? current : null;
 			});
 			if (idle === null) throw new Error("The Personal agent is busy; try again when it is idle");
-			const asked = now();
-			await events.enqueueOwner({
-				source: "companion",
-				kind: "rollover",
-				title: "Rollover",
-				body: ROLLOVER_REQUEST,
-			});
-			const note = await waitFor(timing.replyWaitMs, async () => {
-				const current = await hostNow(host.sessionId);
-				if (current === null || current.busy !== false) return null;
-				return assistantReplySince(await readSessionTail(paths.sessionsDir, host.sessionId), asked);
-			});
+			let note: string | null = null;
+			if (running === "recall") {
+				const asked = now();
+				await events.enqueueOwner({
+					source: "companion",
+					kind: "rollover",
+					title: "Rollover",
+					body: ROLLOVER_REQUEST,
+				});
+				note = await waitFor(timing.replyWaitMs, async () => {
+					const current = await hostNow(host.sessionId);
+					if (current === null || current.busy !== false) return null;
+					return assistantReplySince(await readSessionTail(paths.sessionsDir, host.sessionId), asked);
+				});
+			}
 			await exitSession(host);
+			const resumes = !fresh && running === "chat-tree" && mode() === "chat-tree";
 			await state.update(s => ({
 				...s,
 				handoff: note ?? s.handoff,
-				session: null,
+				session: resumes ? s.session : null,
 				rolloverDay: localDay(now()),
 			}));
+			// The new session is not full yet; its size is read again on the next check.
+			contextFull = false;
 			await launchOrFail();
 		});
 
@@ -697,6 +767,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 		]);
 		loginOk = login.state === "ready";
 		const session = sessionOf();
+		const chat = enabled() && mode() === "chat-tree" ? await readChatTreeStatus(paths) : null;
 		return {
 			setUp: s.setUp,
 			enabled: enabled(),
@@ -715,9 +786,10 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 			spend: spendNow,
 			backups,
 			review: reviewNow,
-			nextRolloverAt: enabled() ? nextLocalTime(now(), s.settings.rollover.time) : null,
+			nextRolloverAt: enabled() && mode() === "recall" ? nextLocalTime(now(), s.settings.rollover.time) : null,
 			counts,
 			rev: s.rev,
+			...(chat !== null ? { chatTree: chat } : {}),
 			...(s.error !== undefined && enabled() ? { error: s.error } : {}),
 		};
 	};
@@ -837,6 +909,18 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 		contextFull = file !== null && Bun.file(file).size >= ROLLOVER_SESSION_BYTES;
 	};
 
+	let chatSeen = "";
+	let chatPushedAt = 0;
+	/** Tell the devices when the chat's numbers moved (messages, lines still being summarised), at most every few seconds. */
+	const watchChatStatus = async (): Promise<void> => {
+		const chat = await readChatTreeStatus(paths);
+		const signature = chat === null ? "" : JSON.stringify(chat);
+		if (signature === chatSeen || now() - chatPushedAt < CHAT_STATUS_PUSH_MS) return;
+		chatSeen = signature;
+		chatPushedAt = now();
+		changed(["status"]);
+	};
+
 	const tick = async (hosts: readonly CompanionHost[]): Promise<void> => {
 		if (!enabled()) return;
 		try {
@@ -863,6 +947,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 				lastRun = run;
 				changed(["status"]);
 			}
+			if (mode() === "chat-tree") await watchChatStatus();
 			if (now() - lastEventsMaintain >= EVENT_MAINTAIN_MS) {
 				lastEventsMaintain = now();
 				guard("event channel", () => events.maintain());
@@ -871,6 +956,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 			guard("sources", () => sources.tick());
 			guard("backup", () => backup.tick());
 			guard("review", () => review.tick());
+			const launchedAs = live === null ? null : launchedMode(live);
 			const action = keepAliveDecision({
 				enabled: true,
 				stopped: state.read().stopped,
@@ -881,9 +967,12 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 				nextStartAt,
 				rolloverDue: rolloverDue(now(), settings().rollover.time, state.read().rolloverDay),
 				contextFull,
+				chatTree: mode() === "chat-tree",
+				modeMismatch: launchedAs !== null && launchedAs !== mode(),
 			});
 			if (action === "start") guard("starting the session", start);
-			else if (action === "rollover") guard("rollover", rollover);
+			else if (action === "rollover") guard("rollover", () => rollover());
+			else if (action === "renew") guard("fresh session", () => rollover(true));
 		} catch (err) {
 			onError(err);
 		}
@@ -921,7 +1010,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 		tick,
 		markHosts: hosts => hosts.map(host => (isPersonalHost(host) ? { ...host, personal: true as const } : host)),
 		hostsFields: canServe => ({
-			...(canServe ? { canPersonal: true as const } : {}),
+			...(canServe ? { canPersonal: true as const, canPersonalChatTree: true as const } : {}),
 			...(enabled() ? { personalRev: state.read().rev } : {}),
 		}),
 		enabled,

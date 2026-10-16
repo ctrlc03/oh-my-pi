@@ -29,6 +29,8 @@ export const PERSONAL_DEFAULTS = {
 	review: { enabled: true, time: "03:30", budgetUsd: 0.5 },
 	/** Daily rollover to a fresh session (the app shows one thread): local time, taken when the session is idle. */
 	rollover: { time: "04:00" },
+	/** Daily sessions with recall; the endless chat (`chat-tree`) is opt-in. */
+	memoryMode: "recall",
 	/** Backups: a daily run at `time` (local, not configurable), DB snapshots kept; the session-JSONL mirror is never pruned. */
 	backup: { time: "03:00", keepDaily: 30, keepMonthly: 12 },
 	/** About you is kept short on purpose: it is loaded into every session. */
@@ -115,6 +117,18 @@ export interface PersonalSessionInfo {
 	generation: number;
 }
 
+/** How much of the endless chat the Personal agent has built and still has to summarise. */
+export interface PersonalChatTreeStatus {
+	/** Messages logged in the chat so far. */
+	messages: number;
+	/** Summary lines still waiting for the cheap model. */
+	nodesPending: number;
+	/** Size of the view the next turn reads, in UTF-8 bytes. */
+	viewBytes: number;
+	/** Summaries that failed (and are retried) since the session started. */
+	compactionsFailed: number;
+}
+
 export interface PersonalStatus {
 	/** The profile layout exists (setup ran). */
 	setUp: boolean;
@@ -128,11 +142,14 @@ export interface PersonalStatus {
 	spend: PersonalSpend;
 	backups: PersonalBackupStatus;
 	review: PersonalReviewStatus;
+	/** The next daily rollover; null while off, and in chat-tree mode (that session has no daily rollover). */
 	nextRolloverAt: number | null;
 	/** Open things for the owner: unanswered questions, pending proposals, unread digests. */
 	counts: { questions: number; proposals: number; digests: number };
 	/** Bumped on every change; mirrors `hosts.personalRev`. */
 	rev: number;
+	/** The endless chat's numbers (`personal-chat/status.json`); present only in chat-tree mode, once the session wrote them. */
+	chatTree?: PersonalChatTreeStatus;
 	error?: string;
 }
 
@@ -157,10 +174,19 @@ export interface PersonalSource {
 	lastError?: string;
 }
 
+/**
+ * How the Personal agent remembers. `recall`: daily sessions with a handoff note and Mnemopi recall on every owner
+ * turn (the default). `chat-tree`: one chat that never ends; every message is logged, a cheap model keeps a tree of
+ * summaries, and each turn starts from the view of it (docs/personal-chat-tree.md).
+ */
+export type PersonalMemoryMode = "recall" | "chat-tree";
+
 export interface PersonalSettings {
 	/** Calendar day / month spend limits, USD; 0 = none. Enforced by the session; the companion mirrors them into the profile's config. */
 	limits: { dayUsd: number; monthUsd: number };
 	review: { enabled: boolean; /** `HH:MM`, local. */ time: string; budgetUsd: number };
+	/** Absent from an older companion = `recall`. A change takes effect when the live session restarts, which the companion does itself once the session is idle. */
+	memoryMode?: PersonalMemoryMode;
 	rollover: { /** `HH:MM`, local. */ time: string };
 	/** null = the default folder inside the profile. */
 	backup: { folder: string | null };
@@ -170,6 +196,7 @@ export interface PersonalSettings {
 /** Sections merge; `sources` replaces the list. */
 export interface PersonalSettingsPatch {
 	limits?: Partial<PersonalSettings["limits"]>;
+	memoryMode?: PersonalMemoryMode;
 	review?: Partial<PersonalSettings["review"]>;
 	rollover?: Partial<PersonalSettings["rollover"]>;
 	backup?: Partial<PersonalSettings["backup"]>;
@@ -350,7 +377,7 @@ export interface PersonalEventRecord {
  * - `personal-status` → `{ status }`
  * - `personal-setup` `{ about? }`: create or repair the profile layout (idempotent) and enable. `about` = the initial About-you text (else the template). → `{ status }`. Needs a write (paired) device.
  * - `personal-enable` / `personal-disable` → `{ status }`. Disable stops the session and every background job and keeps all memory, history and settings.
- * - `personal-control` `{ action }`: `start`, `stop` (graceful: retain + consolidate), `restart` (rollover now, with a handoff). → `{ status }`
+ * - `personal-control` `{ action }`: `start`, `stop` (graceful: retain + consolidate), `restart` (rollover now, with a handoff; in chat-tree mode the session restarts without one: the chat continues). → `{ status }`
  * - `personal-backup-now` → `{ ok, error?, status }`. Makes a backup now, even when nothing changed since the last. Answers when it is done; a backup that fails is `ok: false` with its `error` (and `status.backups` has it too). Refused while a backup is already running. Optional: a companion that predates it answers an error.
  * - `personal-settings-get` → `{ settings, mcpServers }` (`mcpServers` = server names in the profile's `mcp.json`, for the source picker)
  * - `personal-settings-set` `{ patch }` → `{ settings, mcpServers }`
@@ -466,6 +493,8 @@ export type PersonalAnswer<T extends PersonalRequest["t"]> = Extract<PersonalRep
 export interface PersonalHostsFields {
 	/** The companion serves the `personal-*` requests. */
 	canPersonal?: boolean;
+	/** The companion can run the Personal agent in chat-tree mode (`PersonalSettings.memoryMode`); the app offers the choice only when this is true. */
+	canPersonalChatTree?: boolean;
 	/** `PersonalStatus.rev`, so a client refetches only when it moved. Present while the agent is enabled. */
 	personalRev?: number;
 }

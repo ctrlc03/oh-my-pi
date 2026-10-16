@@ -215,3 +215,17 @@ export function setContextHistoryIndex(message: ContextHistoryIndexCarrier, inde
 export function clearContextHistoryIndex(message: ContextHistoryIndexCarrier): void {
 	delete message[kContextHistoryIndex];
 }
+
+/**
+ * Marks a wire text block that asked for a prompt-cache mark right after it ({@link TextContent.cacheBoundary}).
+ * Symbol-keyed so it never reaches the wire body; the Anthropic converter turns it into a `cache_control` breakpoint.
+ */
+export const kCacheBoundary = Symbol("provider.block.cacheBoundary");
+
+/** Carries the cache-boundary marker without exposing a string-keyed property. */
+export type CacheBoundaryCarrier = object & { [kCacheBoundary]?: true };
+
+/** True when the wire block asked for a cache mark after it. */
+export function hasCacheBoundary(block: CacheBoundaryCarrier | null | undefined): boolean {
+	return block?.[kCacheBoundary] === true;
+}

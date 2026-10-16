@@ -47,6 +47,7 @@ import {
 	type PersonalAboutVersion,
 	type PersonalChangeKind,
 	type PersonalChanged,
+	type PersonalChatTreeStatus,
 	type PersonalDigest,
 	type PersonalDiffLine,
 	type PersonalEventRecord,
@@ -117,6 +118,8 @@ export interface MockPersonalOptions {
 	loginFile?: string;
 	/** While this file exists, the enabled agent's run is `failed` (checked every 2 s); removing it starts the session again. */
 	failFile?: string;
+	/** Advertise `canPersonalChatTree` (default true); false stands for a companion that predates chat-tree mode. */
+	chatTree?: boolean;
 }
 
 /** A copy of everything the mock holds, for tests and demos. */
@@ -139,7 +142,7 @@ export interface MockPersonalState {
 
 export interface MockPersonal {
 	/** Fields the mock companion's `hosts` frame carries: `personalRev` only while the agent is enabled. */
-	capabilities(): { canPersonal: true; personalRev?: number };
+	capabilities(): { canPersonal: true; canPersonalChatTree?: true; personalRev?: number };
 	handles(frame: CompanionRequest): frame is PersonalRequest;
 	/** Answers one request. Throws `Error(message)` for a refusal; the mock companion sends it as `{ t: "error", reqId, message }`. */
 	answer(frame: PersonalRequest): PersonalReply;
@@ -297,6 +300,7 @@ export function createMockPersonal(options: MockPersonalOptions): MockPersonal {
 		limits: { ...PERSONAL_DEFAULTS.limits },
 		review: { ...PERSONAL_DEFAULTS.review },
 		rollover: { ...PERSONAL_DEFAULTS.rollover },
+		memoryMode: PERSONAL_DEFAULTS.memoryMode,
 		backup: { folder: null },
 		sources: [],
 	};
@@ -938,6 +942,18 @@ export function createMockPersonal(options: MockPersonalOptions): MockPersonal {
 		} else setRun("stopped");
 	}
 
+	/** What `personal-chat/status.json` would say: a chat that grows with the clock, a view in its 64-128 KB sawtooth, a few lines to summarise. */
+	function chatStats(): PersonalChatTreeStatus {
+		const seconds = Math.floor((clock() - t0) / 1000);
+		const messages = 1_204 + Math.floor(seconds / 4);
+		return {
+			messages,
+			nodesPending: 3 + (seconds % 5),
+			viewBytes: 64_000 + ((messages * 140) % 64_000),
+			compactionsFailed: 1,
+		};
+	}
+
 	function status(): PersonalStatus {
 		const t = clock();
 		const dayStart = new Date(t);
@@ -995,13 +1011,14 @@ export function createMockPersonal(options: MockPersonalOptions): MockPersonal {
 				...(skipped ? { skipped } : {}),
 				nextAt: enabled && settings.review.enabled ? nextOccurrence(t, settings.review.time) : null,
 			},
-			nextRolloverAt: live ? nextOccurrence(t, settings.rollover.time) : null,
+			nextRolloverAt: live && settings.memoryMode !== "chat-tree" ? nextOccurrence(t, settings.rollover.time) : null,
 			counts: {
 				questions: inbox.filter(item => item.kind === "question" && item.state === "open").length,
 				proposals: proposals.filter(p => p.status === "pending").length,
 				digests: digests.filter(d => !d.read).length,
 			},
 			rev,
+			...(enabled && settings.memoryMode === "chat-tree" ? { chatTree: chatStats() } : {}),
 			...(run === "failed"
 				? { error: "omp exited with code 1: the profile's models.yml names a model that does not exist." }
 				: {}),
@@ -1038,6 +1055,11 @@ export function createMockPersonal(options: MockPersonalOptions): MockPersonal {
 		if (patch.review?.time !== undefined) next.review.time = time(patch.review.time, "review");
 		if (patch.review?.budgetUsd !== undefined) next.review.budgetUsd = money(patch.review.budgetUsd, "review budget");
 		if (patch.rollover?.time !== undefined) next.rollover.time = time(patch.rollover.time, "rollover");
+		if (patch.memoryMode !== undefined) {
+			if (patch.memoryMode !== "recall" && patch.memoryMode !== "chat-tree")
+				throw new Error('The memory mode must be "recall" or "chat-tree".');
+			next.memoryMode = patch.memoryMode;
+		}
 		if (patch.backup?.folder !== undefined) {
 			const folder = patch.backup.folder;
 			if (
@@ -1240,7 +1262,10 @@ export function createMockPersonal(options: MockPersonalOptions): MockPersonal {
 			case "personal-settings-set": {
 				const next = validate(frame.patch);
 				if (JSON.stringify(next) !== JSON.stringify(settings)) {
+					const switched = next.memoryMode !== settings.memoryMode;
 					settings = next;
+					// The live session restarts to take the other memory mode, as the companion does once it is idle.
+					if (switched && isLive() && login === "ready") begin(true);
 					changed("status", "settings");
 				}
 				return { t: frame.t, reqId, settings: structuredClone(settings), mcpServers: [...MCP_SERVERS] };
@@ -1519,7 +1544,11 @@ export function createMockPersonal(options: MockPersonalOptions): MockPersonal {
 	}
 
 	return {
-		capabilities: () => ({ canPersonal: true, ...(enabled ? { personalRev: rev } : {}) }),
+		capabilities: () => ({
+			canPersonal: true,
+			...(options.chatTree === false ? {} : { canPersonalChatTree: true as const }),
+			...(enabled ? { personalRev: rev } : {}),
+		}),
 		handles: (frame): frame is PersonalRequest => frame.t.startsWith("personal-"),
 		answer,
 		state: () => ({

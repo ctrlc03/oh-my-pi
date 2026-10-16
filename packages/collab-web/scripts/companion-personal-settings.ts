@@ -1,8 +1,8 @@
 /**
  * The Personal agent's settings frames (`personal-settings-get` / `-set`): what the owner may change from the
- * app (spend limits, review and rollover times, the backup folder, the list of sources), validated here, kept
- * in `state.json`, and mirrored into the profile's `config.yml` so the next session launch enforces the same
- * limits. A running session keeps the limits it started with until its next rollover.
+ * app (spend limits, review and rollover times, the memory mode, the backup folder, the list of sources), validated here,
+ * kept in `state.json`, and mirrored into the profile's `config.yml` so the next session launch enforces the same
+ * limits. A running session keeps the limits it started with until its next rollover or restart.
  *
  * Errors are thrown as `Error`; the companion answers them as `{ t: "error", reqId, message }`.
  */
@@ -18,6 +18,7 @@ import type {
 	PersonalSettingsPatch,
 	PersonalSource,
 } from "@oh-my-pi/pi-wire/personal";
+import { PERSONAL_DEFAULTS } from "@oh-my-pi/pi-wire/personal";
 import { MAX_EVENT_SOURCE_CHARS } from "@oh-my-pi/pi-wire/personal-ipc";
 import type { PersonalPaths, PersonalStateStore } from "./companion-personal-store";
 
@@ -165,9 +166,15 @@ export function mergeSettings(
 		rollover: {
 			time: rollover.time === undefined ? current.rollover.time : time(rollover.time, "the rollover time"),
 		},
+		memoryMode: current.memoryMode ?? PERSONAL_DEFAULTS.memoryMode,
 		backup: { folder: current.backup.folder },
 		sources: current.sources,
 	};
+	if (patch.memoryMode !== undefined) {
+		if (patch.memoryMode !== "recall" && patch.memoryMode !== "chat-tree")
+			throw new Error('the memory mode must be "recall" or "chat-tree"');
+		next.memoryMode = patch.memoryMode;
+	}
 	if (review.enabled !== undefined) {
 		if (typeof review.enabled !== "boolean") throw new Error("review.enabled must be true or false");
 		next.review.enabled = review.enabled;

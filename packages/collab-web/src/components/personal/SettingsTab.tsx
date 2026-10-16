@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { relTime } from "../../lib/format";
 import {
 	type FormGroup,
+	chatTreeLine,
 	formFromSettings,
 	groupChange,
 	groupDirty,
@@ -19,7 +20,7 @@ import { HomeGate, QueryView, useAction } from "./shared";
 import "./agent.css";
 
 /** What the companion answers to a settings request: the settings, and the MCP servers the profile's `mcp.json` names. */
-interface Snapshot {
+export interface Snapshot {
 	settings: PersonalSettings;
 	mcpServers: string[];
 }
@@ -105,7 +106,7 @@ function SaveBar({
 	);
 }
 
-function SettingsForms({ answer }: { answer: Snapshot }): ReactNode {
+export function SettingsForms({ answer }: { answer: Snapshot }): ReactNode {
 	const personal = usePersonal();
 	const [snap, setSnap] = useState(answer);
 	const [form, setForm] = useState(() => formFromSettings(answer.settings));
@@ -152,6 +153,8 @@ function SettingsForms({ answer }: { answer: Snapshot }): ReactNode {
 
 	const edit = (patch: Partial<SettingsForm>): void => setForm(prev => ({ ...prev, ...patch }));
 	const { limits, review, backup } = PERSONAL_DEFAULTS;
+	const canChatTree = personal.home.computer?.snap.canPersonalChatTree === true;
+	const chatTreeOn = canChatTree && form.memoryMode === "chat-tree";
 	const bars = { form, saved: snap.settings, onSave: save };
 
 	return (
@@ -202,19 +205,46 @@ function SettingsForms({ answer }: { answer: Snapshot }): ReactNode {
 				<SaveBar group="review" {...bars} />
 			</SettingsGroup>
 
-			<SettingsGroup title="Rollover">
-				<SettingsRow
-					label="Daily rollover"
-					hint={`Local time. ${PERSONAL_DEFAULTS.rollover.time} by default. The agent moves to a fresh session when it is idle; the thread in the app continues.`}
-				>
-					<Time
-						label="Rollover time"
-						value={form.rolloverTime}
-						onChange={rolloverTime => edit({ rolloverTime })}
-					/>
-				</SettingsRow>
-				<SaveBar group="rollover" {...bars} />
-			</SettingsGroup>
+			{canChatTree && (
+				<SettingsGroup title="Memory mode">
+					<SettingsRow
+						label="How the agent remembers"
+						hint="Switching restarts the agent when it is idle. Nothing is deleted either way."
+					>
+						<Choice
+							label="Memory mode"
+							value={form.memoryMode}
+							options={[
+								{ value: "recall", label: "Daily sessions with recall" },
+								{ value: "chat-tree", label: "One endless chat" },
+							]}
+							onChange={memoryMode => edit({ memoryMode })}
+						/>
+					</SettingsRow>
+					{status?.chatTree !== undefined && (
+						<div className="sh-field-hint" role="status">
+							{chatTreeLine(status.chatTree)}
+						</div>
+					)}
+					<SaveBar group="memory" {...bars} />
+				</SettingsGroup>
+			)}
+
+			{!chatTreeOn && (
+				<SettingsGroup title="Rollover">
+					<SettingsRow
+						label="Daily rollover"
+						hint={`Local time. ${PERSONAL_DEFAULTS.rollover.time} by default. The agent moves to a fresh session when it is idle; the thread in the app continues.`}
+					>
+						<Time
+							label="Rollover time"
+							value={form.rolloverTime}
+							onChange={rolloverTime => edit({ rolloverTime })}
+						/>
+					</SettingsRow>
+					<SaveBar group="rollover" {...bars} />
+				</SettingsGroup>
+			)}
 
 			<SettingsGroup title="Backups">
 				<SettingsRow

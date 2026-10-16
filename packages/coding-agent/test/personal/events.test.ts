@@ -40,7 +40,16 @@ interface Harness {
 	delivered: { message: PersonalEventMessage; delivery: PersonalEventDelivery }[];
 	receipts: { id: string; outcome: PersonalReceiptOutcome; detail?: string }[];
 	answered: string[];
-	state: { busy: boolean; capped: boolean; exits: number; failDeliveries: number; now: number; seen: string[] };
+	notes: string[];
+	state: {
+		busy: boolean;
+		capped: boolean;
+		exits: number;
+		failDeliveries: number;
+		failNotes: number;
+		now: number;
+		seen: string[];
+	};
 	inbox: string;
 	claimed: string;
 }
@@ -63,12 +72,14 @@ function harness(limits: { perSource?: number; total?: number } = {}): Harness {
 		capped: false,
 		exits: 0,
 		failDeliveries: 0,
+		failNotes: 0,
 		now: 1_760_000_000_000,
 		seen: [] as string[],
 	};
 	const delivered: Harness["delivered"] = [];
 	const receipts: Harness["receipts"] = [];
 	const answered: string[] = [];
+	const notes: string[] = [];
 	const host: PersonalEventsHost = {
 		runDir: path.join(root, "run"),
 		agentDir: path.join(root, "agent"),
@@ -94,6 +105,13 @@ function harness(limits: { perSource?: number; total?: number } = {}): Harness {
 		maxPerSourcePerHour: () => limits.perSource ?? 4,
 		maxPerHour: () => limits.total ?? 12,
 		now: () => state.now,
+		note: async text => {
+			if (state.failNotes > 0) {
+				state.failNotes -= 1;
+				throw new Error("chat is not open");
+			}
+			notes.push(text);
+		},
 	};
 	return {
 		host,
@@ -101,6 +119,7 @@ function harness(limits: { perSource?: number; total?: number } = {}): Harness {
 		delivered,
 		receipts,
 		answered,
+		notes,
 		state,
 		inbox: path.join(root, "run", INBOX_DIR),
 		claimed: path.join(root, "run", CLAIMED_DIR, "sess-1"),
@@ -331,6 +350,86 @@ describe("PersonalEventReceiver", () => {
 		await h.receiver.tick();
 		expect(await listDir(h.inbox)).toEqual([]);
 		expect(h.receipts.map(r => [r.id, r.outcome])).toEqual([["e1", "failed"]]);
+	});
+
+	describe("control note", () => {
+		async function putNote(h: Harness, body = "note\nbuy milk"): Promise<void> {
+			await Bun.write(path.join(root, "agent", PERSONAL_OWNER_KEY_FILE), KEY);
+			const control: PersonalEvent = {
+				...ANSWER,
+				id: "n1",
+				source: "owner-control",
+				kind: "control",
+				body,
+				ref: undefined,
+			};
+			await put(h, "0001.json", { ...control, mac: signPersonalEvent(KEY, control) });
+		}
+
+		it("logs the note, then removes the claimed file and receipts it", async () => {
+			const h = harness();
+			await putNote(h);
+			let claimedDuringNote: string[] = [];
+			const note = h.host.note;
+			h.host.note = async text => {
+				claimedDuringNote = await listDir(h.claimed);
+				await note?.call(h.host, text);
+			};
+			await h.receiver.tick();
+			expect(h.notes).toEqual(["buy milk"]);
+			expect(claimedDuringNote).toEqual(["0001.json"]);
+			expect(await listDir(h.claimed)).toEqual([]);
+			expect(await listDir(h.inbox)).toEqual([]);
+			expect(h.receipts).toEqual([{ id: "n1", outcome: "delivered", detail: "noted" }]);
+		});
+
+		it("returns a note that failed to the inbox, then logs it on the retry", async () => {
+			const h = harness();
+			await putNote(h);
+			h.state.failNotes = 1;
+			await h.receiver.tick();
+			expect(await listDir(h.inbox)).toEqual(["0001.json"]);
+			expect(await listDir(h.claimed)).toEqual([]);
+			expect(h.receipts).toEqual([]);
+			await h.receiver.tick();
+			expect(h.notes).toEqual(["buy milk"]);
+			expect(await listDir(h.inbox)).toEqual([]);
+			expect(h.receipts).toEqual([{ id: "n1", outcome: "delivered", detail: "noted" }]);
+		});
+
+		it("drops a note that keeps failing with a failed receipt after the attempt limit", async () => {
+			const h = harness();
+			await putNote(h);
+			h.state.failNotes = 2;
+			await h.receiver.tick();
+			expect(await listDir(h.inbox)).toEqual(["0001.json"]);
+			await h.receiver.tick();
+			expect(await listDir(h.inbox)).toEqual([]);
+			expect(await listDir(h.claimed)).toEqual([]);
+			expect(h.notes).toEqual([]);
+			expect(h.receipts).toEqual([{ id: "n1", outcome: "failed", detail: "chat is not open" }]);
+		});
+
+		it("refuses an empty note, an unsigned note, and any note when the host has no chat", async () => {
+			const h = harness();
+			await putNote(h, "note\n  ");
+			await h.receiver.tick();
+			expect(h.receipts.map(r => [r.id, r.outcome, r.detail])).toEqual([["n1", "refused", "an empty note"]]);
+			expect(await listDir(h.claimed)).toEqual([]);
+
+			const recall = harness();
+			delete recall.host.note;
+			await putNote(recall);
+			await recall.receiver.tick();
+			expect(recall.receipts.map(r => [r.id, r.outcome])).toEqual([["n1", "refused"]]);
+			expect(recall.notes).toEqual([]);
+
+			const unsigned = harness();
+			await put(unsigned, "0001.json", { ...ANSWER, id: "n2", kind: "control", body: "note\nx", ref: undefined });
+			await unsigned.receiver.tick();
+			expect(unsigned.receipts.map(r => [r.id, r.outcome])).toEqual([["n2", "refused"]]);
+			expect(unsigned.notes).toEqual([]);
+		});
 	});
 
 	it("lets only one of two sessions claim a file", async () => {

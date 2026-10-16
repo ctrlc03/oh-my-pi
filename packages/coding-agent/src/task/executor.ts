@@ -54,6 +54,7 @@ import { IrcBus } from "../irc/bus";
 import type { MCPManager } from "../mcp/manager";
 import type { MnemopiSessionState } from "../mnemopi/state";
 import { initializeExtensions } from "../modes/runtime-init";
+import { chatTreeSubagentOverrides } from "../personal/chat-tree/mode";
 import subagentAsyncPendingTemplate from "../prompts/system/subagent-async-pending.md" with { type: "text" };
 import subagentSystemPromptTemplate from "../prompts/system/subagent-system-prompt.md" with { type: "text" };
 import submitReminderTemplate from "../prompts/system/subagent-yield-reminder.md" with { type: "text" };
@@ -1155,6 +1156,9 @@ export function createSubagentSettings(
 			"compaction.thresholdTokens": inheritedRootThresholds.thresholdTokens,
 			"compaction.modelThresholdsEnabled": inheritedRootThresholds.modelThresholdsEnabled,
 		}),
+		// The chat-tree memory mode switched compaction off on the main session only: a subagent has no chat to bound
+		// its context, so it gets its own compaction back.
+		...chatTreeSubagentOverrides(baseSettings),
 		// A subagent's thinking level is chosen at spawn (agent definition, `effort`, or this
 		// snapshot of the parent default); a later parent default edit must not re-steer it.
 		defaultThinkingLevel: cfgDefaultThinkingLevel.get(baseSettings),

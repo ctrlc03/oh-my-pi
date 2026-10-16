@@ -14,6 +14,7 @@ import type {
 	PersonalDigest,
 	PersonalEventRecord,
 	PersonalInboxItem,
+	PersonalMemoryMode,
 	PersonalProposal,
 	PersonalSettings,
 } from "@oh-my-pi/pi-wire/personal";
@@ -45,6 +46,10 @@ export interface PersonalPaths {
 	agentDb: string;
 	/** `P/agent/sessions`. */
 	sessionsDir: string;
+	/** `P/agent/personal-chat`: the endless chat of chat-tree mode (`main/`, `tree/`, `view.json`, `lock`, `status.json`); the session owns it, the companion only reads it. */
+	chatDir: string;
+	/** `P/agent/personal-chat/status.json`. */
+	chatStatusFile: string;
 	/** `P/agent/spend-ledger.jsonl`. */
 	ledgerFile: string;
 	/** `P/agent/collab-companion-personal-ipc.json`. */
@@ -80,6 +85,8 @@ export function personalPaths(configRoot: string): PersonalPaths {
 		mcpJson: path.join(agentDir, "mcp.json"),
 		agentDb: path.join(agentDir, "agent.db"),
 		sessionsDir: path.join(agentDir, "sessions"),
+		chatDir: path.join(agentDir, "personal-chat"),
+		chatStatusFile: path.join(agentDir, "personal-chat", "status.json"),
 		ledgerFile: path.join(agentDir, "spend-ledger.jsonl"),
 		ipcFile: path.join(agentDir, "collab-companion-personal-ipc.json"),
 		ownerKeyFile: path.join(agentDir, "collab-companion-personal-owner.key"),
@@ -229,6 +236,8 @@ export interface PersonalSessionRecord {
 	startedAt: number;
 	/** Counts rollovers: 1 for the first session. */
 	generation: number;
+	/** The memory mode the session was launched with; absent = `recall` (a session recorded before chat-tree mode existed). */
+	mode?: PersonalMemoryMode;
 }
 
 export interface PersonalBackupState {
@@ -277,6 +286,7 @@ export function defaultSettings(): PersonalSettings {
 			budgetUsd: PERSONAL_DEFAULTS.review.budgetUsd,
 		},
 		rollover: { time: PERSONAL_DEFAULTS.rollover.time },
+		memoryMode: PERSONAL_DEFAULTS.memoryMode,
 		backup: { folder: null },
 		sources: [],
 	};
@@ -328,6 +338,7 @@ export function parseState(raw: unknown): PersonalState {
 			limits: { ...base.settings.limits, ...settings.limits },
 			review: { ...base.settings.review, ...settings.review },
 			rollover: { ...base.settings.rollover, ...settings.rollover },
+			memoryMode: settings.memoryMode === "chat-tree" ? "chat-tree" : "recall",
 			backup: { ...base.settings.backup, ...settings.backup },
 			sources: Array.isArray(settings.sources) ? settings.sources : [],
 		},

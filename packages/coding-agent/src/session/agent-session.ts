@@ -460,6 +460,12 @@ import type { ShakeMode, ShakeResult } from "./shake-types";
 import { deliveredEventIds } from "../personal/events";
 import { HighStakesWatch, readRecordedStakesMode, STAKES_ENTRY_TYPE, STAKES_MARKER_TYPE } from "../high-stakes/watch";
 import { PersonalRuntime, personalRunDir } from "../personal/runtime";
+import type { CompactionTransport } from "../personal/chat-tree/compactor";
+import { COMPACTION_MAX_OUTPUT_TOKENS } from "../personal/chat-tree/constants";
+import { applyChatTreeSettings, chatTreeActive } from "../personal/chat-tree/mode";
+import { resolveChatTreeModel } from "../personal/chat-tree/model";
+import { ChatTreeSession } from "../personal/chat-tree/session";
+import { createCompactionTransport } from "../personal/chat-tree/transport";
 import { RollingSpendController } from "./rolling-spend";
 import { SpendCapController, type SpendCapLimits, type SpendCapStatus } from "./spend-cap";
 import { MODEL_MENTION_TAG_RE } from "@oh-my-pi/pi-tui/prompt/model-mention-syntax";
@@ -959,6 +965,8 @@ export class AgentSession implements SettingsScope {
 	#prWatchInstance: PrWatchManager | undefined;
 	/** The Personal agent runtime (docs/personal-agent.md); only a top-level session with `personal.enabled` has one. */
 	#personalInstance: PersonalRuntime | undefined;
+	/** The chat of the Personal `chat-tree` memory mode (docs/personal-chat-tree.md); only a top-level session in that mode has one. */
+	#chatTreeInstance: ChatTreeSession | undefined;
 	#workPoolYieldItems: readonly WorkPoolYieldItem[] = [];
 	/** Item set matching the last successfully rebuilt provider prompt. The base
 	 *  prompt starts consistent with the empty set; every later value is a
@@ -2707,6 +2715,7 @@ export class AgentSession implements SettingsScope {
 		if (readPersistedPrWatches(this.sessionManager.getBranch()).length > 0) this.prWatch.restore();
 		this.registerSessionChangeCallback(() => this.prWatch.sessionChanged());
 		this.#startPersonal(config);
+		this.#startChatTree(config);
 		this.#startHighStakesWatch(config);
 	}
 
@@ -4014,6 +4023,7 @@ export class AgentSession implements SettingsScope {
 		// Synchronous and before any await: the Personal turn guard must see which message started the turn
 		// before the tool calls it leads to are approved.
 		this.#personalInstance?.onAgentEvent(event);
+		this.#chatTreeInstance?.onAgentEvent(event);
 		const eventPromptGeneration = this.#promptGeneration;
 		if (event.type === "agent_end" && this.#activeAgentContinue) {
 			this.#activeAgentContinue.turnEnded = true;
@@ -5526,10 +5536,15 @@ export class AgentSession implements SettingsScope {
 
 	/** Persist a completed warm request as off-transcript usage so session totals include its cost. */
 	#recordCacheWarmUsage(message: AssistantMessage, extensionOverride: boolean): void {
+		this.#recordModelUsage(extensionOverride ? "cache-warm:extension-override" : "cache-warm", message);
+	}
+
+	/** Persist the usage of a side request (not part of the transcript) so session totals and spend caps include its cost. */
+	#recordModelUsage(purpose: string, message: AssistantMessage): void {
 		try {
 			this.sessionManager.appendModelUsage(
 				{
-					purpose: extensionOverride ? "cache-warm:extension-override" : "cache-warm",
+					purpose,
 					api: message.api,
 					provider: message.provider,
 					model: message.model,
@@ -5539,7 +5554,7 @@ export class AgentSession implements SettingsScope {
 				{ sessionId: this.sessionId, parentId: this.sessionManager.getLeafId() },
 			);
 		} catch (error) {
-			logger.debug("Failed to persist cache-warm usage", { error: String(error) });
+			logger.debug(`Failed to persist ${purpose} usage`, { error: String(error) });
 		}
 	}
 
@@ -6026,6 +6041,9 @@ export class AgentSession implements SettingsScope {
 			logger.warn("Active agent run still settling at dispose deadline", { error: String(error) });
 		}
 
+		// The chat closes after the run has settled: the last events of a turn are still being logged until then.
+		await this.#chatTreeInstance?.dispose();
+
 		// Event handlers can reopen the append writer while they persist their
 		// terminal message; that pipeline has drained (or hit the deadline).
 		// Raise the write barrier BEFORE the final close: a handler that
@@ -6246,6 +6264,11 @@ export class AgentSession implements SettingsScope {
 		return this.#personalInstance;
 	}
 
+	/** The chat of the `chat-tree` memory mode (top-level Personal live session); undefined otherwise. */
+	get chatTree(): ChatTreeSession | undefined {
+		return this.#chatTreeInstance;
+	}
+
 	/**
 	 * The high-stakes mode watch (top-level sessions): writes a visible marker when the mode the companion keeps for this
 	 * checkout changes. It reads one small file and does nothing while the companion has published nothing.
@@ -6279,6 +6302,104 @@ export class AgentSession implements SettingsScope {
 		watch.start();
 	}
 
+	/**
+	 * The `chat-tree` memory mode (docs/personal-chat-tree.md): every model call of the session is built from the chat's
+	 * view (see {@link ChatTreeSession.transformContext}), so the session's own history never grows the context.
+	 */
+	#startChatTree(config: AgentSessionConfig): void {
+		if ((config.agentKind ?? "main") !== "main" || (config.memoryTaskDepth ?? 0) !== 0) return;
+		if (!chatTreeActive(this.settings)) return;
+		applyChatTreeSettings(this.settings);
+		// A failed resolution is not remembered: the next use resolves again (the registry may have been populated since).
+		let compaction: Promise<{ modelKey: string; transport: CompactionTransport }> | undefined;
+		const chat = new ChatTreeSession({
+			settings: this.settings,
+			agentDir: this.settings.getAgentDir(),
+			cwd: () => this.sessionManager.getCwd(),
+			convertToLlm: messages => convertToLlm(messages),
+			turnModelKey: () => (this.model ? `${this.model.provider}/${this.model.id}` : undefined),
+			compaction: () => {
+				if (compaction) return compaction;
+				const resolving = (async () => {
+					const resolved = resolveChatTreeModel(this.settings, this.#modelRegistry.getAvailable(), this.model);
+					const model = resolved.model;
+					const thinking = resolved.thinkingLevel;
+					const transport = createCompactionTransport({
+						model: () => model,
+						buildContext: messages => this.agent.buildSideRequestContext(messages),
+						send: (context, signal, onStart) =>
+							this.#sendChatTreeRequest(model, thinking, context, signal, onStart),
+					});
+					return { modelKey: `${model.provider}/${model.id}`, transport };
+				})();
+				compaction = resolving;
+				resolving.catch(() => {
+					if (compaction === resolving) compaction = undefined;
+				});
+				return resolving;
+			},
+		});
+		this.#chatTreeInstance = chat;
+		const inner = this.agent.transformContext;
+		this.agent.transformContext = async (messages, signal) => {
+			const turn = await chat.transformContext(messages, signal);
+			return inner ? await inner(turn, signal) : turn;
+		};
+		this.addDisposer(this.agent.addBeforeModelCallHook(signal => chat.beforeModelCall(signal)));
+	}
+
+	/** One compaction request of the chat tree on its model: the text of the reply, `onStart` called when the response begins. */
+	async #sendChatTreeRequest(
+		model: Model,
+		thinking: ThinkingLevel | undefined,
+		context: Context,
+		signal: AbortSignal | undefined,
+		onStart: () => void,
+	): Promise<string> {
+		const cacheSessionId = this.sessionId;
+		const streamAbort = new AbortController();
+		const options = this.prepareSimpleStreamOptions(
+			{
+				apiKey: this.#modelRegistry.resolver(model, cacheSessionId),
+				sessionId: `${cacheSessionId}:chat-tree`,
+				parentSessionId: cacheSessionId,
+				promptCacheKey: this.getPromptCacheKeyForModel(model) ?? this.agent.sessionId,
+				preferWebsockets: this.preferWebsockets,
+				providerSessionState: this.#providerSessionState,
+				reasoning: thinking ? toReasoningEffort(thinking) : undefined,
+				disableReasoning: thinking ? shouldDisableReasoning(thinking) : true,
+				hideThinkingSummary: this.agent.hideThinkingSummary,
+				serviceTier: this.#models.effectiveServiceTier(model),
+				maxTokens: COMPACTION_MAX_OUTPUT_TOKENS,
+				signal: signal ? AbortSignal.any([signal, streamAbort.signal]) : streamAbort.signal,
+			},
+			model.provider,
+		);
+		let started = false;
+		try {
+			const stream = await this.#sideStreamFn(model, context, options);
+			for await (const event of stream) {
+				// The provider's `start` is pushed before the request is sent: the cache entry of the prefix is only being
+				// written once the response has content (§3.3), so that is what lets the calls that wait for it go.
+				if (!started && event.contentIndex !== undefined) {
+					started = true;
+					onStart();
+				}
+				if (event.type === "error") throw new Error(event.error.errorMessage || "The compaction call failed");
+				if (event.type === "done") {
+					this.#recordModelUsage("chat-tree-compaction", event.message);
+					const text = event.message.content
+						.flatMap(block => (block.type === "text" ? [block.text] : []))
+						.join("");
+					return this.#deobfuscateFromProvider(text);
+				}
+			}
+			throw new Error("The compaction call ended without a response");
+		} finally {
+			streamAbort.abort();
+		}
+	}
+
 	#startPersonal(config: AgentSessionConfig): void {
 		const personal = PersonalRuntime.createIf({
 			settings: this.settings,
@@ -6297,6 +6418,13 @@ export class AgentSession implements SettingsScope {
 						? { triggerTurn: true, deliverAs: "followUp" }
 						: { triggerTurn: false, deliverAs: "nextTurn" },
 				),
+			note: chatTreeActive(this.settings)
+				? async text => {
+						const chat = this.#chatTreeInstance;
+						if (!chat) throw new Error("The chat is not running in this session");
+						await chat.logNote(text);
+					}
+				: undefined,
 			// The graceful path is the mode's own shutdown (memory retained and consolidated); without a mode, dispose here.
 			requestExit: () => {
 				if (this.#extensionRunner) void this.#extensionRunner.shutdown();

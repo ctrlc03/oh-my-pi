@@ -6,7 +6,7 @@
  *
  *   bun scripts/mock-companion.ts [--port 7468] [--web http://localhost:3000/] [--dir /tmp/mock-companion] [--session-link <room link>]
  *                                 [--machine <name>] [--hosts 1,2,3] [--session-id <id>]
- *                                 [--personal fresh|enabled] [--personal-login ready|missing] [--stakes on|off] [--stakes-on 7,9] [--disk on|off] [--delete on|off]
+ *                                 [--personal fresh|enabled] [--personal-login ready|missing] [--personal-chat-tree on|off] [--stakes on|off] [--stakes-on 7,9] [--disk on|off] [--delete on|off]
  *
  * `--machine` names the computer and gives its sessions ids of their own (the way two real computers never share a session id,
  * though their processes may share an instance id: `inst-1` here and there); `--hosts` lists only those fixture sessions
@@ -42,7 +42,8 @@
  * digests, an inbox and events and a Personal session in the sidebar. `--personal-login ready|missing` (default `ready`) is the
  * Personal profile's login; with `missing` the agent stays stopped until the file `<--dir>/personal-login-ready` exists
  * (`touch` it, which stands for running `omp --profile personal login`). While the file `<--dir>/personal-failed` exists the
- * enabled agent's run is `failed` (the entry's Failed state); remove it and the session starts again.
+ * enabled agent's run is `failed` (the entry's Failed state); remove it and the session starts again. `--personal-chat-tree on|off`
+ * (default `on`) advertises `canPersonalChatTree`: Settings → Personal agent → Memory offers "One endless chat" and shows a fake chat's numbers.
  *
  * High-stakes sessions (./mock-stakes) are on unless `--stakes off` (an older companion: no capability, no chip, no toggle, no disabled
  * buttons). `--stakes-on 7,9` starts those fixture sessions high stakes (`api-pagination` is 7, the one `--session-link` opens). Every
@@ -400,6 +401,8 @@ if (personalLogin !== "ready" && personalLogin !== "missing")
 	throw new Error("--personal-login takes ready or missing");
 const personalLoginFile = path.join(dir, "personal-login-ready");
 const personalFailFile = path.join(dir, "personal-failed");
+const personalChatTree = flag("--personal-chat-tree", "on");
+if (personalChatTree !== "on" && personalChatTree !== "off") throw new Error("--personal-chat-tree takes on or off");
 if (personalMode !== "off")
 	await Promise.all([personalLoginFile, personalFailFile].map(file => fs.rm(file, { force: true })));
 const personal =
@@ -413,6 +416,7 @@ const personal =
 				setUp: personalMode === "enabled",
 				loginFile: personalLoginFile,
 				failFile: personalFailFile,
+				chatTree: personalChatTree === "on",
 				broadcastFrame: frame => {
 					for (const peer of peers) socket.send(frame, peer);
 				},

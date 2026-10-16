@@ -58,6 +58,8 @@ export interface PersonalRuntimeHost {
 	requestExit(): void;
 	/** Tear the session down and end the process: the fallback when the graceful exit did not happen. */
 	forceExit(): Promise<void>;
+	/** Log text as a `note` message of the chat (`chat-tree` memory mode); absent in `recall`. */
+	note?(text: string): Promise<void>;
 	subscribeRunState(listener: (state: "running" | "idle") => void): () => void;
 	/** The companion's channel; defaults to the one published in `agentDir`. */
 	companion?: PersonalCompanion;
@@ -104,6 +106,7 @@ export class PersonalRuntime {
 				deliveredEventIds: () => host.deliveredEventIds(),
 				deliver: (message, delivery) => host.deliver(message, delivery),
 				exit: () => this.#exit(),
+				note: host.note && (text => host.note?.(text) ?? Promise.resolve()),
 				receipt: (eventId, outcome, detail) =>
 					this.companion.receipt({ sessionId: host.sessionId(), eventId, outcome, detail }),
 				answered: itemId => this.book.answered(itemId),

@@ -34,6 +34,8 @@ export const BUILTIN_TOOL_NAMES = [
 	"learn",
 	"manage_skill",
 	"watch_pr",
+	"zoom",
+	"date",
 ] as const;
 
 export type BuiltinToolName = (typeof BUILTIN_TOOL_NAMES)[number];

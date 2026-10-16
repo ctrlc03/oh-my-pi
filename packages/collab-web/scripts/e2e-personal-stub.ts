@@ -5,7 +5,9 @@
  * the tools offered). No credentials, no network beyond loopback.
  *
  * A request that offers no tools is not the agent loop (a title, a summary): it gets a plain text reply and
- * never consumes the queue. Everything else takes the first queued reply whose `when` accepts it, or `idle`.
+ * never consumes the queue. Everything else takes the first queued reply whose `when` accepts it, or `idle`; except a
+ * chat-tree compaction (a side request that offers the tools of a turn, see {@link isCompaction}), which is always answered
+ * by the compaction reply (a short line, `setCompaction` changes it) and never takes a queued turn reply.
  */
 
 /** One tool call of a scripted reply. */
@@ -27,6 +29,8 @@ export interface StubReply {
 export interface StubMessage {
 	role: string;
 	text: string;
+	/** The text parts of the content, one per block (a string content is one part). */
+	blocks: string[];
 	toolCalls: StubToolCall[];
 }
 
@@ -39,14 +43,34 @@ export interface StubRequest {
 	/** The system (or developer) messages, joined. */
 	system: string;
 	messages: StubMessage[];
+	/** `messages` without the system (developer) ones: what the conversation holds. */
+	conversation: StubMessage[];
 	/** Names of the tools offered. */
 	toolNames: string[];
 	/** The description of each tool offered, by name. */
 	toolDescriptions: Record<string, string>;
 	/** Text of the last user message. */
 	lastUser: string;
+	/** The text blocks of the last user message, one per content block. */
+	lastUserBlocks: string[];
 	/** Everything the model was shown, as one string: for `toContain` checks. */
 	transcript: string;
+}
+
+/** The last user message of the request ends with a chat-tree compaction task (`Compaction: compress message …`, `Compaction: merge lines …`). */
+export function isCompaction(request: StubRequest): boolean {
+	return request.lastUserBlocks.at(-1)?.startsWith("Compaction:") === true;
+}
+
+/** A line of at most 512 bytes for the compaction task `task`: names what it summarises, so a test can find it in the view. */
+export function defaultCompactionReply(task: string): string {
+	const leaf = /^Compaction: compress message (\d+)/.exec(task);
+	if (leaf) {
+		const input = /<input>\n(?:\w+: )?([^]*?)\n<\/input>/.exec(task)?.[1] ?? "";
+		return `SUMMARY-${leaf[1]}: ${input.slice(0, 60).replace(/\s+/g, " ")}`;
+	}
+	const merge = /^Compaction: merge lines (\S+) and (\S+)/.exec(task);
+	return merge ? `MERGED ${merge[1]} ${merge[2]}` : "SUMMARY";
 }
 
 /** Tool results the model was shown after the last message that contains `marker`: those of the turn that marker started. */
@@ -71,6 +95,8 @@ export interface StubModel {
 	enqueue(reply: StubReply | ((request: StubRequest) => StubReply), when?: (request: StubRequest) => boolean): void;
 	/** The reply for an agent-loop request that finds the queue empty; text "Noted." by default. */
 	setIdle(reply: StubReply): void;
+	/** The reply to a chat-tree compaction (see {@link isCompaction}), from its task text; {@link defaultCompactionReply} by default. */
+	setCompaction(reply: (task: string, request: StubRequest) => StubReply): void;
 	/** Drop queued replies and recorded requests. */
 	reset(): void;
 	/** The requests of the agent loop (those that offer tools), oldest first; titles, summaries and memory extraction are left out. */
@@ -105,6 +131,12 @@ export function stubModelsYml(stub: StubModel, usdPerMillionTokens = 0): string 
 	].join("\n");
 }
 
+function blocksOf(content: unknown): string[] {
+	if (typeof content === "string") return [content];
+	if (!Array.isArray(content)) return [];
+	return content.map(part => (typeof part === "object" && part !== null && "text" in part ? String(part.text) : ""));
+}
+
 function flatten(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
@@ -136,6 +168,7 @@ function record(n: number, body: Record<string, unknown>): StubRequest {
 	const messages: StubMessage[] = raw.map(message => ({
 		role: String(message.role ?? ""),
 		text: flatten(message.content),
+		blocks: blocksOf(message.content),
 		toolCalls: parseCalls(message),
 	}));
 	const tools = (Array.isArray(body.tools) ? body.tools : []) as Array<{
@@ -145,18 +178,21 @@ function record(n: number, body: Record<string, unknown>): StubRequest {
 		.filter(message => message.role === "system" || message.role === "developer")
 		.map(message => message.text)
 		.join("\n");
-	const lastUser = messages.findLast(message => message.role === "user")?.text ?? "";
+	const lastUserMessage = messages.findLast(message => message.role === "user");
+	const lastUser = lastUserMessage?.text ?? "";
 	return {
 		n,
 		at: Date.now(),
 		model: String(body.model ?? ""),
 		system,
 		messages,
+		conversation: messages.filter(message => message.role !== "system" && message.role !== "developer"),
 		toolNames: tools.map(tool => String(tool.function?.name ?? "")),
 		toolDescriptions: Object.fromEntries(
 			tools.map(tool => [String(tool.function?.name ?? ""), String(tool.function?.description ?? "")]),
 		),
 		lastUser,
+		lastUserBlocks: lastUserMessage?.blocks ?? [],
 		transcript: messages.map(message => `${message.role}: ${message.text}`).join("\n"),
 	};
 }
@@ -205,6 +241,7 @@ export function startStubModel(): StubModel {
 		resolve: (request: StubRequest) => void;
 	}> = [];
 	let idle: StubReply = { text: "Noted." };
+	let compaction: (task: string, request: StubRequest) => StubReply = task => ({ text: defaultCompactionReply(task) });
 	let calls = 0;
 
 	const server = Bun.serve({
@@ -224,7 +261,9 @@ export function startStubModel(): StubModel {
 				else waiters.push(waiter);
 			}
 			let reply: StubReply = { text: "ok" };
-			if (entry.toolNames.length > 0) {
+			if (isCompaction(entry)) {
+				reply = compaction(entry.lastUserBlocks.at(-1) ?? "", entry);
+			} else if (entry.toolNames.length > 0) {
 				const at = queue.findIndex(item => (item.when ? item.when(entry) : true));
 				const picked = at >= 0 ? queue.splice(at, 1)[0]!.reply : idle;
 				reply = typeof picked === "function" ? picked(entry) : picked;
@@ -276,10 +315,14 @@ export function startStubModel(): StubModel {
 		setIdle(reply) {
 			idle = reply;
 		},
+		setCompaction(reply) {
+			compaction = reply;
+		},
 		reset() {
 			queue.length = 0;
 			requests.length = 0;
 			idle = { text: "Noted." };
+			compaction = task => ({ text: defaultCompactionReply(task) });
 		},
 		agentRequests() {
 			return requests.filter(entry => entry.toolNames.length > 0);

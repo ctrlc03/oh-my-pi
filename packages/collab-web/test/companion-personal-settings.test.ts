@@ -132,6 +132,31 @@ describe("companion-personal-settings", () => {
 		});
 	});
 
+	it("keeps the memory mode: recall by default, chat-tree on request, nothing else", async () => {
+		const h = await harness(gmail);
+		expect(h.service.get().memoryMode).toBe("recall");
+		for (const memoryMode of ["endless", "", null, 1, true]) {
+			await expect(h.set({ memoryMode } as unknown as PersonalSettingsPatch)).rejects.toThrow("memory mode");
+		}
+		expect(h.applied).toEqual([]);
+		expect(await h.set({ memoryMode: "chat-tree" })).toMatchObject({ settings: { memoryMode: "chat-tree" } });
+		expect(h.applied.map(settings => settings.memoryMode)).toEqual(["chat-tree"]);
+		// Other patches leave it alone; it survives a reopen.
+		await h.set({ limits: { dayUsd: 1 } });
+		expect(h.service.get().memoryMode).toBe("chat-tree");
+		expect((await openPersonalState(h.paths.stateFile)).read().settings.memoryMode).toBe("chat-tree");
+		expect(await h.set({ memoryMode: "recall" })).toMatchObject({ settings: { memoryMode: "recall" } });
+	});
+
+	it("reads an older state.json without a memory mode as recall", async () => {
+		const h = await harness(gmail);
+		await fs.mkdir(h.paths.personalDir, { recursive: true });
+		await fs.writeFile(h.paths.stateFile, JSON.stringify({ v: 1, settings: { limits: { dayUsd: 3, monthUsd: 9 } } }));
+		const reopened = await openPersonalState(h.paths.stateFile);
+		expect(reopened.read().settings.memoryMode).toBe("recall");
+		expect(reopened.read().settings.limits).toEqual({ dayUsd: 3, monthUsd: 9 });
+	});
+
 	describe("backup folder", () => {
 		it("must be absolute, outside the config folder, and creatable", async () => {
 			const h = await harness(gmail);

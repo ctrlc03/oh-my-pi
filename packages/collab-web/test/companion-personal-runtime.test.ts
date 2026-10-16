@@ -20,8 +20,10 @@ import {
 	type OwnerPush,
 	type PersonalEnv,
 	type Personal,
+	ROLLOVER_SESSION_BYTES,
 	rolloverDue,
 } from "../scripts/companion-personal";
+import { NOTE_CHUNK_CHARS, NOTE_CONTROL_PREFIX } from "../scripts/companion-personal-chat";
 import { type PersonalPaths, personalPaths } from "../scripts/companion-personal-store";
 import { parseScheduleInput } from "../scripts/companion-schedule";
 import { createSessionOrg, type OrgFile } from "../scripts/companion-sessionorg";
@@ -41,6 +43,8 @@ const base: KeepAliveInput = {
 	nextStartAt: 0,
 	rolloverDue: false,
 	contextFull: false,
+	chatTree: false,
+	modeMismatch: false,
 };
 
 describe("keep-alive decision", () => {
@@ -133,6 +137,8 @@ const built: Personal[] = [];
 let drift: number;
 /** The session ignores `control exit`. */
 let deaf: boolean;
+/** Every event the simulated session took from the inbox, in order. */
+let consumed: PersonalEvent[];
 
 beforeEach(async () => {
 	root = await fs.mkdtemp(path.join(os.tmpdir(), "personal-runtime-"));
@@ -151,6 +157,7 @@ beforeEach(async () => {
 	counter = 0;
 	drift = 0;
 	deaf = false;
+	consumed = [];
 });
 
 afterEach(async () => {
@@ -198,6 +205,7 @@ async function simulateSession(): Promise<void> {
 	for (const name of names) {
 		const file = path.join(paths.inboxDir, name);
 		const event = parsePersonalEvent(JSON.parse(await Bun.file(file).text())) as PersonalEvent;
+		consumed.push(event);
 		const host = hosts[0];
 		if (event.kind === "rollover" && host !== undefined) {
 			const sessionFile = await findSessionFile(paths.sessionsDir, host.sessionId);
@@ -320,7 +328,7 @@ describe("with Personal never set up", () => {
 			expect(personal.enabled()).toBe(false);
 			expect(personal.exempt("anything")).toBe(false);
 			expect(personal.sessionDirs()).toEqual([path.join(root, "agent", "sessions")]);
-			expect(personal.hostsFields(true)).toEqual({ canPersonal: true });
+			expect(personal.hostsFields(true)).toEqual({ canPersonal: true, canPersonalChatTree: true });
 			expect(personal.hostsFields(false)).toEqual({});
 			personal.shutdown();
 		} finally {
@@ -607,7 +615,7 @@ describe("the owner's controls", () => {
 		expect(hosts).toEqual([]);
 		expect(unpublished).toEqual([paths.ipcFile, path.join(paths.agentDir, "collab-companion-ipc.json")]);
 		expect(personal.ipc.serving()).toBe(false);
-		expect(personal.hostsFields(true)).toEqual({ canPersonal: true });
+		expect(personal.hostsFields(true)).toEqual({ canPersonal: true, canPersonalChatTree: true });
 		expect(personal.exempt("sess-2")).toBe(false);
 		// Data stays; turning it on again repairs and publishes again.
 		expect(await Bun.file(paths.configYml).exists()).toBe(true);
@@ -878,5 +886,328 @@ describe("settling", () => {
 		await org.tick([listed("personal-s"), listed("plain-s")]);
 		expect(endedIds).not.toContain("personal-s");
 		expect(settled).not.toContain("personal-s");
+	});
+});
+
+describe("chat-tree mode", () => {
+	const quiet = { busy: false, inputRequired: false };
+
+	const patchSettings = async (personal: Personal, patch: Record<string, unknown>): Promise<void> => {
+		await request(personal, { t: "personal-settings-set", patch });
+	};
+
+	const settingsOf = async (personal: Personal) => {
+		const reply = await request(personal, { t: "personal-settings-get" });
+		if (reply.t !== "personal-settings-get") throw new Error("not settings");
+		return reply.settings;
+	};
+
+	/** The chat's log holds a message, so the stored handoff note is stale. */
+	const logMessage = async (): Promise<void> => {
+		const dir = path.join(paths.chatDir, "main");
+		await fs.mkdir(dir, { recursive: true });
+		await Bun.write(
+			path.join(dir, "2026-10-09.jsonl"),
+			`${JSON.stringify({ i: 0, kind: "user", text: "hello", size: 5, date: "2026-10-09" })}\n`,
+		);
+	};
+
+	it("takes no daily rollover, renews the session for a full context, and switches mode by restarting", () => {
+		const chat = { ...base, chatTree: true, live: quiet };
+		expect(keepAliveDecision({ ...chat, rolloverDue: true })).toBe("none");
+		expect(keepAliveDecision({ ...chat, contextFull: true })).toBe("renew");
+		expect(keepAliveDecision({ ...chat, contextFull: true, rolloverDue: true })).toBe("renew");
+		expect(keepAliveDecision({ ...chat, contextFull: true, live: { busy: true, inputRequired: false } })).toBe(
+			"none",
+		);
+		expect(keepAliveDecision({ ...chat, live: null })).toBe("start");
+		expect(keepAliveDecision({ ...base, live: quiet, modeMismatch: true })).toBe("rollover");
+		expect(keepAliveDecision({ ...chat, modeMismatch: true })).toBe("rollover");
+		expect(keepAliveDecision({ ...chat, modeMismatch: true, live: { busy: true, inputRequired: false } })).toBe(
+			"none",
+		);
+	});
+
+	it("advertises canPersonalChatTree with canPersonal and nothing without it", async () => {
+		const personal = await build();
+		expect(personal.hostsFields(true)).toEqual({ canPersonal: true, canPersonalChatTree: true });
+		expect(personal.hostsFields(false)).toEqual({});
+	});
+
+	it("keeps the mode in the settings, the profile's config and the next launch, and refuses a bad one", async () => {
+		const personal = await build();
+		await setUp(personal);
+		expect((await settingsOf(personal)).memoryMode).toBe("recall");
+		await patchSettings(personal, { memoryMode: "chat-tree" });
+		expect((await settingsOf(personal)).memoryMode).toBe("chat-tree");
+		expect(Bun.YAML.parse(await Bun.file(paths.configYml).text())).toMatchObject({
+			personal: { memoryMode: "chat-tree" },
+		});
+		await expect(patchSettings(personal, { memoryMode: "endless" })).rejects.toThrow("memory mode");
+		expect((await settingsOf(personal)).memoryMode).toBe("chat-tree");
+
+		// A new runtime on the same folder reads it back, and its session starts in the mode.
+		const again = await build();
+		expect((await settingsOf(again)).memoryMode).toBe("chat-tree");
+		await again.tick([]);
+		await again.idle();
+		expect(launches[0]?.profile?.overlayYaml).toContain("memoryMode: chat-tree");
+		expect(again.deps.state.read().session?.mode).toBe("chat-tree");
+	});
+
+	it("takes no daily rollover and shows no rollover time", async () => {
+		const personal = await build();
+		await setUp(personal);
+		await patchSettings(personal, { memoryMode: "chat-tree", rollover: { time: "01:00" } });
+		await personal.tick([]);
+		await personal.idle();
+		await sessionFile("sess-1");
+		clock = local(10, 1, 30);
+		await personal.tick([...hosts]);
+		await personal.idle();
+		expect(launches).toHaveLength(1);
+		expect(consumed).toEqual([]);
+		expect(await personal.deps.stores.events.list()).toEqual([]);
+		expect((await statusOf(personal)).nextRolloverAt).toBeNull();
+		await patchSettings(personal, { memoryMode: "recall" });
+		expect((await statusOf(personal)).nextRolloverAt).toBeGreaterThan(clock);
+	});
+
+	it("restarts without a handoff and resumes the same omp session: the chat continues", async () => {
+		const personal = await build();
+		await setUp(personal);
+		await patchSettings(personal, { memoryMode: "chat-tree" });
+		await personal.tick([]);
+		await personal.idle();
+		await sessionFile("sess-1");
+		await request(personal, { t: "personal-control", action: "restart" });
+		expect(launches).toHaveLength(2);
+		expect(launches[1]).toMatchObject({ resume: "sess-1", prompt: undefined });
+		expect(consumed.map(event => [event.kind, event.body])).toEqual([["control", "exit"]]);
+		expect(personal.deps.state.read().handoff).toBeNull();
+		expect(personal.deps.state.read().session).toMatchObject({ sessionId: "sess-1", mode: "chat-tree" });
+	});
+
+	it("starts a fresh omp session, with no handoff and no note, when the session file is full; the chat stays", async () => {
+		const personal = await build();
+		await setUp(personal);
+		await patchSettings(personal, { memoryMode: "chat-tree" });
+		await personal.tick([]);
+		await personal.idle();
+		await logMessage();
+		const chatFile = path.join(paths.chatDir, "main", "2026-10-09.jsonl");
+		const chatBefore = await Bun.file(chatFile).text();
+		await personal.deps.state.update(s => ({ ...s, handoff: "stale note" }));
+		await fs.truncate(await sessionFile("sess-1"), ROLLOVER_SESSION_BYTES);
+
+		await personal.tick([...hosts]);
+		await personal.idle();
+		await simulateSession();
+		expect(launches).toHaveLength(2);
+		expect(launches[1]).toMatchObject({ resume: undefined, prompt: undefined });
+		expect(launches[1]?.profile?.overlayYaml).toContain("memoryMode: chat-tree");
+		expect(consumed.map(event => [event.kind, event.body])).toEqual([["control", "exit"]]);
+		expect(personal.deps.state.read().session).toMatchObject({ sessionId: "sess-2", mode: "chat-tree" });
+		expect(await Bun.file(chatFile).text()).toBe(chatBefore);
+
+		// The new session is small: the next poll leaves it be.
+		await personal.tick([...hosts]);
+		await personal.idle();
+		expect(launches).toHaveLength(2);
+	});
+
+	it("leaves a busy full session alone until it is idle", async () => {
+		const personal = await build();
+		await setUp(personal);
+		await patchSettings(personal, { memoryMode: "chat-tree" });
+		await personal.tick([]);
+		await personal.idle();
+		await fs.truncate(await sessionFile("sess-1"), ROLLOVER_SESSION_BYTES);
+		hosts[0]!.busy = true;
+		await personal.tick([...hosts]);
+		await personal.idle();
+		expect(launches).toHaveLength(1);
+		hosts[0]!.busy = false;
+		await personal.tick([...hosts]);
+		await personal.idle();
+		expect(launches).toHaveLength(2);
+		expect(launches[1]).toMatchObject({ resume: undefined, prompt: undefined });
+	});
+
+	it("switches the live session to the other mode by restarting it once it is idle", async () => {
+		const personal = await build();
+		await setUp(personal);
+		await personal.tick([]);
+		await personal.idle();
+		await sessionFile("sess-1");
+		expect(personal.deps.state.read().session?.mode).toBe("recall");
+
+		// recall → chat-tree: the old session writes its note (the chat's first message), the new one starts in the mode.
+		await patchSettings(personal, { memoryMode: "chat-tree" });
+		hosts[0]!.busy = true;
+		await personal.tick([...hosts]);
+		await personal.idle();
+		expect(launches).toHaveLength(1);
+		hosts[0]!.busy = false;
+		await personal.tick([...hosts]);
+		await personal.idle();
+		await simulateSession();
+		expect(launches).toHaveLength(2);
+		expect(launches[1]).toMatchObject({ resume: undefined, prompt: undefined });
+		expect(launches[1]?.profile?.overlayYaml).toContain("memoryMode: chat-tree");
+		expect(consumed.map(event => event.kind)).toEqual(["rollover", "control", "control"]);
+		const note = consumed[2]!;
+		expect(note).toMatchObject({ source: "companion", trust: "owner", body: "note\nHandoff: renew the passport." });
+		expect(note.mac).toBeDefined();
+		expect(personal.deps.state.read()).toMatchObject({
+			handoff: null,
+			session: { sessionId: "sess-2", mode: "chat-tree" },
+		});
+
+		// A poll that sees the session in the configured mode starts nothing.
+		await personal.tick([...hosts]);
+		await personal.idle();
+		expect(launches).toHaveLength(2);
+
+		// chat-tree → recall: no handoff is asked, a fresh session starts.
+		await sessionFile("sess-2");
+		consumed.length = 0;
+		await patchSettings(personal, { memoryMode: "recall" });
+		await personal.tick([...hosts]);
+		await personal.idle();
+		expect(launches).toHaveLength(3);
+		expect(launches[2]).toMatchObject({ resume: undefined, prompt: undefined });
+		expect(launches[2]?.profile?.overlayYaml).toContain("memoryMode: recall");
+		expect(consumed.map(event => [event.kind, event.body])).toEqual([["control", "exit"]]);
+		expect(personal.deps.state.read().session).toMatchObject({ sessionId: "sess-3", mode: "recall" });
+	});
+
+	it("hands the stored note to an empty chat on its first start, as signed `note` controls in order", async () => {
+		const personal = await build();
+		await setUp(personal);
+		await patchSettings(personal, { memoryMode: "chat-tree" });
+		const long = `${"a".repeat(NOTE_CHUNK_CHARS)}${"b".repeat(NOTE_CHUNK_CHARS)}c`;
+		await personal.deps.state.update(s => ({ ...s, handoff: long }));
+		await personal.tick([]);
+		await personal.idle();
+		await simulateSession();
+		expect(launches[0]).toMatchObject({ resume: undefined, prompt: undefined });
+		expect(consumed.map(event => event.kind)).toEqual(["control", "control", "control"]);
+		expect(consumed.every(event => event.trust === "owner" && event.mac !== undefined)).toBe(true);
+		expect(consumed.map(event => event.body.slice(0, NOTE_CONTROL_PREFIX.length))).toEqual([
+			"note\n",
+			"note\n",
+			"note\n",
+		]);
+		expect(consumed.map(event => event.body.slice(NOTE_CONTROL_PREFIX.length)).join("")).toBe(long);
+		expect(personal.deps.state.read().handoff).toBeNull();
+	});
+
+	it("keeps the stored note when it cannot be handed over, and hands it over on the next start", async () => {
+		const personal = await build();
+		await setUp(personal);
+		await patchSettings(personal, { memoryMode: "chat-tree" });
+		await personal.deps.state.update(s => ({ ...s, handoff: "renew the passport" }));
+		const key = await Bun.file(paths.ownerKeyFile).text();
+		await fs.rm(paths.ownerKeyFile);
+		await personal.tick([]);
+		await personal.idle();
+		await simulateSession();
+		expect(launches).toHaveLength(1);
+		expect(consumed).toEqual([]);
+		expect(personal.deps.state.read().handoff).toBe("renew the passport");
+
+		// The session dies; the next start still has the note and the chat is still empty.
+		await Bun.write(paths.ownerKeyFile, key);
+		hosts = [];
+		clock += 10 * 60_000;
+		await personal.tick([]);
+		await personal.idle();
+		await simulateSession();
+		expect(launches).toHaveLength(2);
+		expect(consumed.map(event => event.body)).toEqual(["note\nrenew the passport"]);
+		expect(personal.deps.state.read().handoff).toBeNull();
+	});
+
+	it("drops the stored note when the chat already has messages", async () => {
+		const personal = await build();
+		await setUp(personal);
+		await patchSettings(personal, { memoryMode: "chat-tree" });
+		await logMessage();
+		await personal.deps.state.update(s => ({ ...s, handoff: "stale note" }));
+		await personal.tick([]);
+		await personal.idle();
+		await simulateSession();
+		expect(consumed).toEqual([]);
+		expect(personal.deps.state.read().handoff).toBeNull();
+	});
+
+	it("sends no note in recall mode: the note is the first prompt as before", async () => {
+		const personal = await build();
+		await setUp(personal);
+		await personal.deps.state.update(s => ({ ...s, handoff: "check the tax mail" }));
+		await personal.tick([]);
+		await personal.idle();
+		await simulateSession();
+		expect(launches[0]?.prompt).toContain("check the tax mail");
+		expect(consumed).toEqual([]);
+	});
+
+	it("reports the chat's numbers only in chat-tree mode and only while status.json is readable", async () => {
+		const personal = await build();
+		await setUp(personal);
+		const stats = { messages: 1204, nodesBuilt: 1190, nodesPending: 14, viewBytes: 97_000, compactionsFailed: 2 };
+		const write = (value: unknown): Promise<number> =>
+			Bun.write(paths.chatStatusFile, typeof value === "string" ? value : JSON.stringify(value));
+		await fs.mkdir(paths.chatDir, { recursive: true });
+		await write({ ...stats, updatedAt: new Date(clock).toISOString() });
+		expect((await statusOf(personal)).chatTree).toBeUndefined();
+		await patchSettings(personal, { memoryMode: "chat-tree" });
+		expect((await statusOf(personal)).chatTree).toEqual({
+			messages: 1204,
+			nodesPending: 14,
+			viewBytes: 97_000,
+			compactionsFailed: 2,
+		});
+		await write("{ not json");
+		expect((await statusOf(personal)).chatTree).toBeUndefined();
+		await write({ ...stats, messages: "many" });
+		expect((await statusOf(personal)).chatTree).toBeUndefined();
+		await fs.rm(paths.chatStatusFile);
+		expect((await statusOf(personal)).chatTree).toBeUndefined();
+	});
+
+	it("tells the devices when the chat's numbers move, at most every few seconds", async () => {
+		const personal = await build();
+		await setUp(personal);
+		await patchSettings(personal, { memoryMode: "chat-tree" });
+		await personal.tick([]);
+		await personal.idle();
+		await personal.tick([...hosts]);
+		await personal.idle();
+		const numbers = { nodesBuilt: 5, nodesPending: 1, viewBytes: 70_000, compactionsFailed: 0 };
+		await fs.mkdir(paths.chatDir, { recursive: true });
+		await Bun.write(paths.chatStatusFile, JSON.stringify({ ...numbers, messages: 10 }));
+		const before = broadcasts.length;
+		clock += 10_000;
+		await personal.tick([...hosts]);
+		await personal.idle();
+		expect(broadcasts.length).toBe(before + 1);
+		expect(broadcasts.at(-1)).toMatchObject({ what: ["status"] });
+		// Unchanged numbers say nothing.
+		clock += 1_000;
+		await personal.tick([...hosts]);
+		await personal.idle();
+		expect(broadcasts.length).toBe(before + 1);
+		// Changed numbers inside the window wait for it.
+		await Bun.write(paths.chatStatusFile, JSON.stringify({ ...numbers, messages: 11 }));
+		clock += 1_000;
+		await personal.tick([...hosts]);
+		await personal.idle();
+		expect(broadcasts.length).toBe(before + 1);
+		clock += 5_000;
+		await personal.tick([...hosts]);
+		await personal.idle();
+		expect(broadcasts.length).toBe(before + 2);
 	});
 });

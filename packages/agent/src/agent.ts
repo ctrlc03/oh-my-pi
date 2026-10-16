@@ -608,6 +608,18 @@ export class Agent {
 		this.#transformProviderContext = opts.transformProviderContext;
 	}
 
+	/** The transform every provider request applies to the message list before conversion (see {@link AgentOptions.transformContext}). */
+	get transformContext(): ((messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>) | undefined {
+		return this.#transformContext;
+	}
+
+	/** Replace the transform; the next provider request uses it. A host that rewrites the context wraps the previous one. */
+	set transformContext(
+		value: ((messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>) | undefined,
+	) {
+		this.#transformContext = value;
+	}
+
 	/**
 	 * Get the current session ID used for provider caching.
 	 */

@@ -11,8 +11,8 @@ import { Database } from "bun:sqlite";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { PersonalLogin, PersonalSettings } from "@oh-my-pi/pi-wire/personal";
-import { PERSONAL_LOGIN_COMMAND } from "@oh-my-pi/pi-wire/personal";
+import type { PersonalLogin, PersonalMemoryMode, PersonalSettings } from "@oh-my-pi/pi-wire/personal";
+import { PERSONAL_DEFAULTS, PERSONAL_LOGIN_COMMAND } from "@oh-my-pi/pi-wire/personal";
 import { ABOUT_TEMPLATE, APPEND_SYSTEM } from "./companion-personal-templates";
 import type { PersonalAboutStore, PersonalPaths } from "./companion-personal-store";
 import { writeFileAtomic } from "./companion-personal-store";
@@ -38,6 +38,7 @@ export function managedConfig(paths: PersonalPaths, settings: PersonalSettings):
 		personal: {
 			enabled: true,
 			runKind: "live",
+			memoryMode: settings.memoryMode ?? PERSONAL_DEFAULTS.memoryMode,
 			notifyOwner: { maxPerHour: 6, maxOpenQuestions: 5 },
 			events: { maxPerSourcePerHour: 4, maxPerHour: 12, pollSeconds: 5 },
 			externalTurns: { policy: "always-ask" },
@@ -131,8 +132,9 @@ export interface PersonalProfileOptions {
 	webUrl: string;
 	/** The local relay of this companion (`ws://127.0.0.1:<port>`) once it runs. */
 	localRelayUrl(): string | undefined;
-	/** The limits the next launch gets (mirrors the settings). */
+	/** The settings the next launch gets (mirror the stored ones): the spend limits and the memory mode. */
 	limits(): PersonalSettings["limits"];
+	memoryMode(): PersonalMemoryMode;
 }
 
 export interface PersonalProfile {
@@ -191,7 +193,9 @@ export function createPersonalProfile(options: PersonalProfileOptions): Personal
 			kind === "live"
 				? `collab:\n  autoStart: control\n  relayUrl: ${JSON.stringify(options.relayUrl)}\n  webUrl: ${JSON.stringify(options.webUrl)}\n${local ? `  localRelayUrl: ${JSON.stringify(local)}\n` : ""}`
 				: "";
-		return `${collab}personal:\n  runKind: ${kind}\nsession:\n  spendLimits:\n    dayUsd: ${limits.dayUsd}\n    monthUsd: ${limits.monthUsd}\n${extraYaml ?? ""}`;
+		// A review or source-poll run is never the live chat: only the live session gets the memory mode.
+		const mode = kind === "live" ? `  memoryMode: ${options.memoryMode()}\n` : "";
+		return `${collab}personal:\n  runKind: ${kind}\n${mode}session:\n  spendLimits:\n    dayUsd: ${limits.dayUsd}\n    monthUsd: ${limits.monthUsd}\n${extraYaml ?? ""}`;
 	};
 
 	return {

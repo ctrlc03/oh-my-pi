@@ -4,6 +4,8 @@
  */
 
 import type {
+	PersonalChatTreeStatus,
+	PersonalMemoryMode,
 	PersonalReviewStatus,
 	PersonalRunState,
 	PersonalSettings,
@@ -11,6 +13,7 @@ import type {
 	PersonalSource,
 	PersonalStatus,
 } from "@oh-my-pi/pi-wire/personal";
+import { PERSONAL_DEFAULTS } from "@oh-my-pi/pi-wire/personal";
 import { spendCapped } from "./personal";
 
 // ── parsing ──────────────────────────────────────────────────────────────────
@@ -55,16 +58,18 @@ export interface SettingsForm {
 	reviewTime: string;
 	reviewBudgetUsd: string;
 	rolloverTime: string;
+	memoryMode: PersonalMemoryMode;
 	/** Empty = the default folder inside the profile. */
 	backupFolder: string;
 }
 
-export type FormGroup = "limits" | "review" | "rollover" | "backup";
+export type FormGroup = "limits" | "review" | "rollover" | "memory" | "backup";
 
 const GROUP_FIELDS: Record<FormGroup, readonly (keyof SettingsForm)[]> = {
 	limits: ["dayUsd", "monthUsd"],
 	review: ["reviewEnabled", "reviewTime", "reviewBudgetUsd"],
 	rollover: ["rolloverTime"],
+	memory: ["memoryMode"],
 	backup: ["backupFolder"],
 };
 
@@ -78,6 +83,7 @@ export function formFromSettings(settings: PersonalSettings): SettingsForm {
 		reviewTime: settings.review.time,
 		reviewBudgetUsd: String(settings.review.budgetUsd),
 		rolloverTime: settings.rollover.time,
+		memoryMode: settings.memoryMode ?? PERSONAL_DEFAULTS.memoryMode,
 		backupFolder: settings.backup.folder ?? "",
 	};
 }
@@ -119,6 +125,10 @@ export function groupChange(group: FormGroup, form: SettingsForm, base: Personal
 			if (time === null) return { patch: {}, error: TIME_ERROR };
 			return { patch: time === base.rollover.time ? {} : { rollover: { time } }, error: null };
 		}
+		case "memory": {
+			const saved = base.memoryMode ?? PERSONAL_DEFAULTS.memoryMode;
+			return { patch: form.memoryMode === saved ? {} : { memoryMode: form.memoryMode }, error: null };
+		}
 		case "backup": {
 			const folder = form.backupFolder.trim() === "" ? null : form.backupFolder.trim();
 			if (folder !== null && !isAbsolutePath(folder)) {
@@ -152,6 +162,18 @@ export function resetGroup(form: SettingsForm, group: FormGroup, base: PersonalS
 	const merged: SettingsForm = { ...form };
 	for (const field of GROUP_FIELDS[group]) Object.assign(merged, { [field]: fresh[field] });
 	return merged;
+}
+
+/** The endless chat's numbers on one line: "1,204 messages · view 96 KB · 3 lines still being summarised · 0 failed summaries". */
+export function chatTreeLine(chat: PersonalChatTreeStatus): string {
+	const count = (n: number, one: string, many: string): string =>
+		`${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+	return [
+		count(chat.messages, "message", "messages"),
+		`view ${Math.round(chat.viewBytes / 1000).toLocaleString("en-US")} KB`,
+		`${count(chat.nodesPending, "line", "lines")} still being summarised`,
+		count(chat.compactionsFailed, "failed summary", "failed summaries"),
+	].join(" · ");
 }
 
 // ── sources ──────────────────────────────────────────────────────────────────

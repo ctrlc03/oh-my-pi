@@ -192,6 +192,8 @@ import {
 	CREDENTIAL_DISABLED_NOTICE_SOURCE,
 	formatCredentialDisabledNotice,
 } from "./session/credential-disabled-notice";
+import { applyChatTreeSettings, chatTreeActive } from "./personal/chat-tree/mode";
+import { buildChatTreeSystemPrompt } from "./personal/chat-tree/prompt";
 import { DateCwdReminderInjector } from "./session/date-cwd-reminder";
 import { createInterruptedToolResults, createInterruptedTurnAbortMessage } from "./session/exit-diagnostics";
 import { recoverInlineSloppyEdit } from "./session/inline-edit-recovery";
@@ -1716,6 +1718,9 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 	const settings = await (options.settings ??
 		options.settingsManager ??
 		logger.time("settings", Settings.init, { cwd, agentDir }));
+	// The chat-tree memory mode bounds the context by its own view: omp's compaction and Mnemopi recall stand down.
+	const chatTreeMode = !options.parentTaskPrefix && !options.taskDepth && chatTreeActive(settings);
+	if (chatTreeMode) applyChatTreeSettings(settings);
 	// Discovery provider toggles and process-wide setting effects (theme, request limits, …)
 	// follow the newest holder: each top-level session holds both on its settings until disposed,
 	// then hands them back to the previous holder. Subagents and helper sessions never take them,
@@ -2393,6 +2398,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			getCheckpointState: () => session.getCheckpointState(),
 			getPrWatch: () => session.prWatch,
 			getPersonal: () => session?.personal,
+			getChatTree: () => session?.chatTree,
 			setCheckpointState: state => session.setCheckpointState(state ?? undefined),
 			getLastCompletedRewind: () => session.getLastCompletedRewind(),
 			getToolChoiceQueue: () => session.toolChoiceQueue,
@@ -3868,8 +3874,10 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 						learn: hasSession ? session.hasBuiltInTool("learn") : builtInRegistryToolNames.has("learn"),
 					});
 			const appendParts: string[] = [];
-			if (memoryInstructions) appendParts.push(memoryInstructions);
-			if (autoLearnInstructions) appendParts.push(autoLearnInstructions);
+			// The chat-tree mode has no recall to explain: its `zoom` is described by the system prompt it brings.
+			const chatTreePrompt = agentKind === "main" && chatTreeMode;
+			if (memoryInstructions && !chatTreePrompt) appendParts.push(memoryInstructions);
+			if (autoLearnInstructions && !chatTreePrompt) appendParts.push(autoLearnInstructions);
 			// List each mounted MCP tool once. A routed tool that the xd:// catalog
 			// would list carries its catalog summary on the route line and gets no
 			// catalog line; a tool the route bound omits keeps its catalog line.
@@ -3918,6 +3926,24 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			const profilePrompt = hasSession ? session.profilePromptSection : undefined;
 			if (profilePrompt) appendParts.push(profilePrompt);
 			const appendPrompt = composeAppendPrompt(appendParts, options.appendSystemPrompt);
+			if (chatTreePrompt) {
+				// The mode's own prompt replaces omp's: the user's instructions (About you and the profile's files) follow it.
+				const instructions = contextFiles.map(file => `<file path="${file.path}">\n${file.content}\n</file>`);
+				if (appendPrompt) instructions.push(appendPrompt);
+				const devices = xdevPromptDocs ? renderXdevPromptDocs(xdevPromptDocs, routedCatalogNames) : "";
+				if (devices)
+					instructions.push(
+						`## Tool devices\n\nWrite JSON arguments as \`content\` to \`xd://<tool>\` with \`write\`; read \`xd://<tool>\` for its docs.\n\n${devices}`,
+					);
+				const built: BuildSystemPromptResult = {
+					systemPrompt: [buildChatTreeSystemPrompt(instructions)],
+					xdevCatalogNames:
+						devices && toolSession.xdev ? xdevEntries(toolSession.xdev).map(entry => entry.name) : undefined,
+				};
+				if (typeof options.systemPrompt !== "function") return built;
+				const customPrompt = options.systemPrompt(built.systemPrompt);
+				return { systemPrompt: typeof customPrompt === "string" ? [customPrompt] : customPrompt };
+			}
 			// Owned/in-band tool dialects (non-native) require the full functions-
 			// namespace catalog; native tool calling lets the compact name list suffice.
 			const nativeTools = resolveDialect(cfgToolsFormat.get(settings), agent?.state.model ?? model) === undefined;
@@ -4241,6 +4267,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			// Keep per-request volatility out of the system prompt: the date/cwd
 			// reminder rides on the first user turn so open-weight providers keep
 			// their tool-schema prefix cache (#7404).
+			if (chatTreeMode) return transformed;
 			return dateCwdReminder.transform(
 				transformed,
 				formatLocalCalendarDate(),
@@ -4452,11 +4479,12 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			getToolChoice: () => session?.nextToolChoiceDirective(),
 			onToolChoiceUnavailable: () => session?.toolChoiceQueue.reject("unavailable"),
 			telemetry: options.telemetry,
-			appendOnlyContext: model
-				? shouldEnableAppendOnlyContext(cfgProviderAppendOnlyContext.get(settings), model)
-					? new AppendOnlyContextManager()
-					: undefined
-				: undefined,
+			appendOnlyContext:
+				model && !chatTreeMode
+					? shouldEnableAppendOnlyContext(cfgProviderAppendOnlyContext.get(settings), model)
+						? new AppendOnlyContextManager()
+						: undefined
+					: undefined,
 		});
 		// Catalog rows carry the registry settings' extended-window opt-ins; this
 		// session adopts every model with the window its own settings select (a

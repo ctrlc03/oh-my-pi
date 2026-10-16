@@ -259,7 +259,12 @@ describeE2e("the Personal agent's lifecycle", () => {
 					"the new session to be idle",
 					async () => {
 						const now = await h.status();
-						return now.run === "idle" && now.session?.generation === before.session!.generation + 1;
+						// The companion lists the new host a moment after the session is idle.
+						return (
+							now.run === "idle" &&
+							now.session?.generation === before.session!.generation + 1 &&
+							h.personalHost()?.instanceId === now.session.instanceId
+						);
 					},
 					{ timeoutMs: 180_000, everyMs: 500 },
 				).catch(async err => {

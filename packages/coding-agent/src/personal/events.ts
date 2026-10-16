@@ -47,6 +47,9 @@ export interface PersonalEventDelivery {
 	triggerTurn: boolean;
 }
 
+/** A `control` body that starts with this carries a note for the chat of the `chat-tree` mode. */
+export const CONTROL_NOTE_PREFIX = "note\n";
+
 export interface PersonalEventsHost {
 	/** `<config root>/run/personal`. */
 	runDir: string;
@@ -63,6 +66,8 @@ export interface PersonalEventsHost {
 	deliver(message: PersonalEventMessage, delivery: PersonalEventDelivery): Promise<unknown>;
 	/** `control exit`: finish up and leave, flushing memory the way a normal exit does. */
 	exit(): void;
+	/** `control note`: log text as a `note` message of the chat (the `chat-tree` memory mode only; absent in `recall`). */
+	note?(text: string): Promise<void>;
 	/** Tell the companion what became of an event. */
 	receipt(eventId: string, outcome: PersonalReceiptOutcome, detail?: string): Promise<void>;
 	/** An owner answer closed this inbox item. */
@@ -210,7 +215,7 @@ export class PersonalEventReceiver {
 		}
 		const trust = effectiveTrust(event, key);
 		const downgraded = event.trust === "owner" && trust === "external";
-		if (event.kind === "control") return this.#control(event, trust, claimed);
+		if (event.kind === "control") return this.#control(event, trust, claimed, name);
 		if (!PERSONAL_UNMETERED_KINDS.includes(event.kind)) {
 			const limit = this.#limitHit(event.source);
 			if (limit !== undefined) {
@@ -248,8 +253,32 @@ export class PersonalEventReceiver {
 		return true;
 	}
 
-	/** `control` is never a turn: only the owner's signature makes it do anything, and `exit` is the one verb. */
-	async #control(event: PersonalEvent, trust: "owner" | "external", claimed: string): Promise<boolean> {
+	/**
+	 * `control` is never a turn: only the owner's signature makes it do anything. The verbs: `exit`, and in the
+	 * `chat-tree` mode `note` (a body of `note\n<text>`, logged as one note). A note's claimed file is kept until the
+	 * note is logged: a failure goes back to the inbox through `#deliveryFailed` (same attempt limit, then a `failed`
+	 * receipt), so a chat that cannot open yet does not lose it.
+	 */
+	async #control(event: PersonalEvent, trust: "owner" | "external", claimed: string, name: string): Promise<boolean> {
+		const note = this.#host.note;
+		if (trust === "owner" && note && event.body.startsWith(CONTROL_NOTE_PREFIX)) {
+			const text = event.body.slice(CONTROL_NOTE_PREFIX.length);
+			if (text.trim() === "") {
+				await fs.rm(claimed, { force: true });
+				await this.#receipt(event.id, "refused", "an empty note");
+				return true;
+			}
+			try {
+				await note.call(this.#host, text);
+			} catch (error) {
+				return this.#deliveryFailed(event, claimed, name, error);
+			}
+			this.#seen.add(event.id);
+			this.#failures.delete(event.id);
+			await fs.rm(claimed, { force: true });
+			await this.#receipt(event.id, "delivered", "noted");
+			return true;
+		}
 		await fs.rm(claimed, { force: true });
 		if (trust !== "owner" || event.body.trim() !== "exit") {
 			await this.#receipt(

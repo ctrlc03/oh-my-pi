@@ -36,6 +36,8 @@ export const ESSENTIAL_BUILTIN_TOOL_NAMES: Record<string, true> = {
 	manage_skill: true,
 	context_notes: true,
 	new_context: true,
+	zoom: true,
+	date: true,
 };
 
 /**

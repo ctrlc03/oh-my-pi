@@ -117,7 +117,7 @@ describe("every request type", () => {
 
 	it("answers reads on a mock that is not set up and refuses its writes", () => {
 		const { ask, mock, hosts } = harness({ setUp: false });
-		expect(mock.capabilities()).toEqual({ canPersonal: true });
+		expect(mock.capabilities()).toEqual({ canPersonal: true, canPersonalChatTree: true });
 		expect(ask({ t: "personal-status" }).status).toMatchObject({ setUp: false, enabled: false, run: "off" });
 		expect(ask({ t: "personal-inbox" }).items).toEqual([]);
 		expect(ask({ t: "personal-memory-search", query: {} })).toMatchObject({ items: [], total: 0 });
@@ -143,7 +143,7 @@ describe("setup, login and the host row", () => {
 		});
 		expect(status.error).toBeUndefined();
 		expect(hosts).toEqual([]);
-		expect(mock.capabilities()).toEqual({ canPersonal: true, personalRev: status.rev });
+		expect(mock.capabilities()).toEqual({ canPersonal: true, canPersonalChatTree: true, personalRev: status.rev });
 		const about = ask({ t: "personal-about-get" }).about;
 		expect(about.rev).toBe(1);
 		expect(about.text).toContain("## How I like to work");
@@ -762,6 +762,37 @@ describe("settings", () => {
 		expect(off.month).toMatchObject({ limitUsd: null, level: "off" });
 		ask({ t: "personal-settings-set", patch: { limits: { dayUsd: 100 } } });
 		expect(ask({ t: "personal-status" }).status.spend.day.level).toBe("ok");
+	});
+
+	it("keeps the memory mode: recall by default; chat-tree adds a fake chat's numbers, takes away the rollover time and restarts the session", () => {
+		const { ask, hosts, pushes } = harness();
+		expect(ask({ t: "personal-settings-get" }).settings.memoryMode).toBe("recall");
+		const recall = ask({ t: "personal-status" }).status;
+		expect(recall.chatTree).toBeUndefined();
+		expect(recall.nextRolloverAt).toBeGreaterThan(NOW);
+		const generation = recall.session?.generation;
+
+		const set = ask({ t: "personal-settings-set", patch: { memoryMode: "chat-tree" } });
+		expect(set.settings.memoryMode).toBe("chat-tree");
+		expect(pushes.at(-1)?.what).toContain("settings");
+		const status = ask({ t: "personal-status" }).status;
+		expect(status.nextRolloverAt).toBeNull();
+		expect(status.chatTree).toMatchObject({ messages: 1204, nodesPending: 3, compactionsFailed: 1 });
+		expect(status.chatTree?.viewBytes).toBeGreaterThanOrEqual(64_000);
+		expect(status.chatTree?.viewBytes).toBeLessThanOrEqual(128_000);
+		expect(status.session?.generation).toBe((generation ?? 0) + 1);
+		expect(hosts).toHaveLength(1);
+
+		expect(() => ask({ t: "personal-settings-set", patch: { memoryMode: "endless" as never } })).toThrow(
+			"memory mode",
+		);
+		ask({ t: "personal-settings-set", patch: { memoryMode: "recall" } });
+		expect(ask({ t: "personal-status" }).status.chatTree).toBeUndefined();
+	});
+
+	it("advertises chat-tree mode unless told it is an older companion", () => {
+		expect(harness().mock.capabilities().canPersonalChatTree).toBe(true);
+		expect(harness({ chatTree: false }).mock.capabilities().canPersonalChatTree).toBeUndefined();
 	});
 
 	it("backs up on request: the time moves, and a missing folder fails with its reason", () => {

@@ -92,3 +92,35 @@ export const cfgPersonalExternalTurnsPolicy = register({
  * session: the only way in is a paired device of the owner.
  */
 export const cfgPersonalAllowShareLinks = register({ id: "personal.allowShareLinks", type: "boolean", default: false });
+
+/**
+ * How the Personal agent remembers (docs/personal-chat-tree.md). `recall`: daily session rollover with a
+ * handoff note and Mnemopi recall on every owner turn. `chat-tree`: one chat that never ends, summarized into a
+ * tree of short lines; every owner message starts a fresh model call made of tools, system prompt, a view of the
+ * chat and the message. Inert unless `personal.enabled` and `personal.runKind` is `live`.
+ */
+export const cfgPersonalMemoryMode = register({
+	id: "personal.memoryMode",
+	type: "enum",
+	values: ["recall", "chat-tree"] as const,
+	default: "recall",
+});
+
+/**
+ * `chat-tree`: the model that writes the tree's lines, as `provider/id` with an optional `:thinking` suffix.
+ * Empty: the cheapest Anthropic Haiku the profile can reach, else the profile's `smol` role model, else the
+ * session model.
+ */
+export const cfgPersonalChatTreeModel = register({ id: "personal.chatTree.model", type: "string", default: "" });
+
+/** `chat-tree`: how many tree lines are written at once. Minimum 1. */
+export const cfgPersonalChatTreeConcurrency = register({
+	id: "personal.chatTree.concurrency",
+	type: "number",
+	default: 8,
+	validate: raw => {
+		if (raw !== undefined && (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1)) {
+			throw new Error(`Expected an integer ≥ 1, got ${Bun.inspect(raw)}`);
+		}
+	},
+});

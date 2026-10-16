@@ -873,6 +873,12 @@ export interface TextContent {
 	type: "text";
 	text: string;
 	textSignature?: string; // e.g., for OpenAI responses, message metadata (legacy id string or TextSignatureV1 JSON)
+	/**
+	 * Ask for a prompt-cache mark right after this block of a user or developer message. Anthropic only: the
+	 * provider turns it into a `cache_control` breakpoint and counts it in the request's four, so the
+	 * rolling breakpoints it adds give way. Other providers ignore it.
+	 */
+	cacheBoundary?: boolean;
 }
 
 export interface ThinkingContent {

@@ -71,10 +71,13 @@ import { createAbortSourceTracker } from "../utils/abort";
 import {
 	clearStreamingPartialJson,
 	copyPerCallContextMessage,
+	type CacheBoundaryCarrier,
 	type ConversationalUserCarrier,
+	hasCacheBoundary,
 	isConversationalUser,
 	isPerCallContextMessage,
 	isSyntheticUser,
+	kCacheBoundary,
 	kConversationalUser,
 	kStreamingBlockIndex,
 	kStreamingLastParseLen,
@@ -1005,7 +1008,9 @@ function convertContentBlocks(
 			const text = block.text.toWellFormed();
 			if (text.trim().length === 0) continue;
 			sawText = true;
-			blocks.push({ type: "text", text });
+			const wire: { type: "text"; text: string } & CacheBoundaryCarrier = { type: "text", text };
+			if (block.cacheBoundary) wire[kCacheBoundary] = true;
+			blocks.push(wire);
 			continue;
 		}
 
@@ -4363,11 +4368,41 @@ function applyCacheControlToMessage(message: MessageParam, cacheControl: Anthrop
 	return false;
 }
 
+/**
+ * Gives each text block that asked for a mark ({@link TextContent.cacheBoundary}) its `cache_control`, up to
+ * `budget`, and returns how many it placed. They count against the four breakpoints of the request, so the rolling
+ * marks that follow take what is left.
+ */
+function applyCacheBoundaries(
+	params: MessageCreateParamsStreaming,
+	cacheControl: AnthropicCacheControl,
+	budget: number,
+): number {
+	let placed = 0;
+	for (const message of params.messages) {
+		if (!Array.isArray(message.content)) continue;
+		for (let index = 0; index < message.content.length && placed < budget; index++) {
+			const block = message.content[index];
+			if (!hasCacheBoundary(block) || block.type !== "text") continue;
+			if (block.cache_control == null) {
+				message.content[index] = { ...block, cache_control: cloneAnthropicCacheControl(cacheControl) };
+			}
+			placed++;
+		}
+	}
+	return placed;
+}
+
 function applyPromptCaching(params: MessageCreateParamsStreaming, cacheControl?: AnthropicCacheControl): void {
 	if (!cacheControl) return;
 
 	const headBreakpoints = countHeadBreakpoints(params);
-	const messageBudget = Math.max(0, ANTHROPIC_MAX_BREAKPOINTS - headBreakpoints);
+	const explicitMarks = applyCacheBoundaries(
+		params,
+		cacheControl,
+		Math.max(0, ANTHROPIC_MAX_BREAKPOINTS - headBreakpoints),
+	);
+	const messageBudget = Math.max(0, ANTHROPIC_MAX_BREAKPOINTS - headBreakpoints - explicitMarks);
 	if (messageBudget <= 0 || params.messages.length === 0) return;
 	// `convertAnthropicMessages` appends a neutral `Continue.` pad after a trailing
 	// assistant because Anthropic rejects assistant-prefill endings. It is absent

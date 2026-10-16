@@ -61,6 +61,9 @@ import { GithubTool } from "./gh";
 import { GlobTool } from "./glob";
 import { GrepTool } from "./grep";
 import { IdaTool } from "./ida";
+import { chatTreeActive } from "../personal/chat-tree/mode";
+import type { ChatTreeSession } from "../personal/chat-tree/session";
+import { DateTool, ZoomTool } from "./chat-tree-tools";
 import { NotifyOwnerTool } from "./notify-owner";
 import { ScheduleTool } from "./schedule";
 import { isIrcEnabled } from "../irc/messaging";
@@ -521,6 +524,8 @@ export interface ToolSession {
 	getPrWatch?: () => PrWatchManager;
 	/** The session's Personal agent runtime (`notify_owner`, event inbox, turn origin); absent unless `personal.enabled`. */
 	getPersonal?: () => PersonalRuntime | undefined;
+	/** The session's chat (`zoom`, `date`) in the Personal `chat-tree` memory mode; absent otherwise. */
+	getChatTree?: () => ChatTreeSession | undefined;
 	/** Set or clear active checkpoint state. */
 	setCheckpointState?: (state: CheckpointState | null) => void;
 	/** Get the most recent completed rewind, if this session just rewound a checkpoint. */
@@ -581,6 +586,8 @@ export const BUILTIN_TOOLS: Record<BuiltinToolName, ToolFactory> = {
 	ida: IdaTool.createIf,
 	schedule: ScheduleTool.createIf,
 	notify_owner: NotifyOwnerTool.createIf,
+	zoom: ZoomTool.createIf,
+	date: DateTool.createIf,
 	eval: s => new EvalTool(s),
 	github: GithubTool.createIf,
 	glob: s => new GlobTool(s, { rootPathAlias: true }),
@@ -725,12 +732,17 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 			requestedTools.push("ast_edit");
 		}
 		if (["hindsight", "mnemopi"].includes(cfgMemoryBackend.get(session.settings))) {
-			for (const name of ["recall", "retain", "reflect"]) {
+			for (const name of chatTreeActive(session.settings) ? ["retain"] : ["recall", "retain", "reflect"]) {
 				if (!requestedTools.includes(name)) requestedTools.push(name);
 			}
 		}
 		if (cfgMemoryBackend.get(session.settings) === "mnemopi" && !requestedTools.includes("memory_edit")) {
 			requestedTools.push("memory_edit");
+		}
+		if (chatTreeActive(session.settings) && (session.taskDepth ?? 0) === 0) {
+			for (const name of ["zoom", "date"]) {
+				if (!requestedTools.includes(name)) requestedTools.push(name);
+			}
 		}
 		if (externalThinkingActive && !requestedTools.includes("think")) {
 			requestedTools.push("think");
@@ -769,6 +781,7 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 		if (name === "ida") return cfgIdaAvailable.get(session.settings);
 		if (name === "schedule") return cfgScheduleEnabled.get(session.settings) && (session.taskDepth ?? 0) === 0;
 		if (name === "notify_owner") return cfgPersonalEnabled.get(session.settings) && (session.taskDepth ?? 0) === 0;
+		if (name === "zoom" || name === "date") return chatTreeActive(session.settings) && (session.taskDepth ?? 0) === 0;
 		if (name === "todo")
 			return (!includeYield || session.prewalkArmed === true) && cfgTodoEnabled.get(session.settings);
 		if (name === "glob") return cfgGlobEnabled.get(session.settings);
@@ -798,6 +811,8 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 			);
 		}
 		if (name === "retain" || name === "recall" || name === "reflect") {
+			// The chat's `zoom` is the only way to navigate memory in the chat-tree mode.
+			if (name !== "retain" && chatTreeActive(session.settings)) return false;
 			return ["hindsight", "mnemopi"].includes(cfgMemoryBackend.get(session.settings));
 		}
 		if (name === "memory_edit") return cfgMemoryBackend.get(session.settings) === "mnemopi";

@@ -1269,6 +1269,8 @@ export type CompanionReply =
 			canForeign?: boolean;
 			/** The companion serves the `personal-*` requests (the Personal agent); see `@oh-my-pi/pi-wire/personal`. */
 			canPersonal?: boolean;
+			/** The Personal agent can run in chat-tree mode; the app offers the choice only when true. */
+			canPersonalChatTree?: boolean;
 			/** `PersonalStatus.rev`, present while the Personal agent is enabled on this computer. */
 			personalRev?: number;
 			/** Revision of the computer's session organisation (pin, snooze, settle); present when it keeps one. A new number means fetch it again. */
@@ -1572,6 +1574,8 @@ export interface CompanionSnapshot {
 	canForeign: boolean;
 	/** The companion serves the `personal-*` requests (the Personal agent). */
 	canPersonal: boolean;
+	/** The Personal agent can run in chat-tree mode (one chat that never ends) on this computer. */
+	canPersonalChatTree: boolean;
 	/** `PersonalStatus.rev` while the Personal agent is enabled on this computer (a new number means refetch); null otherwise. */
 	personalRev: number | null;
 	/** Revision of the computer's session organisation document; null when the companion keeps none. */
@@ -1668,6 +1672,7 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	canBrowseFolders: false,
 	canForeign: false,
 	canPersonal: false,
+	canPersonalChatTree: false,
 	personalRev: null,
 	sessionOrgRev: null,
 	canOrderSessions: false,
@@ -2496,6 +2501,7 @@ export class CompanionClient {
 				canBrowseFolders: frame.canBrowseFolders ?? false,
 				canForeign: frame.canForeign ?? false,
 				canPersonal: frame.canPersonal ?? false,
+				canPersonalChatTree: frame.canPersonalChatTree ?? false,
 				personalRev: frame.personalRev ?? null,
 				sessionOrgRev: frame.sessionOrgRev ?? null,
 				canOrderSessions: frame.canOrderSessions ?? false,

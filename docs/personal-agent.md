@@ -16,7 +16,7 @@ Made for the first build; the later sections follow them.
 | Logins | Separate. The agent runs as `omp --profile personal` with its own logins. Setup tells the owner to run `omp --profile personal login` once; the app shows whether the profile has a usable login |
 | Safety | The stricter defaults in [Safety](#safety) |
 | Computers | One **home computer**. The owner picks which paired computer hosts the agent during setup. That computer holds the only memory; every other device reaches the agent through the app. Memory is never synced between computers |
-| One endless session or rollover | A daily rollover to a fresh omp session, hidden behind one **Personal** thread in the app |
+| One endless session or rollover | By default, a daily rollover to a fresh omp session, hidden behind one **Personal** thread in the app. A second mode, chosen by the owner and off until then, keeps one chat that never ends instead ([Memory modes](#memory-modes), [personal-chat-tree.md](./personal-chat-tree.md)) |
 | What Memory search covers | Mnemopi rows. The session JSONL files stay searchable through the existing all-sessions message search (Personal's sessions are included there) |
 | Nightly review budget | $0.50 per run by default, configurable |
 | Memory backend | Mnemopi, not Hindsight (see [Why Mnemopi](#why-mnemopi)) |
@@ -47,6 +47,8 @@ You need the collab companion running on the computer that will host the agent (
 5. Check **Spend limits** (defaults: $5 a day, $50 a month) and the **backup folder**; the default is inside the profile, so point it at another disk or a synced folder.
 
 **Personal** now shows at the top of the sidebar. **Settings → Personal agent → Turn off** stops the agent and its background jobs and keeps all memory, history and settings; turning it on again picks up where it left off. Nothing is deleted by turning it off.
+
+The agent can remember in a second way, one chat that never ends: see [personal-chat-tree.md](./personal-chat-tree.md) (`personal.memoryMode: chat-tree`). The default, described here, is unchanged.
 
 Things worth knowing:
 
@@ -162,6 +164,13 @@ flowchart LR
   - Rollover steps: the companion waits until the session is idle, sends a signed `rollover` event; the old session replies with a handoff note; the companion reads it (`assistantReplySince` over `readSessionTail`; it waits up to five minutes), sends a signed `control` event `exit` (the session finishes, retains and consolidates), waits up to 90 seconds for the host to go (then ends its tmux session), and starts the next session in the same workspace with the handoff as its first prompt. A session that never gives a note is replaced without one; a failed start keeps the note for the retry. `restart` in the app is a rollover now.
 - **Kept alive.** The companion resumes the Personal session if its tmux session is missing (a fresh one, with the stored handoff, when its session file is gone: omp writes a session's file with its first assistant message, so a session that never took a turn comes back as a new session, and that counts as a new generation), checked on the existing host poll (`companion.ts` poll; `scheduler.tick` 15 s). That poll keeps running while Personal is on, even with no device connected. Failed starts back off (15 s, doubling to 5 minutes) and, after three in a row, go to `failed` with an `alert` inbox item; a `stop` from the app keeps it down until `start`.
   - The Personal session is exempt from settling, auto-settle, end-on-settle and `endSession` (`companion-sessionorg.ts`).
+- **Memory modes.** `personal.memoryMode` (Settings → *Personal agent* → *Settings* → *Memory*) picks how the agent remembers. It is `recall` until the owner changes it, and then everything above is as described. `chat-tree` is a second mode, one chat that never ends, whose design, files and tools are in [personal-chat-tree.md](./personal-chat-tree.md); this is what the companion does differently for it:
+  - The companion stores the mode in `state.json`, writes `personal.memoryMode` into the profile's `config.yml` (a managed key, restored by Repair) and into the overlay of each live launch (never into a review or source-poll run), and records the mode each session was launched with.
+  - **No daily rollover.** The daily time does not end a chat-tree session, and the status has no next rollover. Keep-alive still starts a missing session; it resumes the recorded omp session when its file exists, and either way the session continues the same chat under `personal-chat/`, which does not depend on omp session files. The full-context size still applies, differently: past 6 MB the omp session file ends the session at its next idle moment and a **fresh** omp session starts, with no handoff request, no first prompt and no note (the chat carries continuity and `personal-chat/` is untouched).
+  - **Restart without a handoff.** `restart` from a chat-tree session sends `control exit`, waits as a rollover does and starts the session again without asking for a note or giving a first prompt: the chat holds what a note would.
+  - **Switching mode** restarts the live session once it is idle (the keep-alive poll compares the mode the session was launched with and the one configured now), as a rollover: from `recall` the old session writes its handoff note first; from `chat-tree` no note is asked. The new session is always a fresh omp session. Nothing is deleted either way: the Mnemopi memory and the chat both stay, and switching back continues them.
+  - **First start, the note.** On the first start of chat-tree mode with no message in `personal-chat/main/`, the stored handoff note (if any) is handed to the session as owner-signed `control` events whose body is `note\n` and the text (cut into pieces of at most 7,995 characters for the 8,000-character event limit, in order). The session logs them as `note` messages and starts no turn. With messages already logged, a stored note is dropped. Nothing else is imported.
+  - **Status.** The companion reads `personal-chat/status.json` for the status's `chatTree` (only in chat-tree mode, and only while the file is readable and holds the four counts) and, while the numbers change, pushes `personal-changed` `status` at most every 5 seconds.
 - **Who may talk to it.** A Personal session is never shared with guests: `personal.allowShareLinks` is false, `/collab` share links are refused (`/collab`, `start` and `view` print an error; `status` omits the link; `list` and `stop` still work), the registry publishes no read-only link for it, and every write peer is treated as an owner device, because only the companion's paired devices are given control links through the registry. The host stamps `origin: "owner"` on the prompts it injects (`CollabPromptDetails.origin`).
 
 ### Memory
@@ -257,6 +266,7 @@ The extraction and contradiction prompts reuse the existing stage-one and consol
 - **Personal at the top of the sidebar.** Pinned, with its own icon; it can't be settled or ended from the app. It opens the live session's thread; the daily rollover is invisible. It shows the run state (*Spend limit reached* instead of *Ready* or *Waiting for you* while a day or month limit is reached; the Agent tab says the same) and a badge for what waits for the owner, offers *Start* while no session is up, and is hidden while Personal is turned off (turn it on again in Settings → *Personal agent*). A phone shows it in the sessions sheet.
 - **Settings → Personal agent**, a new section that needs the home computer:
   - setup, on/off, start/stop/restart, login state, spend (day/month against the limits), the review and rollover times and budget, the backup folder, status and a *Back up now* button, sources;
+  - **Memory mode** (only when the home computer says `canPersonalChatTree`): *Daily sessions with recall* (the default) or *One endless chat*. Choosing the chat hides the rollover time. While the companion runs the chat, one line under the choice gives its numbers: messages, size of the view in KB (1 KB = 1,000 bytes), lines still being summarised and failed summaries. The choice is saved with its own *Save* and takes effect when the live session restarts, which the companion does by itself once the session is idle (see [Memory modes](#memory-modes));
   - **About you:** view and edit, with history;
   - **Memory:** search of the knowledge layer, with each memory's origin, date and the memory it replaces (*Replaces N earlier* only on a memory that did replace some, from the optional `replacesCount` on the memory); **Retract** (hide from recall) and **Pin** (always recall); **Export** as a JSON or Markdown bundle;
   - **Digests** and **proposals**, and the **events** list.
@@ -283,10 +293,11 @@ The Personal profile ships with stricter defaults than ordinary sessions:
 
 ### App ↔ companion: `packages/wire/src/personal.ts`
 
-- Capability: the `hosts` frame gains `canPersonal` and `personalRev` (`PersonalHostsFields`), and the Personal host row gains `personal: true` (`PersonalHostMark`). Fields are optional, so older apps and companions ignore them.
+- Capability: the `hosts` frame gains `canPersonal` and `personalRev` (`PersonalHostsFields`), and the Personal host row gains `personal: true` (`PersonalHostMark`). A companion that can run chat-tree mode also sends `canPersonalChatTree`; the app offers the memory choice only when it is true. Fields are optional, so older apps and companions ignore them.
 - Requests (answered by `reqId`, `t` equal): `personal-status`, `-setup`, `-enable`, `-disable`, `-control` (`start`/`stop`/`restart`), `-settings-get`, `-settings-set`, `-memory-search`, `-memory-get`, `-memory-retract`, `-memory-pin`, `-memory-unpin`, `-memory-export`, `-about-get`, `-about-set`, `-about-history`, `-proposals`, `-proposal-edit`, `-proposal-accept`, `-proposal-reject`, `-digests`, `-digest-read`, `-inbox`, `-inbox-ack`, `-answer`, `-events`.
 - Push: `personal-changed` `{ what, rev }` to every authenticated device. Web Push payloads use `open` routes from `PERSONAL_ROUTES`. Those routes (`personal`, `personal/inbox`, ...) have no `kind:id` colon, so the service worker's `open` check (`scripts/build-sw.ts`) and the app's `parseRoute` (`lib/notify-route.ts`) accept the `personal` and `personal/<name>` shapes as well.
-- Status: `PersonalStatus` (enabled, home computer, login, run state, session, spend today and this month against the limits, backups, last review, counts, `rev`).
+- Status: `PersonalStatus` (enabled, home computer, login, run state, session, spend today and this month against the limits, backups, last review, counts, `rev`). In chat-tree mode `nextRolloverAt` is `null` and the optional `chatTree` (`messages`, `nodesPending`, `viewBytes`, `compactionsFailed`) carries the numbers of `personal-chat/status.json`, once the session has written it.
+- Settings: `PersonalSettings.memoryMode` (`recall` by default, or `chat-tree`); an older companion sends none, which is `recall`.
 - Writes (setup, enable/disable, control, settings, retract, pin, About, proposals, answers) need a paired device, like the other write requests.
 
 ### Companion ↔ session: `packages/wire/src/personal-ipc.ts`
@@ -304,6 +315,9 @@ All of these are registered and hidden from the TUI settings panel (the app is t
 |---|---|---|---|
 | `personal.enabled` | boolean | `false` | This session is a Personal session: everything below applies |
 | `personal.runKind` | `live` \| `review` | `live` | `review` = the nightly headless run (set per launch) |
+| `personal.memoryMode` | `recall` \| `chat-tree` | `recall` | How the agent remembers (see [Memory modes](#memory-modes)). Written by the companion into `config.yml` and into the live launch overlay; inert unless `personal.enabled` and `personal.runKind` is `live` |
+| `personal.chatTree.model` | string | empty | The cheap model that builds the chat's summaries; empty = the profile's cheapest Anthropic Haiku it can reach ([personal-chat-tree.md](./personal-chat-tree.md)) |
+| `personal.chatTree.concurrency` | integer ≥ 1 | `8` | Summaries built at the same time |
 | `personal.notifyOwner.maxPerHour` | integer | `6` | `notify_owner` info/question calls per hour (0 = unlimited) |
 | `personal.notifyOwner.maxOpenQuestions` | integer | `5` | Unanswered questions at once (0 = unlimited) |
 | `personal.events.maxPerSourcePerHour` | integer | `4` | Turns one source may start per hour (0 = unlimited) |
@@ -333,6 +347,7 @@ P/
     models.yml, mcp.json          the owner's: a local model server, MCP email/calendar servers
     agent.db                      this profile's logins (omp --profile personal login)
     sessions/                     the profile's session JSONL files (omp creates the folder with the first session and a session's file with its first assistant message, so a session that took no turn has no file and cannot be resumed)
+    personal-chat/                the endless chat of chat-tree mode (`main/`, `tree/`, `view.json`, `lock`, `status.json`), written only by the session, only in that mode: see [personal-chat-tree.md](./personal-chat-tree.md)
     memories/mnemopi/mnemopi.db   the memory (WAL files beside it)
     spend-ledger.jsonl            append-only spend deltas, written by sessions, read by the companion
     collab-companion-personal-ipc.json   {port, token, pid}, 0600, written by the companion
@@ -465,7 +480,7 @@ Each phase can be used on its own. The first build covers all of them; see the b
 
 ## Resolved questions
 
-1. **Rollover vs. one endless session.** Daily rollover with a handoff, hidden by the app behind one Personal thread.
+1. **Rollover vs. one endless session.** Daily rollover with a handoff, hidden by the app behind one Personal thread, is the default. The owner may instead pick the endless chat ([Memory modes](#memory-modes)); the choice is off until made.
 2. **Where the raw record lives.** Memory search covers Mnemopi rows; the session JSONL files stay in the existing all-sessions message search, which includes the Personal profile's sessions on the home computer.
 3. **Model cost of the nightly review.** A fixed budget, $0.50 per run by default, configurable in the app; the review also counts against the day and month limits.
 4. **Several computers.** One home computer owns the agent and its memory; every other device connects through the app. Two computers can't both be set up (the app refuses a second one).

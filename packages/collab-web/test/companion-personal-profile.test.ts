@@ -41,6 +41,7 @@ function build(local: string | undefined = undefined) {
 		webUrl: "https://app.example",
 		localRelayUrl: () => local,
 		limits: () => settings.limits,
+		memoryMode: () => settings.memoryMode ?? "recall",
 	});
 	return { paths, about, settings, profile };
 }
@@ -92,6 +93,7 @@ describe("the Personal profile on disk", () => {
 		expect(parsed.personal).toMatchObject({
 			enabled: true,
 			runKind: "live",
+			memoryMode: "recall",
 			notifyOwner: { maxPerHour: 6, maxOpenQuestions: 5 },
 			events: { maxPerSourcePerHour: 4, maxPerHour: 12 },
 			externalTurns: { policy: "always-ask" },
@@ -214,6 +216,27 @@ describe("launch overlays", () => {
 		const file = path.join(root, "overlay.yml");
 		expect(await profile.writeOverlay("review", file)).toBe(file);
 		expect(await mode(file)).toBe(0o600);
+	});
+
+	it("carries the memory mode into config.yml and the live overlay only", async () => {
+		const { paths, profile, settings } = build();
+		settings.memoryMode = "chat-tree";
+		await profile.setup(settings);
+		const parsed = Bun.YAML.parse(await Bun.file(paths.configYml).text()) as Record<string, any>;
+		expect(parsed.personal.memoryMode).toBe("chat-tree");
+		expect((Bun.YAML.parse(profile.overlayText("live")) as Record<string, any>).personal.memoryMode).toBe(
+			"chat-tree",
+		);
+		expect(
+			(Bun.YAML.parse(profile.overlayText("review")) as Record<string, any>).personal.memoryMode,
+		).toBeUndefined();
+
+		// Switching back rewrites the managed key: the file follows the setting.
+		settings.memoryMode = "recall";
+		await profile.applySettings(settings);
+		expect((Bun.YAML.parse(await Bun.file(paths.configYml).text()) as Record<string, any>).personal.memoryMode).toBe(
+			"recall",
+		);
 	});
 });
 

@@ -82,7 +82,7 @@ export function BlockSheet({
 	};
 	const hide = api.hide;
 	return (
-		<Sheet label="Block actions" onClose={onClose}>
+		<Sheet label="Block actions" fixed onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title tr-sheet-title">{blockTitle(block)}</div>
 			</div>

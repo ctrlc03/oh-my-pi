@@ -99,7 +99,7 @@ export function useEditPrompt(
 
 	const sheet =
 		allowed && confirming !== null ? (
-			<Sheet label="Edit this prompt" onClose={close}>
+			<Sheet label="Edit this prompt" fixed onClose={close}>
 				<div className="sh-sheet-head">
 					<div className="sh-sheet-title">Edit this prompt?</div>
 				</div>

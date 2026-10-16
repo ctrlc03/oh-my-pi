@@ -10,6 +10,8 @@ import {
 	clampFrame,
 	type Edge,
 	type Frame,
+	type FrameLimits,
+	type FrameSlot,
 	keyFrame,
 	moveFrame,
 	readFrame,
@@ -82,12 +84,15 @@ function measure(panel: HTMLElement): Frame {
 }
 
 /**
- * `enabled` turns the whole thing on (a floating frame only makes sense with a fine pointer and room). Every big sheet
- * reads and writes the one shared frame. Nothing is saved until the user moves or resizes.
+ * `enabled` turns the whole thing on (a floating frame only makes sense with a fine pointer and room). `slot` is where
+ * the frame is saved (every big sheet shares one) and how small it may be made. Nothing is saved until the user moves
+ * or resizes.
  */
-export function useSheetFrame(enabled: boolean, panel: RefObject<HTMLDivElement | null>): SheetFrame {
+export function useSheetFrame(enabled: boolean, panel: RefObject<HTMLDivElement | null>, slot: FrameSlot): SheetFrame {
+	const { key, minW, minH } = slot;
+	const limits = useMemo<FrameLimits>(() => ({ minW, minH }), [minW, minH]);
 	const zoom = useUiZoom();
-	const [saved, setSaved] = useState(readFrame);
+	const [saved, setSaved] = useState(() => readFrame(key));
 	const [view, setView] = useState<View>(layoutViewport);
 	useEffect(() => {
 		if (!enabled) return;
@@ -102,7 +107,10 @@ export function useSheetFrame(enabled: boolean, panel: RefObject<HTMLDivElement 
 	}, [enabled, zoom]);
 
 	// The saved frame as it fits the window now; the saved one itself is never rewritten by a smaller window.
-	const frame = useMemo(() => (enabled && saved !== null ? clampFrame(saved, view) : null), [enabled, saved, view]);
+	const frame = useMemo(
+		() => (enabled && saved !== null ? clampFrame(saved, view, limits) : null),
+		[enabled, saved, view, limits],
+	);
 
 	const layer = useRef<HTMLDivElement>(null);
 	const syncLayer = useCallback((): void => {
@@ -125,10 +133,13 @@ export function useSheetFrame(enabled: boolean, panel: RefObject<HTMLDivElement 
 	const lastPress = useRef(Number.NEGATIVE_INFINITY);
 	useEffect(() => () => stop.current?.(), []);
 
-	const commit = useCallback((next: Frame | null): void => {
-		saveFrame(next);
-		setSaved(next);
-	}, []);
+	const commit = useCallback(
+		(next: Frame | null): void => {
+			saveFrame(key, next);
+			setSaved(next);
+		},
+		[key],
+	);
 
 	const begin = useCallback(
 		(start: { pointerId: number; clientX: number; clientY: number }, how: Grab, holder: HTMLElement): void => {
@@ -136,7 +147,7 @@ export function useSheetFrame(enabled: boolean, panel: RefObject<HTMLDivElement 
 			if (node === null) return;
 			stop.current?.();
 			const room = layoutViewport();
-			const from = clampFrame(measure(node), room);
+			const from = clampFrame(measure(node), room, limits);
 			let latest = from;
 			let moved = false;
 			let pending = 0;
@@ -156,7 +167,8 @@ export function useSheetFrame(enabled: boolean, panel: RefObject<HTMLDivElement 
 				moved = true;
 				const dx = toLayout(travelX);
 				const dy = toLayout(travelY);
-				latest = how === "move" ? moveFrame(from, dx, dy, room) : resizeFrame(from, how, dx, dy, room);
+				latest =
+					how === "move" ? moveFrame(from, dx, dy, room, limits) : resizeFrame(from, how, dx, dy, room, limits);
 				if (pending === 0) pending = requestAnimationFrame(paint);
 			};
 			// `released`: the pointer went up (a cancelled press is not half of a double press).
@@ -191,7 +203,7 @@ export function useSheetFrame(enabled: boolean, panel: RefObject<HTMLDivElement 
 			holder.addEventListener("pointercancel", onEnd);
 			stop.current = () => finish(false);
 		},
-		[commit, panel],
+		[commit, panel, limits],
 	);
 
 	const onHeader = (event: { target: EventTarget; currentTarget: Element }): boolean => {
@@ -215,7 +227,13 @@ export function useSheetFrame(enabled: boolean, panel: RefObject<HTMLDivElement 
 		onHandleKeyDown: event => {
 			if (event.ctrlKey || event.metaKey || event.altKey || panel.current === null) return;
 			const room = layoutViewport();
-			const next = keyFrame(event.key, event.shiftKey, clampFrame(measure(panel.current), room), room);
+			const next = keyFrame(
+				event.key,
+				event.shiftKey,
+				clampFrame(measure(panel.current), room, limits),
+				room,
+				limits,
+			);
 			if (next === null) return;
 			event.preventDefault();
 			commit(next === "reset" ? null : next);

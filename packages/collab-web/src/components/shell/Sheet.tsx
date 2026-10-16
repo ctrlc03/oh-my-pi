@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { EDGES } from "../../lib/sheet-frame";
+import { BIG_SLOT, EDGES, paneSlot } from "../../lib/sheet-frame";
 import { useSheetFrame } from "../../lib/use-sheet-frame";
 import { layoutRect, layoutViewport } from "../../lib/zoom";
 import { useMedia, WIDE_QUERY } from "../codemap/shared";
@@ -14,6 +14,8 @@ export interface SheetProps {
 	size?: "wide" | "full" | "palette" | "settings";
 	/** The control that opened it: on desktop the sheet opens upward from it instead of under the header. */
 	anchor?: DOMRect;
+	/** A menu or a yes/no question rather than a pane: it stays where it opens and is not moved or resized. */
+	fixed?: boolean;
 	onClose(): void;
 	children: ReactNode;
 }
@@ -22,9 +24,9 @@ export interface SheetProps {
 const ANCHORED_WIDTH = 320;
 
 /**
- * Where the big sheets float and can be moved and resized: a mouse or trackpad as the main pointer, and the wide
- * layout (the one where the sessions sidebar and the agents rail dock, so there is room to move a 420px sheet about).
- * Phones, tablets and touch screens keep the sheets as they were.
+ * Where sheets float and can be moved and resized: a mouse or trackpad as the main pointer, and the wide layout (the
+ * one where the sessions sidebar and the agents rail dock, so there is room to move a sheet about). Phones, tablets
+ * and touch screens keep the sheets as they were.
  */
 const FRAMED_QUERY = `(pointer: fine) and ${WIDE_QUERY}`;
 
@@ -42,14 +44,15 @@ function anchorStyle(rect: DOMRect): CSSProperties {
  * Overlay panel: a bottom sheet on phones, a dropdown card under the header
  * elsewhere (or above its `anchor`). Escape and the backdrop close it; with sheets
  * stacked (a file opened from the changes list), Escape closes only the top one.
- * The big ones (`full`, `wide`, `settings`) can be moved and resized with a mouse, all in one shared frame; see
- * `use-sheet-frame.ts`.
+ * With a mouse, every pane can be moved and resized: the big ones (`full`, `wide`, `settings`) in one shared frame,
+ * each regular one in a frame of its own (see `sheet-frame.ts`). Anchored popovers, the palette and `fixed` sheets stay put.
  */
-export function Sheet({ label, size, anchor, onClose, children }: SheetProps): ReactNode {
+export function Sheet({ label, size, anchor, fixed = false, onClose, children }: SheetProps): ReactNode {
 	const panel = useRef<HTMLDivElement>(null);
 	const big = size === "full" || size === "wide" || size === "settings";
-	const framed = useMedia(FRAMED_QUERY) && big && anchor === undefined;
-	const frame = useSheetFrame(framed, panel);
+	const pane = big || (size === undefined && !fixed);
+	const framed = useMedia(FRAMED_QUERY) && pane && anchor === undefined;
+	const frame = useSheetFrame(framed, panel, big ? BIG_SLOT : paneSlot(label));
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent): void => {
 			// Escape an inner widget already handled (the editor closing its search panel) leaves the sheet open.

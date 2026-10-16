@@ -90,7 +90,7 @@ export function HighStakesRow({ control }: { control: StakesControl }): ReactNod
 				)}
 			</dd>
 			{asking && (
-				<Sheet label="Turn off high stakes" onClose={() => setAsking(false)}>
+				<Sheet label="Turn off high stakes" fixed onClose={() => setAsking(false)}>
 					<div className="sh-sheet-head">
 						<div className="sh-sheet-title">Turn off high stakes?</div>
 					</div>

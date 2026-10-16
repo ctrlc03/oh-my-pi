@@ -352,7 +352,7 @@ export function DeleteHost({ computers, orgs, onDeleted, children }: DeleteHostP
 		<DeleteContext.Provider value={control}>
 			{children}
 			{pending !== null && (
-				<Sheet label="Delete sessions" onClose={cancel}>
+				<Sheet label="Delete sessions" fixed onClose={cancel}>
 					<DeleteConfirm
 						targets={pending.request.sessions}
 						plan={pending.plan}

@@ -69,7 +69,7 @@ export interface OrgMenuProps {
 /** One session's menu, in its sheet. */
 export function OrgMenu(props: OrgMenuProps): ReactNode {
 	return (
-		<Sheet label={`organise ${props.title}`} onClose={props.onClose}>
+		<Sheet label={`organise ${props.title}`} fixed onClose={props.onClose}>
 			<SheetHead title={props.title} onClose={props.onClose} />
 			<OrgMenuBody {...props} />
 		</Sheet>
@@ -223,7 +223,7 @@ export function OrgSnoozeSheet(props: {
 	onClose(): void;
 }): ReactNode {
 	return (
-		<Sheet label={props.title} onClose={props.onClose}>
+		<Sheet label={props.title} fixed onClose={props.onClose}>
 			<SheetHead title={props.title} onClose={props.onClose} />
 			<div className="sh-org-menu">
 				<SnoozeList choices={snoozeChoices(props.now, null)} onPick={props.onPick} />

@@ -1,4 +1,4 @@
-/* Movable, resizable big sheets (a mouse as the main pointer, the wide layout; see Sheet.tsx). The handle layer is
+/* Movable, resizable sheets: every pane, not menus or questions (a mouse as the main pointer, the wide layout; see Sheet.tsx). The handle layer is
  * a sibling of the panel, laid over it at the panel's own rectangle (written from script): the panel scrolls and
  * clips, and the resize zones reach past its edge. Edge zones are 8px wide, 6px of it outside the panel. */
 .sh-sheet-frame {

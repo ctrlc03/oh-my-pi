@@ -1,13 +1,18 @@
 import { describe, expect, it } from "bun:test";
 import {
+	BIG_SLOT,
 	clampFrame,
 	EDGES,
+	FRAME_KEY,
 	type Frame,
 	KEY_STEP,
 	keyFrame,
 	MIN_H,
 	MIN_W,
 	moveFrame,
+	PANE_MIN_H,
+	PANE_MIN_W,
+	paneSlot,
 	parseFrame,
 	resizeFrame,
 } from "../src/lib/sheet-frame";
@@ -108,6 +113,29 @@ describe("resizeFrame", () => {
 		const big: Frame = { x: 0, y: 0, w: 1200, h: 700 };
 		expect(resizeFrame(big, "e", 100, 0, { width: 1000, height: 900 })).toEqual({ x: 0, y: 0, w: 1000, h: 700 });
 		expect(resizeFrame(big, "e", -100, 0, { width: 1000, height: 900 })).toEqual({ x: 0, y: 0, w: 900, h: 700 });
+	});
+});
+
+describe("regular sheets", () => {
+	const pane = paneSlot("Start a session");
+	const form: Frame = { x: 1048, y: 60, w: 380, h: 420 };
+
+	it("can be made narrower and shorter than a big sheet, down to their own minimum", () => {
+		expect(resizeFrame(form, "w", 40, 0, VIEW, pane)).toEqual({ ...form, x: 1088, w: 340 });
+		expect(resizeFrame(form, "se", -5000, -5000, VIEW, pane)).toEqual({ ...form, w: PANE_MIN_W, h: PANE_MIN_H });
+		expect(keyFrame("ArrowUp", true, { ...form, h: PANE_MIN_H }, VIEW, pane)).toEqual({ ...form, h: PANE_MIN_H });
+	});
+
+	it("keep a saved size under the big sheets' minimum", () => {
+		expect(clampFrame(form, VIEW, pane)).toEqual(form);
+		expect(clampFrame(form, VIEW, BIG_SLOT)).toEqual({ ...form, x: 1440 - MIN_W, w: MIN_W });
+	});
+
+	it("each save under a key of their own, apart from the frame the big sheets share", () => {
+		expect(BIG_SLOT.key).toBe(FRAME_KEY);
+		expect(pane.key).not.toBe(FRAME_KEY);
+		expect(paneSlot("Agents").key).not.toBe(pane.key);
+		expect(paneSlot("Start a session").key).toBe(pane.key);
 	});
 });
 

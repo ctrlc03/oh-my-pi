@@ -31,6 +31,17 @@ export const cfgCollabLocalRelayUrl = register({
 	},
 });
 
+/**
+ * Written by the companion into the overlays it generates, never edited by hand (no settings-panel
+ * entry): the companion's endpoint file `{ pid, port, app }`. A host whose local relay stays
+ * unreachable follows it to the companion's current port.
+ */
+export const cfgCollabLocalRelayEndpointFile = register({
+	id: "collab.localRelayEndpointFile",
+	type: "string",
+	default: "",
+});
+
 export const cfgCollabWebUrl = register({
 	id: "collab.webUrl",
 	type: "string",

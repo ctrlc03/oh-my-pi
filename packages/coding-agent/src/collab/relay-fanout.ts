@@ -15,7 +15,7 @@
  */
 import { logger } from "@oh-my-pi/pi-utils";
 import type { CollabFrame, EncodedFrame, RelayControlMessage } from "./protocol";
-import { serializeFrame } from "./protocol";
+import { normalizeLocalRelayUrl, serializeFrame } from "./protocol";
 import { CollabSocket } from "./relay-client";
 
 /** Local peer ids are offset by this much; relays count from 1, so the ranges never meet. */
@@ -24,12 +24,23 @@ export const LOCAL_PEER_BASE = 0x4000_0000;
 export const LOCAL_RESTART_MS = 30_000;
 /** How long {@link FanoutSocket.flush} waits for the local relay's queue after the public one settled. */
 export const LOCAL_FLUSH_WAIT_MS = 500;
+/** Consecutive failed connection attempts (or drops) of the local relay before it is asked where it moved to. */
+export const LOCAL_MOVE_AFTER_FAILURES = 3;
+/** While the local relay stays unreachable, the relocation lookup runs at most this often. */
+export const LOCAL_MOVE_RECHECK_MS = 30_000;
 
 export interface FanoutSocketOptions {
 	/** wss://host[:port]/r/<roomId> on the public relay. */
 	wsUrl: string;
 	/** ws://127.0.0.1:<port>/r/<roomId> on the host's own relay; absent when no local relay is configured. */
 	localWsUrl?: string;
+	/**
+	 * Where the local relay lives now, as a loopback port, or undefined when nothing better is known.
+	 * Consulted only after the local relay has been unreachable for {@link LOCAL_MOVE_AFTER_FAILURES}
+	 * attempts, at most every {@link LOCAL_MOVE_RECHECK_MS}. A port other than the current one
+	 * replaces the local socket; the public relay is never touched.
+	 */
+	locateLocalRelay?: () => number | undefined;
 	key: CryptoKey;
 }
 
@@ -51,10 +62,16 @@ export class FanoutSocket {
 	 * belonged to it. Peers on the other relay are unaffected.
 	 */
 	onRoomRecreated?: (owns: (peerId: number) => boolean) => void;
+	/** The local relay was replaced by one on another port; carries its new `ws://127.0.0.1:<port>` base. */
+	onLocalRelayMoved?: (localRelayUrl: string) => void;
 
 	readonly #primary: CollabSocket;
-	readonly #localWsUrl: string | undefined;
+	#localWsUrl: string | undefined;
 	readonly #key: CryptoKey;
+	readonly #locateLocalRelay: (() => number | undefined) | undefined;
+	/** Failed attempts of the current local socket since it last held the room. */
+	#localFailures = 0;
+	#lastLocateAt = Number.NEGATIVE_INFINITY;
 	#local: CollabSocket | null = null;
 	/** Local relay ids (unshifted) between their `peer-joined` and `peer-left`. */
 	readonly #localPeers = new Set<number>();
@@ -64,6 +81,7 @@ export class FanoutSocket {
 	constructor(opts: FanoutSocketOptions) {
 		this.#localWsUrl = opts.localWsUrl;
 		this.#key = opts.key;
+		this.#locateLocalRelay = opts.locateLocalRelay;
 		const primary = new CollabSocket({ wsUrl: opts.wsUrl, role: "host", key: opts.key });
 		primary.onOpen = () => this.onOpen?.();
 		primary.onFrame = (frame, fromPeer) => {
@@ -191,7 +209,10 @@ export class FanoutSocket {
 		if (this.#closed || this.#localWsUrl === undefined || this.#local !== null) return;
 		const local = new CollabSocket({ wsUrl: this.#localWsUrl, role: "host", key: this.#key });
 		this.#local = local;
-		local.onOpen = () => logger.debug("collab: local relay connected");
+		local.onOpen = () => {
+			this.#localFailures = 0;
+			logger.debug("collab: local relay connected");
+		};
 		local.onFrame = (frame, fromPeer) => {
 			if (fromPeer > 0 && fromPeer < LOCAL_PEER_BASE) this.onFrame?.(frame, fromPeer + LOCAL_PEER_BASE);
 		};
@@ -209,6 +230,10 @@ export class FanoutSocket {
 		local.onClose = (reason, willReconnect) => {
 			logger.debug("collab: local relay closed", { reason, willReconnect });
 			this.#releaseLocalPeers();
+			if (willReconnect && this.#local === local) {
+				this.#relocateIfMoved(local);
+				return;
+			}
 			if (willReconnect || this.#local !== local) return;
 			// A socket that gave up (its own backlog overflowed, the relay refused the room) is
 			// replaced by a fresh one later; the public session carries on meanwhile.
@@ -226,6 +251,37 @@ export class FanoutSocket {
 		const gone = [...this.#localPeers];
 		this.#localPeers.clear();
 		for (const peer of gone) this.onControl?.({ t: "peer-left", peer: peer + LOCAL_PEER_BASE });
+	}
+
+	/**
+	 * After repeated failures, follow the endpoint lookup to another loopback port. Runs inside the
+	 * failing socket's close handler, so the swap waits a microtask: the socket schedules its own
+	 * retry right after the handler returns, and closing it first would leave that timer behind.
+	 */
+	#relocateIfMoved(failing: CollabSocket): void {
+		const locate = this.#locateLocalRelay;
+		const current = this.#localWsUrl;
+		if (locate === undefined || current === undefined) return;
+		if (++this.#localFailures < LOCAL_MOVE_AFTER_FAILURES) return;
+		const now = Date.now();
+		if (now - this.#lastLocateAt < LOCAL_MOVE_RECHECK_MS) return;
+		this.#lastLocateAt = now;
+		const port = locate();
+		if (port === undefined) return;
+		const base = normalizeLocalRelayUrl(`ws://127.0.0.1:${port}`);
+		if (base === null) return;
+		const next = new URL(current);
+		if (next.port === String(port)) return;
+		next.port = String(port);
+		queueMicrotask(() => {
+			if (this.#closed || this.#local !== failing) return;
+			logger.info("collab: local relay moved", { from: current, to: next.href });
+			this.#disposeLocal();
+			this.#localWsUrl = next.href;
+			this.#localFailures = 0;
+			this.onLocalRelayMoved?.(base);
+			this.#startLocal();
+		});
 	}
 
 	#disposeLocal(): void {

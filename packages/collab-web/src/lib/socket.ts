@@ -18,10 +18,13 @@ import {
 	servedRoomUrl,
 } from "./relay-route";
 
+/** Close reason for relay code 4009: another host holds the room. A companion retries it on its own schedule. */
+export const HOST_TAKEN_REASON = "a host is already connected for this room";
+
 const RELAY_CLOSE_REASONS: Record<number, string> = {
 	4001: "room closed",
 	4004: "no such room",
-	4009: "a host is already connected for this room",
+	4009: HOST_TAKEN_REASON,
 	4029: "room is full",
 };
 

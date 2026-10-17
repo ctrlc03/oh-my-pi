@@ -20,8 +20,16 @@ export function companionLine(status: CompanionStatus): string {
 			return `Companion: started by this app (port ${status.endpoint.port})`;
 		case "restarting":
 			return `Companion: restarting in ${Math.ceil(status.delayMs / 1000)} s`;
+		case "waiting":
+			return status.cause === "service"
+				? "Companion: waiting for the companion service…"
+				: "Companion: waiting for the one that is starting…";
 		case "unavailable":
-			return status.reason === "no-omp" ? "Companion: omp is not installed" : "Companion: another one is in the way";
+			return status.reason === "no-omp"
+				? "Companion: omp is not installed"
+				: status.reason === "service"
+					? "Companion: the service cannot start"
+					: "Companion: another one is in the way";
 	}
 }
 
@@ -45,9 +53,22 @@ export function pageForStatus(status: CompanionStatus): { title: string; body: s
 				title: "The companion stopped",
 				body: `It stopped (${status.reason}). Starting it again in ${Math.ceil(status.delayMs / 1000)} s.`,
 			};
+		case "waiting":
+			return {
+				title: status.cause === "service" ? "Waiting for the companion service…" : "A companion is starting…",
+				body:
+					status.cause === "service"
+						? `The companion runs as a background service, so this app asked it to start and opens as soon as it is ready.${status.note === null ? "" : ` The service did not start yet: ${status.note}`}`
+						: `Another companion${status.pid === null ? "" : ` (process ${status.pid})`} is starting or about to take over. The app opens as soon as it is ready.`,
+			};
 		case "unavailable":
 			return {
-				title: status.reason === "no-omp" ? "omp is not installed" : "The companion is not available",
+				title:
+					status.reason === "no-omp"
+						? "omp is not installed"
+						: status.reason === "service"
+							? "The companion service cannot start"
+							: "The companion is not available",
 				body: status.message,
 			};
 		default:

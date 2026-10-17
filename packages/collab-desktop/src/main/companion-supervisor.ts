@@ -4,8 +4,17 @@
  * Process, clock and file system are injected; `companion-supervisor.test.ts` drives it with fakes.
  *
  * Two companions must never run at once: they fight over the room (relay close 4009). So the supervisor looks for a
- * running one before every start, and an attached companion that goes away (a service stopped, or migrated into the
- * app) is replaced by one of its own.
+ * running one before every start, and never starts one while another is there or on its way:
+ *
+ * - a live single-instance lock means a companion is starting or standing by: wait for its endpoint. A holder that
+ *   publishes none within `LOCK_WAIT_MS` (no local relay, no web app) is reported as in the way, and still watched;
+ * - an installed service (launchd, systemd) owns the companion: the app never spawns one. It asks the service manager
+ *   to start the service and waits for the endpoint, asking again at most every `SERVICE_ASK_MS`. A service that
+ *   fails `SERVICE_FAILURES_MAX` asks in a row is reported as unable to start, and still asked (never replaced by an
+ *   app companion: it would fight the service the day that loads);
+ * - otherwise the app runs the companion itself, and restarts it when it crashes.
+ *
+ * An attached companion that goes away is handled the same way (boot again).
  */
 import type { LocalEndpoint } from "./companion-endpoint";
 import { planCompanion } from "./companion-endpoint";
@@ -20,8 +29,16 @@ export type CompanionStatus =
 	/** The companion this app started. */
 	| { kind: "running"; endpoint: LocalEndpoint; pid: number; command: CompanionCommand }
 	| { kind: "restarting"; attempt: number; delayMs: number; reason: string }
-	/** Nothing can serve the app: `omp` is missing, or a companion without the app holds the room. */
-	| { kind: "unavailable"; reason: "no-omp" | "blocked"; message: string; tried: string[] };
+	/**
+	 * Someone else is about to serve and the app waits for them: the companion service it asked to start
+	 * (`cause: "service"`; `note` says why the last request failed), or a companion holding the lock (`cause: "lock"`).
+	 */
+	| { kind: "waiting"; cause: "service" | "lock"; pid: number | null; note: string | null }
+	/**
+	 * Nothing can serve the app: `omp` is missing, a companion without the app holds the room or the lock, or the
+	 * installed service will not start.
+	 */
+	| { kind: "unavailable"; reason: "no-omp" | "blocked" | "service"; message: string; tried: string[] };
 
 export interface ChildHandle {
 	pid: number | undefined;
@@ -32,9 +49,18 @@ export interface ChildHandle {
 	release(): void;
 }
 
+/** The outcome of asking the service manager to start the companion service. */
+export type ServiceStart = { ok: true } | { ok: false; message: string };
+
 export interface SupervisorDeps {
 	resolve(): Promise<Resolution>;
 	discover(): Promise<LocalEndpoint | null>;
+	/** The companion is installed as a launchd or systemd service. Checked at every boot: migrating removes it. */
+	serviceInstalled(): boolean;
+	/** The pid of a companion holding the single-instance lock (starting or standing by), or null. */
+	liveLock(): Promise<{ pid: number } | null>;
+	/** Ask the service manager to start the companion service (not restart it); never rejects. */
+	startService(): Promise<ServiceStart>;
 	spawn(command: CompanionCommand): ChildHandle;
 	sleep(ms: number): Promise<void>;
 	now(): number;
@@ -49,6 +75,15 @@ export const WATCH_MS = 4_000;
 /** A companion that ran this long before it died starts the backoff over. */
 export const STABLE_MS = 60_000;
 export const KILL_GRACE_MS = 6_000;
+/** The service is asked to start at most this often while its companion does not come up. */
+export const SERVICE_ASK_MS = 30_000;
+/** First pause between looks for a companion that is on its way, and the longest one. */
+export const WAIT_FIRST_MS = 1_000;
+export const WAIT_MAX_MS = 5_000;
+/** Failed service starts in a row after which the service is reported as unable to start. */
+export const SERVICE_FAILURES_MAX = 3;
+/** How long a live lock may stay without an endpoint before its holder is reported as in the way. */
+export const LOCK_WAIT_MS = 60_000;
 
 /** Delay before restart number `attempt` (1-based): 1 s, 2 s, 4 s … at most 30 s. */
 export function backoffMs(attempt: number): number {
@@ -58,6 +93,11 @@ export function backoffMs(attempt: number): number {
 /** The attempt number after a companion that ran `uptimeMs` died, given the previous attempt (0: it was the first start). */
 export function nextAttempt(previous: number, uptimeMs: number): number {
 	return uptimeMs >= STABLE_MS ? 1 : previous + 1;
+}
+
+/** Pause before look number `step` (0-based) for a companion that is on its way: 1 s, 2 s, 4 s, then 5 s. */
+export function waitMs(step: number): number {
+	return Math.min(WAIT_MAX_MS, WAIT_FIRST_MS * 2 ** step);
 }
 
 export class CompanionSupervisor {
@@ -112,6 +152,8 @@ export class CompanionSupervisor {
 			this.#set({ kind: "unavailable", reason: "blocked", message: plan.reason, tried: [] });
 			return;
 		}
+		if (await this.#someoneElseStarts(generation)) return;
+		if (generation !== this.#generation) return;
 		const resolution = await this.#deps.resolve();
 		if (generation !== this.#generation) return;
 		if (!resolution.ok) {
@@ -126,7 +168,81 @@ export class CompanionSupervisor {
 		await this.#spawn(generation, resolution.command);
 	}
 
-	/** An attached companion that disappears is replaced: boot again, which attaches to a newer one or starts ours. */
+	/**
+	 * With a live lock or an installed service, a companion is there or on its way and the app must not start one:
+	 * wait for it (asking the service to start when nobody holds the lock), then boot again. False when nothing
+	 * stands in the way and the app may run its own.
+	 */
+	async #someoneElseStarts(generation: number): Promise<boolean> {
+		const lock = await this.#deps.liveLock();
+		if (generation !== this.#generation) return true;
+		if (lock === null && !this.#deps.serviceInstalled()) return false;
+		await this.#waitForCompanion(generation);
+		return true;
+	}
+
+	async #waitForCompanion(generation: number): Promise<void> {
+		let lastAsk = Number.NEGATIVE_INFINITY;
+		let note: string | null = null;
+		let failures = 0;
+		let held = null as { pid: number; since: number } | null;
+		for (let step = 0; ; step++) {
+			const lock = await this.#deps.liveLock();
+			if (generation !== this.#generation) return;
+			const service = lock === null && this.#deps.serviceInstalled();
+			if (lock === null && !service) break;
+			held = lock === null ? null : held?.pid === lock.pid ? held : { pid: lock.pid, since: this.#deps.now() };
+			if (service && this.#deps.now() - lastAsk >= SERVICE_ASK_MS) {
+				lastAsk = this.#deps.now();
+				this.#deps.log("no companion is running; asking the companion service to start");
+				const started = await this.#deps.startService();
+				if (generation !== this.#generation) return;
+				note = started.ok ? null : started.message;
+				failures = started.ok ? 0 : failures + 1;
+				if (!started.ok) this.#deps.log(`the companion service did not start: ${started.message}`);
+			}
+			if (held !== null && this.#deps.now() - held.since >= LOCK_WAIT_MS) {
+				this.#setUnavailable(
+					"blocked",
+					`A companion (process ${held.pid}) has been starting for over ${LOCK_WAIT_MS / 1000} s without publishing an address for the app. It may have been started without its local web app, or its local relay could not start. Stop it (process ${held.pid}) or restart it normally; the app connects as soon as it is ready.`,
+				);
+			} else if (service && failures >= SERVICE_FAILURES_MAX) {
+				this.#setUnavailable(
+					"service",
+					`The companion service is installed but cannot be started${note === null ? "" : ` (${note})`}. Choose Run the Companion Inside This App to remove the service and let the app run the companion, or reinstall the service with omp companion --install. The app keeps trying meanwhile.`,
+				);
+			} else {
+				this.#setWaiting(
+					lock === null ? { cause: "service", pid: null, note } : { cause: "lock", pid: lock.pid, note: null },
+				);
+			}
+			await this.#deps.sleep(waitMs(step));
+			if (generation !== this.#generation) return;
+			if ((await this.#deps.discover()) !== null) break;
+			if (generation !== this.#generation) return;
+		}
+		await this.#boot(generation);
+	}
+
+	#setUnavailable(reason: "blocked" | "service", message: string): void {
+		const current = this.#status;
+		if (current.kind === "unavailable" && current.reason === reason && current.message === message) return;
+		this.#set({ kind: "unavailable", reason, message, tried: [] });
+	}
+
+	#setWaiting(next: { cause: "service" | "lock"; pid: number | null; note: string | null }): void {
+		const current = this.#status;
+		if (
+			current.kind === "waiting" &&
+			current.cause === next.cause &&
+			current.pid === next.pid &&
+			current.note === next.note
+		)
+			return;
+		this.#set({ kind: "waiting", ...next });
+	}
+
+	/** An attached companion that disappears is replaced: boot again, which attaches to a newer one, waits for the service or starts ours. */
 	async #watch(generation: number, endpoint: LocalEndpoint): Promise<void> {
 		while (generation === this.#generation) {
 			await this.#deps.sleep(WATCH_MS);

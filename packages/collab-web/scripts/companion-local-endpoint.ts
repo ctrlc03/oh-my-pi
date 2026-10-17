@@ -29,18 +29,32 @@ export function localAppUrl(port: number): string {
 	return `http://127.0.0.1:${port}/`;
 }
 
+/**
+ * The `collab:` overlay lines that point omp at this companion's local relay: its address, and the endpoint file that
+ * says where it listens after a restart. Empty without a relay (nothing is published then).
+ */
+export function localRelayOverlayYaml(localRelayUrl?: string, localRelayEndpointFile?: string): string {
+	if (!localRelayUrl) return "";
+	const file = localRelayEndpointFile ? `  localRelayEndpointFile: ${JSON.stringify(localRelayEndpointFile)}\n` : "";
+	return `  localRelayUrl: ${JSON.stringify(localRelayUrl)}\n${file}`;
+}
+
+/** Written whole or not at all: another process reads this file while the companion starts. */
 export async function publishLocalEndpoint(file: string, endpoint: LocalEndpoint): Promise<void> {
 	await fs.mkdir(path.dirname(file), { recursive: true });
-	await fs.writeFile(file, `${JSON.stringify(endpoint)}\n`, { mode: 0o600 });
+	const temp = `${file}.${process.pid}.tmp`;
+	await fs.writeFile(temp, `${JSON.stringify(endpoint)}\n`, { mode: 0o600 });
+	await fs.rename(temp, file);
 }
 
 /** Remove the file when it still names `pid`: a newer companion may have replaced it. */
 export async function removeLocalEndpoint(file: string, pid: number): Promise<void> {
-	const current = await readEndpoint(file);
+	const current = await readLocalEndpoint(file);
 	if (current?.pid === pid) await fs.rm(file, { force: true });
 }
 
-async function readEndpoint(file: string): Promise<LocalEndpoint | null> {
+/** The endpoint file's content, whether or not the companion that wrote it still runs; null when absent or unreadable. */
+export async function readLocalEndpoint(file: string): Promise<LocalEndpoint | null> {
 	try {
 		const raw: unknown = JSON.parse(await Bun.file(file).text());
 		if (typeof raw !== "object" || raw === null || !("pid" in raw) || !("port" in raw) || !("app" in raw))
@@ -65,7 +79,7 @@ function alive(pid: number): boolean {
 
 /** The published endpoint of a companion that is running now, or null. */
 export async function findRunningEndpoint(file: string): Promise<LocalEndpoint | null> {
-	const endpoint = await readEndpoint(file);
+	const endpoint = await readLocalEndpoint(file);
 	if (endpoint === null || !alive(endpoint.pid)) return null;
 	try {
 		// Any answer proves something listens there; the status says nothing (the app may still be building).
@@ -77,6 +91,27 @@ export async function findRunningEndpoint(file: string): Promise<LocalEndpoint |
 		return endpoint;
 	} catch {
 		return null;
+	}
+}
+
+/** How long `--open` waits for a companion that holds the lock to publish its address. */
+export const ENDPOINT_WAIT_MS = 60_000;
+
+/** Look for the endpoint every `pollMs` until one is running or `timeoutMs` has passed (checked at least once). */
+export async function waitForRunningEndpoint(
+	file: string,
+	options: {
+		timeoutMs?: number;
+		pollMs?: number;
+		find?: (file: string) => Promise<LocalEndpoint | null>;
+	} = {},
+): Promise<LocalEndpoint | null> {
+	const find = options.find ?? findRunningEndpoint;
+	const deadline = Date.now() + (options.timeoutMs ?? ENDPOINT_WAIT_MS);
+	for (;;) {
+		const found = await find(file);
+		if (found !== null || Date.now() >= deadline) return found;
+		await Bun.sleep(options.pollMs ?? 1_000);
 	}
 }
 

@@ -13,6 +13,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { PersonalLogin, PersonalMemoryMode, PersonalSettings } from "@oh-my-pi/pi-wire/personal";
 import { PERSONAL_DEFAULTS, PERSONAL_LOGIN_COMMAND } from "@oh-my-pi/pi-wire/personal";
+import { localRelayOverlayYaml } from "./companion-local-endpoint";
 import { ABOUT_TEMPLATE, APPEND_SYSTEM } from "./companion-personal-templates";
 import type { PersonalAboutStore, PersonalPaths } from "./companion-personal-store";
 import { writeFileAtomic } from "./companion-personal-store";
@@ -132,6 +133,8 @@ export interface PersonalProfileOptions {
 	webUrl: string;
 	/** The local relay of this companion (`ws://127.0.0.1:<port>`) once it runs. */
 	localRelayUrl(): string | undefined;
+	/** The companion's endpoint file: named in the overlay next to the local relay, so sessions follow the relay to a new port. */
+	localRelayEndpointFile: string;
 	/** The settings the next launch gets (mirror the stored ones): the spend limits and the memory mode. */
 	limits(): PersonalSettings["limits"];
 	memoryMode(): PersonalMemoryMode;
@@ -191,7 +194,7 @@ export function createPersonalProfile(options: PersonalProfileOptions): Personal
 		const local = options.localRelayUrl();
 		const collab =
 			kind === "live"
-				? `collab:\n  autoStart: control\n  relayUrl: ${JSON.stringify(options.relayUrl)}\n  webUrl: ${JSON.stringify(options.webUrl)}\n${local ? `  localRelayUrl: ${JSON.stringify(local)}\n` : ""}`
+				? `collab:\n  autoStart: control\n  relayUrl: ${JSON.stringify(options.relayUrl)}\n  webUrl: ${JSON.stringify(options.webUrl)}\n${localRelayOverlayYaml(local, options.localRelayEndpointFile)}`
 				: "";
 		// A review or source-poll run is never the live chat: only the live session gets the memory mode.
 		const mode = kind === "live" ? `  memoryMode: ${options.memoryMode()}\n` : "";

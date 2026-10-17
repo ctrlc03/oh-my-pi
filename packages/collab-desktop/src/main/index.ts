@@ -21,6 +21,7 @@ import {
 	type SessionReport,
 } from "../shared/bridge";
 import { appUrl, configDirOf, endpointFile, findRunningEndpoint, stateFile } from "./companion-endpoint";
+import { lockFile, readCompanionLock } from "./companion-lock";
 import {
 	checkoutCommand,
 	checkoutRootOf,
@@ -35,10 +36,13 @@ import {
 	discoveryDeps,
 	hasCompanion,
 	isRunnable,
+	lockDeps,
 	printLocalLink,
 	run,
+	serviceFile,
 	serviceInstalled,
 	spawnCompanion,
+	startService,
 	uninstallService,
 } from "./launch";
 import { buildAppMenu, buildTrayMenu, type MenuActions, type MenuModel } from "./menu";
@@ -169,6 +173,12 @@ async function main(): Promise<void> {
 	const supervisor = new CompanionSupervisor({
 		resolve: resolveNow,
 		discover: () => findRunningEndpoint(endpointFile(configDir), discoveryDeps()),
+		serviceInstalled: () => serviceInstalled(home, platform),
+		liveLock: async () => {
+			const lock = await readCompanionLock(lockFile(configDir), lockDeps());
+			return lock?.live === true ? { pid: lock.pid } : null;
+		},
+		startService: () => startService({ platform, uid: process.getuid?.(), plist: serviceFile(home, platform) }),
 		spawn: (command: CompanionCommand) =>
 			spawnCompanion(command, { home, baseEnv: baseEnv(), logFile: companionLog, platform }),
 		sleep: ms => new Promise<void>(resolve => setTimeout(resolve, ms)),
@@ -527,6 +537,22 @@ async function main(): Promise<void> {
 	});
 
 	async function explainUnavailable(status: Extract<CompanionStatus, { kind: "unavailable" }>): Promise<void> {
+		if (status.reason === "service") {
+			const answer = await dialog.showMessageBox({
+				type: "warning",
+				message: "The companion service cannot start",
+				detail: status.message,
+				buttons: ["Run the Companion Inside This App…", "Check Again", "Quit"],
+				defaultId: 1,
+				cancelId: 2,
+			});
+			if (answer.response === 0) void migrateService();
+			else if (answer.response === 1) {
+				unavailableShown = null;
+				void supervisor.start();
+			} else void shutdown(false);
+			return;
+		}
 		if (status.reason === "blocked") {
 			const answer = await dialog.showMessageBox({
 				type: "warning",
@@ -587,10 +613,14 @@ async function main(): Promise<void> {
 			cancelId: 1,
 		});
 		if (confirm.response !== 0) return;
+		let message = "";
 		try {
 			const command = await currentCommand();
 			if (command === null) throw new Error("omp was not found, so the service cannot be removed from here");
-			const message = await uninstallService(command, { home, baseEnv: baseEnv(), platform });
+			// Stop watching first: with the service still installed, an attached companion that goes away makes the
+			// supervisor ask the service to start it again.
+			await supervisor.stop({ keepRunning: true });
+			message = await uninstallService(command, { home, baseEnv: baseEnv(), platform });
 			const deadline = Date.now() + 15_000;
 			while (
 				Date.now() < deadline &&
@@ -598,15 +628,19 @@ async function main(): Promise<void> {
 			) {
 				await new Promise<void>(resolve => setTimeout(resolve, 500));
 			}
-			await supervisor.restart();
+		} catch (err) {
+			dialog.showErrorBox("Could not remove the service", err instanceof Error ? err.message : String(err));
+		}
+		// Whatever happened, supervise again: without the service the app starts its own companion, with it the app
+		// asks the service to start it.
+		await supervisor.start();
+		if (!serviceInstalled(home, platform)) {
 			await dialog.showMessageBox({
 				type: "info",
 				message: "The companion now runs inside this app",
 				detail: message || "The service was removed.",
 				buttons: ["OK"],
 			});
-		} catch (err) {
-			dialog.showErrorBox("Could not remove the service", err instanceof Error ? err.message : String(err));
 		}
 		rebuildMenus();
 	}

@@ -189,7 +189,7 @@ import { companionWorktree, createSettleCleanup, loadSettleState, saveSettleStat
 import { createSessionDelete, TRASH_PURGE_EVERY_MS } from "./companion-delete";
 import { createDiskGuard, loadDiskFile, saveDiskFile } from "./companion-disk";
 import { createSessionLister } from "./companion-list";
-import { preferredRelayPort, startCompanionRelay } from "./companion-local-relay";
+import { previousRelayPort, preferredRelayPort, startCompanionRelay } from "./companion-local-relay";
 import {
 	findRunningEndpoint,
 	localEndpointFile,
@@ -197,7 +197,10 @@ import {
 	openInBrowser,
 	publishLocalEndpoint,
 	removeLocalEndpoint,
+	waitForRunningEndpoint,
 } from "./companion-local-endpoint";
+import { acquireCompanionLock, readCompanionLock, watchCompanionLock } from "./companion-lock";
+import { RoomReconnector } from "./companion-reconnect";
 import { RoomHost } from "./companion-room";
 import { embeddedApp } from "./local-app-embedded";
 import { type AppState, createLocalAppHandler, loadEmbeddedBuild } from "./local-app";
@@ -292,8 +295,7 @@ import { readForeignIndexStrict } from "./foreign/foreign-index";
 const POLL_MS = 3_000;
 /** Refresh while no device is connected but some want push notifications. */
 const PUSH_POLL_MS = 6_000;
-/** Back-off after a terminal relay close (e.g. our previous connection still registered as host). */
-const RECONNECT_MS = 5_000;
+
 const DEFAULT_WEB_URL = "https://my.omp.sh/";
 
 const configDir = path.join(os.homedir(), process.env.PI_CONFIG_DIR || ".omp");
@@ -490,6 +492,34 @@ if (flags.includes("--uninstall")) {
 	}
 	process.exit(0);
 }
+// `--open` / `--print-local-link` talk to the companion that is already running; they start nothing and print no Pages link.
+const printLocalLink = flags.includes("--print-local-link");
+const openLocalApp = flags.includes("--open");
+let running = printLocalLink || openLocalApp ? await findRunningEndpoint(localEndpointFile(configDir)) : null;
+// `--open` while another companion is still starting (it holds the lock but has not published its address yet) waits
+// for that address instead of standing by behind it.
+if (openLocalApp && !printLocalLink && running === null && (await readCompanionLock(configDir))?.live) {
+	console.log("companion: another companion is starting; waiting for it to publish its address");
+	running = await waitForRunningEndpoint(localEndpointFile(configDir));
+	if (running === null) {
+		console.error(
+			"companion: the companion that holds the lock published no address; is it running with --no-local-app?",
+		);
+		process.exit(1);
+	}
+}
+// One companion at a time (two fight over the room): a second one waits here, binding and opening nothing, until the
+// active one is gone. Commands that only talk to the running companion, print a pairing link or write the service file
+// never take the lock. It is taken before the state is read: a companion that waited must not start from state the
+// active one has since changed.
+const takesLock = !(flags.includes("--install") || flags.includes("--pair") || printLocalLink || running !== null);
+const companionLock = takesLock
+	? await acquireCompanionLock(configDir, {
+			onStandby: holder =>
+				console.log(`companion: another companion (pid ${holder.pid}) is running; waiting to take over`),
+		})
+	: null;
+process.on("exit", () => companionLock?.release());
 const rotate = flags.includes("--rotate");
 const relayUrl = (await configValue("collab.relayUrl")) || DEFAULT_RELAY_URL;
 const webUrl = (await configValue("collab.webUrl")) || DEFAULT_WEB_URL;
@@ -528,11 +558,7 @@ async function showLocalPairing(port: number, open: boolean): Promise<void> {
 	}
 }
 
-// `--open` / `--print-local-link` talk to the companion that is already running; they start nothing and print no Pages link.
-const printLocalLink = flags.includes("--print-local-link");
-const openLocalApp = flags.includes("--open");
 if (printLocalLink || openLocalApp) {
-	const running = await findRunningEndpoint(localEndpointFile(configDir));
 	if (running?.app) {
 		await showLocalPairing(running.port, !printLocalLink);
 		process.exit(0);
@@ -634,8 +660,11 @@ let appState: () => AppState = () => ({ kind: "building" });
 if (!flags.includes("--no-local-relay")) {
 	try {
 		const configured = await configValue("collab.localRelayUrl").catch(() => "");
+		// Without a configured address the companion comes back on the port it served on last time (its overlay names it
+		// even after a clean exit removed the endpoint file; sessions already running were launched with that port).
+		const previous = await previousRelayPort(localEndpointFile(configDir), overlayPath);
 		const started = startCompanionRelay({
-			preferredPort: preferredRelayPort(configured),
+			preferredPort: preferredRelayPort(configured, previous),
 			allowedOrigins: [new URL(webUrl).origin],
 			app: serveApp ? createLocalAppHandler(() => appState()) : undefined,
 		});
@@ -895,6 +924,7 @@ const personal = await createPersonal({
 	relayUrl: state.relayUrl,
 	webUrl,
 	localRelayUrl: () => localRelayUrl,
+	localRelayEndpointFile: localEndpointFile(configDir),
 	now: Date.now,
 	listHosts: async () => (await loadSessions()).hosts,
 	endHost: async instanceId => {
@@ -1391,6 +1421,7 @@ async function startSession(
 				overlayPath,
 				promptDir: path.join(configDir, COMPANION_RUN_DIR),
 				localRelayUrl,
+				localRelayEndpointFile: localEndpointFile(configDir),
 				cwd: launchCwd,
 				resume: plan ? plan.resume : resume,
 				sandbox,
@@ -1861,10 +1892,24 @@ async function setSubscription(deviceId: string, subscription: unknown, on: bool
 	schedulePoll();
 }
 
-room.onOpen = route => {
-	recordRelayEvent("open", `room open (${route} relay)`);
-	console.log(`companion: room open on the ${route} relay, waiting for devices`);
-};
+/** When a relay's open counts, and when to host the room there again after a close; see ./companion-reconnect. */
+const reconnector = new RoomReconnector({
+	connect: route => room.connect(route),
+	schedule: (fn, ms) => {
+		const timer = setTimeout(fn, ms);
+		return () => clearTimeout(timer);
+	},
+	confirmed: route => {
+		recordRelayEvent("open", `room open (${route} relay)`);
+		console.log(`companion: room open on the ${route} relay, waiting for devices`);
+	},
+	report: (_route, kind, line) => {
+		recordRelayEvent(kind, line);
+		console.error(`companion: ${line}`);
+	},
+});
+
+room.onOpen = route => reconnector.opened(route);
 
 /** Stop serving a peer: it must authenticate again. */
 function dropPeer(peer: number): void {
@@ -1874,7 +1919,8 @@ function dropPeer(peer: number): void {
 	presence.delete(peer);
 }
 
-room.onControl = msg => {
+room.onControl = (msg, route) => {
+	reconnector.activity(route);
 	if (msg.t !== "peer-left") return;
 	const deviceId = peerDevice.get(msg.peer);
 	dropPeer(msg.peer);
@@ -1944,6 +1990,7 @@ async function revokeDevice(deviceId: unknown): Promise<void> {
 }
 
 room.onFrame = (frame, fromPeer) => {
+	reconnector.activity(RoomHost.routeOf(fromPeer));
 	if (frame.t === "auth") {
 		void authenticate(frame, fromPeer);
 		return;
@@ -2930,11 +2977,9 @@ room.onFrame = (frame, fromPeer) => {
 };
 
 room.onClose = (route, reason, willReconnect) => {
-	recordRelayEvent("close", `${route} relay: ${willReconnect ? `${reason}, reconnecting` : reason}`);
 	// Only the guests that came through the relay that closed are gone.
 	for (const peer of [...peers, ...peerDevice.keys()]) if (RoomHost.routeOf(peer) === route) dropPeer(peer);
-	console.error(`companion: ${route} relay closed (${reason})${willReconnect ? ", reconnecting" : ""}`);
-	if (!willReconnect) setTimeout(() => room.connect(route), RECONNECT_MS);
+	reconnector.closed(route, reason, willReconnect);
 };
 
 room.connect();
@@ -2956,6 +3001,8 @@ void quizzes.init().catch(err => console.error(`companion: starting quizzes fail
 void spars.init().catch(err => console.error(`companion: starting sparring failed: ${errorText(err)}`));
 void bakeoffs.init().catch(err => console.error(`companion: starting bake-offs failed: ${errorText(err)}`));
 
+let stopLockWatch: () => void = () => {};
+
 function shutdown(): void {
 	// Runs are detached process groups: they would outlive the companion.
 	runs.stopAll();
@@ -2963,6 +3010,8 @@ function shutdown(): void {
 	clearTimeout(pollTimer);
 	awake.release();
 	room.close();
+	reconnector.stop();
+	stopLockWatch();
 
 	// The warm preview browser and the speech worker are separate process trees: close them before exiting.
 	void Promise.allSettled([
@@ -2978,3 +3027,14 @@ function shutdown(): void {
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+
+// Two standbys that raced on a stale lock can both end up active: the one the lock no longer names steps aside, and
+// the service manager restarts it into standby (a hand-started one just ends).
+if (companionLock !== null) {
+	stopLockWatch = watchCompanionLock(companionLock, {
+		onLost: holder => {
+			console.error(`companion: the lock now belongs to another companion (pid ${holder.pid}); stopping`);
+			shutdown();
+		},
+	});
+}

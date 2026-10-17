@@ -6,8 +6,9 @@ import { type ChildProcess, execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { appUrl, type DiscoveryDeps, type LocalEndpoint, pidExists } from "./companion-endpoint";
+import type { LockDeps } from "./companion-lock";
 import { type CompanionCommand, companionEnv } from "./companion-resolve";
-import type { ChildHandle } from "./companion-supervisor";
+import type { ChildHandle, ServiceStart } from "./companion-supervisor";
 import { parseLocalLink } from "./pairing";
 import type { RunResult } from "./updater";
 
@@ -178,4 +179,67 @@ export function serviceFile(home: string, platform: NodeJS.Platform): string | n
 export function serviceInstalled(home: string, platform: NodeJS.Platform): boolean {
 	const file = serviceFile(home, platform);
 	return file !== null && fs.existsSync(file);
+}
+
+/** Real file, process-table and command-line access for the single-instance lock check. */
+export function lockDeps(): LockDeps {
+	const { readFile, alive } = discoveryDeps();
+	return {
+		readFile,
+		alive,
+		commandLine: async pid => {
+			const { promise, resolve } = Promise.withResolvers<string | null>();
+			execFile("ps", ["-o", "command=", "-p", String(pid)], { timeout: PROBE_TIMEOUT_MS }, (error, stdout) => {
+				resolve(error === null && stdout.trim() !== "" ? stdout.trim() : null);
+			});
+			return promise;
+		},
+	};
+}
+
+export const MAC_SERVICE_LABEL = "sh.omp.collab-companion";
+export const LINUX_SERVICE_UNIT = "omp-collab-companion.service";
+
+/**
+ * The command that asks the service manager to start the companion service, or null where there is none. It starts
+ * a stopped service and leaves a running one alone (launchd's `kickstart` without `-k`, which would kill and restart it).
+ */
+export function serviceStartCommand(
+	platform: NodeJS.Platform,
+	uid: number | undefined,
+): { command: string; args: string[] } | null {
+	if (platform === "darwin" && uid !== undefined)
+		return { command: "launchctl", args: ["kickstart", `gui/${uid}/${MAC_SERVICE_LABEL}`] };
+	if (platform === "linux") return { command: "systemctl", args: ["--user", "start", LINUX_SERVICE_UNIT] };
+	return null;
+}
+
+/** launchd's answer to `kickstart` for a job that is not loaded (after `bootout`, or a `bootstrap` that failed). */
+export function launchdNotLoaded(result: RunResult): boolean {
+	return result.code === 113 || /could not find service/i.test(result.out);
+}
+
+const failure = (result: RunResult): ServiceStart => ({
+	ok: false,
+	message: result.out.trim().slice(0, 300) || `exit ${result.code}`,
+});
+
+/**
+ * Ask the service manager to start the companion service; never rejects. On macOS a service whose plist exists but
+ * is not loaded is loaded first (`launchctl bootstrap`) and then kicked; a service that still will not start is
+ * reported as the manager said it. On Linux `systemctl --user start` is reported as is.
+ */
+export async function startService(
+	options: { platform: NodeJS.Platform; uid: number | undefined; plist: string | null },
+	exec: (command: string, args: string[]) => Promise<RunResult> = run,
+): Promise<ServiceStart> {
+	const start = serviceStartCommand(options.platform, options.uid);
+	if (start === null) return { ok: false, message: "this platform has no companion service" };
+	const result = await exec(start.command, start.args);
+	if (result.code === 0) return { ok: true };
+	if (options.platform !== "darwin" || options.plist === null || !launchdNotLoaded(result)) return failure(result);
+	const loaded = await exec("launchctl", ["bootstrap", `gui/${options.uid}`, options.plist]);
+	if (loaded.code !== 0) return failure(loaded);
+	const kicked = await exec(start.command, start.args);
+	return kicked.code === 0 ? { ok: true } : failure(kicked);
 }

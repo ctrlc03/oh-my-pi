@@ -240,6 +240,7 @@ async function build(over: Partial<PersonalEnv> = {}): Promise<Personal> {
 		relayUrl: "wss://relay.example/ws",
 		webUrl: "https://app.example",
 		localRelayUrl: () => undefined,
+		localRelayEndpointFile: path.join(root, "agent", "collab-companion-local.json"),
 		now: () => clock,
 		listHosts: async () => {
 			await simulateSession();

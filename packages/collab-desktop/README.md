@@ -7,7 +7,12 @@ The window loads the app the companion serves on loopback (`http://127.0.0.1:<po
 ## How it finds and runs the companion
 
 1. **Discovery.** The companion publishes `<config>/agent/collab-companion-local.json` (`{pid, port, app}`; `<config>` is `~/<PI_CONFIG_DIR or .omp>`). The app attaches when that file names a live process whose port answers a request. A companion that runs but serves no app (`--no-local-app`) is reported, never duplicated. A file left by a crashed companion is ignored.
-2. **Start and supervise.** Otherwise it spawns `omp companion` (detached, output in `<userData>/logs/companion.log`, mode 0600 — it holds the one-time pairing code the companion prints at start). A crash restarts it after 1 s, doubling to 30 s, reset after a minute of stable running. If another companion appears meanwhile (a service starting), the app attaches instead. An attached companion that disappears is replaced by one of the app's own.
+2. **Start and supervise.** Two companions on one room fight over it (the relay closes the loser with 4009 and each retries every few seconds), so the app starts one only when nothing else is there or on its way:
+   - A live single-instance lock (`<config>/agent/collab-companion.lock`, `{pid, startedAt}`; live when that pid runs a companion: a command line with `companion.ts` or `omp companion`) means a companion is starting or standing by. The app waits for its endpoint and spawns nothing. A holder that publishes no endpoint within 60 s (started without its local relay or web app) is reported by pid as in the way; the app keeps watching and attaches when the endpoint appears.
+   - With the launchd/systemd service installed the app **never spawns a companion**. When none is found it asks the service manager to start the service (macOS `launchctl kickstart gui/<uid>/sh.omp.collab-companion`, without `-k`; Linux `systemctl --user start omp-collab-companion.service`), shows *waiting for the companion service*, checks again after 1 s, 2 s, 4 s, then every 5 s, and asks again no more than every 30 s while it does not come. A service whose plist exists but is not loaded (after `launchctl bootout`, or a failed bootstrap) is loaded with `launchctl bootstrap gui/<uid> <plist>` and kicked. After 3 failed asks in a row the window says the service cannot start and offers *Run the Companion Inside This App…* (remove the service) — the app still never spawns beside the service file — and keeps asking, attaching if it comes up.
+   - With no service, no lock and no endpoint it spawns `omp companion` (detached, output in `<userData>/logs/companion.log`, mode 0600 — it holds the one-time pairing code the companion prints at start). A crash restarts it after 1 s, doubling to 30 s, reset after a minute of stable running. If another companion appears meanwhile, the app attaches instead.
+
+   An attached companion that disappears is handled the same way: the app waits for the service or the lock holder, or runs its own when there is neither.
 3. **Quit.** Stops the companion the app started (SIGTERM, SIGKILL after 6 s) unless *Keep the Companion Running After Quit* is on. Never stops one it attached to.
 4. **Pairing.** The window opens the plain app URL and reads `omp.collab.computers` from its storage. Only when it holds no credentials (or invite) for this companion's room does the app run `omp companion --print-local-link` and load the one-time link. *Companion → Pair This Computer Again* forces it.
 5. **The in-app *Restart companion*** is refused for a companion that nothing manages (the hint says so). Use the app's own *Companion → Restart Companion.
@@ -35,7 +40,7 @@ The one-line installer (`scripts/install-collab.sh`, `--desktop` / `--no-desktop
 
 ## Leaving the launchd/systemd service
 
-Nothing is automatic. With a service installed, the app attaches to it. *Companion → Run the Companion Inside This App…* runs `omp companion --uninstall`, waits for the service's endpoint to go away and starts the app's own companion; there is no menu item when no service file exists.
+Nothing is automatic. With a service installed, the app attaches to it and starts it when it is stopped; it never runs a companion of its own beside it. *Companion → Run the Companion Inside This App…* stops watching, runs `omp companion --uninstall`, waits for the service's endpoint to go away and then starts the app's own companion (the service file is gone by then, which is what allows it); there is no menu item when no service file exists.
 
 ## Working on it
 

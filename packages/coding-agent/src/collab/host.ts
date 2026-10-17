@@ -80,6 +80,7 @@ import {
 	generateRoomId,
 	parseCollabLink,
 } from "./protocol";
+import { readLiveLocalRelayPort } from "./local-relay-endpoint";
 import {
 	type CollabAccess,
 	type CollabHostPublication,
@@ -88,6 +89,7 @@ import {
 	publishCollabHost,
 } from "./registry";
 import { FanoutSocket } from "./relay-fanout";
+import { cfgCollabLocalRelayEndpointFile } from "./settings";
 import {
 	announceRestoredFiles,
 	previewRewindFiles,
@@ -522,10 +524,12 @@ export class CollabHost {
 		this.#webLink = formatCollabWebLink(relayUrl, roomId, rawKey, writeToken, webUrl);
 		this.#viewLink = formatCollabLink(relayUrl, roomId, rawKey);
 		this.#webViewLink = formatCollabWebLink(relayUrl, roomId, rawKey, undefined, webUrl);
-		if (localRelayUrl !== undefined) {
-			this.#localWebLink = formatCollabWebLink(relayUrl, roomId, rawKey, writeToken, webUrl, localRelayUrl);
-			this.#localWebViewLink = formatCollabWebLink(relayUrl, roomId, rawKey, undefined, webUrl, localRelayUrl);
-		}
+		// The local links are rebuilt when the local relay moves to another port, so they stay in step with it.
+		const buildLocalLinks = (relay: string): void => {
+			this.#localWebLink = formatCollabWebLink(relayUrl, roomId, rawKey, writeToken, webUrl, relay);
+			this.#localWebViewLink = formatCollabWebLink(relayUrl, roomId, rawKey, undefined, webUrl, relay);
+		};
+		if (localRelayUrl !== undefined) buildLocalLinks(localRelayUrl);
 		const parsed = parseCollabLink(this.#localWebLink || this.#link);
 		if ("error" in parsed) throw new Error(parsed.error);
 		const firstOpen = Promise.withResolvers<void>();
@@ -537,7 +541,14 @@ export class CollabHost {
 		const key = await importRoomKey(rawKey);
 		if (this.ending) throw new CollabHostStoppedError("collab host stopped before connecting");
 
-		const socket = new FanoutSocket({ wsUrl: parsed.wsUrl, localWsUrl: parsed.localWsUrl, key });
+		const endpointFile = cfgCollabLocalRelayEndpointFile.get(this.#ctx.settings).trim();
+		const socket = new FanoutSocket({
+			wsUrl: parsed.wsUrl,
+			localWsUrl: parsed.localWsUrl,
+			locateLocalRelay: endpointFile ? () => readLiveLocalRelayPort(endpointFile) : undefined,
+			key,
+		});
+		socket.onLocalRelayMoved = buildLocalLinks;
 		this.#socket = socket;
 
 		let opened = false;

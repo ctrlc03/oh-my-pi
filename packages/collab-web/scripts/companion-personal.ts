@@ -129,6 +129,8 @@ export interface PersonalEnv {
 	relayUrl: string;
 	webUrl: string;
 	localRelayUrl(): string | undefined;
+	/** The companion's endpoint file (`collab-companion-local.json`), named in every launch's overlay. */
+	localRelayEndpointFile: string;
 	now(): number;
 	/** A fresh listing of the omp hosts on this computer. */
 	listHosts(): Promise<CompanionHost[]>;
@@ -354,6 +356,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 		relayUrl: env.relayUrl,
 		webUrl: env.webUrl,
 		localRelayUrl: env.localRelayUrl,
+		localRelayEndpointFile: env.localRelayEndpointFile,
 		limits: () => settings().limits,
 		memoryMode: mode,
 	});

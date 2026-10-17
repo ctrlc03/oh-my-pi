@@ -15,6 +15,7 @@ import {
 } from "../scripts/companion-personal-store";
 import { ABOUT_TEMPLATE, APPEND_SYSTEM, APPEND_SYSTEM_MARKER } from "../scripts/companion-personal-templates";
 
+const ENDPOINT_FILE = "/home/me/.omp/agent/collab-companion-local.json";
 let root: string;
 let clock: number;
 
@@ -40,6 +41,7 @@ function build(local: string | undefined = undefined) {
 		relayUrl: "wss://relay.example/ws",
 		webUrl: "https://app.example",
 		localRelayUrl: () => local,
+		localRelayEndpointFile: ENDPOINT_FILE,
 		limits: () => settings.limits,
 		memoryMode: () => settings.memoryMode ?? "recall",
 	});
@@ -206,6 +208,7 @@ describe("launch overlays", () => {
 			relayUrl: "wss://relay.example/ws",
 			webUrl: "https://app.example",
 			localRelayUrl: "ws://127.0.0.1:4000",
+			localRelayEndpointFile: ENDPOINT_FILE,
 		});
 		expect(live.personal.runKind).toBe("live");
 		expect(live.session.spendLimits).toEqual({ dayUsd: settings.limits.dayUsd, monthUsd: settings.limits.monthUsd });

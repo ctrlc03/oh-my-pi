@@ -6,6 +6,7 @@
  * the web app itself on the same port (`./local-app`), so the page and its websockets share an origin.
  */
 import { normalizeLocalRelayUrl } from "../src/lib/link";
+import { readLocalEndpoint } from "./companion-local-endpoint";
 import { type LocalRelay, type LocalRelayOptions, startLocalRelay } from "./local-relay";
 
 /** Port tried first. Hand-started sessions point `collab.localRelayUrl` here. */
@@ -19,10 +20,39 @@ export interface CompanionRelay {
 	url: string;
 }
 
-/** The port of the user's own `collab.localRelayUrl`, so hand-started sessions land on this relay; the default otherwise. */
-export function preferredRelayPort(configured: string): number {
+/**
+ * The port the companion served on before: the one in its endpoint file (left by a crashed companion), else the one
+ * its own overlay names (`collab.localRelayUrl` of `collab-companion-overlay.yml`, which sessions already running were
+ * launched with and cannot be told to change; a clean exit removes the endpoint file but not the overlay). Null when
+ * neither says, or the overlay's address is not a loopback one.
+ */
+export async function previousRelayPort(endpointFile: string, overlayFile: string): Promise<number | null> {
+	const endpoint = await readLocalEndpoint(endpointFile);
+	if (endpoint !== null) return endpoint.port;
+	try {
+		const overlay: unknown = Bun.YAML.parse(await Bun.file(overlayFile).text());
+		if (typeof overlay !== "object" || overlay === null || !("collab" in overlay)) return null;
+		const { collab } = overlay;
+		if (typeof collab !== "object" || collab === null || !("localRelayUrl" in collab)) return null;
+		const url = collab.localRelayUrl;
+		const normalized = typeof url === "string" ? normalizeLocalRelayUrl(url) : null;
+		return normalized === null ? null : Number(new URL(normalized).port);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The port to try first, so sessions that remember the relay's address find it again: the port of the user's own
+ * `collab.localRelayUrl` (hand-started sessions land on this relay), else `previous` (see {@link previousRelayPort}),
+ * else the default.
+ */
+export function preferredRelayPort(configured: string, previous?: number | null): number {
 	const normalized = normalizeLocalRelayUrl(configured);
-	return normalized === null ? COMPANION_RELAY_PORT : Number(new URL(normalized).port);
+	if (normalized !== null) return Number(new URL(normalized).port);
+	return previous !== undefined && previous !== null && previous >= 1 && previous <= 65_535
+		? previous
+		: COMPANION_RELAY_PORT;
 }
 
 /**

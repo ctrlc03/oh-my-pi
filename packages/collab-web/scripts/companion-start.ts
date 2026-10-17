@@ -10,6 +10,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { MODEL_SELECTOR_RE } from "../src/lib/fanout";
+import { localRelayOverlayYaml } from "./companion-local-endpoint";
 import { prepareSandbox, SANDBOX_EXEC, type SandboxLaunch } from "./companion-sandbox";
 import { SAFE_ID_RE } from "./companion-sessions";
 
@@ -27,10 +28,11 @@ export const FOREIGN_MODEL_RE = /^[A-Za-z0-9_][\w.:/@+[\]-]{0,199}$/;
 
 /**
  * Config overlay (`omp --config`): host every session this companion starts with control access,
- * and also serve it on the companion's local relay when it runs one.
+ * and also serve it on the companion's local relay when it runs one (`localRelayEndpointFile` lets the session find
+ * that relay again after the companion restarts on another port).
  */
-export function overlayYaml(localRelayUrl?: string): string {
-	return `collab:\n  autoStart: control\n${localRelayUrl ? `  localRelayUrl: ${JSON.stringify(localRelayUrl)}\n` : ""}`;
+export function overlayYaml(localRelayUrl?: string, localRelayEndpointFile?: string): string {
+	return `collab:\n  autoStart: control\n${localRelayOverlayYaml(localRelayUrl, localRelayEndpointFile)}`;
 }
 
 /** Path of tmux, or null when it is not installed. */
@@ -46,9 +48,14 @@ export async function canSandbox(): Promise<boolean> {
 	return process.platform === "darwin" && (await Bun.file(SANDBOX_EXEC).exists());
 }
 
-async function writeOverlay(overlayPath: string, localRelayUrl?: string, yaml?: string): Promise<void> {
+async function writeOverlay(
+	overlayPath: string,
+	localRelayUrl?: string,
+	localRelayEndpointFile?: string,
+	yaml?: string,
+): Promise<void> {
 	await fs.mkdir(path.dirname(overlayPath), { recursive: true });
-	await fs.writeFile(overlayPath, yaml ?? overlayYaml(localRelayUrl), { mode: 0o600 });
+	await fs.writeFile(overlayPath, yaml ?? overlayYaml(localRelayUrl, localRelayEndpointFile), { mode: 0o600 });
 	await fs.chmod(overlayPath, 0o600);
 }
 
@@ -84,6 +91,8 @@ export interface TmuxLaunch {
 	overlayPath: string;
 	/** The companion's local relay (`ws://127.0.0.1:<port>`); sessions started also serve their room there. */
 	localRelayUrl?: string;
+	/** The companion's endpoint file (`localEndpointFile`): the overlay names it next to the relay so sessions follow the relay to a new port. */
+	localRelayEndpointFile?: string;
 	cwd: string;
 	/** Session id to resume; must match {@link SAFE_ID_RE}. */
 	resume?: string;
@@ -199,7 +208,13 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 			);
 		throw new Error("folder does not exist on this computer");
 	}
-	if (!foreign) await writeOverlay(launch.overlayPath, launch.localRelayUrl, launch.profile?.overlayYaml);
+	if (!foreign)
+		await writeOverlay(
+			launch.overlayPath,
+			launch.localRelayUrl,
+			launch.localRelayEndpointFile,
+			launch.profile?.overlayYaml,
+		);
 	const sandbox = !foreign && launch.sandbox ? await prepareSandbox({ ...launch.sandbox, folder: cwd }) : null;
 	const restrict = !foreign && launch.restrict ? await prepareRestriction(launch.restrict) : null;
 

@@ -290,7 +290,7 @@ class FlowRun {
 					signal,
 				});
 				this.stats.requests += cascade.stats.requests;
-				this.stats.errors += cascade.stats.errors;
+				this.stats.errors += cascade.stats.failed + cascade.stats.unanswered;
 				this.stats.inputTokens += cascade.stats.inputTokens;
 				this.stats.outputTokens += cascade.stats.outputTokens;
 				this.stats.cost += cascade.stats.cost;

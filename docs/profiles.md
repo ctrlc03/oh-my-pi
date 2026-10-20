@@ -56,7 +56,7 @@ The same fields work under `profiles.<name>` (with `prompt:` for the text). Inva
 | `description` | Shown in pickers. |
 | `tools` | Allowlist of tool names. Omitted: no allowlist. |
 | `disabledTools` | Tools removed from the active set, applied after `tools`. |
-| `approvalMode` | `always-ask`, `write` or `yolo`. Replaces `tools.approvalMode` while active, except that it never loosens a CLI `--approval-mode`/`--yolo` or the mode under a repository-supplied profile (see below). |
+| `approvalMode` | `always-ask`, `always-ask-cached`, `write` or `yolo`. Replaces `tools.approvalMode` while active, except that it never loosens a CLI `--approval-mode`/`--yolo` or the mode under a repository-supplied profile (see below). |
 | `approval` | `tool: allow \| prompt \| deny`, laid over `tools.approval` per tool. |
 | `pathRules` | Same shape as `tools.pathRules`. |
 | `lspReadOnly` | `true` limits the `lsp` tool to navigation and diagnostics (no `rename`, `rename_file` or applied `code_actions`) while active. `review` sets it. |
@@ -73,7 +73,7 @@ A profile may restrict the session and may allow what the session leaves open, b
 - `tools.approval`: a tool the session denies stays denied even if the profile says `allow`; other keys are overridden per tool.
 - `tools.pathRules`: the profile's `deny` rules are checked first; the session's rules follow up to and including its last `deny`; then the profile's `prompt` rules, then its `allow` rules; then the rest. So neither a profile `prompt` nor a profile `allow` can shadow a configured `deny`. With `tools.outsideProject: deny`, a profile `allow` rule is ignored (an allowing rule exempts a path from that check).
 - `tools.outsideProject`: the stricter value wins.
-- `tools.approvalMode`: a mode set by a CLI flag (`--approval-mode`, `--yolo`) is a floor, and so is your configured mode under a profile that a repository supplies (a `.omp/profiles/*.md` file, `profiles` in project settings, or a `profile.default` set by project settings). The stricter of the two applies (`always-ask` over `write` over `yolo`). Profiles you define yourself replace a configured (non-CLI) mode freely.
+- `tools.approvalMode`: a mode set by a CLI flag (`--approval-mode`, `--yolo`) is a floor, and so is your configured mode under a profile that a repository supplies (a `.omp/profiles/*.md` file, `profiles` in project settings, or a `profile.default` set by project settings). The stricter of the two applies (`always-ask` over `always-ask-cached` over `write` over `yolo`; `always-ask-cached` ranks below `always-ask` because its remembered grants let later writes through unasked). Profiles you define yourself replace a configured (non-CLI) mode freely.
 - `bash.patterns` is never touched by profiles.
 
 While a profile with `approvalMode`, `approval`, `pathRules` or `outsideProject` is active, edits you make to those settings elsewhere are shadowed until the next switch.

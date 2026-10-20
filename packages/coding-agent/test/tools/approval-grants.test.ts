@@ -334,7 +334,7 @@ describe("askToolApproval", () => {
 		const fake = fakeUi(undefined, "local");
 		const approve = vi.fn(async (_prompt: unknown, dialog?: ExtensionUIDialogOptions) => {
 			dialog?.onAnswer?.("remote");
-			return true;
+			return "once" as const;
 		});
 		const outcome = await askToolApproval({
 			ui: { ...fake.ui, approve } as FakeUi["ui"],

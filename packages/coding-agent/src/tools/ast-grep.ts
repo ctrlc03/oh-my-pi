@@ -30,7 +30,14 @@ import { type FileMatchSection, formatFileMatches } from "@oh-my-pi/pi-tui/tools
 import { formatMatchLine } from "@oh-my-pi/pi-tui/tools/match-line-format";
 
 import { createPathRuleFilter, searchRootApproval, searchRootCandidates } from "./path-rules";
-import { relativeSearchResultPath, resolveSearchResultPath, resolveToolSearchScope } from "./path-utils";
+import {
+	parseSearchPath,
+	relativeSearchResultPath,
+	resolveSearchResultPath,
+	resolveToolSearchScope,
+	searchPathTier,
+} from "./path-utils";
+import { searchApprovalCacheTargets } from "./search-approval-targets";
 import { toPathList } from "@oh-my-pi/pi-tui/render/render-utils";
 import { isRawSelector } from "./read-selector";
 import { capParseErrors, formatCodeFrameLine, formatParseErrors } from "@oh-my-pi/pi-tui/render/render-utils";
@@ -149,10 +156,17 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 		return searchRootApproval(
 			this.session,
 			"ast_grep",
-			"read",
+			searchPathTier(args),
 			searchRootCandidates(entries.length > 0 ? entries : ["."]),
 		);
 	};
+	/** `always-ask-cached` keys: the tree (or file) of every root it searches, as `grep` reports them. */
+	readonly approvalCacheTargets = (args: unknown): readonly string[] | undefined =>
+		searchApprovalCacheTargets(
+			toPathList((args as { path?: string } | null | undefined)?.path),
+			this.session.cwd,
+			entry => parseSearchPath(entry).basePath,
+		);
 	readonly label = "AST Grep";
 	readonly summary = "Search code with AST patterns (structural grep)";
 	get description(): string {
@@ -415,7 +429,7 @@ export class AstGrepTool implements AgentTool<typeof astGrepSchema, AstGrepToolD
 				displayContent: displayLines.join("\n"),
 			};
 			if (result.limitReached) {
-				outputLines.push("", "Result limit reached; narrow path or increase limit.");
+				outputLines.push("", "Result limit reached; narrow path or use skip to page through results.");
 			}
 			if (cappedParseErrors.length) {
 				outputLines.push("", ...formatParseErrors(cappedParseErrors, parseErrorsTotal));

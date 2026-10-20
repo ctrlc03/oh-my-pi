@@ -14,7 +14,7 @@
  */
 import * as path from "node:path";
 import type { Judge, JudgmentResult, NoulQuestion } from "@oh-my-pi/pi-ai";
-import type { FindHit, FindStats } from "@oh-my-pi/pi-tui/tools/find";
+import type { FindCoverage, FindHit, FindStats } from "@oh-my-pi/pi-tui/tools/find";
 import type { InternalUrlFilesystem } from "../../internal-urls/url-filesystem";
 import { throwIfAborted } from "../tool-errors";
 import { fileScore, grepIndex, idf } from "./lexical";
@@ -75,6 +75,8 @@ export interface CascadeOptions {
 export interface CascadeResult {
 	/** Files whose verified passages cleared the threshold, strongest first. */
 	hits: FindHit[];
+	/** Whether the judge answered; an empty `hits` proves nothing when `unavailable`. */
+	coverage: FindCoverage;
 	threshold: number;
 	keywords: string[];
 	stats: FindStats;
@@ -112,7 +114,8 @@ class Cascade {
 	readonly stats: FindStats = {
 		listed: 0,
 		requests: 0,
-		errors: 0,
+		failed: 0,
+		unanswered: 0,
 		judged: 0,
 		filesRead: 0,
 		fileBytes: 0,
@@ -150,7 +153,7 @@ class Cascade {
 		} catch (error) {
 			throwIfAborted(signal);
 			this.stats.requests++;
-			this.stats.errors++;
+			this.stats.failed++;
 			this.stats.apiMs += performance.now() - started;
 			return { ok: false, error };
 		}
@@ -216,7 +219,7 @@ class Cascade {
 				const p = noul(outcome, entryKey(k));
 				nameScore[node] = p;
 				if (p === undefined) {
-					if (outcome.ok) this.stats.errors++;
+					if (outcome.ok) this.stats.unanswered++;
 				} else {
 					this.stats.judged++;
 				}
@@ -272,7 +275,7 @@ class Cascade {
 			if (!outcome.ok) this.#fail("sketches", outcome.error);
 			job.batch.forEach(({ f, p }, k) => {
 				const score = noul(outcome, passageKey(k));
-				if (score === undefined && outcome.ok) this.stats.errors++;
+				if (score === undefined && outcome.ok) this.stats.unanswered++;
 				// Failure is unknown, never grounds for a negative judgment.
 				candidates.push({ f, p, score: score ?? 1 });
 			});
@@ -318,7 +321,7 @@ class Cascade {
 			job.passages.forEach((passage, k) => {
 				const score = noul(outcome, passageKey(k));
 				if (score === undefined) {
-					this.stats.errors++;
+					this.stats.unanswered++;
 					return;
 				}
 				const text = plainContent(passage);
@@ -353,7 +356,9 @@ class Cascade {
 		this.stats.fileBytes += sketchSentBytes;
 		this.stats.filesRead += files.length - results.size;
 		hits.sort((a, b) => b.contentScore - a.contentScore);
-		return { hits, threshold: THRESHOLD, keywords, stats: this.stats };
+		const { requests, failed } = this.stats;
+		const coverage: FindCoverage = failed === 0 ? "complete" : failed === requests ? "unavailable" : "partial";
+		return { hits, coverage, threshold: THRESHOLD, keywords, stats: this.stats };
 	}
 }
 

@@ -573,7 +573,7 @@ export async function askToolApproval(options: AskToolApprovalOptions): Promise<
 	if (rules.length === 0 || !store) {
 		// The host's approval dialog when it has one (Ctrl+Enter approves); a plain select elsewhere.
 		const approved = ui.approve
-			? (await ui.approve(prompt, { onAnswer })) === true
+			? (await ui.approve(prompt, { onAnswer })) !== "deny"
 			: (await ui.select(prompt.full, [LEGACY_APPROVE, "Deny"], { onAnswer })) === LEGACY_APPROVE;
 		return { approved, by: by(), choice: approved ? "once" : "deny", saved: [] };
 	}

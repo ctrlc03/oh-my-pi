@@ -167,7 +167,7 @@ pub fn extract_symbols(options: SymbolOptions) -> Result<SymbolResult> {
 	let Some(family) = Family::of(language) else {
 		return Ok(unparsed);
 	};
-	let Some(tree) = parse_cached(&options.code, language)? else {
+	let Some(tree) = parse_cached(&options.code, language, options.path.as_deref())? else {
 		return Ok(unparsed);
 	};
 

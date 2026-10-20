@@ -17,10 +17,14 @@ import nativeDelegationTemplate from "../../prompts/tools/native-delegation.md" 
 import {
 	approvalPrompt,
 	denyError,
+	recordApprovalGrant,
+	requestApproval,
 	resolveApproval,
 	resolveApprovalFromContext,
+	sessionApprovalScope,
 	truncateForPrompt,
 } from "../../tools/approval";
+import { getApprovalGrants } from "../../tools/approval-cache";
 import {
 	applyApprovalGrants,
 	askToolApproval,
@@ -267,12 +271,21 @@ export class ExtensionToolWrapper<TParameters extends TSchema = TSchema, TDetail
 		const grantSession = { cwd: this.runner.cwd };
 		const grantSettings = context?.settings ?? this.runner.sessionSettings;
 		const guestsCanSaveApprovals = grantSettings ? cfgCollabGuestsCanSaveApprovals.get(grantSettings) : false;
+		// `always-ask-cached` grants for this conversation, shared by the pre-check, the full gate,
+		// and the record after an approval.
+		const approvalGrants =
+			approvalMode === "always-ask-cached"
+				? getApprovalGrants(
+						(context?.settings ?? this.runner.sessionSettings)?.getAgentDir(),
+						this.runner.sessionId,
+					)
+				: undefined;
 		const preArgs = approvalArgs(params, context);
 		const preResolved = applyApprovalGrants(
 			grants,
 			this.tool,
 			preArgs,
-			resolveApproval(this.tool, preArgs, approvalMode, userPolicies),
+			resolveApproval(this.tool, preArgs, approvalMode, userPolicies, approvalGrants),
 			grantSession,
 		);
 		if (preResolved.policy === "deny") {
@@ -350,7 +363,7 @@ export class ExtensionToolWrapper<TParameters extends TSchema = TSchema, TDetail
 			grants,
 			this.tool,
 			resolvedArgs,
-			resolveApproval(this.tool, resolvedArgs, approvalMode, userPolicies),
+			resolveApproval(this.tool, resolvedArgs, approvalMode, userPolicies, approvalGrants),
 			grantSession,
 		);
 		context?.xdevTierResolved?.(resolved.tier);
@@ -380,10 +393,23 @@ export class ExtensionToolWrapper<TParameters extends TSchema = TSchema, TDetail
 			context !== undefined &&
 			Object.hasOwn(context, "acpApprovedArgs") &&
 			Bun.deepEquals(effectiveParams, context.acpApprovedArgs);
+		// Only a prompt `always-ask-cached` itself raised can be remembered by target; provider safety
+		// checks are per-call, so they never offer a grant of any kind.
+		const grantable =
+			approvalGrants !== undefined &&
+			resolved.policy === "prompt" &&
+			resolved.source === "mode" &&
+			pendingSafetyChecks.length === 0;
+		const cacheTargets = grantable ? (this.tool.approvalCacheTargets?.(resolvedArgs)?.length ?? 0) > 0 : false;
+		// A prompt the approval mode raised can be approved for the rest of the session — unless the call
+		// can be remembered by target instead, which keeps the grant to what it touches.
+		const sessionScope =
+			pendingSafetyChecks.length === 0 && !cacheTargets ? sessionApprovalScope(resolved, this.tool.name) : undefined;
+		const sessionApproved = sessionScope !== undefined && this.runner.hasSessionApproval(sessionScope.key);
 		const approvalCheck = {
 			required:
 				pendingSafetyChecks.length > 0 ||
-				(resolved.policy === "prompt" && !acpBypass && (explicitPrompt || !xdevBypass)),
+				(resolved.policy === "prompt" && !acpBypass && !sessionApproved && (explicitPrompt || !xdevBypass)),
 			reason: resolved.reason,
 		};
 
@@ -445,9 +471,8 @@ export class ExtensionToolWrapper<TParameters extends TSchema = TSchema, TDetail
 			const uiContext = this.runner.getUIContext();
 			const safetyAppendix =
 				pendingSafetyChecks.length > 0 ? ["Provider safety checks:", ...safetyCheckLines(pendingSafetyChecks)] : [];
-			const prompt = approvalPrompt(this.tool, resolvedArgs, approvalCheck.reason, safetyAppendix);
 			// Saved grants answer only a plain approval-mode prompt, never a rule-raised one.
-			const grantable =
+			const savedGrantable =
 				grants !== undefined &&
 				pendingSafetyChecks.length === 0 &&
 				resolved.policy === "prompt" &&
@@ -456,15 +481,60 @@ export class ExtensionToolWrapper<TParameters extends TSchema = TSchema, TDetail
 				!acpBypass;
 			let outcome: ToolApprovalOutcome;
 			try {
-				outcome = await askToolApproval({
-					ui: uiContext,
-					prompt,
-					tool: this.tool.name,
-					rules: grantable ? deriveGrantRules(this.tool, resolvedArgs, grantSession.cwd) : [],
-					store: grants,
-					guestsCanSaveProject: guestsCanSaveApprovals,
-					session: grantSession,
-				});
+				// `always-ask-cached` owns its prompts (target grants, session answer); saved rules apply in the other modes.
+				const grantRules =
+					savedGrantable && approvalGrants === undefined
+						? deriveGrantRules(this.tool, resolvedArgs, grantSession.cwd)
+						: [];
+				if (grantRules.length > 0) {
+					// Saved ("Always allow" / "Deny always") grants own the prompt when the call has a rule to save.
+					outcome = await askToolApproval({
+						ui: uiContext,
+						prompt: approvalPrompt(this.tool, resolvedArgs, approvalCheck.reason, safetyAppendix),
+						tool: this.tool.name,
+						rules: grantRules,
+						store: grants,
+						guestsCanSaveProject: guestsCanSaveApprovals,
+						session: grantSession,
+					});
+				} else {
+					const answered: { source: "local" | "remote" } = { source: "local" };
+					let answer = await requestApproval(uiContext, this.tool, resolvedArgs, {
+						reason: approvalCheck.reason,
+						appendix: safetyAppendix,
+						sessionSubject: sessionScope?.subject,
+						grants: cacheTargets,
+						dialog: {
+							onAnswer: source => {
+								answered.source = source;
+							},
+						},
+					});
+					if (
+						typeof answer === "object" &&
+						answer.always &&
+						answered.source === "remote" &&
+						!guestsCanSaveApprovals
+					) {
+						// Same rule as the saved-grant prompt: a guest's cross-session choice stays in this session.
+						answer = { ...answer, always: false };
+						uiContext.notify(
+							"A guest's always-approve choice was kept to this session: collab.guestsCanSaveApprovals is off",
+							"warning",
+						);
+					}
+					const granted = answer !== "deny";
+					if (answer === "session" && sessionScope) this.runner.grantSessionApproval(sessionScope.key);
+					if (typeof answer === "object" && approvalGrants) {
+						recordApprovalGrant(this.tool, resolvedArgs, approvalGrants, resolved.tier, answer);
+					}
+					outcome = {
+						approved: granted,
+						by: answered.source === "remote" ? "guest" : "tui",
+						choice: answer === "session" ? "session" : granted ? "once" : "deny",
+						saved: [],
+					};
+				}
 			} catch (err) {
 				await emitApprovalResolved(false, err instanceof Error ? err.message : "approval aborted");
 				cancelPreflight();

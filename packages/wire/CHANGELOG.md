@@ -36,6 +36,11 @@
 - `@oh-my-pi/pi-wire/schedule`: the schedule types shared by the companion, the web app and omp (`Schedule`, `ScheduleWhen` with `cron` and `interval` kinds, `CatchUpPolicy`, `createdBy`), the cron parser and next-run maths with daylight-saving rules (`parseCron`, `nextRunAfter`, `nextRuns`, `parseScheduleWhen`), their wording (`describeCron`, `describeWhen`, `formatRunTime`), and the companion's local schedule channel contract (`SCHEDULE_IPC_FILE`, `ScheduleIpcRequest`, `ScheduleIpcReply`).
 - `BlueprintExcerptRef` (a `BlueprintRef` with optional `from`/`to`, 1-based inclusive) on the refs of `blueprint-excerpt`, `quiz-excerpt`, `spar-excerpt` and `bakeoff-excerpt`, the optional `BlueprintExcerpt.total` (lines in the file) in the answer, and `BLUEPRINT_EXCERPT_STEP` (20), `BLUEPRINT_EXCERPT_MAX_LINES` (2,000 an excerpt) and `BLUEPRINT_EXCERPT_MAX_RANGES` (20 ranged refs a request): a viewer can show more of the code around a citation. An older companion ignores the range and answers the default window without `total`, so a viewer offers no "show more" (protocol version unchanged).
 - `@oh-my-pi/pi-wire/disk`: the disk guard format (`DiskGuardSettings` with its limits and defaults, `DiskState`, `DiskVolume`, `DiskCandidate`, `DiskArtifact`, `DiskClean`, `DiskHealth`, `diskMarginBytes`, the `DISK_ROUTE` a low-space notification opens), the companion requests `disk-guard`, `disk-scan` and `disk-clean`, the `canDiskGuard` capability and `disk` (`DiskHealth`) on the `hosts` frame. Every new field is optional, so an older companion or app ignores them.
+## [18.12.3] - 2026-10-19
+
+### Added
+
+- Added `min`, `max` and dashed reference `marks` to bars/spark `chart` nodes, a `tone` per series column, and the common `hovercard` prop: a node tree Tern floats over the node while the pointer rests on it
 
 ## [18.10.2] - 2026-10-12
 

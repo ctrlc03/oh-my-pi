@@ -9,6 +9,27 @@
 - Added permanent retention: `workingMemoryLimit: Infinity` and `degradeEpisodic: false` keep every row, and invalidation is recorded with `invalid_by`.
 - Added provenance: `provenance`, `authorId` / `authorType` on writes, `excludeAuthorTypes` on recall (facts derived from excluded rows are excluded too), duplicate merging and consolidation per author, and `TRUSTED` / `UNTRUSTED` trust tiers.
 - Rows pinned (`metadata.pinned`) or retracted by the owner can no longer be invalidated, updated or forgotten; added `getPinned()`, and `get()` now returns `author_id`, `author_type` and `trust_tier`.
+### Fixed
+
+- Fixed background fact extraction storing only the first 5 facts of a plain-line extractor answer; it now keeps up to 20, matching JSON answers ([#16377](https://github.com/can1357/oh-my-pi/pull/16377) by [@alphastorm](https://github.com/alphastorm))
+
+## [18.11.2] - 2026-10-16
+
+### Fixed
+
+- Fixed `MNEMOPI_<LABEL>_WEIGHT` and `MNEMOPI_TIER<N>_WEIGHT` having no effect on recall ranking ([#13824](https://github.com/can1357/oh-my-pi/pull/13824) by [@sjawhar](https://github.com/sjawhar))
+
+## [18.11.1] - 2026-10-15
+
+### Fixed
+
+- Fixed a failing `mnemopi` CLI command or MCP memory call dropping the embeddings of memories it had just stored ([#15804](https://github.com/can1357/oh-my-pi/pull/15804) by [@yuzu-octopus](https://github.com/yuzu-octopus))
+
+## [18.11.0] - 2026-10-14
+
+### Fixed
+
+- Fixed polyphonic recall ranking unrelated memories above relevant ones when the query shared only a common word such as "that" with an extracted fact subject ([#15512](https://github.com/can1357/oh-my-pi/issues/15512)).
 
 ## [18.9.0] - 2026-10-11
 

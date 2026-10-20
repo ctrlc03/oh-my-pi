@@ -51,10 +51,18 @@ export function stricterOutsideProject(base: OutsideProject, profile: OutsidePro
 	return OUTSIDE_PROJECT_RANK[profile] > OUTSIDE_PROJECT_RANK[base] ? profile : base;
 }
 
-/** Strictness of an approval mode: the more calls it stops to ask about, the higher. */
-export const APPROVAL_MODE_RANK: Record<ProfileApprovalMode, number> = { yolo: 0, write: 1, "always-ask": 2 };
+/**
+ * Strictness of an approval mode: the more calls it stops to ask about, the higher. `always-ask-cached`
+ * ranks below `always-ask` because its remembered grants let later file writes through unasked.
+ */
+export const APPROVAL_MODE_RANK: Record<ProfileApprovalMode, number> = {
+	yolo: 0,
+	write: 1,
+	"always-ask-cached": 2,
+	"always-ask": 3,
+};
 
-/** The stricter of two approval modes (`always-ask` over `write` over `yolo`). */
+/** The stricter of two approval modes (`always-ask` over `always-ask-cached` over `write` over `yolo`). */
 export function stricterApprovalMode(a: ProfileApprovalMode, b: ProfileApprovalMode): ProfileApprovalMode {
 	return APPROVAL_MODE_RANK[b] > APPROVAL_MODE_RANK[a] ? b : a;
 }

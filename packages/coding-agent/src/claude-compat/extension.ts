@@ -27,7 +27,12 @@ export interface ClaudeHooksExtensionOptions {
 	settings: Settings;
 }
 
-const PERMISSION_MODE = { yolo: "bypassPermissions", write: "acceptEdits", "always-ask": "default" } as const;
+const PERMISSION_MODE = {
+	yolo: "bypassPermissions",
+	write: "acceptEdits",
+	"always-ask": "default",
+	"always-ask-cached": "default",
+} as const;
 
 /** Headroom under the runner's own handler timeout so a slow hook is cut by us (non-blocking), not by it (fail-closed). */
 const TIMEOUT_HEADROOM_MS = 1000;

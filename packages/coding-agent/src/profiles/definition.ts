@@ -12,7 +12,7 @@ import { type PathRule, parsePathRules } from "../tools/path-rules";
 import { SANDBOX_MODES, type SandboxMode } from "../sandbox/settings";
 
 export type ProfileSource = "builtin" | "settings" | "user" | "project";
-export type ProfileApprovalMode = "always-ask" | "write" | "yolo";
+export type ProfileApprovalMode = "always-ask" | "always-ask-cached" | "write" | "yolo";
 export type ProfileApprovalPolicy = "allow" | "deny" | "prompt";
 export type ProfileOutsideProject = "allow" | "prompt" | "deny";
 
@@ -57,7 +57,7 @@ export interface ParsedProfile {
 }
 
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/;
-const APPROVAL_MODES: Record<string, true> = { "always-ask": true, write: true, yolo: true };
+const APPROVAL_MODES: Record<string, true> = { "always-ask": true, "always-ask-cached": true, write: true, yolo: true };
 const POLICIES: Record<string, true> = { allow: true, deny: true, prompt: true };
 
 /** Tools the profile tool filter never removes: the subagent completion channel. */
@@ -159,7 +159,7 @@ export function parseProfile(
 	if (fields.approvalMode !== undefined) {
 		const mode = typeof fields.approvalMode === "string" ? fields.approvalMode.trim().toLowerCase() : "";
 		if (Object.hasOwn(APPROVAL_MODES, mode)) profile.approvalMode = mode as ProfileApprovalMode;
-		else fieldWarnings.push(`approvalMode must be always-ask, write or yolo`);
+		else fieldWarnings.push(`approvalMode must be always-ask, always-ask-cached, write or yolo`);
 	}
 
 	if (fields.approval !== undefined) {

@@ -49,6 +49,17 @@ Sessions run on your computer, in your folders, with your logins. The apps are w
 
 [Getting started](docs/collab-getting-started.md) walks through all of this, the daily features (inbox, schedules, changes and pull requests, other agents such as Claude Code and Codex), and [troubleshooting](docs/collab-getting-started.md#if-something-does-not-work).
 
+### Keep your links private
+
+> [!WARNING]
+> Anyone with a pairing link or a `/collab` link can control your computer. Treat them like passwords.
+
+- **Pairing links and QR codes** (`omp companion --pair`, `--open`, the installer's link) make a device a full remote for this computer. It can start sessions in any folder, and those sessions run shell commands, edit files and use your `git`, `gh` and model logins as you. A pairing link works once and for 10 minutes, but whoever opens it first is paired. Pair only your own devices, never post a link or a screenshot of the QR code, and don't share your screen while one is shown.
+- **`/collab` links** let whoever opens them send prompts to that session, which runs tools as you. Share them only with people you trust with your computer, and use `/collab view` for a read-only link. `/collab stop` ends sharing, and with it every link to that session.
+- **If a link leaked**, remove the device in the app's *Devices* settings, or run `omp companion --rotate` to unpair every device at once.
+
+The relay that carries the traffic only sees encrypted messages: the key is in the link's `#` fragment, which is never sent to a server. That is also why the link alone is enough to get in. More: [Trust, in plain words](docs/collab-getting-started.md#trust-in-plain-words).
+
 ### Everyday commands
 
 | Command | Does |

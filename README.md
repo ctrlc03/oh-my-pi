@@ -41,11 +41,11 @@ This is [ctrlc03/oh-my-pi](https://github.com/ctrlc03/oh-my-pi), a fork of [can1
 - **Control over what the agent may do**: [agent profiles](docs/profiles.md), [approval modes](docs/approval-mode.md), and an [OS-level shell sandbox](docs/sandbox.md).
 - **Session tools**: per-session spend caps, `/undo` and `/redo`, `/diff`, the [request inspector](docs/inspector.md), [pull request watching](docs/pr-watch.md), [schedules](docs/tools/schedule.md), the [`trace`](docs/tools/trace.md) and [`flow`](docs/tools/flow.md) code-map tools, and a [GitHub Action](docs/github-action.md).
 
-The install commands under [Install](#install) below install **upstream** omp, which has none of this. Use one of the following instead.
+To install upstream omp without these features (Homebrew, npm, Nix, mise, Windows), follow [upstream's install instructions](https://github.com/can1357/oh-my-pi#install).
 
 ### Install the fork
 
-macOS or Linux (x64 or arm64; on Linux, glibc 2.35 or newer):
+macOS or Linux (x64 or arm64; on Linux, glibc 2.35 or newer). On Windows, run it inside WSL.
 
 ```sh
 curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh
@@ -70,75 +70,6 @@ To update, run `git pull && bun install`, then `bun run build:native` if the pul
 
 **Apple's on-device model** (`apple/on-device`; needs macOS 27 on Apple silicon with Apple Intelligence turned on): the native addon embeds the bridge to it only when Swift 6.4 and the macOS 27 SDK are installed at build time. Otherwise the build prints a warning and the model never appears. Install them with `sudo softwareupdate -i "Command Line Tools for Xcode 27.0-27.0"` (or install Xcode 27), check with `sh crates/pi-natives/src/applefm/build-bridge.sh detect` (it prints a toolchain when one is usable), then run `bun run build:native`.
 
-### Maintaining the fork
-
-- **Take upstream changes**: `git fetch origin --tags`, then `git merge v<version>` on `main` (`origin` is can1357/oh-my-pi). Resolve conflicts and run `bun run check:ts` before pushing `main`.
-- **Publish a release**: push a tag `collab-v<version>-<n>`, where `<version>` is `packages/coding-agent/package.json`'s version and `<n>` counts releases of that version. See *For the maintainer: publishing a release* under [Install for colleagues](packages/collab-web/README.md#install-for-colleagues).
-- **What runs on GitHub**: a push to `main` deploys the web app and the installer to GitHub Pages and prebuilds the native addons. A `collab-v*` tag builds and publishes the release binaries. Upstream's own CI workflows are disabled in this fork.
-
-## Install
-
-**macOS · Linux**
-
-```sh
-curl -fsSL https://omp.sh/install | sh
-```
-
-Without a usable bun (or with `--binary`), the install scripts fetch the prebuilt binary from `build.stencil.so` and check its SHA-256 before installing it. Pin a release with `curl -fsSL https://omp.sh/install | sh -s -- --binary --ref v<version>` (PowerShell: `-Binary -Ref v<version>`).
-
-> **Alpine / musl:** the prebuilt musl binary links `libstdc++`/`libgcc` dynamically, which stock Alpine does not ship. Install them first: `apk add libstdc++ libgcc`.
-
-**Homebrew**
-
-```sh
-brew install can1357/tap/omp
-```
-
-**Bun (recommended)**
-
-```sh
-bun install -g @oh-my-pi/pi-coding-agent
-```
-
-**Nix**
-
-```sh
-# Run without installing
-nix run github:can1357/oh-my-pi
-
-# Or install into the active profile (Nix < 2.30: `nix profile install`)
-nix profile add github:can1357/oh-my-pi
-```
-
-Flake consumers can use `packages.<system>.omp`, `overlays.default`, `nixosModules.default`, or `homeManagerModules.default`. A Home Manager configuration can install OMP and own its settings declaratively:
-
-```nix
-{
-  inputs.omp.url = "github:can1357/oh-my-pi";
-
-  # In your Home Manager module:
-  imports = [ inputs.omp.homeManagerModules.default ];
-  programs.omp = {
-    enable = true;
-    settings.startup.quiet = true;
-  };
-}
-```
-
-**Windows (PowerShell)**
-
-```powershell
-irm https://omp.sh/install.ps1 | iex
-```
-
-**Pinned versions (mise)**
-
-```sh
-mise use -g github:can1357/oh-my-pi
-```
-
-macOS · Linux · Windows · bun ≥ 1.3.14
-
 ### Shell completions
 
 `omp` generates its own completion scripts for **bash**, **zsh**, and **fish** from the live command/flag metadata, so they never drift from the actual CLI. Subcommands, flags, and enum values complete statically; model names (`--model`, `--smol`, `--slow`, `--plan`) resolve against the bundled model catalog and `--resume` against your on-disk sessions.
@@ -153,6 +84,12 @@ eval "$(omp completions bash)"
 # fish
 omp completions fish > ~/.config/fish/completions/omp.fish
 ```
+
+### Maintaining the fork
+
+- **Take upstream changes**: `git fetch origin --tags`, then `git merge v<version>` on `main` (`origin` is can1357/oh-my-pi). Resolve conflicts and run `bun run check:ts` before pushing `main`.
+- **Publish a release**: push a tag `collab-v<version>-<n>`, where `<version>` is `packages/coding-agent/package.json`'s version and `<n>` counts releases of that version. See *For the maintainer: publishing a release* under [Install for colleagues](packages/collab-web/README.md#install-for-colleagues).
+- **What runs on GitHub**: a push to `main` deploys the web app and the installer to GitHub Pages and prebuilds the native addons. A `collab-v*` tag builds and publishes the release binaries. Upstream's own CI workflows are disabled in this fork.
 
 ## Every tool, _benchmaxxed_.
 

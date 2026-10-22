@@ -49,6 +49,24 @@ Sessions run on your computer, in your folders, with your logins. The apps are w
 
 [Getting started](docs/collab-getting-started.md) walks through all of this, the daily features (inbox, schedules, changes and pull requests, other agents such as Claude Code and Codex), and [troubleshooting](docs/collab-getting-started.md#if-something-does-not-work).
 
+### Staying on this computer: the local relay
+
+The companion runs a relay on loopback (`ws://127.0.0.1:7467`, or the next free port) next to the public one at `my.omp.sh`. An app on the same computer that uses it skips the internet entirely; messages are end-to-end encrypted either way.
+
+| Where you open the app | Connection |
+| --- | --- |
+| The desktop app, or the copy the companion serves (`omp companion --open`) | Local relay, for the companion and the sessions it starts. The app needs no internet once loaded (the model calls still do). |
+| The Pages site on the same computer | Public relay in practice: browsers block an `https` page from opening `ws://127.0.0.1` (Chrome's local network check, Safari outright). Use the local copy instead. |
+| A phone, an iPad or another computer | Public relay. The local relay listens on loopback only, so nothing on your network can reach it. |
+
+Sessions you start yourself with `omp` in a terminal use only the public relay until you point them at the local one. Find the companion's port (`omp companion --print-local-link` prints `http://127.0.0.1:<port>/…`), then:
+
+```sh
+omp config set collab.localRelayUrl ws://127.0.0.1:<port>
+```
+
+Leaving it on is safe: a session only sends to the local relay while someone is connected through it, a local relay that is down never affects the public session, and links printed by `/collab` still name only the public relay. If the companion later starts on another port (because the old one was taken), hand-started sessions fall back to the public relay until you update the setting; sessions the companion starts always follow it. Details: [Local relay for the web app on the host's computer](docs/collab.md#local-relay-for-the-web-app-on-the-hosts-computer).
+
 ### Keep your links private
 
 > [!WARNING]

@@ -467,7 +467,10 @@ describe("install-collab.sh", () => {
 			const box = await sandbox();
 			await publish("1.0.0");
 			await publishDesktop(box);
-			const sums = String(served.get("SHA256SUMS.txt")).replace(/[0-9a-f]{64}( {2}collab-desktop)/, `${"0".repeat(64)}$1`);
+			const sums = String(served.get("SHA256SUMS.txt")).replace(
+				/[0-9a-f]{64}( {2}collab-desktop)/,
+				`${"0".repeat(64)}$1`,
+			);
 			served.set("SHA256SUMS.txt", sums);
 			const result = await run(box, ["--desktop", "--yes"], desktopEnv(box));
 			expect(result.code).toBe(1);
@@ -483,13 +486,19 @@ describe("install-collab.sh", () => {
 			// Swap the zip for one holding the same bundle without a signature.
 			const app = path.join(box.home, "unsigned", "omp collab.app");
 			await mkdir(path.join(app, "Contents"), { recursive: true });
-			await writeFile(path.join(app, "Contents", "Info.plist"), (await readFile(path.join(box.home, "build", "omp collab.app", "Contents", "Info.plist"), "utf8")));
+			await writeFile(
+				path.join(app, "Contents", "Info.plist"),
+				await readFile(path.join(box.home, "build", "omp collab.app", "Contents", "Info.plist"), "utf8"),
+			);
 			const zip = path.join(box.home, "unsigned", "x.zip");
 			Bun.spawnSync(["ditto", "-c", "-k", "--keepParent", app, zip]);
 			const bytes = new Uint8Array(await readFile(zip));
 			served.set(DESKTOP_ASSET, bytes);
 			const sum = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
-			served.set("SHA256SUMS.txt", String(served.get("SHA256SUMS.txt")).replace(/[0-9a-f]{64}( {2}collab-desktop)/, `${sum}$1`));
+			served.set(
+				"SHA256SUMS.txt",
+				String(served.get("SHA256SUMS.txt")).replace(/[0-9a-f]{64}( {2}collab-desktop)/, `${sum}$1`),
+			);
 			const result = await run(box, ["--desktop", "--yes"], desktopEnv(box));
 			expect(result.code).toBe(1);
 			expect(result.all).toContain("signature does not verify");

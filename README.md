@@ -32,6 +32,50 @@ The most capable agent surface that ships. Continuously tuned by real-world use 
 > while we evaluate how open contributions go. Depending on the results, the
 > vouch system may return.
 
+## This fork
+
+This is [ctrlc03/oh-my-pi](https://github.com/ctrlc03/oh-my-pi), a fork of [can1357/oh-my-pi](https://github.com/can1357/oh-my-pi). Its `main` branch follows upstream releases and adds:
+
+- **Collab**: a background service on your computer (the *companion*) and a web app for a browser, phone or iPad. From the app you start, watch and steer every omp session on that computer. See [Getting started](docs/collab-getting-started.md) and the [reference](docs/collab.md).
+- **Personal agent** (opt-in, off by default): [docs/personal-agent.md](docs/personal-agent.md), [docs/personal-chat-tree.md](docs/personal-chat-tree.md).
+- **Control over what the agent may do**: [agent profiles](docs/profiles.md), [approval modes](docs/approval-mode.md), and an [OS-level shell sandbox](docs/sandbox.md).
+- **Session tools**: per-session spend caps, `/undo` and `/redo`, `/diff`, the [request inspector](docs/inspector.md), [pull request watching](docs/pr-watch.md), [schedules](docs/tools/schedule.md), the [`trace`](docs/tools/trace.md) and [`flow`](docs/tools/flow.md) code-map tools, and a [GitHub Action](docs/github-action.md).
+
+The install commands under [Install](#install) below install **upstream** omp, which has none of this. Use one of the following instead.
+
+### Install the fork
+
+macOS or Linux (x64 or arm64; on Linux, glibc 2.35 or newer):
+
+```sh
+curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh
+```
+
+This installs the fork's `omp` binary as `~/.local/bin/omp`, from the latest `collab-v*` GitHub Release, after checking it against the release's `SHA256SUMS.txt`. It then installs the companion as a service that starts at login, and opens the web app paired with this computer. Add `-s -- --no-service` after `sh` to install only the binary. [Getting started](docs/collab-getting-started.md) walks through pairing a phone and a first session. [Install for colleagues](packages/collab-web/README.md#install-for-colleagues) lists every option and where each file goes.
+
+- **Update**: run the same command again, or `omp update`. Both follow this fork's releases, not upstream's.
+- **Uninstall**: `curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh -s -- --uninstall`. Your logins, settings and pairing in `~/.omp` are kept.
+
+### Run the fork from source
+
+```sh
+git clone https://github.com/ctrlc03/oh-my-pi.git
+cd oh-my-pi
+bun setup                          # workspace dependencies and the Rust native addon
+(cd packages/coding-agent && bun link)   # `omp` on your PATH now runs this checkout
+omp companion --install            # optional: the collab companion as a login service
+```
+
+To update, run `git pull && bun install`, then `bun run build:native` if the pull changed `crates/` or `packages/natives`. Restart the companion afterwards with `omp companion --install`.
+
+**Apple's on-device model** (`apple/on-device`; needs macOS 27 on Apple silicon with Apple Intelligence turned on): the native addon embeds the bridge to it only when Swift 6.4 and the macOS 27 SDK are installed at build time. Otherwise the build prints a warning and the model never appears. Install them with `sudo softwareupdate -i "Command Line Tools for Xcode 27.0-27.0"` (or install Xcode 27), check with `sh crates/pi-natives/src/applefm/build-bridge.sh detect` (it prints a toolchain when one is usable), then run `bun run build:native`.
+
+### Maintaining the fork
+
+- **Take upstream changes**: `git fetch origin --tags`, then `git merge v<version>` on `main` (`origin` is can1357/oh-my-pi). Resolve conflicts and run `bun run check:ts` before pushing `main`.
+- **Publish a release**: push a tag `collab-v<version>-<n>`, where `<version>` is `packages/coding-agent/package.json`'s version and `<n>` counts releases of that version. See *For the maintainer: publishing a release* under [Install for colleagues](packages/collab-web/README.md#install-for-colleagues).
+- **What runs on GitHub**: a push to `main` deploys the web app and the installer to GitHub Pages and prebuilds the native addons. A `collab-v*` tag builds and publishes the release binaries. Upstream's own CI workflows are disabled in this fork.
+
 ## Install
 
 **macOS · Linux**

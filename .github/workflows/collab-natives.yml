@@ -3,7 +3,7 @@
 # collab-release.yml needs the Rust addons for four targets (about 30 minutes of compiling on a
 # cold runner). They only change with the inputs scripts/ci-natives-key.sh hashes, so this
 # workflow runs the same composite action (.github/actions/collab-natives) on every push to
-# collab-pwa that touches them: it uploads the artifact `collab-natives-<target>-<key>` (90 days)
+# main that touches them: it uploads the artifact `collab-natives-<target>-<key>` (90 days)
 # when it does not exist yet and does nothing when it does. A release of that tree then
 # downloads the addons and takes a few minutes. Run it by hand (Actions -> collab natives ->
 # Run workflow) to rebuild an expired artifact before a release.
@@ -17,7 +17,7 @@ name: collab natives
 
 on:
   push:
-    branches: [collab-pwa]
+    branches: [main]
     paths:
       - "crates/**"
       - "Cargo.toml"

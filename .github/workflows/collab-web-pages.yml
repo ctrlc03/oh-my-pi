@@ -8,7 +8,7 @@ name: collab-web pages
 
 on:
   push:
-    branches: [collab-pwa]
+    branches: [main]
     paths:
       - "packages/collab-web/**"
       - "packages/wire/**"

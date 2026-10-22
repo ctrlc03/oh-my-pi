@@ -4,7 +4,7 @@
 #   curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh
 #   curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh -s -- --yes --no-login
 #
-# What it does (details: packages/collab-web/README.md, "Install for colleagues"):
+# What it does (details: packages/collab-web/README.md, "Install"):
 #   1. downloads the release binary for this OS and CPU plus SHA256SUMS.txt over HTTPS,
 #      refuses to install anything whose checksum does not match, and, when the GitHub
 #      CLI (`gh`) is installed and signed in, also verifies the build attestation;

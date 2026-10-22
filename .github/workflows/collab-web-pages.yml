@@ -1,7 +1,7 @@
 # Deploys packages/collab-web as an installable PWA to this fork's GitHub Pages site
 # (https://<owner>.github.io/<repo>/). Point omp at it with:
 #   collab.webUrl: https://<owner>.github.io/<repo>/
-# The same site root also serves scripts/install-collab.sh as install.sh, the colleague installer:
+# The same site root also serves scripts/install-collab.sh as install.sh, the one-line installer:
 #   curl -fsSL https://<owner>.github.io/<repo>/install.sh | sh
 # Guarded off for the upstream repository, which serves the client from its relay.
 name: collab-web pages

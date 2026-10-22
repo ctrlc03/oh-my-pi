@@ -1,6 +1,6 @@
 # Getting started with omp collab
 
-A guide for a colleague who has never used omp. It takes about five minutes.
+A guide for anyone who has never used omp. It takes about five minutes.
 
 ## What this is
 
@@ -29,7 +29,7 @@ The installer asks before anything that needs a decision, and you can answer wit
 
 Then it installs the companion as a background service that starts when you log in, opens the web app in your browser, already paired with this computer, and prints a link and QR code for your phone. The app it opens is the copy the companion itself serves on this computer (`http://127.0.0.1:7467`); it needs no internet once loaded. To skip the questions: `curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh -s -- --yes --no-login`.
 
-What goes where, the checksum and build checks, and every installer option are in [Install for colleagues](../packages/collab-web/README.md#install-for-colleagues).
+What goes where, the checksum and build checks, and every installer option are in [Install](../packages/collab-web/README.md#install).
 
 ## Pair your devices
 
@@ -128,4 +128,4 @@ This stops and removes the service and, if you agree, deletes the `omp` binary. 
 - The relay in the middle only passes encrypted messages. The key never leaves the link's fragment.
 - You trust whoever controls this fork, its Pages site and its release workflow, as with any `curl | sh`. To read the script first: `curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | less`. The installer refuses a binary whose checksum is missing or wrong, and, when `gh` is installed and signed in, one the release workflow did not build.
 
-More detail on all of this: [Install for colleagues](../packages/collab-web/README.md#install-for-colleagues).
+More detail on all of this: [Install](../packages/collab-web/README.md#install).

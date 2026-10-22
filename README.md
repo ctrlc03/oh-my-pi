@@ -51,7 +51,7 @@ macOS or Linux (x64 or arm64; on Linux, glibc 2.35 or newer). On Windows, run it
 curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh
 ```
 
-This installs the fork's `omp` binary as `~/.local/bin/omp`, from the latest `collab-v*` GitHub Release, after checking it against the release's `SHA256SUMS.txt`. It then installs the companion as a service that starts at login, and opens the web app paired with this computer. Add `-s -- --no-service` after `sh` to install only the binary. [Getting started](docs/collab-getting-started.md) walks through pairing a phone and a first session. [Install for colleagues](packages/collab-web/README.md#install-for-colleagues) lists every option and where each file goes.
+This installs the fork's `omp` binary as `~/.local/bin/omp`, from the latest `collab-v*` GitHub Release, after checking it against the release's `SHA256SUMS.txt`. It then installs the companion as a service that starts at login, and opens the web app paired with this computer. Add `-s -- --no-service` after `sh` to install only the binary. [Getting started](docs/collab-getting-started.md) walks through pairing a phone and a first session. [The installer reference](packages/collab-web/README.md#install) lists every option and where each file goes.
 
 - **Update**: run the same command again, or `omp update`. Both follow this fork's releases, not upstream's.
 - **Uninstall**: `curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh -s -- --uninstall`. Your logins, settings and pairing in `~/.omp` are kept.
@@ -88,7 +88,7 @@ omp completions fish > ~/.config/fish/completions/omp.fish
 ### Maintaining the fork
 
 - **Take upstream changes**: `git fetch origin --tags`, then `git merge v<version>` on `main` (`origin` is can1357/oh-my-pi). Resolve conflicts and run `bun run check:ts` before pushing `main`.
-- **Publish a release**: push a tag `collab-v<version>-<n>`, where `<version>` is `packages/coding-agent/package.json`'s version and `<n>` counts releases of that version. See *For the maintainer: publishing a release* under [Install for colleagues](packages/collab-web/README.md#install-for-colleagues).
+- **Publish a release**: push a tag `collab-v<version>-<n>`, where `<version>` is `packages/coding-agent/package.json`'s version and `<n>` counts releases of that version. See *For the maintainer: publishing a release* in [the installer reference](packages/collab-web/README.md#install).
 - **What runs on GitHub**: a push to `main` deploys the web app and the installer to GitHub Pages and prebuilds the native addons. A `collab-v*` tag builds and publishes the release binaries. Upstream's own CI workflows are disabled in this fork.
 
 ## Every tool, _benchmaxxed_.

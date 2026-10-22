@@ -9,6 +9,8 @@
 - Added permanent retention: `workingMemoryLimit: Infinity` and `degradeEpisodic: false` keep every row, and invalidation is recorded with `invalid_by`.
 - Added provenance: `provenance`, `authorId` / `authorType` on writes, `excludeAuthorTypes` on recall (facts derived from excluded rows are excluded too), duplicate merging and consolidation per author, and `TRUSTED` / `UNTRUSTED` trust tiers.
 - Rows pinned (`metadata.pinned`) or retracted by the owner can no longer be invalidated, updated or forgotten; added `getPinned()`, and `get()` now returns `author_id`, `author_type` and `trust_tier`.
+## [18.12.4] - 2026-10-20
+
 ### Fixed
 
 - Fixed background fact extraction storing only the first 5 facts of a plain-line extractor answer; it now keeps up to 20, matching JSON answers ([#16377](https://github.com/can1357/oh-my-pi/pull/16377) by [@alphastorm](https://github.com/alphastorm))

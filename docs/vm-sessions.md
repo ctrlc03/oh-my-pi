@@ -138,6 +138,8 @@ Verified against a real App on a private repository: the VM cloned it, pushed a 
 
 Commits from a VM are authored by the App's bot, so they are recognizable on GitHub. Protect the repositories with `omp vm github protect owner/repo`: the App then pushes work branches and opens pull requests, but cannot move the default branch or create release tags. On this fork that matters most: a push to `main` redeploys the `install.sh` everyone runs, and a `collab-v*` tag publishes a release.
 
+Rulesets need a public repository, or GitHub Pro, Team or Enterprise for a private one; on GitHub Free, `protect` on a private repository fails with GitHub's "Upgrade to GitHub Pro" answer, and nothing stops the App from pushing to its default branch. Until then, give VMs only private repositories where that is acceptable.
+
 All of a VM's repositories must belong to one owner (one installation mints its token).
 
 ## Network

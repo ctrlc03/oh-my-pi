@@ -92,7 +92,14 @@ export async function protectRepository(repo: string, args: string[], deps: Gith
 	}
 	const yes = args.includes("--yes") || args.includes("-y");
 	const listed = await deps.runGh(["api", `repos/${repo}/rulesets?per_page=100`]);
-	if (listed.exitCode !== 0) throw new Error(`gh could not list rulesets of ${repo}: ${listed.stderr.trim()}`);
+	if (listed.exitCode !== 0) {
+		const detail = listed.stderr.trim();
+		// GitHub Free has no rulesets on private repositories.
+		const hint = /Upgrade to GitHub Pro/i.test(detail)
+			? "\nRulesets on a private repository need GitHub Pro, Team or Enterprise (or a public repository). Without them, keep the App off repositories whose default branch or tags must not move."
+			: "";
+		throw new Error(`gh could not list rulesets of ${repo}: ${detail}${hint}`);
+	}
 	let existing: string[];
 	try {
 		existing = (JSON.parse(listed.stdout) as Array<{ name: string }>).map(entry => entry.name);

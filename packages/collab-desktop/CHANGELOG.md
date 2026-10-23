@@ -16,7 +16,6 @@
 
 ### Fixed
 
-- Fixed the header, the message box and the pet flashing on macOS while a session's transcript updated under them: the app turns off Chromium's Graphite renderer (`--disable-features=SkiaGraphite`) on macOS.
 - Fixed the app starting its own companion while the launchd/systemd service was also running, which left two companions fighting over the relay room (close 4009, retried every few seconds for hours). With the service installed the app now never spawns a companion: it asks the service manager to start the service (`launchctl kickstart` without `-k`, `systemctl --user start`), shows "waiting for the companion service", and asks again at most every 30 s. A live companion lock (`collab-companion.lock`) also makes the app wait instead of starting one. A service that is installed but not loaded is loaded with `launchctl bootstrap` first; one that still fails three asks in a row, or a lock holder that publishes no address for 60 s, is reported instead of waited for forever.
 - Fixed the app never pairing with the companion when `omp` is a `bun link` to a source checkout: that `omp` has no `companion` command, so the app now runs the checkout's companion (`bun packages/collab-web/scripts/companion.ts`) instead of reporting "no companion to pair with".
 - Fixed the installer refusing to update or delete the app whenever any "omp collab" process ran: it now checks only the copy it is about to replace or delete.

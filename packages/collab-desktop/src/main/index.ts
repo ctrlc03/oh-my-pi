@@ -86,9 +86,6 @@ const dataDir =
 	process.env.OMP_DESKTOP_DATA_DIR || path.join(app.getPath("appData"), app.isPackaged ? APP_NAME : `${APP_NAME} dev`);
 app.setName(APP_NAME);
 app.setPath("userData", dataDir);
-// Chromium's Graphite renderer makes the blurred bars (header, composer) and the pet's layer flash on macOS
-// while the transcript under them repaints; Ganesh, the renderer before it, draws them steadily.
-if (platform === "darwin") app.commandLine.appendSwitch("disable-features", "SkiaGraphite");
 
 const configDir = configDirOf(home, process.env);
 const appDir = app.getAppPath();

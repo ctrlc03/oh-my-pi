@@ -51,6 +51,11 @@ export function vmProvisionLog(name: string, root = getVmRoot()): string {
 	return path.join(vmDir(name, root), "provision.log");
 }
 
+/** Every GitHub write the VM made or was refused, one line each. */
+export function vmGithubLog(name: string, root = getVmRoot()): string {
+	return path.join(vmDir(name, root), "github.log");
+}
+
 export function supervisorEndpointPath(root = getVmRoot()): string {
 	return path.join(root, "supervisor.json");
 }

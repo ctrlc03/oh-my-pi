@@ -93,7 +93,7 @@ The relay that carries the traffic only sees encrypted messages: the key is in t
 
 ### VM sessions: agents with no limits, in a VM
 
-`omp vm` runs an agent with root, an open network and no approvals inside a Linux VM on your computer, paired with your devices as its own computer. Your model logins (subscriptions included) stay on this computer: the VM's model calls go through it. GitHub access is a one-hour token limited to the VM's repositories, from a GitHub App you own.
+`omp vm` runs an agent with root, an open network and no approvals inside a Linux VM on your computer, paired with your devices as its own computer. Your model logins (subscriptions included) stay on this computer: the VM's model calls go through it. GitHub works the same way: git and `gh` in the VM go through this computer, which adds a one-hour token limited to the VM's repositories and refuses pushes to the default branch, tags and merges. The VM holds no GitHub credential.
 
 ```sh
 omp vm init                          # what is installed, what is missing (Lima, QEMU, the GitHub App)

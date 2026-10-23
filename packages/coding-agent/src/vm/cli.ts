@@ -59,6 +59,7 @@ export interface VmCommandFlags {
 	disk?: number;
 	network?: string;
 	allowHost?: string[];
+	branchPrefix?: string;
 	model?: string[];
 	dailyTokens?: number;
 	dailyCost?: number;
@@ -335,6 +336,10 @@ async function createCommand(name: string, flags: VmCommandFlags, reporter: Repo
 	if (!check.ok) throw new Error(`the ${driverName} driver is unavailable: ${check.reason}`);
 	const app = await loadGithubApp();
 	if (!app) throw new Error("no GitHub App is set up: run `omp vm github setup` first");
+	const branchPrefix = flags.branchPrefix?.trim();
+	if (branchPrefix !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(branchPrefix)) {
+		throw new Error("--branch-prefix takes letters, digits, '.', '_', '-' and '/', e.g. omp/");
+	}
 	const budget = {
 		...(flags.dailyTokens !== undefined ? { dailyTokens: positive(flags.dailyTokens, "--daily-tokens", 0) } : {}),
 		...(flags.dailyCost !== undefined ? { dailyCostUsd: positive(flags.dailyCost, "--daily-cost", 0) } : {}),
@@ -349,6 +354,7 @@ async function createCommand(name: string, flags: VmCommandFlags, reporter: Repo
 		network,
 		driver: driverName,
 		...(flags.allowHost?.length ? { allowHosts: flags.allowHost } : {}),
+		...(branchPrefix ? { branchPrefix } : {}),
 		...(flags.model?.length ? { models: flags.model } : {}),
 		...(Object.keys(budget).length > 0 ? { budget } : {}),
 		phase: "creating",

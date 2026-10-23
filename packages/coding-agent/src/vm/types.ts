@@ -37,6 +37,8 @@ export interface VmRecord {
 	/** Gateway model grants (`provider/id` or `provider/*`); absent allows every model the host can serve. */
 	models?: string[];
 	budget?: VmBudget;
+	/** When set, the VM pushes only branches whose names start with it. */
+	branchPrefix?: string;
 	phase: VmPhase;
 	/** Set when `phase` is `failed`: what went wrong. */
 	error?: string;

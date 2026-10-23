@@ -1,6 +1,7 @@
 /**
- * What `omp vm` puts inside a guest: the provisioning scripts, the host-services shim, the git
- * credential helper, the `gh` wrapper and omp's model config. Pure text generation; the CLI runs it.
+ * What `omp vm` puts inside a guest: the provisioning scripts, the host-services shim, the git and
+ * `gh` configuration that sends GitHub traffic to the host, and omp's model config. Pure text
+ * generation; the CLI runs it.
  */
 import type { VmGuestEndpoints } from "./driver";
 import type { VmRecord } from "./types";
@@ -8,6 +9,24 @@ import type { VmRecord } from "./types";
 /** Port of the guest-local shim that forwards to the host's services for this VM. */
 export const GUEST_SHIM_PORT = 4000;
 export const GUEST_SHIM_URL = `http://127.0.0.1:${GUEST_SHIM_PORT}`;
+/** Guest-local socket for `gh` (`http_unix_socket`), relative to the user's home. */
+export const GUEST_GH_SOCKET = ".omp-vm/host.sock";
+/**
+ * The token `gh` is configured with in the guest (`~/.config/gh/hosts.yml`): it refuses to run
+ * without one, and the host replaces whatever it sends with the VM's installation token.
+ */
+export const GUEST_GH_TOKEN_PLACEHOLDER = "omp-vm-host-adds-the-token";
+
+/** `~/.config/gh/hosts.yml`: a placeholder login, so `gh` runs in every shell and service without an environment variable. */
+export function guestGhHostsYaml(): string {
+	return [
+		"github.com:",
+		`    oauth_token: ${GUEST_GH_TOKEN_PLACEHOLDER}`,
+		"    user: omp-vm",
+		"    git_protocol: https",
+		"",
+	].join("\n");
+}
 
 export interface GuestIdentity {
 	name: string;
@@ -51,7 +70,7 @@ export function guestModelsYaml(providers: readonly string[]): string {
 export function guestShimUnit(endpoints: VmGuestEndpoints): string {
 	return [
 		"[Unit]",
-		"Description=omp VM: host services (model gateway, GitHub token) on 127.0.0.1:4000",
+		"Description=omp VM: host services (model gateway, git) on 127.0.0.1:4000",
 		"",
 		"[Service]",
 		`ExecStart=/usr/bin/socat TCP-LISTEN:${GUEST_SHIM_PORT},bind=127.0.0.1,fork,reuseaddr ${endpoints.hostServices}`,
@@ -64,25 +83,39 @@ export function guestShimUnit(endpoints: VmGuestEndpoints): string {
 	].join("\n");
 }
 
-/** git credential helper: answers `get` for github.com with a short-lived token from the host. */
-export const GUEST_CREDENTIAL_HELPER = `#!/bin/sh
-# omp VM: git credential helper. The host mints a GitHub App installation token
-# (one hour, this VM's repositories only) and hands it out through the VM's socket.
-[ "$1" = get ] || exit 0
-response=$(curl -fsS --max-time 30 ${GUEST_SHIM_URL}/github/token 2>/dev/null) || exit 0
-token=$(printf '%s' "$response" | sed -n 's/.*"token":"\\([^"]*\\)".*/\\1/p')
-[ -n "$token" ] || exit 0
-printf 'username=x-access-token\\npassword=%s\\n' "$token"
-`;
+/** systemd user unit that exposes the same services on `~/.omp-vm/host.sock`, where `gh` sends its API calls. */
+export function guestGhSocketUnit(endpoints: VmGuestEndpoints): string {
+	return [
+		"[Unit]",
+		"Description=omp VM: host services for gh on ~/" + GUEST_GH_SOCKET,
+		"",
+		"[Service]",
+		"ExecStartPre=/bin/mkdir -p %h/.omp-vm",
+		`ExecStart=/usr/bin/socat UNIX-LISTEN:%h/${GUEST_GH_SOCKET},fork,unlink-early,mode=600 ${endpoints.hostServices}`,
+		"Restart=always",
+		"RestartSec=1",
+		"",
+		"[Install]",
+		"WantedBy=default.target",
+		"",
+	].join("\n");
+}
 
-/** \`gh\` wrapper: runs the real gh with a fresh token from the host. */
-export const GUEST_GH_WRAPPER = `#!/bin/sh
-# omp VM: gh with a short-lived GitHub App token from the host.
-response=$(curl -fsS --max-time 30 ${GUEST_SHIM_URL}/github/token 2>/dev/null) || response=""
-token=$(printf '%s' "$response" | sed -n 's/.*"token":"\\([^"]*\\)".*/\\1/p')
-if [ -n "$token" ]; then GH_TOKEN="$token"; export GH_TOKEN; fi
-exec /usr/bin/gh "$@"
-`;
+/**
+ * `git config --global` lines that send every github.com remote (HTTPS or SSH form) to the host: rewritten to
+ * `http://github.com/`, which git sends through the shim as its HTTP proxy. Remote URLs still name github.com, so
+ * `gh` recognizes the repository.
+ */
+export function guestGitProxyConfig(): string[] {
+	const key = shellQuote("url.http://github.com/.insteadOf");
+	return [
+		`git config --global --unset-all ${key} || true`,
+		...["https://github.com/", "git@github.com:", "ssh://git@github.com/"].map(
+			from => `git config --global --add ${key} ${shellQuote(from)}`,
+		),
+		`git config --global ${shellQuote("http.http://github.com/.proxy")} ${GUEST_SHIM_URL}`,
+	];
+}
 
 function proxyEnvLines(proxy: string | undefined): string[] {
 	if (!proxy) return [];
@@ -97,7 +130,7 @@ function proxyEnvLines(proxy: string | undefined): string[] {
 	];
 }
 
-/** Root part: packages, gh, the wrapper and helper, the proxy environment, lingering. Idempotent. */
+/** Root part: packages, gh, the proxy environment, gh's placeholder token, lingering. Idempotent. */
 export function guestSystemScript(opts: GuestProvisionOptions, user: string): string {
 	const proxy = opts.endpoints.egressProxy;
 	const envLines = proxyEnvLines(proxy);
@@ -129,18 +162,12 @@ if ! dpkg -s gh >/dev/null 2>&1; then
 	apt-get update -q
 	apt-get install -y -q gh
 fi
-cat > /usr/local/bin/omp-vm-credential <<'OMP_VM_EOF'
-${GUEST_CREDENTIAL_HELPER}OMP_VM_EOF
-chmod 0755 /usr/local/bin/omp-vm-credential
-cat > /usr/local/bin/gh <<'OMP_VM_EOF'
-${GUEST_GH_WRAPPER}OMP_VM_EOF
-chmod 0755 /usr/local/bin/gh
 loginctl enable-linger ${shellQuote(user)}
 echo "omp-vm: system setup done"
 `;
 }
 
-/** User part: the shim, omp's model config, git identity and credentials, omp itself, the repositories. */
+/** User part: the shims, omp's model config, git identity and GitHub routing, omp itself, the repositories. */
 export function guestUserScript(opts: GuestProvisionOptions): string {
 	const proxy = opts.endpoints.egressProxy;
 	const envLines = proxyEnvLines(proxy);
@@ -150,16 +177,18 @@ ${envLines.map(line => `export ${line}`).join("\n")}
 export PATH="$HOME/.local/bin:$PATH"
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 echo "omp-vm: host services shim"
-mkdir -p ~/.config/systemd/user ~/.config/environment.d ~/.omp/agent ~/src
+mkdir -p ~/.config/systemd/user ~/.config/environment.d ~/.config/gh ~/.omp/agent ~/src
 cat > ~/.config/systemd/user/omp-vm-host.service <<'OMP_VM_EOF'
 ${guestShimUnit(opts.endpoints)}OMP_VM_EOF
+cat > ~/.config/systemd/user/omp-vm-gh.service <<'OMP_VM_EOF'
+${guestGhSocketUnit(opts.endpoints)}OMP_VM_EOF
 ${
 	envLines.length > 0
 		? `printf '%s\\n' ${envLines.map(shellQuote).join(" ")} > ~/.config/environment.d/50-omp-proxy.conf\n`
 		: "rm -f ~/.config/environment.d/50-omp-proxy.conf\n"
 }systemctl --user daemon-reload
-systemctl --user enable omp-vm-host.service >/dev/null 2>&1
-systemctl --user restart omp-vm-host.service
+systemctl --user enable omp-vm-host.service omp-vm-gh.service >/dev/null 2>&1
+systemctl --user restart omp-vm-host.service omp-vm-gh.service
 for _ in $(seq 1 30); do
 	curl -fsS --max-time 2 ${GUEST_SHIM_URL}/healthz >/dev/null 2>&1 && break
 	sleep 1
@@ -170,11 +199,17 @@ ${guestModelsYaml(opts.providers)}OMP_VM_EOF
 # The companion's disk guard warns below 40 GB free by default, more than a VM disk holds:
 # scale its limit to this disk unless a device already changed it.
 [ -f ~/.omp/agent/collab-companion-disk.json ] || printf '{"settings":{"limitGb":%s}}\\n' ${guestDiskLimitGb(opts.record.diskGiB)} > ~/.omp/agent/collab-companion-disk.json
-echo "omp-vm: git identity and credentials"
+echo "omp-vm: git identity and GitHub routing"
 git config --global user.name ${shellQuote(opts.identity.name)}
 git config --global user.email ${shellQuote(opts.identity.email)}
 git config --global init.defaultBranch main
-git config --global --replace-all credential.https://github.com.helper /usr/local/bin/omp-vm-credential
+# The VM holds no GitHub credential: git and gh reach GitHub through the host, which adds the token.
+${guestGitProxyConfig().join("\n")}
+printf 'git_protocol: https\\nhttp_unix_socket: %s\\n' "$HOME/${GUEST_GH_SOCKET}" > ~/.config/gh/config.yml
+cat > ~/.config/gh/hosts.yml <<'OMP_VM_EOF'
+${guestGhHostsYaml()}OMP_VM_EOF
+chmod 0600 ~/.config/gh/hosts.yml
+for _ in $(seq 1 30); do [ -S "$HOME/${GUEST_GH_SOCKET}" ] && break; sleep 1; done
 echo "omp-vm: installing omp"
 curl -fsSL ${shellQuote(opts.installerUrl)} | sh -s -- --yes --no-login --no-desktop --no-open
 # Sessions start in tmux with no one at the keyboard: the first-run wizard would block them.

@@ -1,7 +1,8 @@
 /**
  * `omp vm serve`: the host side of every VM. For each VM it serves `<vm dir>/host.sock` (model
- * calls through an in-process auth gateway scoped to that VM, short-lived GitHub tokens) and, for
- * proxied VMs, `<vm dir>/egress.sock`. Credentials stay in this process; VMs only see answers.
+ * calls through an in-process auth gateway scoped to that VM, and GitHub through a policy-checking
+ * proxy that adds the VM's installation token) and, for proxied VMs, `<vm dir>/egress.sock`.
+ * Credentials stay in this process; VMs only see answers.
  */
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -31,7 +32,8 @@ import { discoverAuthStorage } from "../sdk";
 import { usesEgressProxy } from "./drivers";
 import { DEFAULT_ALLOW_HOSTS, type EgressPolicy, startEgressProxy } from "./egress-proxy";
 import { InstallationTokens, loadGithubApp, saveGithubApp } from "./github";
-import { getVmRoot, supervisorEndpointPath, vmEgressSocket, vmHostSocket, vmUsagePath } from "./paths";
+import { createGithubProxy, isGithubProxyRequest } from "./github-proxy";
+import { getVmRoot, supervisorEndpointPath, vmEgressSocket, vmGithubLog, vmHostSocket, vmUsagePath } from "./paths";
 import { listVmRecords, writeFileAtomic } from "./store";
 import type { VmRecord } from "./types";
 
@@ -285,6 +287,20 @@ export async function startVmSupervisor(
 		},
 		log,
 	});
+	const github = createGithubProxy({
+		token: async record => {
+			if (!(await loadGithubApp(root))) {
+				throw new Error("no GitHub App is set up on the host: run `omp vm github setup` there");
+			}
+			return (await tokens.get(record.name, record.repos)).token;
+		},
+		log: (vm, message) => {
+			log(`vm ${vm}: ${message}`);
+			fs.promises
+				.appendFile(vmGithubLog(vm, root), `${new Date().toISOString()} ${message}\n`, { mode: 0o600 })
+				.catch(() => undefined);
+		},
+	});
 	const served = new Map<string, ServedVm>();
 	let closing = false;
 	let resolveClosed!: () => void;
@@ -297,20 +313,7 @@ export async function startVmSupervisor(
 		const entry = served.get(name);
 		if (!entry) return new Response("unknown VM", { status: 404 });
 		if (url.pathname === "/healthz") return new Response("ok");
-		if (url.pathname === "/github/token" && req.method === "GET") {
-			if (!(await loadGithubApp(root))) {
-				return Response.json(
-					{ error: "no GitHub App is set up on the host: run `omp vm github setup` there" },
-					{ status: 404 },
-				);
-			}
-			try {
-				return Response.json(await tokens.get(name, entry.record.repos));
-			} catch (err) {
-				log(`vm ${name}: GitHub token failed: ${String(err)}`);
-				return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 502 });
-			}
-		}
+		if (isGithubProxyRequest(req)) return github.handle(req, entry.record);
 		return gateway.route(req, name);
 	}
 

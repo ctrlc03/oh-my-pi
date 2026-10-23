@@ -38,6 +38,9 @@ export default class Vm extends Command {
 			description: "Extra host the VM may reach in allowlist mode, exact or *.suffix (create; repeatable)",
 			multiple: true,
 		}),
+		"branch-prefix": Flags.string({
+			description: "Allow pushes only to branches starting with this, e.g. omp/ (create)",
+		}),
 		model: Flags.string({
 			description: "Model the VM may use, provider/id or provider/* (create; repeatable; default all)",
 			multiple: true,
@@ -76,6 +79,7 @@ export default class Vm extends Command {
 			disk: flags.disk,
 			network: flags.network,
 			allowHost: flags["allow-host"],
+			branchPrefix: flags["branch-prefix"],
 			model: flags.model,
 			dailyTokens: flags["daily-tokens"],
 			dailyCost: number(flags["daily-cost"], "--daily-cost"),

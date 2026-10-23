@@ -3,7 +3,7 @@
 A VM session runs an agent with no restrictions (root, package installs, Docker, an open network, `yolo` approvals, no shell sandbox) inside a Linux VM on your computer, while:
 
 - your provider logins, subscriptions included (Claude Pro/Max, ChatGPT), never enter the VM;
-- GitHub access from the VM covers only the VM's repositories, through tokens that expire within an hour;
+- the VM holds no GitHub credential: the host adds a one-hour token, narrowed to the VM's repositories, to each git and `gh` request it lets through, and refuses pushes to the default branch, tags and merges;
 - nothing on the host (files, credentials, services on `127.0.0.1`) is reachable from the VM;
 - the collab app drives sessions in the VM like sessions on any other computer.
 
@@ -42,7 +42,7 @@ Inside the VM the repositories are cloned under `~/src/<owner>/<repo>`. Until a 
 | `omp vm github setup [--owner <org>]` | Creates the GitHub App through GitHub's manifest flow (a browser page, then the App's install page) and records its installations. `--app-id <id> --key <pem>` adopts an existing App instead |
 | `omp vm github status` | The App and the accounts it is installed on |
 | `omp vm github protect <owner/repo> [--yes]` | Creates two rulesets with your own `gh`: the default branch blocks deletion, force pushes and direct updates; `v*` and `collab-v*` tags block creation, update and deletion. Repository admins bypass both, so your own pushes keep working; the App does not |
-| `omp vm create <name> --repo owner/repo […]` | Creates, boots and provisions the VM and prints a pairing link. Flags: `--cpus` (4), `--memory` GiB (8), `--disk` GiB (60, sparse), `--network open\|allowlist`, `--allow-host <host>` (allowlist extras, repeatable), `--model provider/id` (repeatable; default all), `--daily-tokens N`, `--daily-cost USD` |
+| `omp vm create <name> --repo owner/repo […]` | Creates, boots and provisions the VM and prints a pairing link. Flags: `--cpus` (4), `--memory` GiB (8), `--disk` GiB (60, sparse), `--network open\|allowlist`, `--allow-host <host>` (allowlist extras, repeatable), `--model provider/id` (repeatable; default all), `--daily-tokens N`, `--daily-cost USD`, `--branch-prefix <prefix>` (the VM pushes only branches whose names start with it) |
 | `omp vm list` | VMs and their status (`creating`, `running`, `stopped`, `failed`, `missing`) |
 | `omp vm start\|stop <name>` | Boots or shuts down the VM. `start` also refreshes the VM's model config with the providers you are signed in to now |
 | `omp vm shell <name>` | A login shell inside the VM |
@@ -65,20 +65,19 @@ flowchart LR
     Key[(GitHub App key)]
     Store --- Sup
     Key --- Sup
-    Sup -- JWT --> GHAPI[(api.github.com)]
+    Sup -- "token added" --> GH[(github.com,<br/>api.github.com)]
   end
   subgraph VM
     Shim[shim<br/>127.0.0.1:4000]
     Omp[omp sessions, yolo]
     Comp[VM companion]
-    Cred[git credential helper,<br/>gh wrapper]
+    Git[git, gh]
     Omp --> Shim
-    Cred --> Shim
+    Git --> Shim
     Comp --- Omp
   end
   Shim -- "&lt;vm&gt;/host.sock" --> Sup
   Comp -- wss --> Relay[(collab relay)] --> App[app]
-  Cred -- 1 h token --> GH[(github.com)]
 ```
 
 ### The supervisor (`omp vm serve`)
@@ -90,10 +89,10 @@ For each VM it serves `~/.omp/agent/vm/vms/<name>/host.sock` (mode 0600):
 | Route | Answer |
 | --- | --- |
 | `POST /v1/pi/stream`, `GET /v1/models`, and the gateway's other model routes (images, speech, embeddings, judgments, video) | The [auth gateway](./auth-broker-gateway.md)'s routes, in process, on your own credentials (the same local store, OAuth refresh leases and all, as your omp sessions). Each VM is a scoped gateway client: its `models` grants and its daily `budget` apply. The gateway-wide routes (`/v1/usage`, `/v1/credentials/check`) answer 403 |
-| `GET /github/token` | `{token, expiresAt}`: a GitHub App installation token for the VM's repositories (below) |
+| Requests for `github.com` (git smart HTTP; git uses the shim as its HTTP proxy) and `api.github.com` (`gh`) | GitHub, through the policy below, with the VM's installation token added on the host |
 | `GET /healthz` | `ok` |
 
-Nothing on the socket carries a credential the VM could reuse elsewhere: the gateway adds the provider credentials on the host, and the per-VM client token never leaves the supervisor. Deleting a VM (its directory) closes its socket and revokes its GitHub token within two seconds. A VM whose `vm.json` holds a grant or budget the gateway refuses is logged and gets no model access; the other VMs are unaffected.
+Nothing on the socket carries a credential the VM could reuse elsewhere: the gateway adds the provider credentials on the host, the GitHub proxy adds the GitHub token on the host, and the per-VM client token never leaves the supervisor. Deleting a VM (its directory) closes its socket and revokes its GitHub token within two seconds. A VM whose `vm.json` holds a grant or budget the gateway refuses is logged and gets no model access; the other VMs are unaffected.
 
 For QEMU VMs it also serves `vms/<name>/egress.sock`, the VM's HTTP proxy (below).
 
@@ -103,7 +102,7 @@ Ubuntu 24.04 (arm64 on Apple silicon, amd64 elsewhere), provisioned over `limact
 
 - git, tmux, socat, curl, build tools, `jq`, and `gh` from GitHub's apt repository;
 - the fork's omp and companion, installed by `install.sh --yes --no-login --no-desktop --no-open` (the companion as a systemd user unit, with lingering enabled);
-- a shim, systemd user unit `omp-vm-host`, that serves the host socket as `http://127.0.0.1:4000` inside the VM;
+- a shim, systemd user unit `omp-vm-host`, that serves the host socket as `http://127.0.0.1:4000` inside the VM, and a second, `omp-vm-gh`, that serves it as `~/.omp-vm/host.sock` for `gh`;
 - `~/.omp/agent/models.yml`, routing every provider you are signed in to through the shim with `transport: pi-native` (only the model id and the context leave the VM; the request is shaped and signed on the host):
 
   ```yaml
@@ -115,7 +114,7 @@ Ubuntu 24.04 (arm64 on Apple silicon, amd64 elsewhere), provisioned over `limact
   ```
 
 - `setupVersion` set so sessions started by the companion never stop at the first-run wizard, and the companion's disk-guard limit scaled to the VM's disk (a tenth of it, at least 2 GB);
-- git configured with the App's bot identity (`<slug>[bot]`) and a credential helper, `/usr/local/bin/omp-vm-credential`, that answers github.com with a token from `/github/token`; `/usr/local/bin/gh` wraps the real `gh` with `GH_TOKEN` set the same way;
+- git configured with the App's bot identity (`<slug>[bot]`), `url.http://github.com/.insteadOf` for `https://github.com/`, `git@github.com:` and `ssh://git@github.com/`, and `http.http://github.com/.proxy` set to the shim, so every github.com remote goes to the host as plain HTTP while still naming github.com; `gh` configured with `http_unix_socket: ~/.omp-vm/host.sock` and a placeholder login in `~/.config/gh/hosts.yml` (it refuses to run without one; the host replaces it). No credential helper, no token on disk or in the environment;
 - each repository cloned under `~/src/<owner>/<repo>`; a repository's `.omp/vm-setup`, when present, runs after the clone (without approval: the VM is the sandbox). Its failure is a warning, not a failed VM.
 
 Chromium is not installed (Ubuntu ships it only as a snap), so the companion's *Preview* reports itself unavailable in VMs.
@@ -132,13 +131,26 @@ The gateway does not read the host's `models.yml`: a model defined only there is
 
 `omp vm github setup` creates a private GitHub App owned by your account (or `--owner <org>`) with *Contents* and *Pull requests* read and write, *Checks*, *Actions* and *Metadata* read, and no webhook. You click *Create* on GitHub, then install it on the repositories VMs may work on. The App's key stays in `~/.omp/agent/vm/github-app.pem` (0600); the shell sandbox denies reading or writing anything under `~/.omp/agent/vm`.
 
-At run time the supervisor signs a JWT with the key, asks `POST /app/installations/{id}/access_tokens` for a token narrowed to the VM's repositories and those permissions, hands it out on `/github/token`, re-mints it ten minutes before it expires, and revokes it when the VM is deleted or the supervisor stops. A token copied out of the VM is good for at most an hour, for those repositories only.
+At run time the supervisor signs a JWT with the key, asks `POST /app/installations/{id}/access_tokens` for a token narrowed to the VM's repositories and those permissions, re-mints it ten minutes before it expires, and revokes it when the VM is deleted or the supervisor stops. The token never leaves the host: the supervisor's GitHub proxy adds it to the requests it forwards.
 
-Verified against a real App on a private repository: the VM cloned it, pushed a branch as the bot and opened a pull request with `gh`; `GET /installation/repositories` with the token listed only that repository, and the token answered 401 a few seconds after `omp vm delete`.
+| Request from the VM | The proxy |
+| --- | --- |
+| git fetch or clone of one of the VM's repositories | Forwards with the token |
+| git fetch or clone of any other repository | Forwards without a credential: public repositories work, private ones do not |
+| git push to one of the VM's repositories | Reads the ref updates at the start of the request and refuses the whole push if any of them is: the default branch, a deletion, a tag or any ref outside `refs/heads/`, or a branch outside `--branch-prefix` when the VM has one. git prints the reason as `! [remote rejected] … (…)`. Otherwise forwards with the token |
+| git push anywhere else | Refused |
+| `gh` REST reads (`GET`, `HEAD`) | Forwards with the token |
+| `gh` REST writes | Only creating and editing pull requests, reviews, review and issue comments, reactions and review requests, on the VM's repositories; the rest (merges, `contents`, `git/refs`, workflow dispatch, settings) answer 403 |
+| `gh` GraphQL | Queries forward; mutations only from the same set (`createPullRequest`, `updatePullRequest`, `addComment`, `addPullRequestReview`, …), read from the request's top-level fields, aliases included; `mergePullRequest`, ref and commit mutations, and mutations through fragments answer 403 |
+| `gh` downloads from GitHub's archive, release-asset and attestation hosts | `GET`/`HEAD` only, without a credential |
 
-Commits from a VM are authored by the App's bot, so they are recognizable on GitHub. Protect the repositories with `omp vm github protect owner/repo`: the App then pushes work branches and opens pull requests, but cannot move the default branch or create release tags. On this fork that matters most: a push to `main` redeploys the `install.sh` everyone runs, and a `collab-v*` tag publishes a release.
+Every write it forwards or refuses is logged in `vms/<name>/github.log` and the supervisor log. This holds on any GitHub plan; the proxy does not need rulesets.
 
-Rulesets need a public repository, or GitHub Pro, Team or Enterprise for a private one; on GitHub Free, `protect` on a private repository fails with GitHub's "Upgrade to GitHub Pro" answer, and nothing stops the App from pushing to its default branch. Until then, give VMs only private repositories where that is acceptable.
+Verified against a real App, from a Lima VM and from a QEMU `allowlist` VM: the clone, fetches and `gh` reads went through the proxy (`GET /installation/repositories` listed only the VM's repository); a branch push and `gh pr create` succeeded as the bot; pushes to `main`, of a tag and deleting a branch came back as `! [remote rejected] … (a VM cannot …)` without reaching GitHub; `gh pr merge` got the GraphQL refusal and `gh api -X PUT …/contents/…` a 403. No file or environment variable in the VM held a token. The installer's build-attestation check passed through the same path.
+
+Commits from a VM are authored by the App's bot, so they are recognizable on GitHub. `omp vm github protect owner/repo` adds rulesets as a second layer for anyone else holding the App's tokens: the default branch blocks deletion, force pushes and direct updates; `v*` and `collab-v*` tags block creation, update and deletion. Rulesets need a public repository, or GitHub Pro, Team or Enterprise for a private one; on GitHub Free, `protect` on a private repository fails with GitHub's "Upgrade to GitHub Pro" answer.
+
+A pushed branch still triggers the repository's `on: push` workflows, with its secrets. Keep secret-using jobs off VM branches: create VMs with `--branch-prefix omp/` and exclude `omp/**` from those workflows, or put the secrets in environments that require a reviewer.
 
 All of a VM's repositories must belong to one owner (one installation mints its token).
 
@@ -154,7 +166,7 @@ The proxy resolves each name on the host and refuses loopback, private, link-loc
 
 `hostLoopback: false` does not cover the host's other addresses: a service on the host bound to all interfaces is still reachable from an `open` VM through the host's LAN address. Bind host services to `127.0.0.1`, or use `allowlist`.
 
-Whatever the mode, anything in the VM can leave through its egress: the repository's code, the current GitHub token, transcripts. The design limits what that is worth, not whether it can leave.
+Whatever the mode, anything in the VM can leave through its egress: the repository's code, transcripts. The design limits what that is worth, not whether it can leave.
 
 ## Threat model
 
@@ -164,7 +176,7 @@ Assume the agent in a VM is fully compromised (prompt injection, a malicious dep
 | --- | --- | --- |
 | Provider logins and refresh tokens | Host store | None directly. Model calls through the VM's socket while the VM runs, within its grants and budget |
 | Gateway client token | Supervisor memory | None: it never leaves the host |
-| GitHub | One-hour token in the VM | Read the VM's repositories, push branches, open pull requests. Not the default branch or release tags once `protect` ran. Revoked on delete |
+| GitHub | One-hour installation token in supervisor memory; none in the VM | Through the proxy, while the VM runs: read its repositories, push non-default branches (under `--branch-prefix` if set), open and comment on pull requests. Not the default branch, tags, deletions or merges. Nothing to copy out |
 | GitHub App private key | Host, 0600, denied to the shell sandbox | None |
 | Host files, SSH keys, `~/.omp`, git credentials | Host, nothing mounted | None |
 | Host services on `127.0.0.1` | Host | Refused |
@@ -207,5 +219,6 @@ On an Apple silicon Mac (macOS 27), Lima built from `master`, QEMU 11.1:
 
 - **Vendor agents in the VM.** Claude Code and Codex use their own logins, not omp's; the VM's *Agents* screen shows them as not signed in. They might use the gateway's `/v1/messages` and `/v1/responses` routes through `ANTHROPIC_BASE_URL` and a custom Codex provider; untested.
 - **Ephemeral per-session VMs** (a copy-on-write clone of a provisioned VM per session), for untrusted pull requests.
-- **No GitHub token in the VM at all**: a host-side git and API proxy that adds the token itself.
+- **Force-push detection.** The proxy sees ref names and object ids, not history, so a VM can force-push its own non-default branches.
+- **Signed commits.** Commits pushed with git are unsigned; commits made through GitHub's API on the App's behalf would be signed.
 - **Recent folders.** A fresh VM lists no folders under *Start session* until a session ran in one.

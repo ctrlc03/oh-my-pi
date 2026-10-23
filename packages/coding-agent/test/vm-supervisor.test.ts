@@ -70,13 +70,15 @@ describe("vm supervisor", () => {
 		expect(await health.text()).toBe("ok");
 	});
 
-	test("GitHub token requests without an App say how to set one up", async () => {
+	test("GitHub requests without an App say how to set one up", async () => {
 		const root = tempRoot();
 		await writeVmRecord(record("api"), root);
 		await start(root);
-		const response = await get(vmHostSocket("api", root), "/github/token");
-		expect(response.status).toBe(404);
-		expect(await response.json()).toEqual({ error: expect.stringContaining("omp vm github setup") });
+		const response = await fetch("http://github.com/acme/api.git/info/refs?service=git-upload-pack", {
+			unix: vmHostSocket("api", root),
+		});
+		expect(response.status).toBe(502);
+		expect(await response.json()).toEqual({ message: expect.stringContaining("omp vm github setup") });
 	});
 
 	test("a second supervisor on the same root refuses to start, naming the first", async () => {

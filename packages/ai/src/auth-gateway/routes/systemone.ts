@@ -21,6 +21,7 @@ import { deterministicUuid } from "../../utils/deterministic-id";
 import {
 	type AuthGatewayRouteOptions,
 	buildGatewayApiKeyResolver,
+	gatewayBudgetRefusal,
 	gatewayRequestLogFields,
 	mirrorRequestAbort,
 	recordGatewayUsage,
@@ -38,6 +39,8 @@ export async function handleSystemOne(
 	const controller = mirrorRequestAbort(req);
 	const aborted = (): Response => systemOne.formatError(499, "request_aborted", "client closed request");
 	if (controller.signal.aborted) return aborted();
+	const overBudget = gatewayBudgetRefusal(bootOpts);
+	if (overBudget) return systemOne.formatError(overBudget.status, overBudget.type, overBudget.message);
 
 	let body: unknown;
 	try {
@@ -111,7 +114,7 @@ export async function handleSystemOne(
 			// A split judgment that fails still billed the chunks that succeeded.
 			onPartialUsage: usage => {
 				if (usage.cost.total === 0) calculateCost(model, usage);
-				recordGatewayUsage(bootOpts.storage, model, client, usage);
+				recordGatewayUsage(bootOpts, model, client, usage);
 			},
 		});
 		// Encode before pricing: the body's `cost` means "upstream billed this"
@@ -119,7 +122,7 @@ export async function handleSystemOne(
 		// when the upstream reported tokens only (TypeSafe).
 		const body = systemOne.encodeResponse(result);
 		if (result.usage.cost.total === 0) calculateCost(model, result.usage);
-		recordGatewayUsage(bootOpts.storage, model, client, result.usage);
+		recordGatewayUsage(bootOpts, model, client, result.usage);
 		return json(200, body, gatewayResponseHeaders(model, { requestId, costUsd: result.usage.cost.total, startedAt }));
 	} catch (error) {
 		if (controller.signal.aborted) return aborted();

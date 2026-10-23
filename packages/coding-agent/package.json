@@ -497,6 +497,10 @@
 			"types": "./src/utils/*.ts",
 			"import": "./src/utils/*.ts"
 		},
+		"./vm/*": {
+			"types": "./src/vm/*.ts",
+			"import": "./src/vm/*.ts"
+		},
 		"./web/*": {
 			"types": "./src/web/*.ts",
 			"import": "./src/web/*.ts"

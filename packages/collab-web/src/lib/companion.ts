@@ -41,6 +41,7 @@ import type {
 	QuizVerdict,
 } from "@oh-my-pi/pi-wire/quiz";
 import type { DiskGuardSettings, DiskHealth, DiskReply, DiskRequest, DiskState } from "@oh-my-pi/pi-wire/disk";
+import type { VmAction, VmCreateOptions, VmReply, VmRequest } from "@oh-my-pi/pi-wire/vm";
 import type {
 	StakesChangedFrame,
 	StakesReply,
@@ -90,6 +91,8 @@ const USAGE_TIMEOUT_MS = 60_000;
 const DISK_SCAN_TIMEOUT_MS = 180_000;
 /** Deleting tens of gigabytes of small files takes minutes. */
 const DISK_CLEAN_TIMEOUT_MS = 900_000;
+/** `omp vm list` asks the drivers and GitHub-App config on the computer; `omp vm pair` mints an invite. */
+const VM_LIST_TIMEOUT_MS = 45_000;
 /** Commits wait on hooks and checkout. */
 const GIT_WRITE_TIMEOUT_MS = 60_000;
 /** Pushes and pull requests talk to the remote. */
@@ -1196,6 +1199,8 @@ export type CompanionRequest =
 	| StakesRequest
 	/** The disk guard (needs `canDiskGuard`); see `@oh-my-pi/pi-wire/disk`. */
 	| DiskRequest
+	/** Virtual machines on the computer (needs `canVms`); see `@oh-my-pi/pi-wire/vm`. */
+	| VmRequest
 	/** The Personal agent (needs `canPersonal`); see `@oh-my-pi/pi-wire/personal`. */
 	| PersonalRequest;
 
@@ -1293,6 +1298,8 @@ export type CompanionReply =
 			canDiskGuard?: boolean;
 			/** A watched volume is below the limit now; absent while all have room and from companions that predate the guard. */
 			disk?: DiskHealth;
+			/** `omp vm` works on this computer: the `vm-*` requests are answered; see `@oh-my-pi/pi-wire/vm`. */
+			canVms?: boolean;
 	  }
 	| { t: "link"; reqId: number; url: string }
 	/** `token`: the credentials issued to a device that paired with an invite; absent when it authenticated with its own. */
@@ -1390,6 +1397,7 @@ export type CompanionReply =
 	| { t: "quiz-changed"; id: string }
 	| StakesReply
 	| DiskReply
+	| VmReply
 	/** Pushed to every authenticated device when a session's high-stakes state changed (mode, pass, quiz); carries no `reqId`. */
 	| StakesChangedFrame
 	| { t: "spar-list"; reqId: number; spars: SparSummary[] }
@@ -1596,6 +1604,8 @@ export interface CompanionSnapshot {
 	power: CompanionPower | null;
 	/** The companion watches free disk space and cleans build output (`disk-*` requests). */
 	canDiskGuard: boolean;
+	/** The computer can create and run virtual machines (`vm-*` requests). */
+	canVms: boolean;
 	/** A watched volume is below the limit now; null while all have room, or on a companion without the guard. */
 	disk: DiskHealth | null;
 	/** Web Push application server key, once the companion has listed hosts. */
@@ -1683,6 +1693,7 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	transcribe: null,
 	power: null,
 	canDiskGuard: false,
+	canVms: false,
 	disk: null,
 	vapidKey: null,
 	error: null,
@@ -2081,6 +2092,27 @@ export class CompanionClient {
 	/** Clean the build output of the picked worktrees now, whether or not auto-clean is on; the companion refuses a worktree that is busy or no longer a candidate (needs `canDiskGuard`). */
 	async diskClean(paths: string[]): Promise<Extract<DiskReply, { t: "disk-clean" }>> {
 		return await this.#call({ t: "disk-clean", paths }, "disk-clean", DISK_CLEAN_TIMEOUT_MS);
+	}
+
+	/** The computer's virtual machines and whether one can be created (needs `canVms`). A VM with `busy` has a job running. */
+	async vmList(): Promise<Extract<VmReply, { t: "vm-list" }>> {
+		return await this.#call({ t: "vm-list" }, "vm-list", VM_LIST_TIMEOUT_MS);
+	}
+
+	/** Start creating a VM; resolves once the computer accepted the job (its progress shows in `vmList`). Rejects with the reason it was refused (needs `canVms`). */
+	async vmCreate(options: VmCreateOptions): Promise<void> {
+		await this.#call({ t: "vm-create", ...options }, "vm-create");
+	}
+
+	/** Start, stop, reset or delete a VM; resolves once the computer accepted the job. A VM with a job running refuses (needs `canVms`). */
+	async vmAction(name: string, action: VmAction): Promise<void> {
+		await this.#call({ t: "vm-action", name, action }, "vm-action");
+	}
+
+	/** A fresh pairing link for the VM's companion, to hand to `extractPairing` (needs `canVms`). */
+	async vmPair(name: string): Promise<{ url: string; expiresAt: number }> {
+		const { url, expiresAt } = await this.#call({ t: "vm-pair", name }, "vm-pair", VM_LIST_TIMEOUT_MS);
+		return { url, expiresAt };
 	}
 
 	/** Models the computer can run, for a fan-out (needs `canFanout`). */
@@ -2512,6 +2544,7 @@ export class CompanionClient {
 				transcribe: frame.transcribe ?? null,
 				power: frame.power ?? null,
 				canDiskGuard: frame.canDiskGuard ?? false,
+				canVms: frame.canVms ?? false,
 				disk: frame.disk ?? null,
 				vapidKey: frame.vapidKey,
 				error: null,

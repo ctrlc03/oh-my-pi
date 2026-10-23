@@ -180,6 +180,11 @@ export const usageHelp = {
 	description: "Show provider usage limits for every authenticated account",
 } satisfies CommandMetadata;
 
+export const vmHelp = {
+	description:
+		"Create and run per-repository Linux VMs that pair with your devices as their own computers; model calls and GitHub tokens come from this computer, credentials stay here",
+} satisfies CommandMetadata;
+
 export const worktreeHelp = {
 	description: "Add, list, or clear git worktrees (clone-first when enabled)",
 } satisfies CommandMetadata;

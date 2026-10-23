@@ -3,8 +3,9 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import type { ComputerHandle } from "../../lib/computers";
 import { AddComputer } from "../shell/AddComputer";
+import { VmSettings } from "../shell/VmSettings";
 import type { SettingsEnv } from "./env";
-import { SettingsGroup } from "./SettingsRows";
+import { ComputerGate, SettingsGroup } from "./SettingsRows";
 
 /** Why a computer is not usable right now, or null while it is connected. */
 function reasonOf(computer: ComputerHandle): string | null {
@@ -108,8 +109,27 @@ export function ComputersSection({ env }: { env: SettingsEnv }): ReactNode {
 					</ul>
 				)}
 			</SettingsGroup>
+			{computers
+				.filter(computer => computer.snap.canVms)
+				.map(computer => (
+					<SettingsGroup
+						key={computer.id}
+						title={computers.length > 1 ? `Virtual machines on ${computer.name}` : "Virtual machines"}
+					>
+						<ComputerGate computer={computer} named={computers.length > 1}>
+							{client => (
+								<VmSettings
+									client={client}
+									computerName={computers.length > 1 ? computer.name : undefined}
+									onPair={onPair}
+								/>
+							)}
+						</ComputerGate>
+					</SettingsGroup>
+				))}
 			<SettingsGroup title="Add a computer">
 				<AddComputer
+					computers={computers}
 					onPair={link => {
 						setAdded(false);
 						onPair(link);

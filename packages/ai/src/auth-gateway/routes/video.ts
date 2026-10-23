@@ -9,8 +9,10 @@ import { deterministicUuid } from "../../utils/deterministic-id";
 import {
 	type AuthGatewayRouteOptions,
 	buildGatewayApiKeyResolver,
+	gatewayBudgetRefusal,
 	gatewayRequestLogFields,
 	mirrorRequestAbort,
+	recordGatewayUsage,
 	resolveGatewayApiKey,
 } from "../dispatch";
 import { gatewayResponseHeaders, json, resolveClientIdentity } from "../http";
@@ -100,20 +102,52 @@ function logVideoRequest(
 	});
 }
 
+/**
+ * Remembers which completed video jobs already had their cost recorded, so
+ * polling a finished job again never counts it twice. One per router; it keeps
+ * the newest `limit` job ids, so a job polled again after that many others
+ * completed counts once more.
+ */
+export class CompletedVideoJobs {
+	readonly #recorded = new Set<string>();
+	readonly #limit: number;
+
+	constructor(limit = 1024) {
+		this.#limit = limit;
+	}
+
+	/** True the first time `gatewayId` is seen, false while it is still remembered. */
+	markFirst(gatewayId: string): boolean {
+		if (this.#recorded.has(gatewayId)) return false;
+		this.#recorded.add(gatewayId);
+		if (this.#recorded.size > this.#limit) {
+			const [oldest] = this.#recorded;
+			this.#recorded.delete(oldest);
+		}
+		return true;
+	}
+}
+
 function recordCompletedUsage(
 	bootOpts: AuthGatewayRouteOptions,
 	resolved: ResolvedVideoRequest,
 	req: Request,
 	job: VideoJob,
+	gatewayId: string,
+	completed: CompletedVideoJobs,
 ): void {
 	if (job.status !== "completed" || job.usage === undefined) return;
+	if (!completed.markFirst(gatewayId)) return;
+	const client = resolveClientIdentity(req.headers);
 	bootOpts.storage.usage.observe({
 		provider: resolved.model.provider,
 		model: resolved.model.id,
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		costUsd: job.usage.cost.total,
-		client: resolveClientIdentity(req.headers),
+		client,
 	});
+	// Video bills by cost alone: `recordGatewayUsage` adds it to the client's budget, while the observe above reports it.
+	recordGatewayUsage(bootOpts, resolved.model, client, job.usage);
 }
 
 /** OpenRouter-compatible `POST /v1/videos` asynchronous video submit handler. */
@@ -122,6 +156,8 @@ export async function handleVideoSubmit(
 	req: Request,
 	peer: string,
 ): Promise<Response> {
+	const overBudget = gatewayBudgetRefusal(bootOpts);
+	if (overBudget) return videoServer.formatError(overBudget.status, overBudget.type, overBudget.message);
 	const startedAt = performance.now();
 	const requestId = crypto.randomUUID();
 	const controller = mirrorRequestAbort(req);
@@ -187,6 +223,7 @@ export async function handleVideoPoll(
 	req: Request,
 	peer: string,
 	gatewayId: string,
+	completed: CompletedVideoJobs,
 ): Promise<Response> {
 	const startedAt = performance.now();
 	const requestId = crypto.randomUUID();
@@ -195,7 +232,7 @@ export async function handleVideoPoll(
 	logVideoRequest(bootOpts, requestId, "poll", resolved, peer);
 	try {
 		const job = await pollVideo(resolved.model, resolved.upstreamId, videoOptions(bootOpts, resolved, peer));
-		recordCompletedUsage(bootOpts, resolved, req, job);
+		recordCompletedUsage(bootOpts, resolved, req, job, gatewayId, completed);
 		return json(
 			200,
 			videoServer.encodePollResponse(job, req, gatewayId),

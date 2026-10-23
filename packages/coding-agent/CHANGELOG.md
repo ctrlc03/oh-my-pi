@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `omp vm` (docs/vm-sessions.md): per-repository Linux VMs that run their own omp and collab companion and pair with your devices as their own computers, with no provider credential and no long-lived GitHub credential inside. `create`, `list`, `start`, `stop`, `shell`, `pair`, `reset` (a fresh image keeping name, repositories and limits; nothing comes over from the old guest, so it pairs again and the old GitHub token is revoked), `delete`, `logs` and `init`, with `--json` NDJSON progress for the companion. `open` VMs use Lima with Virtualization.framework, no mounts and `networkOpts.hostLoopback: false` (macOS; needs Lima 2.3 or a `master` build); `allowlist` VMs (and any VM on Linux) use QEMU with `restrict=on` and the serial console in an in-memory ring buffer, reaching the network only through a host egress proxy that allows listed hosts on ports 80 and 443 and refuses private, loopback and link-local addresses whatever the name.
+- Added the VM supervisor, `omp vm serve` (started by the collab companion, or by `create` when none runs; one per computer through a kernel lock that dies with it, a second one stands by): one unix socket per VM serving the auth gateway's model routes in process on your own credentials, scoped per VM (model grants via `--model`, a daily budget via `--daily-tokens`/`--daily-cost`, usage kept in `vms/<name>/usage.json`; a VM with an invalid grant or budget is logged and left without model access, the others unaffected), and `GET /github/token`.
+- Added `omp vm github setup|status|protect`: creates a private GitHub App through GitHub's manifest flow (or adopts one with `--app-id --key`), mints one-hour installation tokens narrowed to each VM's repositories (contents and pull requests write; checks, actions, metadata read), re-minted ten minutes before expiry and revoked on delete; `protect` adds rulesets that keep the default branch and `v*`/`collab-v*` tags out of the App's reach (repository admins bypass). Inside the VM, a git credential helper and a `gh` wrapper fetch the token; commits are authored by the App's bot.
+- The shell sandbox now denies reading and writing the VM folder (`~/.omp/agent/vm`: the GitHub App key, VM SSH keys).
+
 ## [18.12.6] - 2026-10-21
 
 ### Added

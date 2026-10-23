@@ -6,6 +6,7 @@ import { deterministicUuid } from "../../utils/deterministic-id";
 import {
 	type AuthGatewayRouteOptions,
 	buildGatewayApiKeyResolver,
+	gatewayBudgetRefusal,
 	gatewayRequestLogFields,
 	mirrorRequestAbort,
 	recordGatewayUsage,
@@ -20,6 +21,8 @@ export async function handleRerank(bootOpts: AuthGatewayRouteOptions, req: Reque
 	const controller = mirrorRequestAbort(req);
 	const aborted = (): Response => rerankWire.formatError(499, "request_aborted", "client closed request");
 	if (controller.signal.aborted) return aborted();
+	const overBudget = gatewayBudgetRefusal(bootOpts);
+	if (overBudget) return rerankWire.formatError(overBudget.status, overBudget.type, overBudget.message);
 
 	let parsed: rerankWire.RerankParsedRequest;
 	try {
@@ -61,7 +64,7 @@ export async function handleRerank(bootOpts: AuthGatewayRouteOptions, req: Reque
 			fetch: bootOpts.fetch,
 			signal: controller.signal,
 		});
-		recordGatewayUsage(bootOpts.storage, model, client, result.usage);
+		recordGatewayUsage(bootOpts, model, client, result.usage);
 		return json(
 			200,
 			rerankWire.encodeResponse(

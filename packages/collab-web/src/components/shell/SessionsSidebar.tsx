@@ -448,7 +448,7 @@ export function SessionsSidebar({
 						>
 							<Plus size={15} /> Add a computer
 						</button>
-						{adding && <AddComputer onPair={onPair} onPaired={() => setAdding(false)} />}
+						{adding && <AddComputer computers={computers} onPair={onPair} onPaired={() => setAdding(false)} />}
 					</div>
 				)}
 			</div>

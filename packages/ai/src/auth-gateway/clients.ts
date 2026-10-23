@@ -20,6 +20,10 @@
  * under a new session; requests the old version admitted keep resolving under
  * the old restriction until they finish, and only then is it lifted. A
  * version's requests share that session's account pin.
+ *
+ * - `budget`: daily limits on the client's total usage, counted per UTC day in
+ *   the gateway's usage ledger under the client's name (so a reload keeps the
+ *   day's usage and applies the new limit). See `budget.ts`.
  */
 import { isRecord } from "@oh-my-pi/pi-utils";
 import type { SessionRestrictionLease, SessionsApi } from "../auth/types";
@@ -35,6 +39,23 @@ export interface AuthGatewayClient {
 	models?: readonly string[];
 	/** Provider id → OAuth identity keys the client's requests to that provider may use. */
 	accounts?: Readonly<Record<string, readonly string[]>>;
+	/** Daily limits; once either is reached the client gets 429 until the next UTC midnight. */
+	budget?: AuthGatewayClientBudget;
+}
+
+/** Limits for one client; at least one daily limit is set. */
+export interface AuthGatewayClientBudget {
+	/** Tokens per UTC day: input + output + cache read + cache write. */
+	dailyTokens?: number;
+	/** Cost in USD per UTC day. */
+	dailyCostUsd?: number;
+	/**
+	 * In-flight inference requests the client may have at once, counted per
+	 * router; one over the cap gets 429. Defaults to 16. A daily limit is
+	 * checked when a request starts and its usage is added when it ends, so
+	 * this caps how far requests in flight together can overshoot it.
+	 */
+	maxConcurrent?: number;
 }
 
 /** An admitted scoped client, as the gateway's routes see it. */
@@ -42,6 +63,8 @@ export interface AuthGatewayClientScope {
 	readonly name: string;
 	/** False when the client may call every served model. */
 	readonly limitsModels: boolean;
+	/** Daily limits the gateway enforces for this client, if any. */
+	readonly budget?: AuthGatewayClientBudget;
 	/** Whether the client may call `model`. */
 	allows(model: Model<Api>): boolean;
 	/**
@@ -62,7 +85,8 @@ export interface AuthGatewayClientScope {
 	retain(): () => void;
 }
 
-const CLIENT_FIELDS: Record<string, true> = { tokenSha256: true, models: true, accounts: true };
+const CLIENT_FIELDS: Record<string, true> = { tokenSha256: true, models: true, accounts: true, budget: true };
+const BUDGET_FIELDS: Record<string, true> = { dailyTokens: true, dailyCostUsd: true, maxConcurrent: true };
 const SHA256_HEX = /^[0-9a-f]{64}$/i;
 // C0 controls and DEL: a name is logged verbatim.
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
@@ -71,9 +95,37 @@ function invalid(where: string, problem: string): Error {
 	return new Error(`Invalid auth-gateway clients: ${where}: ${problem}`);
 }
 
+/** Validate a client's `budget`: an object of known fields, each a positive finite number, at least one present. */
+function validateBudget(name: string, value: unknown): AuthGatewayClientBudget {
+	if (!isRecord(value)) throw invalid(`${name}.budget`, "expected an object with dailyTokens and/or dailyCostUsd");
+	for (const field of Object.keys(value)) {
+		if (!Object.hasOwn(BUDGET_FIELDS, field)) throw invalid(`${name}.budget`, `unknown field "${field}"`);
+	}
+	const budget: AuthGatewayClientBudget = {};
+	for (const field of ["dailyTokens", "dailyCostUsd"] as const) {
+		const limit = value[field];
+		if (limit === undefined) continue;
+		if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
+			throw invalid(`${name}.budget.${field}`, "expected a positive finite number");
+		}
+		budget[field] = limit;
+	}
+	const maxConcurrent = value.maxConcurrent;
+	if (maxConcurrent !== undefined) {
+		if (typeof maxConcurrent !== "number" || !Number.isSafeInteger(maxConcurrent) || maxConcurrent <= 0) {
+			throw invalid(`${name}.budget.maxConcurrent`, "expected a positive integer");
+		}
+		budget.maxConcurrent = maxConcurrent;
+	}
+	if (budget.dailyTokens === undefined && budget.dailyCostUsd === undefined) {
+		throw invalid(`${name}.budget`, "expected dailyTokens and/or dailyCostUsd");
+	}
+	return budget;
+}
+
 /**
  * Parse a clients file: a JSON object mapping each client name to
- * `{ tokenSha256, models?, accounts? }`. Any malformed entry or unknown field
+ * `{ tokenSha256, models?, accounts?, budget? }`. Any malformed entry or unknown field
  * rejects the whole file, since a misspelled `models` would otherwise allow
  * every model. Errors name the offending field, never its value.
  */
@@ -93,7 +145,7 @@ export function parseAuthGatewayClients(text: string): AuthGatewayClient[] {
 		for (const field of Object.keys(entry)) {
 			if (!Object.hasOwn(CLIENT_FIELDS, field)) throw invalid(name, `unknown field "${field}"`);
 		}
-		const { tokenSha256, models, accounts } = entry;
+		const { tokenSha256, models, accounts, budget } = entry;
 		if (typeof tokenSha256 !== "string") throw invalid(`${name}.tokenSha256`, "expected a hex SHA-256 digest");
 		const client: AuthGatewayClient = { name, tokenSha256 };
 		if (models !== undefined) {
@@ -115,6 +167,7 @@ export function parseAuthGatewayClients(text: string): AuthGatewayClient[] {
 			}
 			client.accounts = pools;
 		}
+		if (budget !== undefined) client.budget = validateBudget(name, budget);
 		clients.push(client);
 	}
 	// Validate every entry here too, so a bad file fails where it is read.
@@ -134,6 +187,7 @@ class ClientScope implements AuthGatewayClientScope {
 	readonly name: string;
 	readonly tokenSha256: string;
 	readonly limitsModels: boolean;
+	readonly budget: AuthGatewayClientBudget | undefined;
 	/** Equal for the same entry read again, so a reload that leaves it unchanged keeps the scope and its pin. */
 	readonly policy: string;
 	/** Exact `provider/id` grants. */
@@ -163,6 +217,7 @@ class ClientScope implements AuthGatewayClientScope {
 		this.#grantsModels = client.models !== undefined;
 		this.#bindsAccounts = client.accounts !== undefined;
 		this.limitsModels = this.#grantsModels || this.#bindsAccounts;
+		this.budget = client.budget === undefined ? undefined : validateBudget(name, client.budget);
 		for (const grant of client.models ?? []) {
 			const slash = grant.indexOf("/");
 			const provider = grant.slice(0, slash);
@@ -197,7 +252,13 @@ class ClientScope implements AuthGatewayClientScope {
 				throw invalid(`${name}.models`, `grants provider "${unbound}", which "accounts" does not list`);
 			}
 		}
-		this.policy = JSON.stringify([name, this.tokenSha256, client.models ?? null, client.accounts ?? null]);
+		this.policy = JSON.stringify([
+			name,
+			this.tokenSha256,
+			client.models ?? null,
+			client.accounts ?? null,
+			this.budget ?? null,
+		]);
 	}
 
 	allows(model: Model<Api>): boolean {
@@ -246,6 +307,16 @@ class ClientScope implements AuthGatewayClientScope {
 		for (const [provider, lease] of this.#leases) this.#sessions?.unrestrict(provider, this.#sessionId, lease);
 		this.#leases = [];
 	}
+}
+
+/**
+ * Check one client as {@link AuthGatewayClientTable.set} would: throws the same
+ * error for a malformed name, digest, grant, account list or budget, and
+ * touches no sessions. A table-wide rule (duplicate names or digests, a
+ * digest equal to the gateway token's) needs the whole table and is not checked.
+ */
+export function validateAuthGatewayClient(client: AuthGatewayClient): void {
+	compileClients([client]);
 }
 
 /** Validate `clients` as one table and compile it, keyed by token digest. */

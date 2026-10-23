@@ -7,6 +7,7 @@ import { deterministicUuid } from "../../utils/deterministic-id";
 import {
 	type AuthGatewayRouteOptions,
 	buildGatewayApiKeyResolver,
+	gatewayBudgetRefusal,
 	gatewayRequestLogFields,
 	mirrorRequestAbort,
 	recordGatewayUsage,
@@ -20,6 +21,8 @@ export async function handleSpeech(bootOpts: AuthGatewayRouteOptions, req: Reque
 	const controller = mirrorRequestAbort(req);
 	const aborted = (): Response => speechWire.formatError(499, "request_aborted", "client closed request");
 	if (controller.signal.aborted) return aborted();
+	const overBudget = gatewayBudgetRefusal(bootOpts);
+	if (overBudget) return speechWire.formatError(overBudget.status, overBudget.type, overBudget.message);
 
 	let body: unknown;
 	try {
@@ -78,7 +81,7 @@ export async function handleSpeech(bootOpts: AuthGatewayRouteOptions, req: Reque
 			fetch: bootOpts.fetch,
 			signal: controller.signal,
 		});
-		recordGatewayUsage(bootOpts.storage, model, client, result.usage);
+		recordGatewayUsage(bootOpts, model, client, result.usage);
 		const response = speechWire.encodeResponse(result, parsed.modelId);
 		const responseHeaders = gatewayResponseHeaders(model, {
 			requestId,

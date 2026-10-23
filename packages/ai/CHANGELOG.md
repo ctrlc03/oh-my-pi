@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Auth-gateway client entries accept `budget: { dailyTokens?, dailyCostUsd?, maxConcurrent? }`: once a scoped client's usage for the current UTC day reaches a limit, its inference requests answer `429` (`daily_budget_exhausted`, with the next UTC midnight as the reset) before any credential lookup, in each route's own error format. Usage is totalled per client name in an `AuthGatewayUsageLedger` (`usageLedger` option of `createAuthGatewayRouter` / `startAuthGateway`, in-memory by default; `createMemoryUsageLedger`, `utcDay` exported); gateway-token traffic is never limited. `POST /v1/videos` is checked like the other inference routes, and a completed video's cost counts once, when its job is first polled completed. A budget is checked when a request starts and usage is added when it ends, so a budgeted client's in-flight inference requests are capped at `budget.maxConcurrent` (positive integer, default 16): one over the cap answers `429` `too_many_concurrent_requests` with `retry-after: 1`, which bounds the overshoot to the requests in flight. `validateAuthGatewayClient` checks one client entry as the clients table would, without side effects.
+
 ## [18.12.5] - 2026-10-21
 
 ### Added

@@ -91,6 +91,18 @@ The relay that carries the traffic only sees encrypted messages: the key is in t
 
 **Uninstall**: `curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh -s -- --uninstall`. It removes the service and, if you agree, the binary and the desktop app. Your logins, settings and pairing in `~/.omp` are kept; delete that folder to forget them.
 
+### VM sessions: agents with no limits, in a VM
+
+`omp vm` runs an agent with root, an open network and no approvals inside a Linux VM on your computer, paired with your devices as its own computer. Your model logins (subscriptions included) stay on this computer: the VM's model calls go through it. GitHub access is a one-hour token limited to the VM's repositories, from a GitHub App you own.
+
+```sh
+omp vm init                          # what is installed, what is missing (Lima, QEMU, the GitHub App)
+omp vm github setup                  # once: create the GitHub App and install it on your repositories
+omp vm create api --repo acme/api    # prints a pairing link for the new computer
+```
+
+The app does the same from *Add a computer → New virtual machine*. Requirements, limits and the threat model: [VM sessions](docs/vm-sessions.md).
+
 ### Shell completions
 
 `omp` generates completion scripts for **bash**, **zsh** and **fish** from its own command metadata, including model names and your saved sessions.

@@ -30,6 +30,7 @@ A repository's own config (`<project>/.omp/config.yml` and the other project lay
 
 - credentials in your home directory: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.azure`, `~/.kube`, `~/.config/gcloud`, `~/.config/gh`, `~/.docker/config.json`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.git-credentials`, `~/Library/Keychains` and `/Library/Keychains`;
 - omp's credential database (`agent.db`);
+- the VM root (`~/.omp/agent/vm`, or `OMP_VM_ROOT`): the GitHub App private key and the VMs' SSH keys of [VM sessions](./vm-sessions.md). It is neither readable nor writable in any mode;
 - paths a `tools.pathRules` `deny` rule covers for reading (a deny that covers only writes makes the path read-only). `allow` and `prompt` rules are not translated. See [path rules](./approval-mode.md#path-rules).
 
 **Read-only even inside a writable root**, so a sandboxed command cannot plant code or settings that later run outside the sandbox:

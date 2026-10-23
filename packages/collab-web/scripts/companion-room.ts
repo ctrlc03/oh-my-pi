@@ -21,6 +21,35 @@ export interface RoomHostOptions {
 	publicUrl: string;
 	/** `ws://127.0.0.1:<port>/r/<roomId>`; absent when the companion runs no loopback relay. */
 	localUrl?: string;
+	/** HTTP proxy for the public relay; see {@link relayProxy}. */
+	proxy?: string;
+}
+
+/**
+ * The proxy the standard variables name for `wsUrl` (`HTTPS_PROXY` for `wss:`, `HTTP_PROXY` for `ws:`, then
+ * `ALL_PROXY`; lower-case forms too), unless `NO_PROXY` lists its host (exact, a `.suffix`/`suffix` domain, or `*`).
+ * Bun's WebSocket ignores them, and in a VM whose egress goes through the host's proxy the relay is unreachable without.
+ */
+export function relayProxy(wsUrl: string, env: Record<string, string | undefined> = process.env): string | undefined {
+	let url: URL;
+	try {
+		url = new URL(wsUrl);
+	} catch {
+		return undefined;
+	}
+	const host = url.hostname.toLowerCase();
+	const noProxy = (env.NO_PROXY ?? env.no_proxy ?? "")
+		.split(",")
+		.map(entry => entry.trim().toLowerCase().replace(/:\d+$/, ""))
+		.filter(Boolean);
+	for (const entry of noProxy) {
+		if (entry === "*") return undefined;
+		const domain = entry.replace(/^\*?\./, "");
+		if (host === domain || host.endsWith(`.${domain}`)) return undefined;
+	}
+	const secure = url.protocol === "wss:" || url.protocol === "https:";
+	const proxy = secure ? (env.HTTPS_PROXY ?? env.https_proxy) : (env.HTTP_PROXY ?? env.http_proxy);
+	return proxy || env.ALL_PROXY || env.all_proxy || undefined;
 }
 
 export class RoomHost<Out extends object, In> {
@@ -37,7 +66,12 @@ export class RoomHost<Out extends object, In> {
 
 	constructor(options: RoomHostOptions) {
 		this.#public = this.#attach(
-			new CollabSocket<Out, In>({ wsUrl: options.publicUrl, role: "host", key: options.key }),
+			new CollabSocket<Out, In>({
+				wsUrl: options.publicUrl,
+				role: "host",
+				key: options.key,
+				...(options.proxy ? { proxy: options.proxy } : {}),
+			}),
 			"public",
 		);
 		this.#local =

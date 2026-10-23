@@ -188,6 +188,7 @@ import { COMPANION_RUN_DIR } from "./companion-sandbox";
 import { companionWorktree, createSettleCleanup, loadSettleState, saveSettleState } from "./companion-settle";
 import { createSessionDelete, TRASH_PURGE_EVERY_MS } from "./companion-delete";
 import { createDiskGuard, loadDiskFile, saveDiskFile } from "./companion-disk";
+import { createVmFeature } from "./companion-vm";
 import { createSessionLister } from "./companion-list";
 import { previousRelayPort, preferredRelayPort, startCompanionRelay } from "./companion-local-relay";
 import {
@@ -201,7 +202,7 @@ import {
 } from "./companion-local-endpoint";
 import { acquireCompanionLock, readCompanionLock, watchCompanionLock } from "./companion-lock";
 import { RoomReconnector } from "./companion-reconnect";
-import { RoomHost } from "./companion-room";
+import { RoomHost, relayProxy } from "./companion-room";
 import { embeddedApp } from "./local-app-embedded";
 import { type AppState, createLocalAppHandler, loadEmbeddedBuild } from "./local-app";
 import { startSourceApp } from "./local-app-source";
@@ -691,10 +692,14 @@ if (!flags.includes("--no-local-relay")) {
 
 // ── room ─────────────────────────────────────────────────────────────────────
 
+const publicRelayUrl = (parseCollabLink(roomLink) as ParsedCollabLink).wsUrl;
+const relayProxyUrl = relayProxy(publicRelayUrl);
+if (relayProxyUrl) console.log(`companion: public relay through the proxy ${new URL(relayProxyUrl).host}`);
 const room = new RoomHost<CompanionReply, CompanionRequest>({
-	publicUrl: (parseCollabLink(roomLink) as ParsedCollabLink).wsUrl,
+	publicUrl: publicRelayUrl,
 	localUrl: localRelayUrl === undefined ? undefined : `${localRelayUrl}/r/${state.roomId}`,
 	key: importRoomKey(rawKey),
+	...(relayProxyUrl ? { proxy: relayProxyUrl } : {}),
 });
 
 /** Peers that authenticated as a paired device: only these are served. */
@@ -1022,6 +1027,14 @@ const diskGuard = createDiskGuard({
 	onError: err => console.error(`companion: disk check failed: ${errorText(err)}`),
 });
 
+/** Virtual machines: runs `omp vm …` and keeps the VM supervisor alive; see ./companion-vm. */
+const vm = createVmFeature({
+	ompBin,
+	vmRoot: process.env.OMP_VM_ROOT || path.join(configDir, "agent", "vm"),
+	log: message => console.error(`companion: ${message}`),
+	onChange: () => void refresh(),
+});
+
 const hiddenPath = path.join(path.dirname(statePath), "collab-companion-hidden.json");
 
 /** The messages the user hid from the chat, per session, so every device shows the same ones; see ./companion-hidden. */
@@ -1237,6 +1250,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		power: power ?? undefined,
 		canDiskGuard: true,
 		disk: diskGuard.health() ?? undefined,
+		...vm.hostsFields(),
 		...personal.hostsFields(extras.canStart),
 	};
 	const json = JSON.stringify(frame);
@@ -2288,6 +2302,12 @@ room.onFrame = (frame, fromPeer) => {
 				return { t: "disk-clean", reqId: frame.reqId, ...(await diskGuard.clean(frame.paths)) };
 			});
 			return;
+		case "vm-list":
+		case "vm-create":
+		case "vm-action":
+		case "vm-pair":
+			respond(frame.reqId, () => vm.handle(frame));
+			return;
 		case "usage":
 			respond(frame.reqId, async () => {
 				if (!isUsageRange(frame.range)) throw new Error("unknown usage range");
@@ -3000,6 +3020,7 @@ void blueprints.init().catch(err => console.error(`companion: starting architect
 void quizzes.init().catch(err => console.error(`companion: starting quizzes failed: ${errorText(err)}`));
 void spars.init().catch(err => console.error(`companion: starting sparring failed: ${errorText(err)}`));
 void bakeoffs.init().catch(err => console.error(`companion: starting bake-offs failed: ${errorText(err)}`));
+void vm.init().catch(err => console.error(`companion: starting virtual machines failed: ${errorText(err)}`));
 
 let stopLockWatch: () => void = () => {};
 
@@ -3022,6 +3043,7 @@ function shutdown(): void {
 		quizzes.shutdown(),
 		spars.shutdown(),
 		bakeoffs.shutdown(),
+		vm.shutdown(),
 		removeLocalEndpoint(localEndpointFile(configDir), process.pid),
 	]).then(() => process.exit(0));
 }

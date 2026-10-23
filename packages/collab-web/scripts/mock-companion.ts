@@ -6,7 +6,7 @@
  *
  *   bun scripts/mock-companion.ts [--port 7468] [--web http://localhost:3000/] [--dir /tmp/mock-companion] [--session-link <room link>]
  *                                 [--machine <name>] [--hosts 1,2,3] [--session-id <id>]
- *                                 [--personal fresh|enabled] [--personal-login ready|missing] [--personal-chat-tree on|off] [--stakes on|off] [--stakes-on 7,9] [--disk on|off] [--delete on|off]
+ *                                 [--personal fresh|enabled] [--personal-login ready|missing] [--personal-chat-tree on|off] [--stakes on|off] [--stakes-on 7,9] [--disk on|off] [--vm on|off] [--vm-github ready|missing] [--delete on|off]
  *
  * `--machine` names the computer and gives its sessions ids of their own (the way two real computers never share a session id,
  * though their processes may share an instance id: `inst-1` here and there); `--hosts` lists only those fixture sessions
@@ -58,6 +58,11 @@
  * build output: two the guard may delete, one a cargo build runs in (busy), one used an hour ago (recent) and one whose size could not be
  * measured. *Clean now* removes what is picked and gives its size back as free space, so the warning clears once enough went. Nothing
  * touches a real disk.
+ *
+ * Virtual machines (./mock-vm) are on unless `--vm off` (a companion without `omp vm`: no capability, no Virtual machines group in Settings →
+ * Computers, no *New virtual machine*). Two canned VMs; a create runs through a few progress lines, then pairs the new computer through a link
+ * to this mock room, and start, stop, reset and delete take a moment. `--vm-github missing` reports the GitHub App as not set up, which shows
+ * the `omp vm github setup` hint and refuses creating. Nothing starts a process.
  */
 
 import * as fs from "node:fs/promises";
@@ -94,6 +99,7 @@ import { createMockStakes } from "./mock-stakes";
 import { createMockStart } from "./mock-start";
 import { createMockSettle } from "./mock-settle";
 import { createMockDisk } from "./mock-disk";
+import { createMockVm } from "./mock-vm";
 import { createMockDelete } from "./mock-delete";
 
 const POLL_MS = 3000;
@@ -357,6 +363,21 @@ const diskFlag = flag("--disk", "on");
 if (diskFlag !== "on" && diskFlag !== "off") throw new Error("--disk takes on or off");
 const disk = diskFlag === "on" ? await createMockDisk({ dir, onChange: () => broadcast() }) : undefined;
 
+/** Virtual machines (./mock-vm): canned VMs and a create that takes a few seconds. `--vm off` is a companion without `omp vm`: nothing advertised or answered. */
+const vmFlag = flag("--vm", "on");
+if (vmFlag !== "on" && vmFlag !== "off") throw new Error("--vm takes on or off");
+const vmGithub = flag("--vm-github", "ready");
+if (vmGithub !== "ready" && vmGithub !== "missing") throw new Error("--vm-github takes ready or missing");
+const vm =
+	vmFlag === "on"
+		? createMockVm({
+				github: vmGithub,
+				onChange: () => broadcast(),
+				pairUrl: () =>
+					formatPairingUrl(webUrl, roomLink, encodeBase64Url(crypto.getRandomValues(new Uint8Array(16)))),
+			})
+		: undefined;
+
 /** Quizzes on code changes: a finished stack quiz, one half answered, a failed one; new ones tick to ready. `--quiz-stage-ms` slows the ticks. */
 const quiz = createMockQuiz({
 	instanceId: "inst-7",
@@ -440,6 +461,7 @@ function hostsFrame(): CompanionReply {
 		...deletion?.capabilities,
 		...stakes.capabilities,
 		...disk?.hostsFields(),
+		...vm?.hostsFields(),
 		...personal?.capabilities(),
 		canGithub: true,
 		idle: stakes.decorate(idle),
@@ -573,6 +595,15 @@ socket.onFrame = (frame, fromPeer) => {
 		);
 	else if (disk?.handles(frame))
 		void disk.answer(frame).then(
+			reply => socket.send(reply, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
+	else if (vm?.handles(frame))
+		void vm.answer(frame).then(
 			reply => socket.send(reply, fromPeer),
 			(err: unknown) =>
 				socket.send(

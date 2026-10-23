@@ -150,7 +150,7 @@ export function ConnectScreen({
 							</button>
 							{adding && (
 								<section className="sh-connect-card" aria-label="Add a computer">
-									<AddComputer onPair={onPair} onPaired={() => setAdding(false)} />
+									<AddComputer computers={computers} onPair={onPair} onPaired={() => setAdding(false)} />
 								</section>
 							)}
 						</div>

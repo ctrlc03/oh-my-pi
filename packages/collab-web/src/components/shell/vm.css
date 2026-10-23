@@ -1,0 +1,136 @@
+/* ---- virtual machines: the list in Settings → Computers, the New VM form ---- */
+.sh-vm-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.sh-vm-problem {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 10px 12px;
+	font-size: 13px;
+	background: color-mix(in srgb, var(--warn) 9%, var(--bg-inset));
+	border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+	border-radius: var(--radius);
+}
+
+.sh-vm-problem svg {
+	flex: none;
+	margin-top: 2px;
+	color: var(--warn);
+}
+
+.sh-vms {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-vm {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px 0;
+	border-bottom: 1px solid var(--border);
+}
+
+.sh-vm:last-child {
+	border-bottom: 0;
+}
+
+.sh-vm-main {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+}
+
+.sh-vm-main > svg {
+	flex: none;
+	margin-top: 3px;
+	color: var(--fg-muted);
+}
+
+.sh-vm-text {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.sh-vm-name {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	font-size: 14px;
+	overflow-wrap: anywhere;
+}
+
+.sh-vm-busy {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+
+.sh-vm-actions,
+.sh-vm-confirm {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.sh-vm-confirm {
+	flex-direction: column;
+	padding: 8px 10px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-chip.sh-vm-status-running {
+	color: var(--ok);
+}
+
+.sh-chip.sh-vm-status-failed,
+.sh-chip.sh-vm-status-missing {
+	color: var(--err);
+}
+
+.sh-chip.sh-vm-status-creating {
+	color: var(--warn);
+}
+
+.sh-vm-form textarea.sh-input {
+	min-height: 64px;
+}
+
+.sh-vm-sizes {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 10px;
+}
+
+.sh-vm-number {
+	width: 84px;
+}
+
+.sh-add-vm {
+	gap: 8px;
+}
+
+@media (max-width: 640px) {
+	.sh-vm-sizes {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.sh-vm .sh-btn,
+	.sh-vm-form .sh-btn {
+		min-height: 44px;
+	}
+}

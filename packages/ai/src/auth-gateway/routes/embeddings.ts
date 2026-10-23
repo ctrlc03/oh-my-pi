@@ -6,6 +6,7 @@ import { deterministicUuid } from "../../utils/deterministic-id";
 import {
 	type AuthGatewayRouteOptions,
 	buildGatewayApiKeyResolver,
+	gatewayBudgetRefusal,
 	gatewayRequestLogFields,
 	mirrorRequestAbort,
 	recordGatewayUsage,
@@ -24,6 +25,8 @@ export async function handleEmbeddings(
 	const controller = mirrorRequestAbort(req);
 	const aborted = (): Response => embeddings.formatError(499, "request_aborted", "client closed request");
 	if (controller.signal.aborted) return aborted();
+	const overBudget = gatewayBudgetRefusal(bootOpts);
+	if (overBudget) return embeddings.formatError(overBudget.status, overBudget.type, overBudget.message);
 
 	let parsed: embeddings.EmbeddingsParsedRequest;
 	try {
@@ -73,7 +76,7 @@ export async function handleEmbeddings(
 			fetch: bootOpts.fetch,
 			signal: controller.signal,
 		});
-		recordGatewayUsage(bootOpts.storage, model, client, result.usage);
+		recordGatewayUsage(bootOpts, model, client, result.usage);
 		return json(
 			200,
 			embeddings.encodeResponse(result, parsed.modelId),

@@ -47,6 +47,9 @@ export function suspendsHiddenPages(): boolean {
 	return typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
 }
 
+/** Bun's WebSocket constructor: the DOM typings this file compiles against know no options object. */
+type BunWebSocket = new (url: string, options: { proxy: string }) => WebSocket;
+
 export interface CollabSocketOptions {
 	/** wss://host[:port]/r/<roomId> — no query string. */
 	wsUrl: string;
@@ -59,6 +62,11 @@ export interface CollabSocketOptions {
 	role: "host" | "guest";
 	/** Room key; a pending import promise is awaited inside the seal/open chains. */
 	key: CryptoKey | PromiseLike<CryptoKey>;
+	/**
+	 * HTTP proxy for the connection to `wsUrl` (Bun only; browsers use their own proxy settings). The companion sets
+	 * it in a VM whose only way out is the host's egress proxy, where Bun's WebSocket would otherwise ignore `https_proxy`.
+	 */
+	proxy?: string;
 }
 
 /** `Out` is what this end seals and sends, `In` what it opens: guest frames out / host frames in by default. */
@@ -237,7 +245,9 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 		this.#established = false;
 		let ws: WebSocket;
 		try {
-			ws = new WebSocket(`${wsUrl}?role=${this.#opts.role}`);
+			const url = `${wsUrl}?role=${this.#opts.role}`;
+			const proxy = route === "public" ? this.#opts.proxy : undefined;
+			ws = proxy ? new (WebSocket as unknown as BunWebSocket)(url, { proxy }) : new WebSocket(url);
 		} catch (err) {
 			// The browser refused outright (Safari: ws:// from an https page).
 			if (route === "public") throw err;

@@ -19,6 +19,7 @@ import { SCHEDULE_IPC_FILE } from "@oh-my-pi/pi-wire/schedule";
 import type { Settings } from "../config/settings";
 import { type PathRule, parsePathRules } from "../tools/path-rules";
 import { cfgToolsPathRules } from "../tools/settings";
+import { getVmRoot } from "../vm/paths";
 import { escapeRegexLiteral, globToRegexSource } from "./glob-regex";
 import { effectiveSandboxMode, effectiveSandboxNetwork, type SandboxMode } from "./settings";
 
@@ -350,6 +351,9 @@ export function resolveSandboxPolicy(input: SandboxPolicyInput): SandboxPolicy |
 			// No agent dir yet: nothing to hide.
 		}
 	}
+
+	// VM sessions: the GitHub App key and the VMs' SSH keys live under the VM root.
+	for (const form of pathForms(getVmRoot())) denyAccess.push({ subpath: form });
 
 	const ruleMatchers = pathRuleMatchers(parsePathRules(cfgToolsPathRules.get(input.settings)), [...projectRoots]);
 	denyAccess.push(...ruleMatchers.access);

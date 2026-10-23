@@ -152,8 +152,8 @@ export interface AuthGatewayServerOptions {
 	/** Accept any of these bearer tokens. Empty allows unauthenticated calls unless `clients` is set. */
 	bearerTokens: string[];
 	/**
-	 * Scoped clients, each admitted by its own bearer and limited to its models
-	 * and accounts (see `clients.ts`). Any table, even an empty one, requires a
+	 * Scoped clients, each admitted by its own bearer and limited to its models,
+	 * accounts and daily budget (see `clients.ts`). Any table, even an empty one, requires a
 	 * bearer on every request. Throws at startup when invalid.
 	 */
 	clients?: readonly AuthGatewayClient[];

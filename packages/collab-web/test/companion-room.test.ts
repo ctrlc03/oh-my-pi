@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { LOCAL_PEER_BASE, type RoomRoute, RoomHost } from "../scripts/companion-room";
+import { LOCAL_PEER_BASE, type RoomRoute, RoomHost, relayProxy } from "../scripts/companion-room";
 import { startLocalRelay } from "../scripts/local-relay";
 import { generateRoomKey, importRoomKey } from "../src/lib/codec";
 import { CollabSocket } from "../src/lib/socket";
@@ -103,5 +103,30 @@ describe("the companion's room on two relays", () => {
 		localRelay.stop();
 		await until("a close", () => (closed.length > 0 ? true : undefined));
 		expect(closed[0]).toBe("local");
+	});
+});
+
+describe("relayProxy", () => {
+	const proxy = "http://10.0.2.101:3128";
+
+	it("takes HTTPS_PROXY for a wss relay and HTTP_PROXY for a ws one", () => {
+		const env = { https_proxy: proxy, http_proxy: "http://plain:8080" };
+		expect(relayProxy("wss://my.omp.sh/r/room", env)).toBe(proxy);
+		expect(relayProxy("ws://relay.example:9000/r/room", env)).toBe("http://plain:8080");
+	});
+
+	it("falls back to ALL_PROXY and is undefined with no variable set", () => {
+		expect(relayProxy("wss://my.omp.sh/r/room", { ALL_PROXY: proxy })).toBe(proxy);
+		expect(relayProxy("wss://my.omp.sh/r/room", {})).toBeUndefined();
+	});
+
+	it("skips hosts NO_PROXY lists: exact, domain suffix, and *", () => {
+		const env = { HTTPS_PROXY: proxy, HTTP_PROXY: proxy };
+		expect(relayProxy("ws://127.0.0.1:7468/r/room", { ...env, NO_PROXY: "localhost,127.0.0.1" })).toBeUndefined();
+		expect(relayProxy("wss://eu.my.omp.sh/r/room", { ...env, NO_PROXY: ".omp.sh" })).toBeUndefined();
+		expect(relayProxy("wss://my.omp.sh/r/room", { ...env, no_proxy: "omp.sh:443" })).toBeUndefined();
+		expect(relayProxy("wss://my.omp.sh/r/room", { ...env, NO_PROXY: "*" })).toBeUndefined();
+		// A suffix match is on a label boundary: notomp.sh is not omp.sh.
+		expect(relayProxy("wss://notomp.sh/r/room", { ...env, NO_PROXY: "omp.sh" })).toBe(proxy);
 	});
 });

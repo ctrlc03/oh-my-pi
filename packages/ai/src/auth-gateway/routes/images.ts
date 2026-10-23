@@ -8,6 +8,7 @@ import { deterministicUuid } from "../../utils/deterministic-id";
 import {
 	type AuthGatewayRouteOptions,
 	buildGatewayApiKeyResolver,
+	gatewayBudgetRefusal,
 	gatewayRequestLogFields,
 	mirrorRequestAbort,
 	recordGatewayUsage,
@@ -35,6 +36,8 @@ async function handleImages(
 	const controller = mirrorRequestAbort(req);
 	const aborted = (): Response => imagesServer.formatError(499, "request_aborted", "client closed request");
 	if (controller.signal.aborted) return aborted();
+	const overBudget = gatewayBudgetRefusal(bootOpts);
+	if (overBudget) return imagesServer.formatError(overBudget.status, overBudget.type, overBudget.message);
 
 	let body: unknown | FormData;
 	try {
@@ -100,7 +103,7 @@ async function handleImages(
 			signal: controller.signal,
 		});
 		if (result.usage.cost.total === 0) calculateCost(model, result.usage);
-		recordGatewayUsage(bootOpts.storage, model, client, result.usage);
+		recordGatewayUsage(bootOpts, model, client, result.usage);
 		return json(
 			200,
 			imagesServer.encodeResponse(result, parsed.modelId),

@@ -16,6 +16,7 @@ import { isUsageLimitOutcome } from "../error/rate-limit";
 import type { Api, FetchImpl, Model, Usage } from "../types";
 import type { ClientUsageIdentity } from "../usage";
 import { extractProviderRetryHint } from "../utils/retry-after";
+import { type AuthGatewayUsageLedger, utcDay } from "./budget";
 import type { AuthGatewayClientScope } from "./clients";
 import type { AuthGatewayServerOptions } from "./types";
 
@@ -43,10 +44,51 @@ export interface AuthGatewayRouteOptions {
 	 * lookup below resolves under its {@link AuthGatewayClientScope.credentialSessionId}.
 	 */
 	client?: AuthGatewayClientScope;
+	/**
+	 * Where scoped clients' daily usage is totalled and their budgets read from.
+	 * Defaults to an in-memory ledger, one per router; unscoped traffic is
+	 * never recorded or limited.
+	 */
+	usageLedger?: AuthGatewayUsageLedger;
+	/** Clock for budget days, in epoch milliseconds; defaults to `Date.now`. Test seam. */
+	now?: () => number;
 }
 
 /** The route options a request's credential lookups read. */
 export type AuthGatewayCredentialOptions = Pick<AuthGatewayRouteOptions, "storage" | "client">;
+
+/** The route options a request's budget check and usage record read. */
+type AuthGatewayBudgetOptions = Pick<AuthGatewayRouteOptions, "client" | "usageLedger" | "now">;
+
+/**
+ * The refusal a scoped client gets once its usage for the current UTC day has
+ * reached a daily limit, or `undefined` while it is under them (and always for
+ * unscoped traffic). Routes check it before any credential lookup and
+ * format it in their own wire format. A request in flight is never cut off, so
+ * the one that crosses a limit overshoots it, and so do those in flight with
+ * it (the router caps their count, see `maxConcurrent`).
+ */
+export function gatewayBudgetRefusal(opts: AuthGatewayBudgetOptions): GatewayErrorClassification | undefined {
+	const budget = opts.client?.budget;
+	if (!opts.client || !budget) return undefined;
+	if (!opts.usageLedger) throw new Error("auth-gateway budget set without a usage ledger");
+	const nowMs = (opts.now ?? Date.now)();
+	const used = opts.usageLedger.read(opts.client.name, utcDay(nowMs));
+	let exhausted: string;
+	if (budget.dailyTokens !== undefined && used.tokens >= budget.dailyTokens) {
+		exhausted = `${used.tokens} of ${budget.dailyTokens} tokens`;
+	} else if (budget.dailyCostUsd !== undefined && used.costUsd >= budget.dailyCostUsd) {
+		exhausted = `$${used.costUsd.toFixed(4)} of $${budget.dailyCostUsd}`;
+	} else {
+		return undefined;
+	}
+	const resetsAt = new Date((Math.floor(nowMs / 86_400_000) + 1) * 86_400_000).toISOString();
+	return {
+		status: 429,
+		type: "daily_budget_exhausted",
+		message: `Daily budget exhausted for client ${opts.client.name} (${exhausted}); resets at ${resetsAt}`,
+	};
+}
 
 /** The HTTP server's options: the routes' plus its listener and inbound auth. */
 export interface AuthGatewayBootOptions extends AuthGatewayServerOptions, AuthGatewayRouteOptions {}
@@ -279,19 +321,26 @@ function gatewayCredentialSessionId(opts: AuthGatewayCredentialOptions, model: M
 /**
  * Attribute one settled upstream request to the originating client via the
  * broker's observed-usage channel (`AuthStorage.usage.observe`, batched
- * by the remote store). Error/aborted turns still record — the provider
- * billed whatever tokens the partial turn consumed; zero-usage results
- * (pre-flight failures) are skipped. `at` defaults to now.
+ * by the remote store), and add it to a scoped client's daily budget totals.
+ * Error/aborted turns still record — the provider billed whatever tokens the
+ * partial turn consumed; zero-usage results (pre-flight failures) are skipped.
+ * `at` defaults to now.
  */
 export function recordGatewayUsage(
-	storage: AuthStorage,
+	opts: Pick<AuthGatewayRouteOptions, "storage" | "client" | "usageLedger" | "now">,
 	model: Model<Api>,
 	client: ClientUsageIdentity,
 	usage: Usage,
 	at?: number,
 ): void {
-	if (usage.input + usage.output + usage.cacheRead + usage.cacheWrite === 0) return;
-	storage.usage.observe({
+	const tokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+	const costUsd = Number.isFinite(usage.cost.total) ? usage.cost.total : 0;
+	if (opts.client && opts.usageLedger && (tokens > 0 || costUsd > 0)) {
+		const nowMs = (opts.now ?? Date.now)();
+		opts.usageLedger.add(opts.client.name, utcDay(nowMs), { tokens, costUsd });
+	}
+	if (tokens === 0) return;
+	opts.storage.usage.observe({
 		provider: model.provider,
 		model: model.id,
 		at,

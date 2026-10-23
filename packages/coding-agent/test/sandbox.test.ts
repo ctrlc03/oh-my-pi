@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { executeBash } from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
 import { buildBwrapArgs, planBwrap } from "@oh-my-pi/pi-coding-agent/sandbox/bubblewrap";
+import { getVmRoot } from "@oh-my-pi/pi-coding-agent/vm/paths";
 import { getAgentDir, setAgentDir } from "@oh-my-pi/pi-utils";
 import { globToRegexSource } from "@oh-my-pi/pi-coding-agent/sandbox/glob-regex";
 import {
@@ -183,6 +184,16 @@ describe("sandbox policy", () => {
 	it("hides the companion's schedule IPC token", () => {
 		const policy = resolveSandboxPolicy({ settings: sandboxSettings(), cwd: dir });
 		expect(policy?.denyAccess).toContainEqual({ subpath: path.join(getAgentDir(), "collab-companion-ipc.json") });
+	});
+
+	it("denies the VM root (GitHub App key, VM SSH keys) for reading and writing", () => {
+		const policy = resolveSandboxPolicy({ settings: sandboxSettings(), cwd: dir });
+		expect(policy?.denyAccess).toContainEqual({ subpath: getVmRoot() });
+		const readOnlyMode = resolveSandboxPolicy({
+			settings: sandboxSettings({ "sandbox.mode": "read-only" }),
+			cwd: dir,
+		});
+		expect(readOnlyMode?.denyAccess).toContainEqual({ subpath: getVmRoot() });
 	});
 
 	it("does not make the home directory (or an ancestor) writable", () => {
@@ -426,6 +437,29 @@ describe.skipIf(!HAS_SEATBELT)("sandboxed bash (macOS Seatbelt)", () => {
 			expect(fs.existsSync(path.join(agentDir, "proj", "grants.json"))).toBe(false);
 		} finally {
 			setAgentDir(original);
+		}
+	});
+
+	it("cannot read or write inside the VM root, even when it lies in the workspace", async () => {
+		const vmRoot = path.join(dir, "vm-root");
+		fs.mkdirSync(vmRoot);
+		fs.writeFileSync(path.join(vmRoot, "github-app.pem"), "PRIVATE-KEY-MATERIAL");
+		const previous = process.env.OMP_VM_ROOT;
+		process.env.OMP_VM_ROOT = vmRoot;
+		try {
+			const settings = sandboxSettings();
+			const read = await run(`cat ${vmRoot}/github-app.pem`, settings);
+			expect(read.exitCode).not.toBe(0);
+			expect(read.output).not.toContain("PRIVATE-KEY-MATERIAL");
+			const write = await run(`echo x > ${vmRoot}/planted`, settings);
+			expect(write.exitCode).not.toBe(0);
+			expect(fs.existsSync(path.join(vmRoot, "planted"))).toBe(false);
+			// The rest of the workspace stays writable, so the denial comes from the VM root rule.
+			const sibling = await run("echo ok > sibling.txt", settings);
+			expect(sibling.exitCode).toBe(0);
+		} finally {
+			if (previous === undefined) delete process.env.OMP_VM_ROOT;
+			else process.env.OMP_VM_ROOT = previous;
 		}
 	});
 

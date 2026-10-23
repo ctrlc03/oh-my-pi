@@ -33,19 +33,28 @@ import { type ModelKind, modelKind } from "@oh-my-pi/pi-catalog/types";
 import { logger } from "@oh-my-pi/pi-utils";
 import { classifyGatewayError } from "../error/gateway";
 import * as anthropicMessages from "../providers/anthropic-messages-server";
+import * as embeddingsWire from "../providers/embeddings-server";
+import * as imagesWire from "../providers/images-server";
 import * as openaiChat from "../providers/openai-chat-server";
 import * as openaiResponses from "../providers/openai-responses-server";
 import * as piNative from "../providers/pi-native-server";
+import * as rerankWire from "../providers/rerank-server";
+import * as speechWire from "../providers/speech-server";
+import * as systemOneWire from "../providers/systemone-server";
+import * as transcriptionsWire from "../providers/transcriptions-server";
+import * as videoWire from "../providers/video-server";
 import { completeSimple, streamSimple } from "../stream";
 import type { Api, AssistantMessageEventStream, Context, Model, SimpleStreamOptions } from "../types";
 import { deterministicUuid } from "../utils/deterministic-id";
 import { parseBind } from "../utils/parse-bind";
 import { resolvePeer } from "../utils/resolve-peer";
+import { createInflightGate, createMemoryUsageLedger, DEFAULT_MAX_CONCURRENT } from "./budget";
 import { type AuthGatewayClientScope, AuthGatewayClientTable } from "./clients";
 import {
 	type AuthGatewayBootOptions,
 	type AuthGatewayRouteOptions,
 	buildGatewayApiKeyResolver,
+	gatewayBudgetRefusal,
 	gatewayRequestLogFields,
 	mirrorRequestAbort,
 	normalizeClientSessionKey,
@@ -70,7 +79,7 @@ import { handleRerank } from "./routes/rerank";
 import { handleSpeech } from "./routes/speech";
 import { handleSystemOne } from "./routes/systemone";
 import { handleTranscriptions } from "./routes/transcriptions";
-import { handleVideoContent, handleVideoPoll, handleVideoSubmit } from "./routes/video";
+import { CompletedVideoJobs, handleVideoContent, handleVideoPoll, handleVideoSubmit } from "./routes/video";
 import { AuthGatewaySessionStateStore } from "./session-state";
 import type {
 	AuthGatewayServerHandle,
@@ -276,6 +285,8 @@ async function handleFormatEndpoint(
 	const requestId = crypto.randomUUID();
 	const controller = mirrorRequestAbort(req);
 	if (controller.signal.aborted) return clientClosedResponse(route);
+	const overBudget = gatewayBudgetRefusal(bootOpts);
+	if (overBudget) return route.module.formatError(overBudget.status, overBudget.type, overBudget.message);
 
 	let body: unknown;
 	try {
@@ -411,7 +422,7 @@ async function handleFormatEndpoint(
 		try {
 			if (controller.signal.aborted) return clientClosedResponse(route);
 			const message = await completeSimple(model, parsed.context, streamOpts);
-			recordGatewayUsage(bootOpts.storage, model, client, message.usage, message.timestamp || undefined);
+			recordGatewayUsage(bootOpts, model, client, message.usage, message.timestamp || undefined);
 			if (message.stopReason === "aborted" || message.stopReason === "error") {
 				const errorMessage =
 					message.errorMessage ??
@@ -472,9 +483,7 @@ async function handleFormatEndpoint(
 		if (controller.signal.aborted) return clientClosedResponse(route);
 		void events
 			.result()
-			.then(message =>
-				recordGatewayUsage(bootOpts.storage, model, client, message.usage, message.timestamp || undefined),
-			)
+			.then(message => recordGatewayUsage(bootOpts, model, client, message.usage, message.timestamp || undefined))
 			.catch(() => {})
 			.finally(settle);
 		streamOwnsLease = true;
@@ -530,6 +539,8 @@ async function handlePiNative(
 	const controller = mirrorRequestAbort(req);
 	const aborted = (): Response => piNative.formatError(499, "request_aborted", "client closed request");
 	if (controller.signal.aborted) return aborted();
+	const overBudget = gatewayBudgetRefusal(bootOpts);
+	if (overBudget) return piNative.formatError(overBudget.status, overBudget.type, overBudget.message);
 
 	let body: unknown;
 	try {
@@ -635,7 +646,7 @@ async function handlePiNative(
 		try {
 			if (controller.signal.aborted) return aborted();
 			const message = await completeSimple(model, parsed.context, streamOpts);
-			recordGatewayUsage(bootOpts.storage, model, client, message.usage, message.timestamp || undefined);
+			recordGatewayUsage(bootOpts, model, client, message.usage, message.timestamp || undefined);
 			if (message.stopReason === "aborted" || message.stopReason === "error") {
 				const errorMessage =
 					message.errorMessage ??
@@ -692,9 +703,7 @@ async function handlePiNative(
 		if (controller.signal.aborted) return aborted();
 		void events
 			.result()
-			.then(message =>
-				recordGatewayUsage(bootOpts.storage, model, client, message.usage, message.timestamp || undefined),
-			)
+			.then(message => recordGatewayUsage(bootOpts, model, client, message.usage, message.timestamp || undefined))
 			.catch(() => {})
 			.finally(settle);
 		streamOwnsLease = true;
@@ -805,6 +814,64 @@ function handleModelsList(opts: AuthGatewayRouteOptions): Response {
 /** `GET /v1/videos/:id` (poll) and `GET /v1/videos/:id/content` (download); group 1 = id, group 2 = `/content`. */
 const VIDEO_JOB_PATH = /^\/v1\/videos\/([^/]+)(\/content)?$/;
 
+/**
+ * The wire-format error builder of each inference route a budgeted client's
+ * in-flight cap covers: every `POST` route that serves a model, polls and
+ * downloads excluded. A refusal is formatted like the route's own errors.
+ */
+const INFERENCE_ERROR_FORMATS: Record<string, FormatModule["formatError"]> = {
+	"/v1/pi/stream": piNative.formatError,
+	"/v1/systemone": systemOneWire.formatError,
+	"/alpha/decisions": systemOneWire.formatError,
+	"/v1/images/generations": imagesWire.formatError,
+	"/v1/images": imagesWire.formatError,
+	"/v1/images/edits": imagesWire.formatError,
+	"/v1/audio/speech": speechWire.formatError,
+	"/v1/audio/transcriptions": transcriptionsWire.formatError,
+	"/v1/embeddings": embeddingsWire.formatError,
+	"/v1/rerank": rerankWire.formatError,
+	"/v1/videos": videoWire.formatError,
+};
+
+function inferenceErrorFormat(pathname: string): FormatModule["formatError"] | undefined {
+	const chat = FORMAT_ROUTES[pathname];
+	if (chat) return chat.module.formatError;
+	return Object.hasOwn(INFERENCE_ERROR_FORMATS, pathname) ? INFERENCE_ERROR_FORMATS[pathname] : undefined;
+}
+
+/**
+ * `response` with `release` called once its body has ended, failed or been
+ * cancelled; a response without a body is over at once.
+ */
+function releaseWhenSettled(response: Response, release: () => void): Response {
+	if (response.body === null) {
+		release();
+		return response;
+	}
+	const reader = response.body.getReader();
+	const body = new ReadableStream<Uint8Array>({
+		async pull(controller) {
+			try {
+				const chunk = await reader.read();
+				if (chunk.done) {
+					release();
+					controller.close();
+				} else {
+					controller.enqueue(chunk.value);
+				}
+			} catch (error) {
+				release();
+				controller.error(error);
+			}
+		},
+		cancel(reason) {
+			release();
+			return reader.cancel(reason);
+		},
+	});
+	return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
 // Only exact static routes are safe to include in unauthorized request logs.
 // Dynamic video IDs and unknown paths may carry credentials.
 const LOGGABLE_PATHS: Record<string, true> = {
@@ -877,12 +944,19 @@ function scopeRouteOptions(opts: AuthGatewayRouteOptions, client: AuthGatewayCli
 }
 
 /**
- * The gateway's routes over `hostOpts`, owning their per-session provider state:
+ * The gateway's routes over `routeOpts`, owning their per-session provider state
+ * and, unless `routeOpts.usageLedger` is given, their own in-memory usage ledger:
  * two routers in one process never share (or tear down) each other's.
  */
-export function createAuthGatewayRouter(hostOpts: AuthGatewayRouteOptions): AuthGatewayRouter {
+export function createAuthGatewayRouter(routeOpts: AuthGatewayRouteOptions): AuthGatewayRouter {
+	const hostOpts: AuthGatewayRouteOptions = {
+		...routeOpts,
+		usageLedger: routeOpts.usageLedger ?? createMemoryUsageLedger(),
+	};
 	const sessionStates = new AuthGatewaySessionStateStore();
-	const route = async (req: Request, peer: string, client?: AuthGatewayClientScope): Promise<Response> => {
+	const inflight = createInflightGate();
+	const completedVideos = new CompletedVideoJobs();
+	const dispatch = async (req: Request, peer: string, client?: AuthGatewayClientScope): Promise<Response> => {
 		const pathname = new URL(req.url).pathname;
 		const opts = client ? scopeRouteOptions(hostOpts, client) : hostOpts;
 		try {
@@ -959,8 +1033,8 @@ export function createAuthGatewayRouter(hostOpts: AuthGatewayRouteOptions): Auth
 			const videoJob = req.method === "GET" ? VIDEO_JOB_PATH.exec(pathname) : null;
 			if (videoJob) {
 				const gatewayId = decodeURIComponent(videoJob[1]);
-				const handler = videoJob[2] ? handleVideoContent : handleVideoPoll;
-				return await handler(opts, req, peer, gatewayId);
+				if (videoJob[2]) return await handleVideoContent(opts, req, peer, gatewayId);
+				return await handleVideoPoll(opts, req, peer, gatewayId, completedVideos);
 			}
 
 			// Model catalog.
@@ -979,6 +1053,37 @@ export function createAuthGatewayRouter(hostOpts: AuthGatewayRouteOptions): Auth
 				error: String(error),
 			});
 			return json(500, { error: "internal error" });
+		}
+	};
+	const route = async (req: Request, peer: string, client?: AuthGatewayClientScope): Promise<Response> => {
+		const budget = client?.budget;
+		const formatError =
+			client && budget && req.method === "POST" ? inferenceErrorFormat(new URL(req.url).pathname) : undefined;
+		if (!client || !budget || !formatError) return dispatch(req, peer, client);
+		const cap = budget.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
+		const slot = inflight.acquire(client.name, cap);
+		if (!slot) {
+			const refusal = formatError(
+				429,
+				"too_many_concurrent_requests",
+				`Client ${client.name} already has ${cap} requests in flight (the cap); retry when one finishes`,
+			);
+			refusal.headers.set("retry-after", "1");
+			return refusal;
+		}
+		// Whichever comes first frees the slot: the response ending, or the client aborting (a response the
+		// transport never reads would otherwise hold it, and an abort should not wait on the upstream).
+		const release = () => {
+			req.signal.removeEventListener("abort", release);
+			slot();
+		};
+		if (req.signal.aborted) release();
+		else req.signal.addEventListener("abort", release, { once: true });
+		try {
+			return releaseWhenSettled(await dispatch(req, peer, client), release);
+		} catch (error) {
+			release();
+			throw error;
 		}
 	};
 	return { route, close: () => sessionStates.close() };

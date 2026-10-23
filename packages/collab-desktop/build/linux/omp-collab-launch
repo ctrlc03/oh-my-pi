@@ -1,0 +1,41 @@
+#!/bin/sh
+# Starts omp collab. A tarball install has no setuid chrome-sandbox, so Chromium's sandbox needs unprivileged user
+# namespaces. Where neither is available (Ubuntu 24.04 restricts them with AppArmor; some containers and hardened
+# kernels forbid them) Chromium refuses to start, and the app runs with --no-sandbox instead. The reason goes to stderr
+# and, as OMP_COLLAB_NO_SANDBOX_REASON, to the app's log.
+set -u
+
+self=$(readlink -f "$0" 2>/dev/null) || self=$0
+here=$(dirname "$self")
+exe="$here/omp-collab"
+
+# The setuid helper Chromium falls back to: owned by root, with the setuid bit.
+suid_sandbox() {
+	[ -u "$here/chrome-sandbox" ] && [ "$(stat -c %u "$here/chrome-sandbox" 2>/dev/null)" = 0 ]
+}
+
+# Why Chromium's user-namespace sandbox cannot work here, or nothing when it can. The kernel switches are checked
+# before a trial `unshare`: AppArmor's restriction allows the namespace to be created but strips what is done inside it.
+userns_blocker() {
+	if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then
+		echo "AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1)"
+	elif [ "$(cat /proc/sys/user/max_user_namespaces 2>/dev/null)" = 0 ]; then
+		echo "user namespaces are disabled (user.max_user_namespaces=0)"
+	elif [ "$(cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null)" = 0 ]; then
+		echo "unprivileged user namespaces are disabled (kernel.unprivileged_userns_clone=0)"
+	elif command -v unshare >/dev/null 2>&1 &&
+		! unshare --user --map-root-user --mount --pid --fork true >/dev/null 2>&1; then
+		echo "this system does not let an unprivileged user create the namespaces the sandbox needs"
+	fi
+}
+
+if ! suid_sandbox; then
+	reason=$(userns_blocker)
+	if [ -n "$reason" ]; then
+		echo "omp-collab: running without the Chromium sandbox: $reason" >&2
+		OMP_COLLAB_NO_SANDBOX_REASON=$reason
+		export OMP_COLLAB_NO_SANDBOX_REASON
+		exec "$exe" --no-sandbox "$@"
+	fi
+fi
+exec "$exe" "$@"

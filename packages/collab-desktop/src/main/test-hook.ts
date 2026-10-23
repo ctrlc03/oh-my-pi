@@ -16,6 +16,8 @@ export interface Diagnostics {
 export interface TestHook {
 	diagnostics(): Diagnostics;
 	toggleWindow(): void;
+	/** Sets Open at Login as the menu item does and returns whether it is on afterwards. */
+	setOpenAtLogin(value: boolean): boolean;
 	checkForUpdates(): Promise<void>;
 	trayMenu(): string[];
 }

@@ -48,7 +48,7 @@ On macOS or Linux (x64 or arm64), paste one line into a terminal:
 curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh
 ```
 
-Then open the app; there is nothing else to run. The installer asks before anything that needs a decision (an existing `omp`, installing tmux, logging in, the desktop app on a Mac) and reads the answers from the terminal, so the pipe works. To skip the questions: `curl -fsSL … | sh -s -- --yes --no-login`.
+Then open the app; there is nothing else to run. The installer asks before anything that needs a decision (an existing `omp`, installing tmux, logging in, the desktop app on a Mac or a Linux desktop) and reads the answers from the terminal, so the pipe works. To skip the questions: `curl -fsSL … | sh -s -- --yes --no-login`.
 
 **What it does**, in order:
 
@@ -57,7 +57,7 @@ Then open the app; there is nothing else to run. The installer asks before anyth
 3. Checks tmux, git and a browser opener. tmux (needed for *Start session* and other vendors' agents) is installed with `brew`, `apt`, `dnf`, `pacman`, `zypper` or `apk` after you agree; git on Linux the same way, `xcode-select --install` on macOS.
 4. Runs `omp config set collab.webUrl https://ctrlc03.github.io/oh-my-pi/`, so pairing links open this site and not upstream's app.
 5. If no model is usable (no API key in the environment, no login), runs `omp login` on the terminal so the provider's browser sign-in works.
-6. On a Mac with a desktop session (not over ssh), offers the *omp collab* desktop app (`collab-desktop-darwin-<arch>.zip` from the same release, with the same checksum and attestation checks) and installs it as `~/Applications/omp collab.app`. `--desktop` installs it without asking, `--no-desktop` skips it. A failure here leaves the `omp` install in place. See [Desktop app](../../docs/collab.md#desktop-app).
+6. On a Mac with a desktop session (not over ssh), offers the *omp collab* desktop app (`collab-desktop-darwin-<arch>.zip` from the same release, with the same checksum and attestation checks) and installs it as `~/Applications/omp collab.app`. On Linux, with a desktop session (`$DISPLAY` or `$WAYLAND_DISPLAY` set, not over ssh), it does the same with `collab-desktop-linux-<arch>.tar.gz`: unpacked into `~/.local/share/omp-collab/desktop` (`OMP_COLLAB_DESKTOP_DIR` changes it), with an applications-menu entry; it needs GTK 3, NSS, ALSA and GBM, and names any that are missing. `--desktop` installs it without asking (over ssh too), `--no-desktop` skips it. A failure here leaves the `omp` install in place, and an app that is running is not replaced (quit it and run the installer again; on Linux that is also how the app updates). See [Desktop app](../../docs/collab.md#desktop-app).
 7. Runs `omp companion --install`: a LaunchAgent on macOS, a systemd user unit on Linux, started now and at login, restarted if it dies. The desktop app attaches to this service instead of starting its own companion.
 8. Prints the pairing link with a QR code for a phone (the Pages address) and opens the app on this computer: the desktop app when it is installed (it pairs itself with the companion), otherwise the browser on the copy the companion serves at `http://127.0.0.1:<port>`, paired with a fresh one-time link from `omp companion --print-local-link` (the Pages link when the companion serves no app). With `--no-open` nothing is opened and the closing message says so. On a re-run the installer updates in place and does not open the app again (`--pair` shows the link anyway; `omp companion --pair` prints a fresh one any time, `omp companion --open` opens this computer's app in a browser).
 
@@ -75,12 +75,13 @@ Options: `--yes`, `--no-login`, `--no-service` (install the binary only; start t
 | macOS service | `~/Library/LaunchAgents/sh.omp.collab-companion.plist`; log `~/Library/Logs/omp-collab-companion.log` |
 | Linux service | `~/.config/systemd/user/omp-collab-companion.service`; log `journalctl --user -u omp-collab-companion -f` |
 | macOS desktop app | `~/Applications/omp collab.app`; its settings and logs in `~/Library/Application Support/omp collab` |
+| Linux desktop app | `~/.local/share/omp-collab/desktop` (launcher `omp-collab-launch`), menu entry `~/.local/share/applications/omp-collab.desktop`, Open at Login entry `~/.config/autostart/omp-collab.desktop`; its settings and logs in `~/.config/omp collab` |
 
 On Linux a user service stops when the last login session ends unless lingering is on; the install prints `loginctl enable-linger $USER` when it is off.
 
 **Updating**: run the same command again (it replaces the binary, restarts the service and keeps your pairing), or `omp update`, which follows this fork's releases for these binaries and not upstream's. Settings → *About & maintenance* shows the companion's build tag.
 
-**Uninstalling**: `curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh -s -- --uninstall` stops and removes the service and, if you agree (or pass `--yes`), deletes the binary and the desktop app. It keeps `~/.omp`, so logins, settings and the pairing survive a reinstall; delete that folder to forget them. In the app, Settings → *Devices* removes a paired device.
+**Uninstalling**: `curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh -s -- --uninstall` stops and removes the service and, if you agree (or pass `--yes`), deletes the binary and the desktop app (on Linux also its menu and Open at Login entries). It keeps `~/.omp`, so logins, settings and the pairing survive a reinstall; delete that folder to forget them. In the app, Settings → *Devices* removes a paired device.
 
 **Whose logins sessions use.** Everything runs on the computer where omp is installed, with the provider logins and API keys of the user who ran the installer. Nothing is shared with the person who published the installer; sessions started from the app bill that user's own account, and that user's files, git and `gh` credentials are what the agent works with. The relay in between is content-blind (the default is `wss://my.omp.sh`; set `collab.relayUrl` to change it), and the room key lives in the pairing link's fragment.
 

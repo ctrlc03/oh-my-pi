@@ -19,6 +19,19 @@ export function electronDist(): string {
 	return dist;
 }
 
+/** The version of the installed `electron` package: what a build for another platform downloads, with no host binary. */
+export function electronVersion(): string {
+	const manifest: unknown = JSON.parse(fs.readFileSync(path.join(electronPackage, "package.json"), "utf8"));
+	if (
+		typeof manifest === "object" &&
+		manifest !== null &&
+		"version" in manifest &&
+		typeof manifest.version === "string"
+	)
+		return manifest.version;
+	throw new Error("the electron package has no version");
+}
+
 export function electronExecutable(): string {
 	const dist = electronDist();
 	return process.platform === "darwin"

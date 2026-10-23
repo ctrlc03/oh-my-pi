@@ -11,9 +11,11 @@
 #   2. installs it as <prefix>/omp (default ~/.local/bin/omp);
 #   3. checks tmux, git and a browser opener (offers to install tmux);
 #   4. sets collab.webUrl, runs `omp login` when no model provider is usable;
-#   5. on a Mac with a desktop session, offers the omp collab desktop app (a menu-bar app that runs this
-#      computer's companion, shows when a session needs you and updates itself): the same release,
-#      checksum verified, installed as ~/Applications/omp collab.app;
+#   5. on a Mac or a Linux desktop session, offers the omp collab desktop app (a menu-bar / tray app that
+#      runs this computer's companion and shows when a session needs you): the same release, checksum
+#      verified, installed as ~/Applications/omp collab.app (macOS, which updates itself) or unpacked
+#      into ~/.local/share/omp-collab/desktop with an applications-menu entry (Linux, where re-running
+#      this installer is the update);
 #   6. installs the companion as a background service (launchd / systemd user unit); the desktop app
 #      attaches to it instead of starting its own;
 #   7. opens the desktop app (without it: the pairing link in this computer's browser) and prints a QR code.
@@ -26,7 +28,7 @@
 #   -y, --yes             answer yes to every question (needs no terminal)
 #       --no-login        do not run `omp login`
 #       --no-service      do not install the background service
-#       --desktop         install the desktop app without asking (macOS)
+#       --desktop         install the desktop app without asking (macOS, Linux)
 #       --no-desktop      do not offer the desktop app
 #       --no-open         do not open the browser (the link and QR are still printed); without it the installer opens the app on this computer
 #       --pair            show the pairing link and QR again on a re-run (always shown on a fresh install)
@@ -40,7 +42,8 @@
 #   -h, --help            show this help
 #
 # Environment: PI_INSTALL_DIR, OMP_COLLAB_REPO (owner/name), OMP_COLLAB_BASE_URL,
-# OMP_COLLAB_WEB_URL, NO_COLOR.
+# OMP_COLLAB_WEB_URL, OMP_COLLAB_DESKTOP_DIR (where the desktop app goes: the parent of "omp collab.app"
+# on macOS, the app's own directory on Linux), NO_COLOR.
 
 DEFAULT_REPO="ctrlc03/oh-my-pi"
 DEFAULT_WEB_URL="https://ctrlc03.github.io/oh-my-pi/"
@@ -151,7 +154,7 @@ Options:
   -y, --yes             answer yes to every question (needs no terminal)
       --no-login        do not run `omp login`
       --no-service      do not install the background service
-      --desktop         install the desktop app (macOS) without asking
+      --desktop         install the desktop app (macOS, Linux) without asking
       --no-desktop      do not offer the desktop app
       --no-open         do not open the browser (the link and QR are still printed); without it the installer opens the app the companion serves on this computer
       --pair            show the pairing link and QR again on a re-run
@@ -241,12 +244,16 @@ ask() {
 
 # ── platform ─────────────────────────────────────────────────────────────────
 
-detect_platform() {
+detect_os() {
 	case "$(uname -s)" in
 	Darwin) OS=darwin ;;
 	Linux) OS=linux ;;
 	*) die "unsupported OS $(uname -s): this installer supports macOS and Linux (on Windows, use WSL)" ;;
 	esac
+}
+
+detect_platform() {
+	detect_os
 	case "$(uname -m)" in
 	arm64 | aarch64) ARCH=arm64 ;;
 	x86_64 | amd64) ARCH=x64 ;;
@@ -261,7 +268,10 @@ detect_platform() {
 		die "this system uses musl libc (Alpine); the collab release is built for glibc distributions only"
 	fi
 	ASSET="omp-$OS-$ARCH"
-	DESKTOP_ASSET="collab-desktop-$OS-$ARCH.zip"
+	case "$OS" in
+	darwin) DESKTOP_ASSET="collab-desktop-$OS-$ARCH.zip" ;;
+	*) DESKTOP_ASSET="collab-desktop-$OS-$ARCH.tar.gz" ;;
+	esac
 	CUSTOM_BASE=1
 	if [ -z "$BASE_URL" ]; then
 		CUSTOM_BASE=0
@@ -581,34 +591,61 @@ login_if_needed() {
 	fi
 }
 
-# ── desktop app (macOS) ──────────────────────────────────────────────────────
+# ── desktop app ──────────────────────────────────────────────────────────────
+#
+# macOS: a signed bundle, ~/Applications/omp collab.app. Linux: a tarball unpacked into one directory
+# (~/.local/share/omp-collab/desktop), started through its launcher, with an applications-menu entry.
 
 DESKTOP_APP_NAME="omp collab.app"
 DESKTOP_BUNDLE_ID="sh.omp.collab.desktop"
+DESKTOP_LINUX_EXE="omp-collab"
+DESKTOP_LINUX_LAUNCHER="omp-collab-launch"
+DESKTOP_LINUX_ENTRY="omp-collab.desktop"
 
-desktop_default_dir() { printf '%s' "${OMP_COLLAB_DESKTOP_DIR:-$HOME/Applications}"; }
+desktop_default_dir() {
+	if [ "$OS" = linux ]; then
+		printf '%s' "${OMP_COLLAB_DESKTOP_DIR:-$STATE_DIR/desktop}"
+	else
+		printf '%s' "${OMP_COLLAB_DESKTOP_DIR:-$HOME/Applications}"
+	fi
+}
+
+linux_applications_dir() { printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/applications"; }
+linux_autostart_dir() { printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/autostart"; }
 
 # plist_value APP KEY: a value of the app's Info.plist (empty when unreadable).
 plist_value() { /usr/bin/plutil -extract "$2" raw -o - "$1/Contents/Info.plist" 2>/dev/null || true; }
 
 # desktop_running APP: the app at APP is running (its own executable, not any copy elsewhere).
 desktop_running() {
-	ps -axo command= 2>/dev/null | awk -v exe="$1/Contents/MacOS/${DESKTOP_APP_NAME%.app}" 'index($0, exe) == 1 { found = 1 } END { exit !found }'
+	if [ "$OS" = darwin ]; then
+		ps -axo command= 2>/dev/null | awk -v exe="$1/Contents/MacOS/${DESKTOP_APP_NAME%.app}" 'index($0, exe) == 1 { found = 1 } END { exit !found }'
+	else
+		# The launcher execs the executable by its real path; a match must end there (the launcher's own name starts the same).
+		_real=$(cd "$1" 2>/dev/null && pwd -P) || _real="$1"
+		ps -A -o args= 2>/dev/null | awk -v exe="$_real/$DESKTOP_LINUX_EXE" 'index($0, exe) == 1 { after = substr($0, length(exe) + 1, 1); if (after == "" || after == " ") found = 1 } END { exit !found }'
+	fi
 }
 
-# True on a Mac with a desktop session: not over ssh, and launchd says this is a GUI (Aqua) session.
+# True with a desktop session: not over ssh, and on a Mac launchd says this is a GUI (Aqua) session, on Linux
+# an X11 or Wayland display is set.
 has_desktop_session() {
-	[ "$OS" = darwin ] || return 1
 	[ -z "${SSH_CONNECTION:-}" ] || return 1
-	_session=$(launchctl managername 2>/dev/null || true)
-	[ -z "$_session" ] || [ "$_session" = Aqua ]
+	if [ "$OS" = darwin ]; then
+		_session=$(launchctl managername 2>/dev/null || true)
+		[ -z "$_session" ] || [ "$_session" = Aqua ]
+	else
+		[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]
+	fi
 }
 
-# Where the app goes: where this installer put it before, a copy in /Applications (from the disk image) that
-# this user can replace, else ~/Applications.
+# Where the app goes. macOS: where this installer put it before, a copy in /Applications (from the disk image)
+# that this user can replace, else ~/Applications. Linux: where this installer put it before, else the default.
 desktop_target() {
 	if [ -n "$RECORDED_DESKTOP_PATH" ] && [ -d "$RECORDED_DESKTOP_PATH" ]; then
 		printf '%s' "$RECORDED_DESKTOP_PATH"
+	elif [ "$OS" = linux ]; then
+		desktop_default_dir
 	elif [ -z "${OMP_COLLAB_DESKTOP_DIR:-}" ] && [ -d "/Applications/$DESKTOP_APP_NAME" ] && [ -w /Applications ]; then
 		printf '/Applications/%s' "$DESKTOP_APP_NAME"
 	else
@@ -622,15 +659,90 @@ desktop_fail() {
 	DESKTOP_FAILED=1
 }
 
+# desktop_exec_quote PATH: PATH as one argument of a desktop entry's Exec line (double-quoted; ", `, $ and \ escaped
+# with a backslash, and every backslash doubled again by the file's own string escaping; % doubled).
+desktop_exec_quote() {
+	printf '"%s"' "$(printf '%s' "$1" | sed -e 's/%/%%/g' -e 's/[\\"`$]/\\&/g' -e 's/\\/\\\\/g')"
+}
+
+# write_desktop_entry APP: the applications-menu entry (Linux), replaced atomically.
+write_desktop_entry() {
+	_apps=$(linux_applications_dir)
+	mkdir -p "$_apps" || return 1
+	_entry="$_apps/$DESKTOP_LINUX_ENTRY"
+	_tmp="$_entry.new.$$"
+	{
+		printf '[Desktop Entry]\nType=Application\nName=omp collab\n'
+		printf 'Comment=Runs the omp collab companion on this computer and shows when a session needs you\n'
+		printf 'Exec=%s\n' "$(desktop_exec_quote "$1/$DESKTOP_LINUX_LAUNCHER")"
+		printf 'Icon=%s/resources/icon.png\nTerminal=false\nCategories=Development;\nStartupWMClass=omp-collab\n' "$1"
+	} >"$_tmp" || return 1
+	mv -f "$_tmp" "$_entry" || {
+		rm -f "$_tmp"
+		return 1
+	}
+}
+
+# remove_desktop_entries: the applications-menu entry and the Open at Login entry (Linux), when they are the app's.
+remove_desktop_entries() {
+	for _file in "$(linux_applications_dir)/$DESKTOP_LINUX_ENTRY" "$(linux_autostart_dir)/$DESKTOP_LINUX_ENTRY"; do
+		if [ -f "$_file" ] && grep -q "^Exec=.*$DESKTOP_LINUX_LAUNCHER" "$_file" 2>/dev/null; then
+			rm -f "$_file"
+		fi
+	done
+}
+
+# warn_missing_libs APP: Electron needs system libraries (GTK, NSS, ALSA...); a missing one makes the app exit at
+# start with no window, so say so now. Never fails the install.
+warn_missing_libs() {
+	have ldd || return 0
+	_missing=$(ldd "$1/$DESKTOP_LINUX_EXE" 2>/dev/null </dev/null | awk '/not found/ { printf "%s ", $1 }')
+	if [ -n "$_missing" ]; then
+		warn "the desktop app will not start until these libraries are installed: ${_missing% }"
+		note "On Debian/Ubuntu: sudo apt install libgtk-3-0 libasound2 libnss3 libgbm1 libxss1 (libgtk-3-0t64 and libasound2t64 on 24.04); on Fedora: sudo dnf install gtk3 alsa-lib nss mesa-libgbm libXScrnSaver"
+	fi
+}
+
+# desktop_unpack STAGE: unpacks the verified download into STAGE and sets _new to the app inside it. Returns 1
+# with DESKTOP_ERR set when it will not unpack or is not the omp collab app.
+desktop_unpack() {
+	if [ "$OS" = darwin ]; then
+		if ! ditto -x -k "$WORK/$DESKTOP_ASSET" "$1" || [ ! -d "$1/$DESKTOP_APP_NAME" ]; then
+			DESKTOP_ERR="could not unpack $DESKTOP_ASSET"
+			return 1
+		fi
+		_new="$1/$DESKTOP_APP_NAME"
+		if [ "$(plist_value "$_new" CFBundleIdentifier)" != "$DESKTOP_BUNDLE_ID" ]; then
+			DESKTOP_ERR="$DESKTOP_ASSET does not hold the omp collab app"
+			return 1
+		fi
+		if have codesign && ! codesign --verify --deep --strict "$_new" >"$WORK/codesign.out" 2>&1; then
+			cat "$WORK/codesign.out" >&2
+			DESKTOP_ERR="the app's signature does not verify"
+			return 1
+		fi
+	else
+		_new="$1/app"
+		mkdir "$_new"
+		# The archive holds one top-level directory named after itself.
+		if ! tar -xzf "$WORK/$DESKTOP_ASSET" -C "$_new" --strip-components=1; then
+			DESKTOP_ERR="could not unpack $DESKTOP_ASSET"
+			return 1
+		fi
+		if [ ! -x "$_new/$DESKTOP_LINUX_EXE" ] || [ ! -x "$_new/$DESKTOP_LINUX_LAUNCHER" ] || [ ! -f "$_new/resources/app.asar" ]; then
+			DESKTOP_ERR="$DESKTOP_ASSET does not hold the omp collab app"
+			return 1
+		fi
+	fi
+}
+
 # Offers (or, with --desktop, just does) the desktop app: the same checksum and attestation checks as the omp
-# binary, then an atomic swap of the bundle. The app is signed ad hoc, which macOS accepts when the download did
-# not come from a browser (curl sets no quarantine flag); a failure here never undoes the omp install.
+# binary, then an atomic swap of the app. On macOS the bundle is signed ad hoc, which macOS accepts when the
+# download did not come from a browser (curl sets no quarantine flag). On Linux the unpacked app gets an
+# applications-menu entry, and its launcher decides whether Chromium's sandbox can run. A failure here never
+# undoes the omp install.
 install_desktop() {
 	[ "$DO_DESKTOP" != 0 ] || return 0
-	if [ "$OS" != darwin ]; then
-		[ "$DO_DESKTOP" != 1 ] || warn "the desktop app exists for macOS only so far; skipping it"
-		return 0
-	fi
 	if [ "$DO_DESKTOP" = ask ] && ! has_desktop_session; then
 		return 0
 	fi
@@ -645,7 +757,11 @@ install_desktop() {
 	_dest=$(desktop_target)
 	say "The omp collab desktop app"
 	if [ "$DO_DESKTOP" = ask ]; then
-		note "A menu-bar app: it runs this computer's companion, tells you when a session needs your input, and updates itself."
+		if [ "$OS" = darwin ]; then
+			note "A menu-bar app: it runs this computer's companion, tells you when a session needs your input, and updates itself."
+		else
+			note "A tray app: it runs this computer's companion and tells you when a session needs your input. Re-run this installer to update it."
+		fi
 		if ! ask "Install it as $_dest?" y; then
 			note "skipped; add it later with: curl -fsSL ${WEB_URL%/}/install.sh | sh -s -- --desktop"
 			return 0
@@ -671,6 +787,7 @@ install_desktop() {
 	}
 	DESKTOP_APP="$_dest"
 	if [ -d "$_dest" ] && [ "$RECORDED_DESKTOP_PATH" = "$_dest" ] && [ "$RECORDED_DESKTOP_SHA" = "$_have" ]; then
+		[ "$OS" != linux ] || write_desktop_entry "$_dest" || warn "could not write the applications-menu entry"
 		ok "$_dest is already the latest release"
 		DESKTOP_READY=1
 		return 0
@@ -688,21 +805,9 @@ install_desktop() {
 	_stage="$_dir/.omp-collab-update.$$"
 	rm -rf "$_stage"
 	mkdir "$_stage"
-	if ! ditto -x -k "$WORK/$DESKTOP_ASSET" "$_stage" || [ ! -d "$_stage/$DESKTOP_APP_NAME" ]; then
+	if ! desktop_unpack "$_stage"; then
 		rm -rf "$_stage"
-		desktop_fail "could not unpack $DESKTOP_ASSET"
-		return 0
-	fi
-	_new="$_stage/$DESKTOP_APP_NAME"
-	if [ "$(plist_value "$_new" CFBundleIdentifier)" != "$DESKTOP_BUNDLE_ID" ]; then
-		rm -rf "$_stage"
-		desktop_fail "$DESKTOP_ASSET does not hold the omp collab app"
-		return 0
-	fi
-	if have codesign && ! codesign --verify --deep --strict "$_new" >"$WORK/codesign.out" 2>&1; then
-		cat "$WORK/codesign.out" >&2
-		rm -rf "$_stage"
-		desktop_fail "the app's signature does not verify"
+		desktop_fail "$DESKTOP_ERR"
 		return 0
 	fi
 	if [ -e "$_dest" ]; then
@@ -720,7 +825,12 @@ install_desktop() {
 		return 0
 	fi
 	rm -rf "$_dest.old" "$_stage"
-	xattr -dr com.apple.quarantine "$_dest" 2>/dev/null || true
+	if [ "$OS" = darwin ]; then
+		xattr -dr com.apple.quarantine "$_dest" 2>/dev/null || true
+	else
+		write_desktop_entry "$_dest" || warn "could not write the applications-menu entry; start the app with $_dest/$DESKTOP_LINUX_LAUNCHER"
+		warn_missing_libs "$_dest"
+	fi
 	DESKTOP_PATH="$_dest"
 	DESKTOP_SHA="$_have"
 	DESKTOP_READY=1
@@ -728,15 +838,58 @@ install_desktop() {
 	ok "installed $_dest"
 }
 
-# Offers to delete the desktop app on --uninstall (macOS). Sets DESKTOP_KEPT to its path when it stays.
+# Starts the desktop app and returns 0 once it is up (Linux: still running after two seconds, or handed over to
+# the instance that already runs).
+open_desktop() {
+	if [ "$OS" = darwin ]; then
+		"$OPENER" "$DESKTOP_APP" >/dev/null 2>&1 </dev/null
+		return
+	fi
+	if have setsid; then
+		setsid "$DESKTOP_APP/$DESKTOP_LINUX_LAUNCHER" >"$WORK/desktop-open.out" 2>&1 </dev/null &
+	else
+		nohup "$DESKTOP_APP/$DESKTOP_LINUX_LAUNCHER" >"$WORK/desktop-open.out" 2>&1 </dev/null &
+	fi
+	_pid=$!
+	_polls=0
+	while [ "$_polls" -lt 10 ]; do
+		# Gone already: it handed over to the running instance (exit 0) or failed to start.
+		kill -0 "$_pid" 2>/dev/null || {
+			wait "$_pid"
+			return
+		}
+		sleep 0.2
+		_polls=$((_polls + 1))
+	done
+	return 0
+}
+
+# True when this installer can open the desktop app now (macOS: the opener exists; Linux: there is a display).
+can_open_desktop() {
+	if [ "$OS" = darwin ]; then
+		[ -n "${OPENER:-}" ]
+	else
+		[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]
+	fi
+}
+
+# Offers to delete the desktop app on --uninstall. Sets DESKTOP_KEPT to its path when it stays.
 uninstall_desktop() {
 	DESKTOP_KEPT=""
-	[ "$(uname -s)" = Darwin ] || return 0
-	_app="${RECORDED_DESKTOP_PATH:-$(desktop_default_dir)/$DESKTOP_APP_NAME}"
-	[ -d "$_app" ] || return 0
-	if [ "$(plist_value "$_app" CFBundleIdentifier)" != "$DESKTOP_BUNDLE_ID" ]; then
-		warn "$_app is not the omp collab desktop app; leaving it alone"
-		return 0
+	if [ "$OS" = darwin ]; then
+		_app="${RECORDED_DESKTOP_PATH:-$(desktop_default_dir)/$DESKTOP_APP_NAME}"
+		[ -d "$_app" ] || return 0
+		if [ "$(plist_value "$_app" CFBundleIdentifier)" != "$DESKTOP_BUNDLE_ID" ]; then
+			warn "$_app is not the omp collab desktop app; leaving it alone"
+			return 0
+		fi
+	else
+		_app="${RECORDED_DESKTOP_PATH:-$(desktop_default_dir)}"
+		[ -d "$_app" ] || return 0
+		if [ ! -x "$_app/$DESKTOP_LINUX_EXE" ] || [ ! -f "$_app/resources/app.asar" ]; then
+			warn "$_app is not the omp collab desktop app; leaving it alone"
+			return 0
+		fi
 	fi
 	if desktop_running "$_app"; then
 		warn "omp collab is running; quit it and run the uninstall again to delete $_app"
@@ -744,7 +897,12 @@ uninstall_desktop() {
 	elif ask "Delete the desktop app $_app?" n; then
 		rm -rf "$_app" || die "cannot delete $_app"
 		ok "deleted $_app"
-		note "Kept: its settings and logs in ~/Library/Application Support/omp collab (and an 'Open at Login' entry, which macOS drops once the app is gone)."
+		if [ "$OS" = darwin ]; then
+			note "Kept: its settings and logs in ~/Library/Application Support/omp collab (and an 'Open at Login' entry, which macOS drops once the app is gone)."
+		else
+			remove_desktop_entries
+			note "Removed: its applications-menu entry and its Open at Login entry. Kept: its settings and logs in ${XDG_CONFIG_HOME:-~/.config}/omp collab."
+		fi
 	else
 		note "kept $_app"
 		DESKTOP_KEPT="$_app"
@@ -810,12 +968,13 @@ pair_link() {
 	fi
 	say "Pair a device"
 	printf '%s\n' "$PAIR_OUTPUT"
-	if [ "$DO_OPEN" = 1 ] && [ "$DESKTOP_READY" = 1 ] && [ -n "${OPENER:-}" ]; then
+	if [ "$DO_OPEN" = 1 ] && [ "$DESKTOP_READY" = 1 ] && can_open_desktop; then
 		# The app finds the companion (the service just started), starts one when there is none, and pairs its own window.
-		if "$OPENER" "$DESKTOP_APP" >/dev/null 2>&1 </dev/null; then
+		if open_desktop; then
 			OPENED=desktop
 			note "opened the omp collab desktop app (it pairs itself with this computer's companion)"
 		else
+			cat "$WORK/desktop-open.out" >&2 2>/dev/null || true
 			warn "could not open the desktop app; open $DESKTOP_APP yourself"
 		fi
 	elif [ "$DO_OPEN" = 1 ] && [ -n "${OPENER:-}" ]; then
@@ -858,7 +1017,12 @@ finish() {
 	fi
 	say "Done. What to do next"
 	if [ "${OPENED:-}" = desktop ]; then
-		note "Open the app:   the omp collab window this installer opened; open it again from $DESKTOP_APP or Spotlight."
+		if [ "$OS" = darwin ]; then
+			note "Open the app:   the omp collab window this installer opened; open it again from $DESKTOP_APP or Spotlight."
+		else
+			note "Open the app:   the omp collab window this installer opened; open it again from your applications menu ('omp collab')"
+			note "                or with $DESKTOP_APP/$DESKTOP_LINUX_LAUNCHER."
+		fi
 		note "                On a phone use $WEB_URL (pair it below)."
 	elif [ "${OPENED:-}" = local ]; then
 		note "Open the app:   the browser tab this installer opened is the app on this computer, served by the"
@@ -880,7 +1044,11 @@ finish() {
 		fi
 	fi
 	if [ "$DESKTOP_READY" = 1 ]; then
-		note "Desktop app:    $DESKTOP_APP (its menu has 'Open at Login'; it keeps itself up to date)."
+		if [ "$OS" = darwin ]; then
+			note "Desktop app:    $DESKTOP_APP (its menu has 'Open at Login'; it keeps itself up to date)."
+		else
+			note "Desktop app:    $DESKTOP_APP (its menu has 'Open at Login'; run the install command again to update it)."
+		fi
 	fi
 	note "Update:         run the install command again"
 	note "Uninstall:      curl -fsSL ${WEB_URL%/}/install.sh | sh -s -- --uninstall"
@@ -891,6 +1059,7 @@ finish() {
 # ── uninstall ────────────────────────────────────────────────────────────────
 
 uninstall() {
+	detect_os
 	read_state
 	if [ -n "$RECORDED_PATH" ]; then
 		OMP="$RECORDED_PATH"

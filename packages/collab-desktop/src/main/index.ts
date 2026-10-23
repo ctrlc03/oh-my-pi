@@ -20,6 +20,7 @@ import {
 	type SaveOutcome,
 	type SessionReport,
 } from "../shared/bridge";
+import { autostartCommand, autostartEnabled, autostartEntry, autostartFile, setAutostart } from "./autostart";
 import { appUrl, configDirOf, endpointFile, findRunningEndpoint, stateFile } from "./companion-endpoint";
 import { lockFile, readCompanionLock } from "./companion-lock";
 import {
@@ -85,9 +86,16 @@ const dataDir =
 	process.env.OMP_DESKTOP_DATA_DIR || path.join(app.getPath("appData"), app.isPackaged ? APP_NAME : `${APP_NAME} dev`);
 app.setName(APP_NAME);
 app.setPath("userData", dataDir);
+// Chromium's Graphite renderer makes the blurred bars (header, composer) and the pet's layer flash on macOS
+// while the transcript under them repaints; Ganesh, the renderer before it, draws them steadily.
+if (platform === "darwin") app.commandLine.appendSwitch("disable-features", "SkiaGraphite");
 
 const configDir = configDirOf(home, process.env);
 const appDir = app.getAppPath();
+/** The window icon on Linux: beside the app's resources when packaged, the source icon in development. */
+const linuxIcon = app.isPackaged
+	? path.join(process.resourcesPath, "icon.png")
+	: path.join(appDir, "build", "icon.png");
 const logsDir = path.join(dataDir, "logs");
 const desktopLog = path.join(logsDir, "desktop.log");
 const companionLog = path.join(logsDir, "companion.log");
@@ -118,9 +126,21 @@ if (!app.requestSingleInstanceLock()) {
 
 async function main(): Promise<void> {
 	await app.whenReady();
+	// The Linux launcher sets this when it started the app without Chromium's sandbox.
+	if (process.env.OMP_COLLAB_NO_SANDBOX_REASON)
+		log(`running without the Chromium sandbox: ${process.env.OMP_COLLAB_NO_SANDBOX_REASON}`);
 	const settings = new SettingsStore(path.join(dataDir, "settings.json"));
 	const windowFile = path.join(dataDir, "window-state.json");
-	const hiddenStart = process.argv.includes("--hidden") || app.getLoginItemSettings().wasOpenedAtLogin;
+	const hiddenStart =
+		process.argv.includes("--hidden") || (platform !== "linux" && app.getLoginItemSettings().wasOpenedAtLogin);
+	const autostart = autostartFile(home, process.env);
+	const autostartCommandLine = (): string[] =>
+		autostartCommand({
+			packaged: app.isPackaged,
+			exe: app.getPath("exe"),
+			appPath: appDir,
+			launcherExists: fs.existsSync,
+		});
 
 	let win: electron.BrowserWindow | null = null;
 	let tray: electron.Tray | null = null;
@@ -226,6 +246,8 @@ async function main(): Promise<void> {
 			minHeight: MIN_SIZE.height,
 			show: false,
 			title: APP_NAME,
+			// Linux windows take their icon from the app: a tarball install has no icon theme entry to look it up in.
+			...(platform === "linux" ? { icon: linuxIcon } : {}),
 			backgroundColor: "#000000",
 			webPreferences: {
 				preload: path.join(appDir, "dist", "preload.cjs"),
@@ -438,11 +460,14 @@ async function main(): Promise<void> {
 	// ── tray, menus, shortcut ────────────────────────────────────────────────
 
 	function trayImage(state: TrayView["state"]): electron.NativeImage {
+		// macOS tints the black "Template" icons to the menu bar; a Linux panel does not, and they vanish on a dark one,
+		// so Linux gets mid-tone icons that read on both.
+		const suffix = platform === "linux" ? "Linux" : "Template";
 		const name = {
-			idle: "trayIdleTemplate",
-			working: "trayWorkingTemplate",
-			offline: "trayOfflineTemplate",
-			input: "trayInput",
+			idle: `trayIdle${suffix}`,
+			working: `trayWorking${suffix}`,
+			offline: `trayOffline${suffix}`,
+			input: platform === "linux" ? "trayInputLinux" : "trayInput",
 		}[state];
 		return nativeImage.createFromPath(path.join(appDir, "assets", "tray", `${name}.png`));
 	}
@@ -476,7 +501,9 @@ async function main(): Promise<void> {
 			rebuildMenus();
 		},
 		setOpenAtLogin: value => {
-			app.setLoginItemSettings({ openAtLogin: value, args: value ? ["--hidden"] : [] });
+			if (platform === "linux")
+				setAutostart(autostart, value ? autostartEntry(APP_NAME, autostartCommandLine()) : null);
+			else app.setLoginItemSettings({ openAtLogin: value, args: value ? ["--hidden"] : [] });
 			rebuildMenus();
 		},
 		quit: () => void shutdown(false),
@@ -489,7 +516,7 @@ async function main(): Promise<void> {
 			appName: APP_NAME,
 			devTools: !app.isPackaged || testMode,
 			settings: current,
-			openAtLogin: app.getLoginItemSettings().openAtLogin,
+			openAtLogin: platform === "linux" ? autostartEnabled(autostart) : app.getLoginItemSettings().openAtLogin,
 			companion: supervisor.status,
 			serviceInstalled: serviceInstalled(home, platform),
 			update: updateStatus,
@@ -841,6 +868,10 @@ async function main(): Promise<void> {
 				paths: { dataDir, configDir, companionLog },
 			}),
 			toggleWindow,
+			setOpenAtLogin: value => {
+				actions.setOpenAtLogin(value);
+				return menuModel().openAtLogin;
+			},
 			checkForUpdates: () => checkForUpdates(true),
 			trayMenu: () => buildTrayMenu(menuModel(), actions).map(item => item.label ?? item.type ?? ""),
 		};

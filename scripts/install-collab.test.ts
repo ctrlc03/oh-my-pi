@@ -1,5 +1,5 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { afterAll, afterEach, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
@@ -17,6 +17,9 @@ const ARCH = process.arch === "arm64" ? "arm64" : "x64";
 const ASSET = `omp-${OS}-${ARCH}`;
 const PAIR_URL = "https://example.test/app/#pair:room.key&invite=once";
 const LOCAL_URL = "http://127.0.0.1:7467/#pair:room.key&invite=local";
+
+// Each test runs the installer (a download, a checksum, a few subshells) up to four times; a loaded CI runner needs more than 5 s.
+setDefaultTimeout(30_000);
 
 function stubOmp(version: string): string {
 	return `#!/bin/sh
@@ -67,11 +70,15 @@ afterEach(async () => {
 });
 
 /** Publishes `omp-<os>-<arch>` and its SHA256SUMS.txt (a wrong hash with `badSum`). */
-async function publish(version: string, opts: { badSum?: boolean; noEntry?: boolean } = {}): Promise<void> {
+async function publish(
+	version: string,
+	opts: { badSum?: boolean; noEntry?: boolean; os?: string } = {},
+): Promise<void> {
+	const asset = `omp-${opts.os ?? OS}-${ARCH}`;
 	const binary = stubOmp(version);
 	const sum = opts.badSum ? "0".repeat(64) : new Bun.CryptoHasher("sha256").update(binary).digest("hex");
-	served.set(ASSET, binary);
-	served.set("SHA256SUMS.txt", opts.noEntry ? `${sum}  omp-other\n` : `${sum}  ${ASSET}\n`);
+	served.set(asset, binary);
+	served.set("SHA256SUMS.txt", opts.noEntry ? `${sum}  omp-other\n` : `${sum}  ${asset}\n`);
 }
 
 interface Sandbox {
@@ -516,6 +523,238 @@ describe("install-collab.sh", () => {
 			const removed = await run(box, ["--uninstall", "--yes"], desktopEnv(box));
 			expect(removed.code).toBe(0);
 			expect(await exists(appDir(box))).toBe(false);
+			expect(await exists(stateOf(box))).toBe(false);
+		});
+	});
+
+	// The Linux desktop path is driven on any host: a `uname` stub makes the installer take it, and the app is a
+	// tarball shaped like the release's (one top-level directory) holding stub executables.
+	describe("desktop app (Linux)", () => {
+		const DESKTOP_ASSET = `collab-desktop-linux-${ARCH}.tar.gz`;
+		const DISPLAY_ENV = { DISPLAY: ":99" };
+
+		async function asLinux(box: Sandbox): Promise<void> {
+			const machine = ARCH === "arm64" ? "aarch64" : "x86_64";
+			await writeFile(
+				path.join(box.bin, "uname"),
+				`#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo ${machine} ;; *) exec /usr/bin/uname "$@" ;; esac\n`,
+				{ mode: 0o755 },
+			);
+		}
+
+		/** Publishes omp and a Linux desktop tarball; `files` replaces what the app holds (a stub executable and launcher by default). */
+		async function publishDesktop(box: Sandbox, files?: Record<string, string>): Promise<void> {
+			await publish("1.0.0", { os: "linux" });
+			const top = `collab-desktop-linux-${ARCH}`;
+			const root = path.join(box.home, "build", top);
+			const contents = files ?? {
+				"omp-collab": '#!/bin/sh\necho "exe $*" >>"$HOME/desktop-run.log"\n',
+				"omp-collab-launch": '#!/bin/sh\necho "launched $*" >>"$HOME/desktop-run.log"\n',
+				"resources/app.asar": "asar",
+				"resources/icon.png": "png",
+			};
+			for (const [name, body] of Object.entries(contents)) {
+				const file = path.join(root, name);
+				await mkdir(path.dirname(file), { recursive: true });
+				await writeFile(file, body, { mode: name.startsWith("omp-collab") ? 0o755 : 0o644 });
+			}
+			const tarball = path.join(box.home, "build", DESKTOP_ASSET);
+			expect(
+				Bun.spawnSync(["tar", "-czf", tarball, "-C", path.join(box.home, "build"), top], {
+					env: { ...process.env, COPYFILE_DISABLE: "1" },
+				}).exitCode,
+			).toBe(0);
+			const bytes = new Uint8Array(await readFile(tarball));
+			const sum = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+			served.set(DESKTOP_ASSET, bytes);
+			served.set("SHA256SUMS.txt", `${served.get("SHA256SUMS.txt")}${sum}  ${DESKTOP_ASSET}\n`);
+		}
+
+		const stateOf = (box: Sandbox) => path.join(box.home, ".local", "share", "omp-collab", "install");
+		const appDir = (box: Sandbox) => path.join(box.home, ".local", "share", "omp-collab", "desktop");
+		const entryOf = (box: Sandbox) => path.join(box.home, ".local", "share", "applications", "omp-collab.desktop");
+		const autostartOf = (box: Sandbox) => path.join(box.home, ".config", "autostart", "omp-collab.desktop");
+
+		it("unpacks the app, writes the applications-menu entry, records it and starts it instead of the browser", async () => {
+			const box = await sandbox();
+			await asLinux(box);
+			await publishDesktop(box);
+			const result = await run(box, ["--desktop", "--yes"], DISPLAY_ENV);
+
+			expect(result.code).toBe(0);
+			expect(result.stdout).toContain(`installed ${appDir(box)}`);
+			expect((await stat(path.join(appDir(box), "omp-collab-launch"))).mode & 0o111).not.toBe(0);
+			expect(await exists(path.join(appDir(box), "resources", "app.asar"))).toBe(true);
+			const entry = await read(entryOf(box));
+			expect(entry).toContain("[Desktop Entry]");
+			expect(entry).toContain(`Exec="${appDir(box)}/omp-collab-launch"`);
+			expect(entry).toContain(`Icon=${appDir(box)}/resources/icon.png`);
+			expect(entry).toContain("Terminal=false");
+			const state = await read(stateOf(box));
+			expect(state).toContain(`desktop_path=${appDir(box)}`);
+			expect(state).toMatch(/desktop_sha256=[0-9a-f]{64}/);
+			expect(await read(path.join(box.home, "desktop-run.log"))).toContain("launched");
+			expect(await read(path.join(box.home, "xdg-open.log"))).not.toContain(LOCAL_URL);
+			expect(result.stdout).toContain("opened the omp collab desktop app");
+			expect(await exists(path.join(box.home, ".local", "share", "omp-collab", ".omp-collab-update"))).toBe(false);
+		});
+
+		it("offers the app only with a desktop session", async () => {
+			const box = await sandbox();
+			await asLinux(box);
+			await publishDesktop(box);
+			const headless = await run(box, ["--yes"]);
+			expect(headless.code).toBe(0);
+			expect(await exists(appDir(box))).toBe(false);
+			const ssh = await run(box, ["--yes"], { ...DISPLAY_ENV, SSH_CONNECTION: "1.2.3.4 22 5.6.7.8 22" });
+			expect(await exists(appDir(box))).toBe(false);
+			expect(ssh.code).toBe(0);
+			const wayland = await run(box, ["--yes"], { WAYLAND_DISPLAY: "wayland-0" });
+			expect(wayland.code).toBe(0);
+			expect(await exists(path.join(appDir(box), "omp-collab"))).toBe(true);
+		});
+
+		it("installs with --desktop over ssh but does not start it without a display", async () => {
+			const box = await sandbox();
+			await asLinux(box);
+			await publishDesktop(box);
+			const result = await run(box, ["--desktop", "--yes"], { SSH_CONNECTION: "1.2.3.4 22 5.6.7.8 22" });
+			expect(result.code).toBe(0);
+			expect(await exists(path.join(appDir(box), "omp-collab"))).toBe(true);
+			expect(await exists(path.join(box.home, "desktop-run.log"))).toBe(false);
+			expect(await read(path.join(box.home, "xdg-open.log"))).toContain(LOCAL_URL);
+		});
+
+		it("honours OMP_COLLAB_DESKTOP_DIR and quotes a path with spaces in the Exec line", async () => {
+			const box = await sandbox();
+			await asLinux(box);
+			await publishDesktop(box);
+			const dir = path.join(box.home, "my apps", 'omp "collab" $HOME');
+			const result = await run(box, ["--desktop", "--yes"], { ...DISPLAY_ENV, OMP_COLLAB_DESKTOP_DIR: dir });
+			expect(result.code).toBe(0);
+			expect(await exists(path.join(dir, "omp-collab"))).toBe(true);
+			const exec = (await read(entryOf(box))).split("\n").find(line => line.startsWith("Exec=")) ?? "";
+			expect(exec).toBe(`Exec="${dir.replace(/["`$\\]/g, "\\\\$&")}/omp-collab-launch"`);
+		});
+
+		it("is idempotent, restores a deleted entry, keeps the record across --no-desktop, and updates in place", async () => {
+			const box = await sandbox();
+			await asLinux(box);
+			await publishDesktop(box);
+			await run(box, ["--desktop", "--yes"], DISPLAY_ENV);
+			await rm(entryOf(box));
+			const again = await run(box, ["--desktop", "--yes"], DISPLAY_ENV);
+			expect(again.stdout).toContain("is already the latest release");
+			expect(await exists(entryOf(box))).toBe(true);
+			await run(box, ["--no-desktop", "--yes"], DISPLAY_ENV);
+			expect(await read(stateOf(box))).toContain(`desktop_path=${appDir(box)}`);
+
+			await publishDesktop(box, {
+				"omp-collab": "#!/bin/sh\n# v2\n",
+				"omp-collab-launch": "#!/bin/sh\n# v2\n",
+				"resources/app.asar": "asar2",
+			});
+			const updated = await run(box, ["--desktop", "--yes"], DISPLAY_ENV);
+			expect(updated.code).toBe(0);
+			expect(await read(path.join(appDir(box), "resources", "app.asar"))).toBe("asar2");
+			expect(await exists(`${appDir(box)}.old`)).toBe(false);
+		});
+
+		it("does not replace the app while it runs", async () => {
+			const box = await sandbox();
+			await asLinux(box);
+			await publishDesktop(box);
+			await run(box, ["--desktop", "--yes"], DISPLAY_ENV);
+			const real = await realpath(appDir(box));
+			await writeFile(
+				path.join(box.bin, "ps"),
+				`#!/bin/sh\necho "${real}/omp-collab --type=renderer"\necho "${real}/omp-collab-launch"\n`,
+				{ mode: 0o755 },
+			);
+			await publishDesktop(box, {
+				"omp-collab": "#!/bin/sh\n# v2\n",
+				"omp-collab-launch": "#!/bin/sh\n",
+				"resources/app.asar": "asar2",
+			});
+			const result = await run(box, ["--desktop", "--yes"], DISPLAY_ENV);
+			expect(result.code).toBe(0);
+			expect(result.all).toContain("is running, so");
+			expect(await read(path.join(appDir(box), "resources", "app.asar"))).toBe("asar");
+		});
+
+		it("ignores a process that merely starts like the app's launcher", async () => {
+			const box = await sandbox();
+			await asLinux(box);
+			await publishDesktop(box);
+			await run(box, ["--desktop", "--yes"], DISPLAY_ENV);
+			const real = await realpath(appDir(box));
+			await writeFile(path.join(box.bin, "ps"), `#!/bin/sh\necho "${real}/omp-collab-launch"\n`, { mode: 0o755 });
+			await publishDesktop(box, {
+				"omp-collab": "#!/bin/sh\n",
+				"omp-collab-launch": "#!/bin/sh\n",
+				"resources/app.asar": "asar2",
+			});
+			const result = await run(box, ["--desktop", "--yes"], DISPLAY_ENV);
+			expect(result.code).toBe(0);
+			expect(await read(path.join(appDir(box), "resources", "app.asar"))).toBe("asar2");
+		});
+
+		it("refuses an archive that is not the app, and one whose checksum does not match", async () => {
+			const box = await sandbox();
+			await asLinux(box);
+			await publishDesktop(box, { "something-else": "x" });
+			const wrong = await run(box, ["--desktop", "--yes"], DISPLAY_ENV);
+			expect(wrong.code).toBe(1);
+			expect(wrong.all).toContain("does not hold the omp collab app");
+			expect(await exists(appDir(box))).toBe(false);
+			expect((await stat(path.join(box.prefix, "omp"))).mode & 0o111).not.toBe(0);
+
+			const other = await sandbox();
+			await asLinux(other);
+			await publishDesktop(other);
+			served.set(
+				"SHA256SUMS.txt",
+				String(served.get("SHA256SUMS.txt")).replace(/[0-9a-f]{64}( {2}collab-desktop)/, `${"0".repeat(64)}$1`),
+			);
+			const bad = await run(other, ["--desktop", "--yes"], DISPLAY_ENV);
+			expect(bad.code).toBe(1);
+			expect(bad.all).toContain("checksum mismatch for collab-desktop");
+			expect(await exists(appDir(other))).toBe(false);
+			expect(await exists(entryOf(other))).toBe(false);
+		});
+
+		it("skips the app when the release has none", async () => {
+			const box = await sandbox();
+			await asLinux(box);
+			await publish("1.0.0", { os: "linux" });
+			const result = await run(box, ["--desktop", "--yes"], DISPLAY_ENV);
+			expect(result.code).toBe(0);
+			expect(result.all).toContain("has no desktop app");
+			expect(await exists(appDir(box))).toBe(false);
+		});
+
+		it("deletes the app and its entries on --uninstall --yes and keeps them without confirmation", async () => {
+			const box = await sandbox();
+			await asLinux(box);
+			await publishDesktop(box);
+			await run(box, ["--desktop", "--yes"], DISPLAY_ENV);
+			// What the app's Open at Login writes, and an entry that is not the app's.
+			await mkdir(path.dirname(autostartOf(box)), { recursive: true });
+			await writeFile(autostartOf(box), `[Desktop Entry]\nExec="${appDir(box)}/omp-collab-launch" --hidden\n`);
+			const foreign = path.join(path.dirname(autostartOf(box)), "other.desktop");
+			await writeFile(foreign, "[Desktop Entry]\nExec=other\n");
+
+			const kept = await run(box, ["--uninstall"], DISPLAY_ENV);
+			expect(kept.code).toBe(0);
+			expect(await exists(appDir(box))).toBe(true);
+			expect(await exists(entryOf(box))).toBe(true);
+
+			const removed = await run(box, ["--uninstall", "--yes"], DISPLAY_ENV);
+			expect(removed.code).toBe(0);
+			expect(await exists(appDir(box))).toBe(false);
+			expect(await exists(entryOf(box))).toBe(false);
+			expect(await exists(autostartOf(box))).toBe(false);
+			expect(await exists(foreign)).toBe(true);
 			expect(await exists(stateOf(box))).toBe(false);
 		});
 	});

@@ -4,7 +4,7 @@ This is [ctrlc03/oh-my-pi](https://github.com/ctrlc03/oh-my-pi), a fork of [oh-m
 
 `main` follows upstream releases and adds:
 
-- **Collab**: a background service on your computer (the *companion*), a web app for a browser, phone or iPad, and a desktop app for macOS. From the app you start, watch and steer every omp session on that computer, and on other computers you pair. See [Getting started](docs/collab-getting-started.md) and the [reference](docs/collab.md).
+- **Collab**: a background service on your computer (the *companion*), a web app for a browser, phone or iPad, and a desktop app for macOS and Linux. From the app you start, watch and steer every omp session on that computer, and on other computers you pair. See [Getting started](docs/collab-getting-started.md) and the [reference](docs/collab.md).
 - **Personal agent** (opt-in, off by default): [docs/personal-agent.md](docs/personal-agent.md), [docs/personal-chat-tree.md](docs/personal-chat-tree.md).
 - **Control over what the agent may do**: [agent profiles](docs/profiles.md), [approval modes](docs/approval-mode.md), and an [OS-level shell sandbox](docs/sandbox.md).
 - **Session tools**: per-session spend caps, `/undo` and `/redo`, `/diff`, the [request inspector](docs/inspector.md), [pull request watching](docs/pr-watch.md), [schedules](docs/tools/schedule.md), the [`trace`](docs/tools/trace.md) and [`flow`](docs/tools/flow.md) code-map tools, and a [GitHub Action](docs/github-action.md).
@@ -22,7 +22,7 @@ The installer asks before anything that needs a decision; <kbd>Enter</kbd> takes
 1. Downloads the fork's `omp` from the latest `collab-v*` GitHub Release, refuses it if its checksum does not match the release's `SHA256SUMS.txt`, and installs it as `~/.local/bin/omp`.
 2. Offers to install tmux (needed to start sessions from the app), and git on Linux.
 3. Runs `omp login` if no model provider is logged in. Pick your provider and follow its prompts.
-4. **On a Mac, offers the desktop app** and installs it as `~/Applications/omp collab.app` (the default answer is yes). It is optional: everything also works in a browser.
+4. **On a Mac or a Linux desktop, offers the desktop app** and installs it as `~/Applications/omp collab.app` (macOS) or into `~/.local/share/omp-collab/desktop` with an applications-menu entry (Linux); the default answer is yes. It is optional: everything also works in a browser.
 5. Installs the companion as a background service that starts at login and restarts if it dies (a LaunchAgent on macOS, a systemd user unit on Linux).
 6. Opens the desktop app, or without it the web app in this computer's browser, already paired with this computer. It also prints a link and QR code for pairing a phone.
 

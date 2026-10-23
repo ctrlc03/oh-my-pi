@@ -29,8 +29,10 @@
 # The release also carries the desktop app (packages/collab-desktop): an Electron shell around the same
 # web app that runs this computer's companion. The `desktop` job packages it on macOS runners (arm64 and
 # x64), signs it ad hoc, and checks the bundle; the assets are `collab-desktop-darwin-<arch>.zip` (what
-# the installer and the app's self-updater download) and `.dmg`. Their names must not start with `omp-`:
-# that prefix is how the binaries are counted, attested and checksummed apart from them.
+# the installer and the app's self-updater download) and `.dmg`. On Linux runners (arm64 and x64) it
+# packages `collab-desktop-linux-<arch>.tar.gz`, which the installer unpacks into the user's data
+# directory (the Linux app does not update itself: the installer is the update). Their names must not
+# start with `omp-`: that prefix is how the binaries are counted, attested and checksummed apart from them.
 #
 # Guarded off for the upstream repository.
 name: collab release
@@ -190,11 +192,12 @@ jobs:
           retention-days: 7
 
   # The desktop app. It is not a binary of omp: it needs the `omp` the installer put on this computer (see
-  # packages/collab-desktop/README.md), so nothing here depends on the build/sign/smoke jobs. The bundle is
+  # packages/collab-desktop/README.md), so nothing here depends on the build/sign/smoke jobs. The macOS bundle is
   # signed ad hoc (no secrets, no notarization), so macOS only runs it when it did not come from a browser
-  # download: the installer fetches it with curl, which leaves no quarantine flag.
+  # download: the installer fetches it with curl, which leaves no quarantine flag. The Linux package is a
+  # tarball of the unpacked app plus its launcher; each is built on a runner of its own OS and CPU.
   desktop:
-    name: Desktop app ${{ matrix.arch }}
+    name: Desktop app ${{ matrix.os }}-${{ matrix.arch }}
     needs: meta
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -202,14 +205,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: arm64, runner: macos-14 }
-          - { arch: x64, runner: macos-15-intel }
+          - { os: darwin, arch: arm64, runner: macos-14 }
+          - { os: darwin, arch: x64, runner: macos-15-intel }
+          - { os: linux, arch: arm64, runner: ubuntu-22.04-arm }
+          - { os: linux, arch: x64, runner: ubuntu-22.04 }
     permissions:
       contents: read
     env:
       OMP_RELEASE_REPO: ${{ github.repository }}
       OMP_BUILD_TAG: ${{ needs.meta.outputs.tag }}
       ARCH: ${{ matrix.arch }}
+      DESKTOP_OS: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -220,8 +226,9 @@ jobs:
         run: bun test
       - name: Package the app
         working-directory: packages/collab-desktop
-        run: bun run dist --arch "$ARCH"
+        run: bun run dist --platform "$DESKTOP_OS" --arch "$ARCH"
       - name: Check the bundle
+        if: matrix.os == 'darwin'
         working-directory: packages/collab-desktop/release
         run: |
           set -euo pipefail
@@ -246,12 +253,48 @@ jobs:
           archs="$(lipo -archs "$app/Contents/MacOS/omp collab")"
           grep -qw "$([ "$ARCH" = x64 ] && echo x86_64 || echo arm64)" <<< "$archs"
           rm -rf check
+      # The installer unpacks the tarball with `--strip-components=1`, so it must hold exactly one top-level
+      # directory, with the executable, the launcher and the app archive in it.
+      - name: Check the tarball
+        if: matrix.os == 'linux'
+        working-directory: packages/collab-desktop/release
+        run: |
+          set -euo pipefail
+          ls -l
+          tarball="collab-desktop-linux-$ARCH.tar.gz"
+          test -s "$tarball"
+          test "$(tar -tzf "$tarball" | cut -d/ -f1 | sort -u | wc -l)" -eq 1
+          rm -rf check
+          mkdir check
+          tar -xzf "$tarball" -C check --strip-components=1
+          test -x check/omp-collab
+          test -x check/omp-collab-launch
+          sh -n check/omp-collab-launch
+          test -f check/resources/app.asar
+          test -f check/resources/icon.png
+          # The build tag the app reports (and updates from) is the one being released.
+          (cd check && "$GITHUB_WORKSPACE/node_modules/.bin/asar" extract-file resources/app.asar dist/build-info.json)
+          test "$(jq -r .tag check/build-info.json)" = "$OMP_BUILD_TAG"
+          # The executable is for this runner's CPU.
+          kind="$(file -b check/omp-collab)"
+          echo "$kind"
+          grep -q 'ELF 64-bit' <<< "$kind"
+          grep -q "$([ "$ARCH" = x64 ] && echo 'x86-64' || echo 'ARM aarch64')" <<< "$kind"
+          rm -rf check
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: matrix.os == 'darwin'
         with:
           name: collab-desktop-darwin-${{ matrix.arch }}
           path: |
             packages/collab-desktop/release/collab-desktop-darwin-${{ matrix.arch }}.zip
             packages/collab-desktop/release/collab-desktop-darwin-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: matrix.os == 'linux'
+        with:
+          name: collab-desktop-linux-${{ matrix.arch }}
+          path: packages/collab-desktop/release/collab-desktop-linux-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
           retention-days: 7
 
@@ -367,7 +410,7 @@ jobs:
           merge-multiple: true
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: collab-desktop-darwin-*
+          pattern: collab-desktop-*
           path: assets
           merge-multiple: true
       - uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
@@ -402,18 +445,20 @@ jobs:
           merge-multiple: true
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: collab-desktop-darwin-*
+          pattern: collab-desktop-*
           path: assets
           merge-multiple: true
-      # SHA256SUMS.txt covers exactly the four binaries and the desktop app's zips and disk images that the installer
-      # and the app's updater download and verify. `omp-*` is still exactly the four binaries.
+      # SHA256SUMS.txt covers exactly the four binaries and the desktop app's assets: the macOS zips and disk images
+      # and the Linux tarballs, which the installer and the macOS app's updater download and verify. `omp-*` is
+      # still exactly the four binaries.
       - name: Generate checksums
         run: |
           set -euo pipefail
           ls -l assets
           test "$(find assets -type f -name 'omp-*' | wc -l)" -eq 4
           test "$(find assets -type f -name 'collab-desktop-darwin-*' | wc -l)" -eq 4
-          bun scripts/ci-release-checksums.ts assets/SHA256SUMS.txt assets/omp-* assets/collab-desktop-darwin-*
+          test "$(find assets -type f -name 'collab-desktop-linux-*' | wc -l)" -eq 2
+          bun scripts/ci-release-checksums.ts assets/SHA256SUMS.txt assets/omp-* assets/collab-desktop-darwin-* assets/collab-desktop-linux-*
           cat assets/SHA256SUMS.txt
       # make_latest only for the highest collab-v* tag (the installer's default URL is
       # releases/latest); rebuilding an older tag never moves it. Existing assets of a tag
@@ -427,4 +472,5 @@ jobs:
           files: |
             assets/omp-*
             assets/collab-desktop-darwin-*
+            assets/collab-desktop-linux-*
             assets/SHA256SUMS.txt

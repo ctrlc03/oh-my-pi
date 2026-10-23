@@ -4,7 +4,7 @@ A guide for anyone who has never used omp. It takes about five minutes.
 
 ## What this is
 
-omp is a coding agent that runs in your terminal. This fork adds a small background service, the *companion*, a web app and, on a Mac, a desktop app. Install it once on your computer, pair the app with it, and you can start and watch coding-agent sessions from a browser, a phone or an iPad. The sessions run on your computer, in your folders, with your own accounts. The apps are only windows onto them.
+omp is a coding agent that runs in your terminal. This fork adds a small background service, the *companion*, a web app and, on a Mac or a Linux desktop, a desktop app. Install it once on your computer, pair the app with it, and you can start and watch coding-agent sessions from a browser, a phone or an iPad. The sessions run on your computer, in your folders, with your own accounts. The apps are only windows onto them.
 
 ## What you need
 
@@ -26,7 +26,7 @@ The installer asks before anything that needs a decision, and you can answer wit
 - **An `omp` already exists.** One the installer did not put there is never replaced unless you say yes. Another `omp` elsewhere on your `PATH` is named and left alone.
 - **tmux is missing.** The app needs it to start sessions, so the installer offers to install it with your package manager (`brew`, `apt`, `dnf`, `pacman`, `zypper` or `apk`). On Linux it offers the same for `git`.
 - **No model is logged in.** It runs `omp login` in the terminal. Pick your provider and follow its prompts; for providers that sign in through the browser, a window opens and you come back to the terminal when it is done. Skip it and run `omp login` yourself later, because sessions cannot work without a login.
-- **On a Mac: the desktop app.** It offers *omp collab*, the web app in its own window with a menu-bar icon that counts sessions waiting for you, native notifications and the shortcut <kbd>⌥⌘O</kbd> to show or hide it. <kbd>Enter</kbd> installs it as `~/Applications/omp collab.app`; it updates itself from this fork's releases. Everything also works in a browser without it.
+- **On a Mac or a Linux desktop: the desktop app.** It offers *omp collab*, the web app in its own window with a menu-bar (macOS) or tray (Linux) icon that counts sessions waiting for you, native notifications and a shortcut to show or hide it (<kbd>⌥⌘O</kbd> on a Mac, <kbd>Ctrl+Alt+O</kbd> on Linux). <kbd>Enter</kbd> installs it as `~/Applications/omp collab.app` and it updates itself from this fork's releases; on Linux it goes into `~/.local/share/omp-collab/desktop` with an entry in your applications menu, and you update it by running the installer again. Everything also works in a browser without it.
 
 Then it installs the companion as a background service that starts when you log in, opens the desktop app (or, without it, the web app in your browser) already paired with this computer, and prints a link and QR code for your phone. Both show the copy of the app the companion itself serves on this computer (`http://127.0.0.1:7467`); it needs no internet once loaded. To skip the questions: `curl -fsSL https://ctrlc03.github.io/oh-my-pi/install.sh | sh -s -- --yes --no-login`.
 
@@ -34,7 +34,7 @@ What goes where, the checksum and build checks, and every installer option are i
 
 ## Pair your devices
 
-The desktop app, or the browser the installer opened, is paired already. On a Mac, open *omp collab* again from Spotlight or `~/Applications`. In a browser the address is `http://127.0.0.1:7467` (the companion logs the port it picked): the web app served by the companion on this computer. Its connect screen shows your computer, with every omp session on it, including the ones you run with `omp` in a terminal. To open it again, or in another browser, run `omp companion --open` (it pairs that browser with a fresh one-time link; `omp companion --print-local-link` prints the link without opening it). A browser pairs per address, so one already paired on the Pages site pairs again at `127.0.0.1`.
+The desktop app, or the browser the installer opened, is paired already. On a Mac, open *omp collab* again from Spotlight or `~/Applications`; on Linux, from your applications menu. In a browser the address is `http://127.0.0.1:7467` (the companion logs the port it picked): the web app served by the companion on this computer. Its connect screen shows your computer, with every omp session on it, including the ones you run with `omp` in a terminal. To open it again, or in another browser, run `omp companion --open` (it pairs that browser with a fresh one-time link; `omp companion --print-local-link` prints the link without opening it). A browser pairs per address, so one already paired on the Pages site pairs again at `127.0.0.1`.
 
 Use the local copy on this computer and <https://ctrlc03.github.io/oh-my-pi/> everywhere else:
 

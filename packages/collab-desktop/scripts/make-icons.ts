@@ -4,7 +4,9 @@
  * rasterised here with plain coverage sampling so no image library is needed.
  *
  * macOS tints a "Template" image to match the menu bar, using only its alpha, so the idle, working and offline icons
- * are black with alpha; the needs-input icon is orange and not a template, so it stands out.
+ * are black with alpha; the needs-input icon is orange and not a template, so it stands out. A Linux panel tints
+ * nothing, and black vanishes on a dark one, so the "Linux" icons are a mid-tone grey that reads on both, 22 px (the
+ * usual tray size there) with an orange needs-input icon.
  */
 import { deflateSync } from "node:zlib";
 import * as fs from "node:fs";
@@ -111,19 +113,27 @@ function png(size: number, pixels: Uint8Array): Uint8Array {
 	return Buffer.concat(parts);
 }
 
-const ICONS: Record<string, Style> = {
-	trayIdleTemplate: { color: [0, 0, 0], alpha: 1, dot: false },
-	trayWorkingTemplate: { color: [0, 0, 0], alpha: 1, dot: true },
-	trayOfflineTemplate: { color: [0, 0, 0], alpha: 0.35, dot: false },
-	trayInput: { color: [255, 159, 10], alpha: 1, dot: true },
+const MACOS_TRAY = 18;
+const LINUX_TRAY = 22;
+const LINUX_GREY = [140, 146, 158] as const;
+
+const ICONS: Record<string, { style: Style; size: number }> = {
+	trayIdleTemplate: { style: { color: [0, 0, 0], alpha: 1, dot: false }, size: MACOS_TRAY },
+	trayWorkingTemplate: { style: { color: [0, 0, 0], alpha: 1, dot: true }, size: MACOS_TRAY },
+	trayOfflineTemplate: { style: { color: [0, 0, 0], alpha: 0.35, dot: false }, size: MACOS_TRAY },
+	trayInput: { style: { color: [255, 159, 10], alpha: 1, dot: true }, size: MACOS_TRAY },
+	trayIdleLinux: { style: { color: LINUX_GREY, alpha: 1, dot: false }, size: LINUX_TRAY },
+	trayWorkingLinux: { style: { color: LINUX_GREY, alpha: 1, dot: true }, size: LINUX_TRAY },
+	trayOfflineLinux: { style: { color: LINUX_GREY, alpha: 0.45, dot: false }, size: LINUX_TRAY },
+	trayInputLinux: { style: { color: [255, 159, 10], alpha: 1, dot: true }, size: LINUX_TRAY },
 };
 
 const trayDir = path.join(root, "assets", "tray");
 fs.mkdirSync(trayDir, { recursive: true });
-for (const [name, style] of Object.entries(ICONS)) {
+for (const [name, { style, size: base }] of Object.entries(ICONS)) {
 	for (const [suffix, size] of [
-		["", 18],
-		["@2x", 36],
+		["", base],
+		["@2x", base * 2],
 	] as const) {
 		fs.writeFileSync(path.join(trayDir, `${name}${suffix}.png`), png(size, render(size, style)));
 	}

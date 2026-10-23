@@ -2104,6 +2104,11 @@ export class CompanionClient {
 		await this.#call({ t: "vm-create", ...options }, "vm-create");
 	}
 
+	/** Start cloning the template `template` into a fresh VM named `name`; resolves once the computer accepted the job (its progress and, when done, its `pairUrl` show in `vmList`). Rejects with the reason it was refused (needs `canVms`). */
+	async vmClone(template: string, name: string): Promise<void> {
+		await this.#call({ t: "vm-clone", template, name }, "vm-clone");
+	}
+
 	/** Start, stop, reset or delete a VM; resolves once the computer accepted the job. A VM with a job running refuses (needs `canVms`). */
 	async vmAction(name: string, action: VmAction): Promise<void> {
 		await this.#call({ t: "vm-action", name, action }, "vm-action");

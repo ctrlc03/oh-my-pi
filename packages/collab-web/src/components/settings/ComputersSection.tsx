@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import type { ComputerHandle } from "../../lib/computers";
 import { AddComputer } from "../shell/AddComputer";
+import { FreshVmBadge } from "../shell/FreshVmBadge";
 import { VmSettings } from "../shell/VmSettings";
 import type { SettingsEnv } from "./env";
 import { ComputerGate, SettingsGroup } from "./SettingsRows";
@@ -74,6 +75,7 @@ function ComputerRow({
 							role="img"
 							aria-label={stateLabel(computer)}
 						/>
+						{computer.fresh !== undefined && <FreshVmBadge />}
 					</div>
 					{reason !== null && <div className="sh-field-hint">{reason}</div>}
 				</div>

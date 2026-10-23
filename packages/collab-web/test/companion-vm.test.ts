@@ -440,6 +440,87 @@ describe("jobs", () => {
 	});
 });
 
+describe("templates and fresh VMs", () => {
+	const TEMPLATE: VmListOutput["vms"][number] = {
+		...INFO,
+		name: "web",
+		repos: ["acme/web"],
+		status: "stopped",
+		template: true,
+		home: "/home/ubuntu",
+	};
+
+	it("builds a template with --template, and lists it with its home", async () => {
+		const { feature, cli, changes, entry } = await setup();
+		await feature.init();
+		await feature.handle({ ...CREATE, template: true });
+		expect(cli.jobs[0]?.args).toEqual(["create", "web", "--repo", "acme/web", "--template", "--json"]);
+
+		cli.state.listed = { ready: READY, vms: [TEMPLATE] };
+		cli.jobs[0]?.say({ t: "done", vm: TEMPLATE });
+		cli.jobs[0]?.finish();
+		await until(() => changes.count > 0);
+		expect(await entry("web")).toEqual(TEMPLATE);
+	});
+
+	it("runs `omp vm clone` for a fresh VM, shows its progress, and keeps the link it ends with", async () => {
+		const { feature, cli, changes, entry } = await setup();
+		cli.state.listed = { ready: READY, vms: [TEMPLATE] };
+		await feature.init();
+		const accepted = await feature.handle({ t: "vm-clone", reqId: 9, template: "web", name: "web-1a2b" });
+		expect(accepted).toEqual({ t: "vm-clone", reqId: 9, accepted: true });
+		expect(cli.jobs[0]?.args).toEqual(["clone", "web", "--name", "web-1a2b", "--json"]);
+		expect(await entry("web-1a2b")).toMatchObject({
+			status: "creating",
+			busy: { action: "clone", message: "Cloning…" },
+		});
+
+		cli.jobs[0]?.say({ t: "progress", step: "boot", message: "Booting the clone" });
+		expect((await entry("web-1a2b"))?.busy).toEqual({ action: "clone", step: "boot", message: "Booting the clone" });
+
+		const fresh = { from: "web", expiresAt: 99 };
+		const { template: _template, ...plain } = TEMPLATE;
+		const clone = { ...plain, name: "web-1a2b", status: "running" as const };
+		cli.state.listed = {
+			ready: READY,
+			vms: [TEMPLATE, { ...clone, fresh }],
+		};
+		cli.jobs[0]?.say({ t: "done", pairUrl: "https://my.omp.sh/#pair:clone" });
+		cli.jobs[0]?.finish();
+		await until(() => changes.count > 0);
+		expect(await entry("web-1a2b")).toMatchObject({
+			fresh,
+			home: "/home/ubuntu",
+			pairUrl: "https://my.omp.sh/#pair:clone",
+		});
+		expect((await entry("web-1a2b"))?.busy).toBeUndefined();
+	});
+
+	it("shows a failed clone as the VM's error, and refuses a bad or equal name before running anything", async () => {
+		const { feature, cli, changes, entry } = await setup();
+		await feature.init();
+		await feature.handle({ t: "vm-clone", reqId: 1, template: "web", name: "web-1a2b" });
+		cli.jobs[0]?.say({ t: "error", message: "web is running; stop it before cloning" });
+		cli.jobs[0]?.finish(1);
+		await until(() => changes.count > 0);
+		expect(await entry("web-1a2b")).toMatchObject({
+			status: "failed",
+			error: "web is running; stop it before cloning",
+		});
+
+		await expect(feature.handle({ t: "vm-clone", reqId: 2, template: "../x", name: "web-1" })).rejects.toThrow(
+			"invalid VM name",
+		);
+		await expect(feature.handle({ t: "vm-clone", reqId: 3, template: "web", name: "Bad" })).rejects.toThrow(
+			"invalid VM name",
+		);
+		await expect(feature.handle({ t: "vm-clone", reqId: 4, template: "web", name: "web" })).rejects.toThrow(
+			"name of its own",
+		);
+		expect(cli.jobs).toHaveLength(1);
+	});
+});
+
 describe("the supervisor", () => {
 	it("is kept running while a VM directory exists, with its output in supervisor.log", async () => {
 		const { feature, sup, vmRoot } = await setup({ vmDirs: ["api"] });

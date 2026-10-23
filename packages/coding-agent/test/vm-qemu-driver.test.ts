@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	buildCloneCloudInit,
 	buildMetaData,
 	buildQemuArgs,
 	buildSshArgs,
@@ -137,6 +138,20 @@ describe("cloud-init", () => {
 	test("meta-data names the instance and host", () => {
 		expect(buildMetaData(ci)).toBe("instance-id: vm-dev-1\nlocal-hostname: vm-dev\n");
 	});
+
+	test("a clone's seed has an instance id of its own and the clone's hostname, and trusts the same key", () => {
+		const key = "ssh-ed25519 AAAAC3Nza test\n";
+		const a = buildCloneCloudInit("base-1", "alice", key);
+		const b = buildCloneCloudInit("base-1", "alice", key);
+		expect(a.instanceId).toMatch(/^vm-base-1-[0-9a-f]{8}$/);
+		expect(a.instanceId).not.toBe(b.instanceId);
+		expect(a.instanceId).not.toBe(ci.instanceId);
+		expect(buildMetaData(a)).toBe(`instance-id: ${a.instanceId}\nlocal-hostname: vm-base-1\n`);
+		const data = Bun.YAML.parse(buildUserData(a)) as Record<string, any>;
+		expect(data.hostname).toBe("vm-base-1");
+		expect(data.users[0].name).toBe("alice");
+		expect(data.users[0].ssh_authorized_keys).toEqual(["ssh-ed25519 AAAAC3Nza test"]);
+	});
 });
 
 describe("remote commands", () => {
@@ -208,6 +223,19 @@ describe("driver surface", () => {
 	test("instance names cannot escape the home directory", async () => {
 		const driver = createQemuDriver({ home });
 		await expect(driver.state("../x")).rejects.toThrow(/invalid VM name/);
+	});
+
+	test("cloning needs an existing source", async () => {
+		const driver = createQemuDriver({ home });
+		const options = {
+			record: { name: "dev-1" } as VmRecord,
+			dir: home,
+			hostSocket: "/x",
+			egressSocket: "/y",
+			log: () => {},
+		};
+		await expect(driver.clone("ghost", options)).rejects.toThrow(/ghost does not exist/);
+		await expect(driver.clone("../x", options)).rejects.toThrow(/invalid VM name/);
 	});
 
 	test("guest endpoints are fixed", () => {

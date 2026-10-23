@@ -118,6 +118,7 @@ import { loadTrim, saveTrim, trimEntries } from "./lib/trim";
 import { sumUsage } from "./lib/usage";
 import { limitedUntil } from "./lib/usage-limits";
 import { useComputers } from "./lib/use-computers";
+import { ComputerActionsContext, useForgetFreshComputers, type ComputerActions } from "./lib/use-fresh-computers";
 import { PersonalContext, usePersonalProvider } from "./lib/use-personal";
 import { useHostRecovery } from "./lib/use-host-recovery";
 import { useGuestSnapshot } from "./lib/use-guest";
@@ -186,6 +187,17 @@ export function App(): ReactNode {
 
 	const pair = useCallback((next: PairingLink): void => void pairComputer(next), [pairComputer]);
 	const removeComputer = useCallback(async (id: string): Promise<void> => setRooms(await remove(id)), [remove]);
+	useForgetFreshComputers(computers, removeComputer);
+	const computersRef = useRef(computers);
+	computersRef.current = computers;
+	const computerActions = useMemo<ComputerActions>(
+		() => ({
+			pair: pairComputer,
+			remove: removeComputer,
+			find: id => computersRef.current.find(entry => entry.id === id),
+		}),
+		[pairComputer, removeComputer],
+	);
 	const settingsEnv = useMemo<SettingsEnv>(
 		() => ({ computers, pushes, orgs, onPair: pair, onRemoveComputer: removeComputer }),
 		[computers, pushes, orgs, pair, removeComputer],
@@ -419,52 +431,54 @@ export function App(): ReactNode {
 	}, [client]);
 
 	return (
-		<PersonalContext.Provider value={personal}>
-			<DeleteHost computers={computers} orgs={orgs} onDeleted={sessionsDeleted}>
-				<UpdateBar />
-				<Tooltip />
-				<FixItHost computers={computers} onOpenHost={openHost} onOpenLink={openLink} />
-				{!client || !link ? (
-					<ConnectScreen
-						error={connectError}
-						rooms={rooms}
-						computers={computers}
-						onConnect={next => {
-							resumedRef.current = false;
-							connect(next);
-						}}
-						onForget={forget}
-						onPair={pair}
-						onOpenHost={openHost}
-						onRemoveComputer={removeComputer}
-					/>
-				) : (
-					<Session
-						key={link}
-						client={client}
-						link={link}
-						openedHint={opened?.link === link ? opened : null}
-						computers={computers}
-						orgs={orgs}
-						onPair={pair}
-						rooms={rooms}
-						onLeave={leave}
-						onRejoin={rejoin}
-						onRemember={remember}
-						onRoomGone={roomGone}
-						onRoomReplaced={replaceRoom}
-						onOpenHost={openHost}
-						beside={beside}
-						onOpenLink={openLink}
-					/>
-				)}
-				<PetHost client={client} hosts={allHosts} hostsLive={anyLive} />
-				<DesktopBridge computers={computers} onOpen={openDesktopSession} />
-				<SettingsHost env={settingsEnv} />
-				<ZoomHost />
-				<PersonalRoutes computers={computers} onOpenHost={openHost} />
-			</DeleteHost>
-		</PersonalContext.Provider>
+		<ComputerActionsContext.Provider value={computerActions}>
+			<PersonalContext.Provider value={personal}>
+				<DeleteHost computers={computers} orgs={orgs} onDeleted={sessionsDeleted}>
+					<UpdateBar />
+					<Tooltip />
+					<FixItHost computers={computers} onOpenHost={openHost} onOpenLink={openLink} />
+					{!client || !link ? (
+						<ConnectScreen
+							error={connectError}
+							rooms={rooms}
+							computers={computers}
+							onConnect={next => {
+								resumedRef.current = false;
+								connect(next);
+							}}
+							onForget={forget}
+							onPair={pair}
+							onOpenHost={openHost}
+							onRemoveComputer={removeComputer}
+						/>
+					) : (
+						<Session
+							key={link}
+							client={client}
+							link={link}
+							openedHint={opened?.link === link ? opened : null}
+							computers={computers}
+							orgs={orgs}
+							onPair={pair}
+							rooms={rooms}
+							onLeave={leave}
+							onRejoin={rejoin}
+							onRemember={remember}
+							onRoomGone={roomGone}
+							onRoomReplaced={replaceRoom}
+							onOpenHost={openHost}
+							beside={beside}
+							onOpenLink={openLink}
+						/>
+					)}
+					<PetHost client={client} hosts={allHosts} hostsLive={anyLive} />
+					<DesktopBridge computers={computers} onOpen={openDesktopSession} />
+					<SettingsHost env={settingsEnv} />
+					<ZoomHost />
+					<PersonalRoutes computers={computers} onOpenHost={openHost} />
+				</DeleteHost>
+			</PersonalContext.Provider>
+		</ComputerActionsContext.Provider>
 	);
 }
 

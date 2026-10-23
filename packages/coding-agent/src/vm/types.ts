@@ -20,6 +20,14 @@ export interface VmBudget {
 /** Where the creation of a VM stands. A VM is usable only once `ready`. */
 export type VmPhase = "creating" | "ready" | "failed";
 
+/** A fresh VM: a throwaway clone of a template VM that runs one session and is deleted when that session ends. */
+export interface VmFresh {
+	/** The template VM it was cloned from. */
+	from: string;
+	/** When the supervisor deletes it even if its session still runs (epoch ms). */
+	expiresAt: number;
+}
+
 /** What `<vm root>/<name>/vm.json` holds. */
 export interface VmRecord {
 	version: 1;
@@ -45,6 +53,12 @@ export interface VmRecord {
 	createdAt: number;
 	/** When provisioning last finished. */
 	provisionedAt?: number;
+	/** Provisioned once, kept stopped and never paired: fresh VMs are cloned from it. */
+	template?: true;
+	/** Set on a fresh VM (cloned from a template). */
+	fresh?: VmFresh;
+	/** The guest user's home directory, learned while provisioning (repositories are under `<home>/src/<owner>/<repo>`). */
+	home?: string;
 }
 
 /** Runtime status reported by `omp vm list`. */
@@ -64,6 +78,9 @@ export interface VmInfo {
 	provisionedAt?: number;
 	error?: string;
 	budget?: VmBudget;
+	template?: true;
+	fresh?: VmFresh;
+	home?: string;
 }
 
 /** What `omp vm list --json` reports about the host's readiness. */
@@ -85,7 +102,7 @@ export interface VmListOutput {
 }
 
 /**
- * NDJSON lines `omp vm create|start|stop|reset|delete --json` writes to stdout, one per line.
+ * NDJSON lines `omp vm create|clone|start|stop|reset|delete --json` writes to stdout, one per line.
  * The last line is `done` or `error`.
  */
 export type VmProgressLine =
@@ -94,3 +111,7 @@ export type VmProgressLine =
 	| { t: "error"; message: string };
 
 export const VM_NAME_PATTERN = /^[a-z][a-z0-9-]{0,30}$/;
+/** At most this many fresh VMs exist at once on a computer (each takes the template's memory while it runs). */
+export const VM_MAX_FRESH = 3;
+/** A fresh VM is deleted this long after it was cloned, even if its session still runs. */
+export const VM_FRESH_TTL_MS = 24 * 60 * 60_000;

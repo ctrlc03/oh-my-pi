@@ -12,33 +12,39 @@ import { Settings } from "../config/settings";
 import { discoverAuthStorage } from "../sdk";
 import type { VmDriver, VmDriverOptions } from "./driver";
 import { defaultDriverFor, getVmDriver } from "./drivers";
+import { cloneRefusal } from "./fresh";
 import { loadGithubApp, runVmGithubCommand } from "./github";
 import {
 	type GuestIdentity,
+	guestCloneSystemScript,
+	guestCloneUserScript,
 	guestModelsYaml,
 	guestSystemScript,
 	guestUserScript,
 	parsePairUrl,
 	shellQuote,
 } from "./guest";
+import { deleteVm } from "./lifecycle";
 import { getVmRoot, vmDir, vmEgressSocket, vmHostSocket, vmProvisionLog } from "./paths";
+import { assertVmName, listVmRecords, readVmRecord, writeVmRecord } from "./store";
 import { readLiveSupervisor, SupervisorRunningError, startVmSupervisor, waitForSupervisor } from "./supervisor";
-import { assertVmName, listVmRecords, readVmRecord, removeVmDir, writeVmRecord } from "./store";
-import type {
-	VmDriverName,
-	VmInfo,
-	VmListOutput,
-	VmNetworkMode,
-	VmProgressLine,
-	VmReadiness,
-	VmRecord,
-	VmStatus,
+import {
+	VM_FRESH_TTL_MS,
+	type VmDriverName,
+	type VmInfo,
+	type VmListOutput,
+	type VmNetworkMode,
+	type VmProgressLine,
+	type VmReadiness,
+	type VmRecord,
+	type VmStatus,
 } from "./types";
 
 export const VM_ACTIONS = [
 	"init",
 	"github",
 	"create",
+	"clone",
 	"list",
 	"start",
 	"stop",
@@ -68,6 +74,9 @@ export interface VmCommandFlags {
 	key?: string;
 	yes?: boolean;
 	idleExit?: boolean;
+	template?: boolean;
+	/** `clone`: the fresh VM's name. */
+	name?: string;
 }
 
 const DEFAULTS = { cpus: 4, memoryGiB: 8, diskGiB: 60 } as const;
@@ -130,6 +139,9 @@ export async function runVmCommand(action: VmAction, args: string[], flags: VmCo
 				break;
 			case "create":
 				await createCommand(requireName(args), flags, reporter);
+				break;
+			case "clone":
+				await cloneCommand(requireName(args), flags, reporter);
 				break;
 			case "start":
 				await startCommand(requireName(args), reporter);
@@ -219,6 +231,9 @@ async function vmInfo(record: VmRecord): Promise<VmInfo> {
 		...(record.provisionedAt ? { provisionedAt: record.provisionedAt } : {}),
 		...(record.error ? { error: record.error } : {}),
 		...(record.budget ? { budget: record.budget } : {}),
+		...(record.template ? { template: record.template } : {}),
+		...(record.fresh ? { fresh: record.fresh } : {}),
+		...(record.home ? { home: record.home } : {}),
 	};
 }
 
@@ -236,8 +251,13 @@ async function listCommand(flags: VmCommandFlags): Promise<void> {
 	}
 	for (const vm of vms) {
 		const detail = vm.error ? ` — ${vm.error}` : "";
+		const kind = vm.template
+			? "  [template]"
+			: vm.fresh
+				? `  [fresh from ${vm.fresh.from}, expires ${new Date(vm.fresh.expiresAt).toLocaleString()}]`
+				: "";
 		console.log(
-			`${vm.name.padEnd(16)} ${vm.status.padEnd(9)} ${vm.network.padEnd(9)} ${vm.cpus} CPU, ${vm.memoryGiB} GiB, ${vm.diskGiB} GiB disk  ${vm.repos.join(", ")}${detail}`,
+			`${vm.name.padEnd(16)} ${vm.status.padEnd(9)} ${vm.network.padEnd(9)} ${vm.cpus} CPU, ${vm.memoryGiB} GiB, ${vm.diskGiB} GiB disk  ${vm.repos.join(", ")}${kind}${detail}`,
 		);
 	}
 }
@@ -357,6 +377,7 @@ async function createCommand(name: string, flags: VmCommandFlags, reporter: Repo
 		...(branchPrefix ? { branchPrefix } : {}),
 		...(flags.model?.length ? { models: flags.model } : {}),
 		...(Object.keys(budget).length > 0 ? { budget } : {}),
+		...(flags.template ? { template: true as const } : {}),
 		phase: "creating",
 		createdAt: Date.now(),
 	};
@@ -371,11 +392,81 @@ async function createCommand(name: string, flags: VmCommandFlags, reporter: Repo
 	try {
 		await ensureSupervisor(reporter);
 		const ready = await provision(record, driver, reporter, { fresh: true });
+		if (ready.template) {
+			await finishTemplate(ready, driver, reporter);
+			return;
+		}
 		const pairing = await pairVm(ready, driver);
 		const info = await vmInfo(ready);
 		reporter.done(
 			{ vm: info, pairUrl: pairing.url },
 			`VM ${name} is ready. Pair it from the app (Settings → Computers), or open:\n${pairing.url}`,
+		);
+	} catch (err) {
+		await markFailed(record, err);
+		throw err;
+	}
+}
+
+/**
+ * A fresh VM: a copy-on-write clone of the stopped template, given an identity of its own (hostname, machine id,
+ * companion room, SSH host keys) before it pairs. It lives until its session ends or `fresh.expiresAt`; the
+ * supervisor then deletes it.
+ */
+async function cloneCommand(templateName: string, flags: VmCommandFlags, reporter: Reporter): Promise<void> {
+	const name = flags.name;
+	if (!name) throw new Error("name the fresh VM: omp vm clone <template> --name <name>");
+	const template = await requireRecord(templateName);
+	const driver = getVmDriver(template.driver);
+	const refusal = cloneRefusal({
+		template,
+		templateState: await driver.state(templateName),
+		name,
+		existing: await listVmRecords(),
+	});
+	if (refusal) throw new Error(refusal);
+	const check = await driver.check();
+	if (!check.ok) throw new Error(`the ${template.driver} driver is unavailable: ${check.reason}`);
+	const record: VmRecord = {
+		version: 1,
+		name,
+		repos: template.repos,
+		cpus: template.cpus,
+		memoryGiB: template.memoryGiB,
+		diskGiB: template.diskGiB,
+		network: template.network,
+		driver: template.driver,
+		...(template.allowHosts ? { allowHosts: template.allowHosts } : {}),
+		...(template.models ? { models: template.models } : {}),
+		...(template.budget ? { budget: template.budget } : {}),
+		...(template.branchPrefix ? { branchPrefix: template.branchPrefix } : {}),
+		...(template.home ? { home: template.home } : {}),
+		phase: "creating",
+		createdAt: Date.now(),
+		fresh: { from: templateName, expiresAt: Date.now() + VM_FRESH_TTL_MS },
+	};
+	await writeVmRecord(record);
+	try {
+		await ensureSupervisor(reporter);
+		const { options, onOutput } = await openProvisionLog(record, driver, reporter);
+		reporter.progress("boot", `cloning ${templateName}`);
+		await driver.clone(templateName, options);
+		reporter.progress("provision", "giving the VM its own identity");
+		const clone = { name, providers: await hostProviders() };
+		const system = await driver.exec(name, ["sudo", "bash", "-s"], {
+			stdin: guestCloneSystemScript(clone),
+			onOutput,
+		});
+		if (system.code !== 0) throw new Error(`system setup failed (see omp vm logs ${name})`);
+		const userPart = await driver.exec(name, ["bash", "-s"], { stdin: guestCloneUserScript(clone), onOutput });
+		if (userPart.code !== 0) throw new Error(`setup failed (see omp vm logs ${name})`);
+		const latest = (await readVmRecord(name)) ?? record;
+		const ready: VmRecord = { ...latest, phase: "ready", provisionedAt: Date.now() };
+		await writeVmRecord(ready);
+		const pairing = await pairVm(ready, driver);
+		reporter.done(
+			{ vm: await vmInfo(ready), pairUrl: pairing.url },
+			`Fresh VM ${name} is ready. Pair it from the app, or open:\n${pairing.url}`,
 		);
 	} catch (err) {
 		await markFailed(record, err);
@@ -398,22 +489,7 @@ async function provision(
 	reporter: Reporter,
 	opts: { fresh: boolean },
 ): Promise<VmRecord> {
-	const logPath = vmProvisionLog(record.name);
-	await fs.writeFile(logPath, "", { mode: 0o600 });
-	const log = (line: string): void => {
-		void fs.appendFile(logPath, line.endsWith("\n") ? line : `${line}\n`);
-	};
-	const onOutput = (chunk: string): void => {
-		log(chunk);
-		for (const line of chunk.split("\n")) {
-			const match = /^omp-vm: (.+)$/.exec(line.trim());
-			if (match) reporter.progress("provision", match[1]);
-		}
-	};
-	const options = driverOptions(record, driver, line => {
-		log(line);
-		reporter.progress("boot", line);
-	});
+	const { options, onOutput } = await openProvisionLog(record, driver, reporter);
 	reporter.progress("boot", opts.fresh ? `creating the ${driver.name} VM` : "starting the VM");
 	if (opts.fresh) await driver.create(options);
 	else await driver.start(options);
@@ -421,6 +497,7 @@ async function provision(
 	const whoami = await driver.exec(record.name, ["id", "-un"]);
 	if (whoami.code !== 0) throw new Error(`cannot run commands in the VM: ${whoami.stderr.trim()}`);
 	const user = whoami.stdout.trim();
+	const home = await guestHome(record.name, driver);
 	const guest = {
 		record,
 		endpoints: driver.guestEndpoints(record),
@@ -437,9 +514,54 @@ async function provision(
 	if (userPart.code !== 0) throw new Error(`setup failed (see omp vm logs ${record.name})`);
 	const latest = (await readVmRecord(record.name)) ?? record;
 	const { error: _error, ...rest } = latest;
-	const ready: VmRecord = { ...rest, phase: "ready", provisionedAt: Date.now() };
+	const ready: VmRecord = { ...rest, phase: "ready", provisionedAt: Date.now(), home };
 	await writeVmRecord(ready);
 	return ready;
+}
+
+/** Opens the VM's provisioning transcript; lines the guest scripts prefix with `omp-vm:` become progress. */
+async function openProvisionLog(
+	record: VmRecord,
+	driver: VmDriver,
+	reporter: Reporter,
+): Promise<{ options: VmDriverOptions; onOutput: (chunk: string) => void }> {
+	const logPath = vmProvisionLog(record.name);
+	await fs.writeFile(logPath, "", { mode: 0o600 });
+	const log = (line: string): void => {
+		void fs.appendFile(logPath, line.endsWith("\n") ? line : `${line}\n`);
+	};
+	const onOutput = (chunk: string): void => {
+		log(chunk);
+		for (const line of chunk.split("\n")) {
+			const match = /^omp-vm: (.+)$/.exec(line.trim());
+			if (match) reporter.progress("provision", match[1]);
+		}
+	};
+	const options = driverOptions(record, driver, line => {
+		log(line);
+		reporter.progress("boot", line);
+	});
+	return { options, onOutput };
+}
+
+/** The guest user's home directory. */
+async function guestHome(name: string, driver: VmDriver): Promise<string> {
+	const result = await driver.exec(name, ["bash", "-c", 'printf %s "$HOME"']);
+	const home = result.stdout.trim();
+	if (result.code !== 0 || !home.startsWith("/")) {
+		throw new Error(`cannot read the VM's home directory: ${result.stderr.trim() || home}`);
+	}
+	return home;
+}
+
+/** A template is provisioned once and kept stopped: nothing runs in it, and it is never paired. */
+async function finishTemplate(record: VmRecord, driver: VmDriver, reporter: Reporter): Promise<void> {
+	reporter.progress("stop", "stopping the template");
+	await driver.stop(record.name);
+	reporter.done(
+		{ vm: await vmInfo(record) },
+		`Template ${record.name} is ready and stopped. Start a fresh VM from it with: omp vm clone ${record.name} --name <name>`,
+	);
 }
 
 /** A fresh one-time pairing link from the VM's companion. */
@@ -480,9 +602,7 @@ async function stopCommand(name: string, reporter: Reporter): Promise<void> {
 async function deleteCommand(name: string, reporter: Reporter): Promise<void> {
 	const record = await requireRecord(name);
 	reporter.progress("delete", "deleting the VM and its disk");
-	await getVmDriver(record.driver).remove(name);
-	// The supervisor notices the directory is gone, closes the VM's sockets and revokes its GitHub token.
-	await removeVmDir(name);
+	await deleteVm(record);
 	reporter.done({ deleted: true }, `VM ${name} is deleted`);
 }
 
@@ -493,17 +613,22 @@ async function deleteCommand(name: string, reporter: Reporter): Promise<void> {
  */
 async function resetCommand(name: string, reporter: Reporter): Promise<void> {
 	const record = await requireRecord(name);
+	if (record.fresh) throw new Error(`${name} is a fresh VM and has a limited life; delete it and clone again`);
 	const driver = getVmDriver(record.driver);
 	const check = await driver.check();
 	if (!check.ok) throw new Error(`the ${record.driver} driver is unavailable: ${check.reason}`);
 	reporter.progress("reset", "deleting the old VM");
 	await driver.remove(name);
-	const { error: _error, provisionedAt: _provisionedAt, ...rest } = record;
+	const { error: _error, provisionedAt: _provisionedAt, home: _home, ...rest } = record;
 	const fresh: VmRecord = { ...rest, phase: "creating", createdAt: Date.now() };
 	await writeVmRecord(fresh);
 	try {
 		await ensureSupervisor(reporter);
 		const ready = await provision(fresh, driver, reporter, { fresh: true });
+		if (ready.template) {
+			await finishTemplate(ready, driver, reporter);
+			return;
+		}
 		const pairUrl = (await pairVm(ready, driver)).url;
 		reporter.done(
 			{ vm: await vmInfo(ready), pairUrl },
@@ -517,6 +642,8 @@ async function resetCommand(name: string, reporter: Reporter): Promise<void> {
 
 async function pairCommand(name: string, flags: VmCommandFlags): Promise<void> {
 	const record = await requireRecord(name);
+	if (record.template)
+		throw new Error(`${name} is a template and is never paired; clone it: omp vm clone ${name} --name <name>`);
 	const driver = getVmDriver(record.driver);
 	if ((await driver.state(name)) !== "running") throw new Error(`VM ${name} is not running: omp vm start ${name}`);
 	const pairing = await pairVm(record, driver);

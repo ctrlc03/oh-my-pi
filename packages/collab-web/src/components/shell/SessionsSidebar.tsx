@@ -19,6 +19,7 @@ import { InboxEntry } from "./InboxSheet";
 import { useOpenElsewhere } from "./OpenElsewhere";
 import { OrgSessions } from "./OrgSessions";
 import { SchedulesEntry } from "./SchedulesSheet";
+import { FreshVmBadge } from "./FreshVmBadge";
 import { StartSessionSheet } from "./StartSessionSheet";
 import { PersonalSlot } from "./PersonalEntry";
 
@@ -190,6 +191,7 @@ function ComputerGroup({
 			<Laptop size={14} />
 			{name}
 			<span className={`sh-dot${live ? " sh-dot-live" : ""}`} role="img" aria-label={live ? "Online" : "Offline"} />
+			{computer.fresh !== undefined && <FreshVmBadge />}
 			{state !== null && <span className="sh-group-state">{state}</span>}
 		</>
 	);

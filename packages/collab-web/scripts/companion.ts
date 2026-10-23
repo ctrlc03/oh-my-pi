@@ -2304,6 +2304,7 @@ room.onFrame = (frame, fromPeer) => {
 			return;
 		case "vm-list":
 		case "vm-create":
+		case "vm-clone":
 		case "vm-action":
 		case "vm-pair":
 			respond(frame.reqId, () => vm.handle(frame));

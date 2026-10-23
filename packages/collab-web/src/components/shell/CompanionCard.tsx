@@ -42,6 +42,7 @@ import { QrScanner } from "./QrScanner";
 import { SchedulesEntry } from "./SchedulesSheet";
 import { SessionsSheet } from "./SessionsSheet";
 import { HighStakesChip } from "./StakesControl";
+import { FreshVmBadge } from "./FreshVmBadge";
 import { StartSessionSheet } from "./StartSessionSheet";
 import { UsageSheet } from "./UsageSheet";
 
@@ -165,6 +166,7 @@ export function CompanionCard({
 					<Laptop size={14} />
 					{name}
 					<span className={`sh-dot${live ? " sh-dot-live" : ""}`} aria-label={live ? "Online" : "Offline"} />
+					{computer.fresh !== undefined && <FreshVmBadge />}
 					{showName && !live && <span className="sh-group-state">{stateWord(snap.phase)}</span>}
 				</h2>
 				<span className="sh-companion-actions">

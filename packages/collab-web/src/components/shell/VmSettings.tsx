@@ -14,6 +14,7 @@ import {
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { extractPairing, type CompanionClient, type PairingLink } from "../../lib/companion";
+import { fmtDuration } from "../../lib/format";
 import { VmCreateForm } from "./VmCreateForm";
 import "./vm.css";
 
@@ -28,12 +29,15 @@ const STATUS_LABEL: Record<VmStatus, string> = {
 	missing: "Missing",
 };
 
-/** The actions offered for a VM that has no job running. */
-export function vmActionsFor(status: VmStatus): { start: boolean; stop: boolean; pair: boolean; reset: boolean } {
+/** The actions offered for a VM that has no job running. A template is never paired, and a fresh VM is paired by the session start that made it (`pairable` false). */
+export function vmActionsFor(
+	status: VmStatus,
+	pairable = true,
+): { start: boolean; stop: boolean; pair: boolean; reset: boolean } {
 	return {
 		start: status === "stopped",
 		stop: status === "running",
-		pair: status === "running",
+		pair: status === "running" && pairable,
 		reset: status !== "creating",
 	};
 }
@@ -74,7 +78,13 @@ export function useVmList(
 			setState({ status: "ready", ready: reply.ready, vms: reply.vms, error: null });
 			for (const vm of reply.vms) {
 				if (vm.busy !== undefined) watched.current.add(vm.name);
-				else if (vm.pairUrl !== undefined && watched.current.has(vm.name) && !paired.current.has(vm.pairUrl)) {
+				// A fresh VM is paired by the session start that cloned it, which marks the computer.
+				else if (
+					vm.fresh === undefined &&
+					vm.pairUrl !== undefined &&
+					watched.current.has(vm.name) &&
+					!paired.current.has(vm.pairUrl)
+				) {
 					paired.current.add(vm.pairUrl);
 					const link = extractPairing(vm.pairUrl);
 					if (link !== null && onPairRef.current !== undefined) {
@@ -156,7 +166,7 @@ export function VmRow({
 	onConfirm(action: "reset" | "delete" | null): void;
 	onPair(): void;
 }): ReactNode {
-	const can = vmActionsFor(vm.status);
+	const can = vmActionsFor(vm.status, vm.template === undefined && vm.fresh === undefined);
 	const working = vm.busy !== undefined;
 	const idle = !working && !pending;
 	return (
@@ -167,11 +177,24 @@ export function VmRow({
 					<div className="sh-vm-name">
 						{vm.name}
 						<span className={`sh-chip sh-vm-status sh-vm-status-${vm.status}`}>{STATUS_LABEL[vm.status]}</span>
+						{vm.template === true && <span className="sh-chip sh-vm-kind">template</span>}
+						{vm.fresh !== undefined && <span className="sh-chip sh-vm-kind">fresh</span>}
 					</div>
 					<div className="sh-field-hint">
 						{repoSummary(vm)} · {vm.cpus} CPUs · {vm.memoryGiB} GiB · {vm.diskGiB} GiB disk ·{" "}
 						{vm.network === "open" ? "open network" : "allowlist network"}
 					</div>
+					{vm.template === true && (
+						<div className="sh-field-hint">
+							Template for fresh VMs: kept stopped and never paired. Start a session in a fresh VM to clone it.
+						</div>
+					)}
+					{vm.fresh !== undefined && (
+						<div className="sh-field-hint">
+							Fresh VM from {vm.fresh.from}: ends with its session, or in{" "}
+							{fmtDuration(vm.fresh.expiresAt - Date.now())}.
+						</div>
+					)}
 					{vm.busy !== undefined && (
 						<div className="sh-field-hint sh-vm-busy" role="status">
 							<LoaderCircle size={12} className="sh-spin" aria-hidden="true" /> {vm.busy.message}
@@ -443,6 +466,11 @@ export function VmCreate({
 			{creating !== null && list.added.includes(creating) && (
 				<div className="sh-field-hint" role="status">
 					{creating} is ready and was added as a computer.
+				</div>
+			)}
+			{creating !== null && vm?.template === true && vm.busy === undefined && vm.error === undefined && (
+				<div className="sh-field-hint" role="status">
+					{creating} is a template for fresh VMs. It is stopped and was not added as a computer.
 				</div>
 			)}
 		</div>

@@ -3,6 +3,7 @@ import { CompanionClient, INITIAL_SNAPSHOT, type PairingLink } from "./companion
 import {
 	type Computer,
 	type ComputerHandle,
+	type FreshComputer,
 	computerNames,
 	loadComputers,
 	loadLastComputer,
@@ -130,15 +131,18 @@ class ComputerStore {
 			const client = connection?.client ?? null;
 			const error = connection?.error ?? null;
 			const name = names[computer.id]!;
+			const fresh = computer.fresh;
 			const before = Object.hasOwn(this.#built, computer.id) ? this.#built[computer.id]! : null;
 			const handle =
 				before !== null &&
 				before.snap === snap &&
 				before.client === client &&
 				before.error === error &&
-				before.name === name
+				before.name === name &&
+				before.fresh?.name === fresh?.name &&
+				before.fresh?.hostComputerId === fresh?.hostComputerId
 					? before
-					: { id: computer.id, name, client, snap, error };
+					: { id: computer.id, name, client, snap, error, ...(fresh === undefined ? {} : { fresh }) };
 			built[computer.id] = handle;
 			return handle;
 		});
@@ -153,8 +157,8 @@ class ComputerStore {
 export interface ComputersControl {
 	/** Every paired computer, in the order they were paired. */
 	computers: readonly ComputerHandle[];
-	/** Pair with the computer a link names: a new one is added, one already paired takes the link's invite. Its id; null when the link does not parse. */
-	pair(link: PairingLink): string | null;
+	/** Pair with the computer a link names: a new one is added, one already paired takes the link's invite. `fresh` marks it as a fresh VM. Its id; null when the link does not parse. */
+	pair(link: PairingLink, fresh?: FreshComputer): string | null;
 	/**
 	 * Take a computer off this device: this device is revoked on the computer when it answers (the computer stops
 	 * listing it among its devices), then the pairing and what this device kept for it are dropped. Resolves with the
@@ -176,8 +180,8 @@ export function useComputers(): ComputersControl {
 	}, [store]);
 
 	const pair = useCallback(
-		(link: PairingLink): string | null => {
-			const added = pairComputer(link);
+		(link: PairingLink, fresh?: FreshComputer): string | null => {
+			const added = pairComputer(link, fresh);
 			if (added === null) return null;
 			store.sync(added.list);
 			return added.id;

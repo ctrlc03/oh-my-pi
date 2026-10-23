@@ -4,6 +4,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
 	type GuestProvisionOptions,
+	guestCloneSystemScript,
+	guestCloneUserScript,
+	guestDoneWatcherScript,
+	guestDoneWatcherUnit,
 	guestGitProxyConfig,
 	guestSystemScript,
 	guestUserScript,
@@ -88,6 +92,86 @@ describe("guest provisioning scripts", () => {
 		} finally {
 			fs.rmSync(home, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("fresh VM identity scripts", () => {
+	const clone = { name: "base-1", providers: ["anthropic"] };
+
+	test("are valid bash", () => {
+		expect(bashSyntaxError(guestCloneSystemScript(clone))).toBe("");
+		expect(bashSyntaxError(guestCloneUserScript(clone))).toBe("");
+	});
+
+	test("the system part names the host after the clone and makes a new machine id", () => {
+		const script = guestCloneSystemScript(clone);
+		expect(script).toContain("hostnamectl set-hostname 'vm-base-1'");
+		expect(script).toContain("/etc/machine-id");
+	});
+
+	test("the user part drops the template's companion identity but keeps the disk-guard limit", () => {
+		const script = guestCloneUserScript(clone);
+		expect(script).toContain("systemctl --user stop omp-collab-companion.service");
+		expect(script).toContain("collab-companion*' ! -name collab-companion-disk.json");
+		for (const gone of ["agent/sessions", "agent/worktrees", ".omp/install-id"]) expect(script).toContain(gone);
+		expect(script).toContain("anthropic");
+		expect(script.indexOf("rm -rf ~/.omp/agent/sessions")).toBeLessThan(script.indexOf("start omp-collab-companion"));
+	});
+
+	test("the done-watcher is valid POSIX sh and posts to the shim", () => {
+		const script = guestDoneWatcherScript();
+		expect(Bun.spawnSync(["sh", "-n"], { stdin: new Blob([script]) }).exitCode).toBe(0);
+		expect(script).toContain("curl -fsS -X POST http://127.0.0.1:4000/vm/done");
+		expect(script).toContain("tmux ls -F '#{session_name}'");
+		expect(guestDoneWatcherUnit()).toContain("ExecStart=%h/.omp-vm/done-watcher.sh");
+	});
+});
+
+describe("done-watcher behaviour", () => {
+	/** Runs the watcher against a fake clock, tmux, sleep and curl; returns the uptime at which it called /vm/done (null: never). */
+	function run(opts: { startUptime: number; sessionUntil: number }): number | null {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vm-watch-"));
+		try {
+			const stub = (name: string, body: string) => {
+				fs.writeFileSync(path.join(dir, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+			};
+			fs.writeFileSync(path.join(dir, "uptime"), String(opts.startUptime));
+			fs.writeFileSync(path.join(dir, "session_until"), String(opts.sessionUntil));
+			// Each sleep advances the clock by 100 s (fewer processes than the real 10 s); the loop ends once curl ran or the clock passes 4000 s.
+			stub(
+				"sleep",
+				`[ -e "$D/called" ] && exit 1\nup=$(cat "$D/uptime"); [ "$up" -gt 4000 ] && exit 1\necho $((up + 100)) > "$D/uptime"`,
+			);
+			// A companion session (omp-<8 hex>) exists until `session_until`; a session of the user's is always there.
+			stub(
+				"tmux",
+				`if [ "$(cat "$D/uptime")" -lt "$(cat "$D/session_until")" ]; then echo omp-deadbeef; fi\necho notes`,
+			);
+			stub("curl", `cat "$D/uptime" > "$D/called"`);
+			const script = guestDoneWatcherScript().replace("/proc/uptime", '"$D/uptime"');
+			const result = Bun.spawnSync(["sh", "-c", script], {
+				env: { PATH: `${dir}:/usr/bin:/bin`, D: dir },
+				timeout: 20_000,
+			});
+			expect(result.exitCode).toBe(0);
+			const called = path.join(dir, "called");
+			return fs.existsSync(called) ? Number(fs.readFileSync(called, "utf8")) : null;
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	}
+
+	test("asks the host to delete the VM two minutes after its session ended", () => {
+		// The session runs until uptime 300; the first poll without it is at 300, and 120 s of idleness is reached at 500.
+		expect(run({ startUptime: 100, sessionUntil: 300 })).toBe(500);
+	});
+
+	test("asks after thirty minutes of uptime when no session ever started", () => {
+		expect(run({ startUptime: 100, sessionUntil: 0 })).toBe(1800);
+	});
+
+	test("never asks while a session exists", () => {
+		expect(run({ startUptime: 100, sessionUntil: 1_000_000 })).toBeNull();
 	});
 });
 

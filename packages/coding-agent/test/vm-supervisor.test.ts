@@ -8,6 +8,7 @@ import {
 	vmDir,
 	vmEgressSocket,
 	vmHostSocket,
+	vmRecordPath,
 } from "@oh-my-pi/pi-coding-agent/vm/paths";
 import { listVmRecords, removeVmDir, writeVmRecord } from "@oh-my-pi/pi-coding-agent/vm/store";
 import {
@@ -154,5 +155,110 @@ describe("vm supervisor", () => {
 		await handle.close();
 		expect(fs.existsSync(supervisorEndpointPath(root))).toBe(false);
 		expect(readLiveSupervisor(root)).toBeNull();
+	});
+});
+
+describe("fresh VMs in the supervisor", () => {
+	const FUTURE = Date.now() + 60 * 60_000;
+
+	function fresh(name: string, extra: Partial<VmRecord> = {}): VmRecord {
+		return { ...record(name), fresh: { from: "base", expiresAt: FUTURE }, ...extra };
+	}
+
+	/** A supervisor whose deletes are recorded and done as `omp vm delete` would (the directory goes). */
+	async function startRecording(root: string, gate?: Promise<void>): Promise<string[]> {
+		const removed: string[] = [];
+		handles.push(
+			await startVmSupervisor({
+				root,
+				log: () => {},
+				remove: async r => {
+					removed.push(r.name);
+					await gate;
+					await removeVmDir(r.name, root);
+				},
+			}),
+		);
+		return removed;
+	}
+
+	function post(root: string, name: string): Promise<Response> {
+		return fetch("http://vm/vm/done", { method: "POST", unix: vmHostSocket(name, root) });
+	}
+
+	/** Polls until `condition` holds (a scan takes up to two seconds). */
+	async function until(condition: () => boolean | Promise<boolean>): Promise<void> {
+		for (let i = 0; i < 100 && !(await condition()); i++) await Bun.sleep(50);
+	}
+
+	const names = async (root: string): Promise<string[]> => (await listVmRecords(root)).map(r => r.name);
+
+	test("POST /vm/done deletes a fresh VM, and its socket goes away", async () => {
+		const root = tempRoot();
+		await writeVmRecord(fresh("f1"), root);
+		await writeVmRecord(fresh("f2"), root);
+		const removed = await startRecording(root);
+		expect((await post(root, "f1")).status).toBe(202);
+		// A VM can only end itself: f2 is untouched.
+		expect(removed).toEqual(["f1"]);
+		await until(async () => (await names(root)).length === 1);
+		expect(await names(root)).toEqual(["f2"]);
+		const socket = vmHostSocket("f1", root);
+		await until(
+			async () =>
+				await get(socket, "/healthz").then(
+					() => false,
+					() => true,
+				),
+		);
+		await expect(get(socket, "/healthz")).rejects.toThrow();
+		expect((await get(vmHostSocket("f2", root), "/healthz")).status).toBe(200);
+	});
+
+	test("POST /vm/done is a 404 on a VM that is not fresh, and deletes nothing", async () => {
+		const root = tempRoot();
+		await writeVmRecord(record("shared"), root);
+		await writeVmRecord({ ...record("tpl"), template: true }, root);
+		const removed = await startRecording(root);
+		expect((await post(root, "shared")).status).toBe(404);
+		expect((await post(root, "tpl")).status).toBe(404);
+		expect(removed).toEqual([]);
+		expect(await names(root)).toEqual(["shared", "tpl"]);
+	});
+
+	test("a fresh VM still being created is not deleted by /vm/done", async () => {
+		const root = tempRoot();
+		await writeVmRecord(fresh("f1", { phase: "creating" }), root);
+		const removed = await startRecording(root);
+		expect((await post(root, "f1")).status).toBe(409);
+		expect(removed).toEqual([]);
+	});
+
+	test("a repeated /vm/done while the delete runs deletes once", async () => {
+		const root = tempRoot();
+		await writeVmRecord(fresh("f1"), root);
+		const release = Promise.withResolvers<void>();
+		const removed = await startRecording(root, release.promise);
+		await post(root, "f1");
+		await post(root, "f1");
+		expect(removed).toEqual(["f1"]);
+		release.resolve();
+	});
+
+	test("a scan sweeps fresh VMs past their time and failed ones nobody used", async () => {
+		const root = tempRoot();
+		await writeVmRecord(fresh("old", { fresh: { from: "base", expiresAt: Date.now() - 1 } }), root);
+		await writeVmRecord(fresh("bad", { phase: "failed" }), root);
+		await writeVmRecord(fresh("badnew", { phase: "failed" }), root);
+		await writeVmRecord(fresh("busy", { phase: "creating" }), root);
+		await writeVmRecord({ ...record("keep"), phase: "failed" }, root);
+		// `bad` and `keep` failed twenty minutes ago.
+		const longAgo = new Date(Date.now() - 20 * 60_000);
+		fs.utimesSync(vmRecordPath("bad", root), longAgo, longAgo);
+		fs.utimesSync(vmRecordPath("keep", root), longAgo, longAgo);
+		const removed = await startRecording(root);
+		expect(removed.sort()).toEqual(["bad", "old"]);
+		await until(async () => (await names(root)).length === 3);
+		expect(await names(root)).toEqual(["badnew", "busy", "keep"]);
 	});
 });

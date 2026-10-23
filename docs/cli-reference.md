@@ -294,7 +294,7 @@ Run `omp <command> --help` for each command's own flags and examples.
 | `token` | Get the API key or OAuth token for a provider. | [secrets](./secrets.md) |
 | `toks` | Count file or text tokens with the embedded offline tokenizers. | |
 | `ttsr` | Inspect and test Time-Traveling Stream Rules (TTSR). (Covers the CLI command; the [TTSR feature](./ttsr-injection-lifecycle.md) is documented separately.) | |
-| `vm` | Per-repository Linux VMs that pair with your devices as their own computers: `init`, `github setup\|status\|protect`, `create`, `list`, `start`, `stop`, `shell`, `pair`, `reset`, `delete`, `logs`, `serve` (`--json` for scripts and the companion). Model calls and GitHub access go through the host, which adds the credentials; no credential enters the VM. | [VM sessions](./vm-sessions.md) |
+| `vm` | Per-repository Linux VMs that pair with your devices as their own computers: `init`, `github setup\|status\|protect`, `create` (`--template` makes a stopped template), `clone <template> --name <name>` (a throwaway fresh VM, deleted when its session ends), `list`, `start`, `stop`, `shell`, `pair`, `reset`, `delete`, `logs`, `serve` (`--json` for scripts and the companion). Model calls and GitHub access go through the host, which adds the credentials; no credential enters the VM. | [VM sessions](./vm-sessions.md) |
 | `worktree`, `wt` | Add, list, or clear git worktrees; uses clone-first behavior when enabled. | |
 | `search`, `q`, `web-search` | Test web search providers from the CLI. | [web_search tool](./tools/web_search.md) |
 

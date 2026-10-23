@@ -259,9 +259,11 @@ describe("installation tokens", () => {
 		const { fetch: fetchFn, calls } = fakeFetch(handler, call =>
 			call.method === "DELETE" ? new Response(null, { status: 204 }) : undefined,
 		);
-		const source = tokens(fetchFn);
+		const logs: string[] = [];
+		const source = tokens(fetchFn, { log: m => logs.push(m) });
 		const first = await source.get("vm-a", ["acme/api"]);
 		await source.revoke("vm-a");
+		expect(logs).toEqual(["GitHub token for vm-a revoked"]);
 		const del = calls.find(c => c.method === "DELETE");
 		expect(del?.url).toBe("https://api.github.com/installation/token");
 		expect(del?.auth).toBe(`Bearer ${first.token}`);

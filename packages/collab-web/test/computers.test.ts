@@ -152,6 +152,31 @@ describe("computers storage", () => {
 		writeJson("omp.collab.computers", [{ link: LAPTOP }, "garbage", { link: "nope" }, { link: LAPTOP }, LAPTOP]);
 		expect(loadComputers()).toEqual([{ id: LAPTOP_ID, link: LAPTOP }]);
 	});
+
+	it("remembers that a computer is a fresh VM through pairing again and a connection's own updates", () => {
+		const fresh = { hostComputerId: MOON_ID, name: "web-1a2b" };
+		expect(pairComputer({ link: LAPTOP, invite: "inv" }, fresh)?.list[0]).toEqual({
+			id: LAPTOP_ID,
+			link: LAPTOP,
+			invite: "inv",
+			fresh,
+		});
+		rememberPairing(LAPTOP_ID, { link: LAPTOP, device: { id: "d", token: "t" }, machine: "vm-web-1a2b" });
+		expect(loadComputers()[0]).toEqual({
+			id: LAPTOP_ID,
+			link: LAPTOP,
+			device: { id: "d", token: "t" },
+			machine: "vm-web-1a2b",
+			fresh,
+		});
+		pairComputer({ link: LAPTOP });
+		expect(loadComputers()[0]?.fresh).toEqual(fresh);
+	});
+
+	it("drops a fresh mark that is not a host and a name", () => {
+		writeJson("omp.collab.computers", [{ link: LAPTOP, fresh: { hostComputerId: MOON_ID } }]);
+		expect(loadComputers()).toEqual([{ id: LAPTOP_ID, link: LAPTOP }]);
+	});
 });
 
 describe("addComputer", () => {

@@ -18,7 +18,7 @@ export default class Vm extends Command {
 	static args = {
 		action: Args.string({ description: "Sub-command", required: false, options: [...VM_ACTIONS] }),
 		rest: Args.string({
-			description: "VM name (github: setup, status, or protect <owner/repo>)",
+			description: "VM name (clone: the template; github: setup, status, or protect <owner/repo>)",
 			required: false,
 			multiple: true,
 		}),
@@ -52,6 +52,10 @@ export default class Vm extends Command {
 		key: Flags.string({ description: "Private key file of that App (github setup --app-id)" }),
 		yes: Flags.boolean({ description: "Do not ask for confirmation (github protect)" }),
 		"idle-exit": Flags.boolean({ description: "Stop after 5 minutes without any VM (serve)" }),
+		template: Flags.boolean({
+			description: "Provision a template: kept stopped and never paired; fresh VMs are cloned from it (create)",
+		}),
+		name: Flags.string({ description: "Name of the fresh VM cloned from the template (clone)" }),
 	};
 
 	static examples = [
@@ -59,6 +63,8 @@ export default class Vm extends Command {
 		"# Create the GitHub App VMs push with (once per computer)\n  omp vm github setup",
 		"# A VM for one repository, paired as a new computer\n  omp vm create api --repo acme/api",
 		"# Bigger, internet limited to an allowlist, with a daily budget\n  omp vm create web --repo acme/web --cpus 8 --memory 16 --network allowlist --daily-cost 20",
+		"# A template to start fresh VMs from: provisioned once, kept stopped, never paired\n  omp vm create base --repo acme/api --template",
+		"# A throwaway VM for one session, deleted when the session ends\n  omp vm clone base --name base-1",
 		"# Lifecycle\n  omp vm list\n  omp vm stop api\n  omp vm start api\n  omp vm reset api\n  omp vm delete api",
 		"# A shell inside the VM\n  omp vm shell api",
 		"# A fresh pairing link for another device\n  omp vm pair api",
@@ -88,6 +94,8 @@ export default class Vm extends Command {
 			key: flags.key,
 			yes: flags.yes,
 			idleExit: flags["idle-exit"],
+			template: flags.template,
+			name: flags.name,
 		});
 	}
 }

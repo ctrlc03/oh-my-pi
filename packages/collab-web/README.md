@@ -24,6 +24,8 @@ To try several computers offline, start two mock companions on different ports a
 
 To try the Personal agent offline, add `--personal fresh` (advertised, not set up: Settings → Personal agent → *Set up*) or `--personal enabled` (set up, with sample memories, About you, proposals, digests, an inbox and events, and a Personal session in the sidebar) to `bun scripts/mock-companion.ts`; without it the mock advertises and answers nothing of the Personal agent. `--personal-login missing` (default `ready`) leaves the profile without a login: the agent stays stopped and Settings shows the sign-in command until you `touch <dir>/personal-login-ready`, which stands for running `omp --profile personal login`. The agent is canned (`scripts/mock-personal.ts`, in memory): answering a question makes it "work" for three seconds and reply with an inbox item two seconds in, and every change is pushed to every paired device.
 
+To try virtual machines and *Run in a fresh VM* offline, run `bun scripts/mock-companion.ts --vm on --web http://localhost:3000/` (`--vm on` is the default; `--web` is the app's address, which a clone's pairing link uses): Settings → Computers → Virtual machines lists a canned template, `web-template`, and *Template for fresh VMs* in the New VM form makes more. *Start a session → Run in a fresh VM* clones one; the clone is another mock companion in a child process (its own room and relay port), so it pairs as a separate computer, badged *fresh VM*. Delete its session and the clone goes away within about a minute (its companion exits five seconds after its last session is gone, and the app forgets the computer at its next 60-second check). See [Virtual machines](../../docs/collab.md#virtual-machines).
+
 ## Build & deploy
 
 ```sh

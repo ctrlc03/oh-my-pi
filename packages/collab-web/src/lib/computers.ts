@@ -25,9 +25,17 @@ const LAST_COMPUTER_KEY = "omp.collab.last-computer";
 /** A computer whose companion has not reported a machine name yet. */
 const UNNAMED = "Computer";
 
+/** A computer that is a fresh VM: the computer whose companion made it, and the VM's name there. */
+export interface FreshComputer {
+	hostComputerId: string;
+	name: string;
+}
+
 /** A paired computer as stored: the pairing, under the id of its room. */
 export interface Computer extends Pairing {
 	id: string;
+	/** Set on a fresh VM, so the app can badge it and forget it once the VM is gone from its host. */
+	fresh?: FreshComputer;
 }
 
 /** One computer as the app sees it live: its connection, and what it last reported. */
@@ -39,6 +47,8 @@ export interface ComputerHandle {
 	client: CompanionClient | null;
 	snap: CompanionSnapshot;
 	error: string | null;
+	/** Set on a fresh VM; see {@link Computer.fresh}. */
+	fresh?: FreshComputer;
 }
 
 /** The room id of a pairing link, which names its computer; null when the link does not parse. */
@@ -50,7 +60,7 @@ export function computerIdOf(link: string): string | null {
 function parseComputer(raw: unknown): Computer | null {
 	if (typeof raw === "string") return parseComputer({ link: raw });
 	if (typeof raw !== "object" || raw === null) return null;
-	const { link, invite, device, machine } = raw as Record<string, unknown>;
+	const { link, invite, device, machine, fresh } = raw as Record<string, unknown>;
 	if (typeof link !== "string") return null;
 	const id = computerIdOf(link);
 	if (id === null) return null;
@@ -61,6 +71,10 @@ function parseComputer(raw: unknown): Computer | null {
 		computer.device = { id: creds.id, token: creds.token };
 	}
 	if (typeof machine === "string") computer.machine = machine;
+	const origin = fresh as Partial<FreshComputer> | undefined;
+	if (typeof origin?.hostComputerId === "string" && typeof origin.name === "string") {
+		computer.fresh = { hostComputerId: origin.hostComputerId, name: origin.name };
+	}
 	return computer;
 }
 
@@ -103,15 +117,21 @@ export function saveComputers(list: readonly Computer[]): void {
 
 /**
  * `link` added to the list, or, when its computer is already there, updating that entry. A link with an invite
- * buys new credentials, so the old ones go; a link without one (the room link alone) keeps them.
+ * buys new credentials, so the old ones go; a link without one (the room link alone) keeps them. `fresh` marks a
+ * fresh VM; without it an entry keeps the mark it has.
  */
-export function addComputer(list: readonly Computer[], link: PairingLink): { list: Computer[]; id: string } | null {
+export function addComputer(
+	list: readonly Computer[],
+	link: PairingLink,
+	fresh?: FreshComputer,
+): { list: Computer[]; id: string } | null {
 	const id = computerIdOf(link.link);
 	if (id === null) return null;
 	const at = list.findIndex(computer => computer.id === id);
 	if (at < 0) {
 		const added: Computer = { id, link: link.link };
 		if (link.invite !== undefined) added.invite = link.invite;
+		if (fresh !== undefined) added.fresh = fresh;
 		return { list: [...list, added], id };
 	}
 	const known = list[at]!;
@@ -120,6 +140,8 @@ export function addComputer(list: readonly Computer[], link: PairingLink): { lis
 	else if (known.invite !== undefined) updated.invite = known.invite;
 	if (link.invite === undefined && known.device !== undefined) updated.device = known.device;
 	if (known.machine !== undefined) updated.machine = known.machine;
+	const origin = fresh ?? known.fresh;
+	if (origin !== undefined) updated.fresh = origin;
 	return { list: list.map((computer, i) => (i === at ? updated : computer)), id };
 }
 
@@ -128,8 +150,8 @@ export function removeComputer(list: readonly Computer[], id: string): Computer[
 }
 
 /** Pair with the computer `link` names (reading the list fresh: a connection may have stored credentials since the app read it). */
-export function pairComputer(link: PairingLink): { list: Computer[]; id: string } | null {
-	const added = addComputer(loadComputers(), link);
+export function pairComputer(link: PairingLink, fresh?: FreshComputer): { list: Computer[]; id: string } | null {
+	const added = addComputer(loadComputers(), link, fresh);
 	if (added !== null) saveComputers(added.list);
 	return added;
 }
@@ -144,8 +166,11 @@ export function unpairComputer(id: string): Computer[] {
 /** A connection learned something to keep about its computer (credentials after pairing, the machine name). */
 export function rememberPairing(id: string, pairing: Pairing): void {
 	const list = loadComputers();
-	if (!list.some(computer => computer.id === id)) return;
-	saveComputers(list.map(computer => (computer.id === id ? { ...pairing, id } : computer)));
+	const known = list.find(computer => computer.id === id);
+	if (known === undefined) return;
+	const next: Computer = { ...pairing, id };
+	if (known.fresh !== undefined) next.fresh = known.fresh;
+	saveComputers(list.map(computer => (computer.id === id ? next : computer)));
 }
 
 /** The computer a session last started on, which the next start offers first. */

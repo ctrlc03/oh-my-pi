@@ -25,6 +25,8 @@ export interface VmDraft {
 	network: VmNetworkMode;
 	/** Empty: no limit. */
 	dailyCostUsd: string;
+	/** Build a template for fresh VMs instead of a VM to pair. */
+	template: boolean;
 }
 
 export const EMPTY_VM_DRAFT: VmDraft = {
@@ -35,6 +37,7 @@ export const EMPTY_VM_DRAFT: VmDraft = {
 	diskGiB: String(VM_DEFAULTS.diskGiB),
 	network: VM_DEFAULTS.network,
 	dailyCostUsd: "",
+	template: false,
 };
 
 /** `owner/repo` from what a person pastes: a repository URL, an ssh address, with or without `.git`. */
@@ -67,6 +70,7 @@ export function vmDraftOptions(draft: VmDraft): { options: VmCreateOptions } | {
 		diskGiB: numberOf(draft.diskGiB),
 		network: draft.network,
 		dailyCostUsd: numberOf(draft.dailyCostUsd),
+		...(draft.template ? { template: true } : {}),
 	};
 	const problem = vmCreateProblem(options);
 	return problem === null ? { options } : { problem };
@@ -244,6 +248,20 @@ export function VmCreateForm({
 					Model calls from the VM stop for the rest of the UTC day once their estimated cost reaches this.
 				</span>
 			</label>
+			<label className="sh-start-sandbox">
+				<input
+					type="checkbox"
+					checked={draft.template}
+					onChange={e => edit({ template: e.currentTarget.checked })}
+				/>
+				<span className="sh-start-sandbox-text">
+					<span className="sh-start-sandbox-title">Template for fresh VMs</span>
+					<span className="sh-field-hint">
+						Built once, then kept stopped and never paired. Starting a session in a fresh VM clones it: a
+						throwaway copy with an identity of its own, deleted when the session ends.
+					</span>
+				</span>
+			</label>
 			{disabledReason && (
 				<div className="sh-connect-error" role="alert">
 					{disabledReason}
@@ -270,7 +288,8 @@ export function VmCreateForm({
 					className="sh-btn sh-btn-primary"
 					disabled={busy || !("options" in parsed) || Boolean(disabledReason)}
 				>
-					{busy ? <LoaderCircle size={14} className="sh-spin" /> : <Plus size={14} />} Create VM
+					{busy ? <LoaderCircle size={14} className="sh-spin" /> : <Plus size={14} />}{" "}
+					{draft.template ? "Create template" : "Create VM"}
 				</button>
 			</div>
 		</form>

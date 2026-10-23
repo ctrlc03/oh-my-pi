@@ -50,6 +50,12 @@ export interface VmDriver {
 	create(opts: VmDriverOptions): Promise<void>;
 	/** Boots an existing, stopped instance; resolves once `exec` works. No-op when running. */
 	start(opts: VmDriverOptions): Promise<void>;
+	/**
+	 * Copies the stopped instance `source` into a new instance named `opts.record.name` (copy-on-write where the
+	 * host allows it) and boots it; resolves once `exec` works. The guest boots as a new cloud-init instance (new SSH
+	 * host keys), but it has the source's disk, so the caller must give it the rest of its own identity.
+	 */
+	clone(source: string, opts: VmDriverOptions): Promise<void>;
 	/** Shuts the instance down; no-op when stopped or absent. */
 	stop(name: string): Promise<void>;
 	/** Deletes the instance and its disks; no-op when absent. */

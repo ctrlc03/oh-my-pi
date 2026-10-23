@@ -9,14 +9,31 @@ import {
 	LoaderCircle,
 	Plus,
 	RefreshCw,
+	Server,
 	ShieldAlert,
 	ShieldCheck,
 	X,
 } from "lucide-react";
+import { freshVmName, type VmEntry } from "@oh-my-pi/pi-wire/vm";
 import type { KeyboardEvent, ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { CompanionAgent, CompanionClient, ForeignPermission, RecentFolder } from "../../lib/companion";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import {
+	type CompanionAgent,
+	type CompanionClient,
+	extractPairing,
+	type ForeignPermission,
+	type RecentFolder,
+} from "../../lib/companion";
 import { type ComputerHandle, computerById, saveLastComputer } from "../../lib/computers";
+import {
+	freshFolder,
+	freshLimitReason,
+	type FreshProgress,
+	type FreshStartDeps,
+	runFreshStart,
+	sleepUnlessAborted,
+	usableTemplates,
+} from "../../lib/fresh-vm";
 import { relTime, shortenPath } from "../../lib/format";
 import { setOpenIntent } from "../../lib/inbox";
 import { type Combo, formatCombo, IS_MAC, matchCombo } from "../../lib/shortcuts";
@@ -31,6 +48,7 @@ import {
 	type StartTarget,
 	startOptions,
 } from "../../lib/start-session";
+import { ComputerActionsContext } from "../../lib/use-fresh-computers";
 import { type RequestState, useRequest } from "../../lib/use-request";
 import { useOpenElsewhere } from "./OpenElsewhere";
 import { QuickReplies } from "./QuickReplies";
@@ -39,6 +57,7 @@ import { AgentChip } from "./AgentChip";
 import { AgentPicker } from "./AgentPicker";
 import { AgentsSheet } from "./AgentsSheet";
 import { ComputerPicker, useStartComputer } from "./ComputerPicker";
+import { chosenTemplate, FreshVmForm, FreshVmProgress } from "./FreshVmForm";
 import { FolderBrowser } from "./FolderBrowser";
 import { FanoutCompareSheet, FanoutPicker } from "./FanoutSheet";
 import { Sheet } from "./Sheet";
@@ -113,6 +132,22 @@ export function StartSessionSheet({
 		[client, canForeign],
 	);
 	const { state: agentsState, reload: reloadAgents } = useRequest(loadAgents);
+	const canVms = computer?.snap.canVms ?? false;
+	const loadVms = useCallback(
+		() => (canVms && client !== null ? client.vmList().then(reply => reply.vms) : Promise.resolve<VmEntry[]>([])),
+		[client, canVms],
+	);
+	const { state: vmsState, reload: reloadVms } = useRequest(loadVms);
+	const vmList = vmsState.status === "ready" ? vmsState.value : [];
+	const templates = usableTemplates(vmList);
+	const computerActions = useContext(ComputerActionsContext);
+	/** Run in a fresh VM: the form is showing, with its template and repository picks. */
+	const [fresh, setFresh] = useState(false);
+	const [freshTemplate, setFreshTemplate] = useState("");
+	const [freshRepo, setFreshRepo] = useState("");
+	/** What the fresh VM on its way is doing; null when none is. */
+	const [freshRun, setFreshRun] = useState<(FreshProgress & { template: string }) | null>(null);
+	const freshAbort = useRef<AbortController | null>(null);
 	const [agent, setAgent] = useState<string | null>(null);
 	const [model, setModel] = useState("");
 	const [permission, setPermission] = useState<ForeignPermission>("supervised");
@@ -134,6 +169,9 @@ export function StartSessionSheet({
 	const runKey = useRef(0);
 	const openElsewhere = useOpenElsewhere();
 	const closedRef = useRef(false);
+	// A fresh start outlives this render, and opening needs the app's latest computers (it holds the new one).
+	const onOpenRef = useRef(onOpen);
+	onOpenRef.current = onOpen;
 	useEffect(() => {
 		closedRef.current = false;
 		return () => {
@@ -147,6 +185,7 @@ export function StartSessionSheet({
 		shownComputer.current = computerId;
 		setFolder(null);
 		setBrowsing(false);
+		setFresh(false);
 		setAgent(null);
 		setModel("");
 		setFan(false);
@@ -190,6 +229,79 @@ export function StartSessionSheet({
 		model: chosenAgent === null ? "" : model,
 		permission,
 	});
+
+	const freshLimit = freshLimitReason(vmList, where === "your computer" ? "This computer" : where);
+	const freshOffered = canVms && computerActions !== null && templates.length > 0;
+
+	/** Clone the template into a fresh VM, pair with it, start the session there and open it; a failure deletes the VM again. */
+	const startFresh = (): void => {
+		const template = chosenTemplate(templates, freshTemplate);
+		if (template?.home === undefined || computerActions === null) return;
+		const repo = template.repos.includes(freshRepo) ? freshRepo : (template.repos[0] ?? "");
+		const target = newSessionTarget({
+			cwd: freshFolder(template.home, repo),
+			sandboxed: false,
+			highStakes: highStakes && canHighStakes,
+			worktree,
+			branch,
+			prompt,
+			agent: null,
+			model: "",
+			permission,
+		});
+		const first = prompt.trim();
+		const hostId = computer.id;
+		const controller = new AbortController();
+		freshAbort.current?.abort();
+		freshAbort.current = controller;
+		setError(null);
+		setFreshRun({ stage: "cloning", message: "Cloning the VM…", template: template.name });
+		const deps: FreshStartDeps = {
+			vmClone: (from, name) => client.vmClone(from, name),
+			vmList: async () => (await client.vmList()).vms,
+			vmDelete: name => client.vmAction(name, "delete"),
+			pair: (url, marked) => {
+				const link = extractPairing(url);
+				return link === null ? null : computerActions.pair(link, marked);
+			},
+			phaseOf: id => computerActions.find(id)?.snap.phase ?? null,
+			startSession: async id => {
+				const vmClient = computerActions.find(id)?.client;
+				if (!vmClient) throw new Error("The new VM's computer is not connected.");
+				return await vmClient.startSession(target.cwd, startOptions(target));
+			},
+			forget: id => computerActions.remove(id),
+			now: Date.now,
+			sleep: sleepUnlessAborted,
+		};
+		const params = { template: template.name, name: freshVmName(template.name), hostComputerId: hostId };
+		void runFreshStart(deps, params, controller.signal, progress => {
+			if (!closedRef.current) setFreshRun({ ...progress, template: template.name });
+		}).then(async result => {
+			if (freshAbort.current === controller) freshAbort.current = null;
+			if (result.ok) {
+				saveLastComputer(hostId);
+				// Recorded even if the sheet was closed meanwhile: opening the session later still sends it.
+				if (first) setOpenIntent(result.computerId, result.instanceId, { prompt: first });
+				if (closedRef.current) return;
+				try {
+					await onOpenRef.current(result.computerId, result.instanceId);
+				} catch (err) {
+					setFreshRun(null);
+					setError(err instanceof Error ? err.message : String(err));
+				}
+				return;
+			}
+			if (!closedRef.current) {
+				setFreshRun(null);
+				if (!result.cancelled) setError(result.message);
+			}
+			void result.cleanup.then(note => {
+				if (note !== undefined && !closedRef.current) setError(prev => (prev === null ? note : `${prev} ${note}`));
+			});
+			reloadVms();
+		});
+	};
 
 	const start = async (target: StartTarget, force = false): Promise<void> => {
 		setStarting(target);
@@ -285,18 +397,24 @@ export function StartSessionSheet({
 	return (
 		<Sheet label="Start a session" onClose={onClose}>
 			<div className="sh-sheet-head">
-				{(folder !== null || browsing) && starting === null ? (
+				{(folder !== null || browsing || fresh) && starting === null && freshRun === null ? (
 					<button
 						type="button"
 						className="sh-btn sh-btn-icon"
-						onClick={() => (folder !== null ? setFolder(null) : setBrowsing(false))}
+						onClick={() => (folder !== null ? setFolder(null) : fresh ? setFresh(false) : setBrowsing(false))}
 						aria-label="Back"
 					>
 						<ChevronLeft size={16} />
 					</button>
 				) : null}
 				<div className="sh-sheet-title sh-start-title">
-					{folder !== null ? folderLabel(folder.cwd) : browsing ? "Choose a folder" : "Start a session"}
+					{folder !== null
+						? folderLabel(folder.cwd)
+						: browsing
+							? "Choose a folder"
+							: fresh
+								? "Run in a fresh VM"
+								: "Start a session"}
 				</div>
 				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 					<X size={16} />
@@ -304,7 +422,7 @@ export function StartSessionSheet({
 			</div>
 			{openElsewhere.notice}
 			{error && <div className="sh-connect-error">{error}</div>}
-			{folder === null && starting === null && !browsing && (
+			{folder === null && starting === null && !browsing && !fresh && (
 				<ComputerPicker computers={computers} feature="start" value={computerId} onChange={setComputerId} />
 			)}
 			{starting === null && runs.length > 0 && (
@@ -337,7 +455,35 @@ export function StartSessionSheet({
 					))}
 				</div>
 			)}
-			{starting !== null ? (
+			{freshRun !== null ? (
+				<FreshVmProgress
+					progress={freshRun}
+					template={freshRun.template}
+					onCancel={() => freshAbort.current?.abort()}
+				/>
+			) : fresh && freshOffered && folder === null && !browsing ? (
+				<FreshVmForm
+					templates={templates}
+					template={freshTemplate}
+					onTemplate={name => {
+						setFreshTemplate(name);
+						setFreshRepo("");
+					}}
+					repo={freshRepo}
+					onRepo={setFreshRepo}
+					canHighStakes={canHighStakes}
+					highStakes={highStakes}
+					onHighStakes={setHighStakes}
+					worktree={worktree}
+					onWorktree={setWorktree}
+					branch={branch}
+					onBranch={setBranch}
+					prompt={prompt}
+					onPrompt={setPrompt}
+					disabledReason={freshLimit}
+					onStart={startFresh}
+				/>
+			) : starting !== null ? (
 				<div className="sh-start-progress" role="status">
 					<LoaderCircle size={22} className="sh-spin" />
 					<div className="sh-start-progress-title">
@@ -363,6 +509,18 @@ export function StartSessionSheet({
 					state={state}
 					canScratch={canScratch}
 					onPick={setFolder}
+					fresh={
+						freshOffered
+							? {
+									onPick: () => {
+										reloadVms();
+										setFresh(true);
+									},
+									disabledReason: freshLimit,
+									template: chosenTemplate(templates, freshTemplate)?.name ?? "",
+								}
+							: undefined
+					}
 					onBrowse={canBrowseFolders ? () => setBrowsing(true) : undefined}
 					onRetry={reload}
 				/>
@@ -562,6 +720,7 @@ export function FolderList({
 	state,
 	canScratch,
 	onPick,
+	fresh,
 	onBrowse,
 	onRetry,
 }: {
@@ -569,14 +728,37 @@ export function FolderList({
 	/** The companion can start a session without a project. */
 	canScratch: boolean;
 	onPick(folder: RecentFolder): void;
+	/** Run in a fresh VM of a template the computer holds; `disabledReason` says why it cannot be started now. Absent: not offered. */
+	fresh?: { onPick(): void; disabledReason: string | null; template: string };
 	/** Open the folder browser; absent when the companion cannot list its folders. */
 	onBrowse?(): void;
 	onRetry(): void;
 }): ReactNode {
 	const other =
-		canScratch || onBrowse !== undefined ? (
+		canScratch || onBrowse !== undefined || fresh !== undefined ? (
 			<section className="sh-switch-section" aria-label="Other places">
 				<ul className="sh-recents-list">
+					{fresh !== undefined && (
+						<li className="sh-recent">
+							<button
+								type="button"
+								className="sh-recent-join"
+								onClick={fresh.onPick}
+								disabled={fresh.disabledReason !== null}
+							>
+								<span className="sh-recent-title">
+									<Server size={14} />
+									<span className="sh-recent-name">Run in a fresh VM</span>
+								</span>
+								<span className="sh-recent-meta">
+									<span className="sh-recent-cwd">
+										{fresh.disabledReason ??
+											`A throwaway copy of ${fresh.template}, deleted when the session ends`}
+									</span>
+								</span>
+							</button>
+						</li>
+					)}
 					{canScratch && (
 						<li className="sh-recent">
 							<button type="button" className="sh-recent-join" onClick={() => onPick(NO_PROJECT_FOLDER)}>

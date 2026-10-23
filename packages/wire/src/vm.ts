@@ -35,7 +35,7 @@ export interface VmReadiness {
 }
 
 /** What a VM's job (a long action) is doing now. */
-export type VmJobAction = "create" | "start" | "stop" | "reset" | "delete";
+export type VmJobAction = "create" | "clone" | "start" | "stop" | "reset" | "delete";
 
 export interface VmBusy {
 	action: VmJobAction;
@@ -67,6 +67,12 @@ export interface VmEntry {
 	 * next successful `vm-pair` or ten minutes, whichever is first.
 	 */
 	pairUrl?: string;
+	/** Provisioned once, kept stopped and never paired: fresh VMs are cloned from it. */
+	template?: true;
+	/** A fresh VM: cloned from `from` for one session, deleted when that session ends or at `expiresAt` (epoch ms). */
+	fresh?: { from: string; expiresAt: number };
+	/** The guest user's home directory; the repositories are under `<home>/src/<owner>/<repo>`. */
+	home?: string;
 }
 
 /** VM names are also the driver's instance names. */
@@ -81,6 +87,14 @@ export const VM_MAX_DAILY_COST_USD = 100_000;
 export const VM_DEFAULTS = { cpus: 4, memoryGiB: 8, diskGiB: 60, network: "open" } as const;
 /** How long `pairUrl` stays on a VM entry. */
 export const VM_PAIR_URL_TTL_MS = 10 * 60_000;
+/** At most this many fresh VMs exist at once on a computer. */
+export const VM_MAX_FRESH = 3;
+
+/** A name for a fresh VM cloned from `template`: the template's name (cut to fit) and four random hex digits. */
+export function freshVmName(template: string): string {
+	const suffix = Array.from(crypto.getRandomValues(new Uint8Array(2)), b => b.toString(16).padStart(2, "0")).join("");
+	return `${template.slice(0, 26).replace(/-+$/, "")}-${suffix}`;
+}
 
 export function isVmName(value: unknown): value is string {
 	return typeof value === "string" && VM_NAME_PATTERN.test(value);
@@ -100,6 +114,8 @@ export interface VmCreateOptions {
 	network?: VmNetworkMode;
 	/** Estimated model cost allowed per UTC day. */
 	dailyCostUsd?: number;
+	/** Build a template for fresh VMs: provisioned, then stopped, never paired. */
+	template?: boolean;
 }
 
 /** The first thing wrong with the options, in words for a person; null when they are acceptable. */
@@ -133,18 +149,22 @@ export function vmCreateProblem(options: VmCreateOptions): string | null {
 export type VmAction = "start" | "stop" | "reset" | "delete";
 
 /**
- * `vm-list`: the VMs and whether one can be created. `vm-create` and `vm-action` start a job and answer `accepted` at
- * once; progress shows as `busy` on the VM in `vm-list`, a failure as its `error`. A VM has one job at a time: a second
- * action on a busy VM is refused. `vm-pair` mints a fresh pairing link for the VM's companion.
+ * `vm-list`: the VMs and whether one can be created. `vm-create`, `vm-clone` and `vm-action` start a job and answer
+ * `accepted` at once; progress shows as `busy` on the VM in `vm-list`, a failure as its `error`. A VM has one job at a
+ * time: a second action on a busy VM is refused. `vm-pair` mints a fresh pairing link for the VM's companion.
+ * `vm-clone` makes a fresh VM named `name` (see `freshVmName`) from the stopped template `template`; its `pairUrl`
+ * shows on the new entry when the job is done.
  */
 export type VmRequest =
 	| { t: "vm-list"; reqId: number }
 	| ({ t: "vm-create"; reqId: number } & VmCreateOptions)
+	| { t: "vm-clone"; reqId: number; template: string; name: string }
 	| { t: "vm-action"; reqId: number; name: string; action: VmAction }
 	| { t: "vm-pair"; reqId: number; name: string };
 
 export type VmReply =
 	| { t: "vm-list"; reqId: number; ready: VmReadiness; vms: VmEntry[] }
 	| { t: "vm-create"; reqId: number; accepted: true }
+	| { t: "vm-clone"; reqId: number; accepted: true }
 	| { t: "vm-action"; reqId: number; accepted: true }
 	| { t: "vm-pair"; reqId: number; url: string; expiresAt: number };

@@ -7,6 +7,7 @@ import {
 	loadLastComputer,
 	unavailableReason,
 } from "../../lib/computers";
+import { FreshVmBadge } from "./FreshVmBadge";
 import "./computer-picker.css";
 
 export interface ComputerPickerProps {
@@ -57,6 +58,7 @@ export function ComputerPicker({
 								aria-hidden="true"
 							/>
 							{computer.name}
+							{computer.fresh !== undefined && <FreshVmBadge />}
 						</button>
 					);
 				})}

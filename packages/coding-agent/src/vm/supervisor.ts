@@ -33,8 +33,18 @@ import { usesEgressProxy } from "./drivers";
 import { DEFAULT_ALLOW_HOSTS, type EgressPolicy, startEgressProxy } from "./egress-proxy";
 import { InstallationTokens, loadGithubApp, saveGithubApp } from "./github";
 import { createGithubProxy, isGithubProxyRequest } from "./github-proxy";
-import { getVmRoot, supervisorEndpointPath, vmEgressSocket, vmGithubLog, vmHostSocket, vmUsagePath } from "./paths";
-import { listVmRecords, writeFileAtomic } from "./store";
+import { freshSweep } from "./fresh";
+import {
+	getVmRoot,
+	supervisorEndpointPath,
+	vmEgressSocket,
+	vmGithubLog,
+	vmHostSocket,
+	vmRecordPath,
+	vmUsagePath,
+} from "./paths";
+import { deleteVm } from "./lifecycle";
+import { listVmRecords, readVmRecord, writeFileAtomic } from "./store";
 import type { VmRecord } from "./types";
 
 const RESCAN_MS = 2_000;
@@ -266,10 +276,16 @@ export interface VmSupervisorHandle {
  * Starts the supervisor. Throws {@link SupervisorRunningError} when another one holds the lock on `supervisor.json`.
  */
 export async function startVmSupervisor(
-	opts: { root?: string; log?: (message: string) => void } = {},
+	opts: {
+		root?: string;
+		log?: (message: string) => void;
+		/** Deletes a fresh VM's instance and directory; defaults to what `omp vm delete` does. Tests replace it. */
+		remove?: (record: VmRecord) => Promise<void>;
+	} = {},
 ): Promise<VmSupervisorHandle> {
 	const root = opts.root ?? getVmRoot();
 	const log = opts.log ?? ((message: string) => logger.debug(message));
+	const remove = opts.remove ?? ((record: VmRecord) => deleteVm(record, root));
 	// Held until close() or exit: the kernel drops it with the process, so a crash never leaves a stale owner.
 	const lock = tryAcquireLockIn(root);
 	if (!lock) throw new SupervisorRunningError(readLiveSupervisor(root)?.pid ?? 0);
@@ -314,7 +330,44 @@ export async function startVmSupervisor(
 		if (!entry) return new Response("unknown VM", { status: 404 });
 		if (url.pathname === "/healthz") return new Response("ok");
 		if (isGithubProxyRequest(req)) return github.handle(req, entry.record);
+		if (req.method === "POST" && url.pathname === "/vm/done") return sessionDone(name);
 		return gateway.route(req, name);
+	}
+
+	/** `POST /vm/done`: the guest of a fresh VM says its session is over. Other VMs have no such route. */
+	async function sessionDone(name: string): Promise<Response> {
+		const record = await readVmRecord(name, root);
+		if (!record?.fresh) return new Response("not found", { status: 404 });
+		// A CLI job still owns a VM that is being created.
+		if (record.phase === "creating") return new Response("the VM is still being created", { status: 409 });
+		void deleteFresh(record, "its session ended");
+		return Response.json({ ok: true }, { status: 202 });
+	}
+
+	/** Names being deleted now, so a second trigger (or a scan) does not start a second delete. */
+	const deleting = new Set<string>();
+
+	async function deleteFresh(record: VmRecord, why: string): Promise<void> {
+		if (deleting.has(record.name) || closing) return;
+		deleting.add(record.name);
+		log(`vm ${record.name}: deleting (${why})`);
+		try {
+			await remove(record);
+			log(`vm ${record.name}: deleted`);
+		} catch (err) {
+			log(`vm ${record.name}: delete failed, will retry: ${String(err)}`);
+		} finally {
+			deleting.delete(record.name);
+		}
+	}
+
+	/** When `vm.json` was last written; for a failed VM, when it failed. */
+	async function recordWrittenAt(name: string): Promise<number> {
+		try {
+			return (await fs.promises.stat(vmRecordPath(name, root))).mtimeMs;
+		} catch {
+			return Date.now();
+		}
 	}
 
 	function serveSocket(record: VmRecord): ReturnType<typeof Bun.serve> {
@@ -354,7 +407,14 @@ export async function startVmSupervisor(
 			await retire(name, entry);
 			log(`vm ${name}: removed`);
 		}
+		const now = Date.now();
 		for (const record of records) {
+			// A fresh VM that outlived its limit, or failed and was left alone: delete it, as `omp vm delete` would.
+			const written = record.fresh && record.phase === "failed" ? await recordWrittenAt(record.name) : 0;
+			const sweep = freshSweep(record, now, written);
+			if (sweep) void deleteFresh(record, sweep === "expired" ? "its time is up" : "failed and nobody used it");
+			// Going away: its record stays until the driver has removed the instance.
+			if (deleting.has(record.name)) continue;
 			let entry = served.get(record.name);
 			// Deleted and created again between two scans: a different VM under the same name.
 			if (entry && entry.record.createdAt !== record.createdAt) {

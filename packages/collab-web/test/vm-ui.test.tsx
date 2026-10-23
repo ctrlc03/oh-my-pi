@@ -3,6 +3,9 @@ import type { VmEntry, VmReadiness } from "@oh-my-pi/pi-wire/vm";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AddComputer } from "../src/components/shell/AddComputer";
 import { EMPTY_VM_DRAFT, vmDraftOptions } from "../src/components/shell/VmCreateForm";
+import { FreshVmBadge } from "../src/components/shell/FreshVmBadge";
+import { FreshVmForm, FreshVmProgress } from "../src/components/shell/FreshVmForm";
+import { FolderList } from "../src/components/shell/StartSessionSheet";
 import { VmReadinessNote, VmRow, VmRows, vmActionsFor } from "../src/components/shell/VmSettings";
 import { CompanionClient } from "../src/lib/companion";
 import { generateRoomKey } from "../src/lib/codec";
@@ -168,12 +171,146 @@ describe("VmRows", () => {
 	});
 });
 
+describe("templates and fresh VMs in the VM list", () => {
+	const template = (patch: Partial<VmEntry> = {}) =>
+		vm({ name: "web", template: true, status: "stopped", home: "/home/ubuntu", ...patch });
+
+	it("marks a template, and offers it no Pair even while it runs for maintenance", () => {
+		const stopped = row(template());
+		expect(stopped).toContain("template");
+		expect(stopped).toContain("Template for fresh VMs");
+		expect(stopped).toContain('aria-label="Start web"');
+		const running = row(template({ status: "running" }));
+		expect(running).toContain('aria-label="Stop web"');
+		expect(running).not.toContain('aria-label="Pair web"');
+	});
+
+	it("marks a fresh VM with its template and when it ends, and leaves pairing it to the session start", () => {
+		const html = row(
+			vm({ name: "web-1a2b", fresh: { from: "web", expiresAt: Date.now() + 3 * 3_600_000 + 30_000 } }),
+		);
+		expect(html).toContain("fresh");
+		expect(html).toContain("Fresh VM from web");
+		expect(html).toContain("ends with its session, or in");
+		expect(html).toContain("3h00m");
+		expect(html).not.toContain('aria-label="Pair web-1a2b"');
+		expect(html).toContain('aria-label="Delete web-1a2b"');
+	});
+
+	it("shows what a clone in progress is doing", () => {
+		const html = row(
+			vm({ status: "creating", busy: { action: "clone", step: "boot", message: "Booting the clone…" } }),
+		);
+		expect(html).toContain("Booting the clone…");
+	});
+
+	it("builds a template from the form: --template only when ticked", () => {
+		const draft = { ...EMPTY_VM_DRAFT, name: "web", repos: "acme/web" };
+		expect(vmDraftOptions(draft)).not.toHaveProperty("options.template");
+		expect(vmDraftOptions({ ...draft, template: true })).toHaveProperty("options.template", true);
+	});
+});
+
+describe("Run in a fresh VM", () => {
+	const templates = [
+		vm({ name: "web", template: true, status: "stopped", home: "/home/ubuntu", repos: ["acme/web", "acme/api"] }),
+		vm({ name: "docs", template: true, status: "stopped", home: "/home/dev", repos: ["acme/docs"] }),
+	];
+	const form = (patch: Partial<Parameters<typeof FreshVmForm>[0]> = {}) =>
+		renderToStaticMarkup(
+			<FreshVmForm
+				templates={templates}
+				template="web"
+				onTemplate={noop}
+				repo="acme/api"
+				onRepo={noop}
+				canHighStakes
+				highStakes={false}
+				onHighStakes={noop}
+				worktree={false}
+				onWorktree={noop}
+				branch=""
+				onBranch={noop}
+				prompt=""
+				onPrompt={noop}
+				disabledReason={null}
+				onStart={noop}
+				{...patch}
+			/>,
+		);
+
+	it("picks a template and one of its repositories, and names the folder inside the VM", () => {
+		const html = form();
+		expect(html).toContain('aria-label="Template"');
+		expect(html).toContain('<option value="docs">');
+		expect(html).toContain('<option value="acme/api" selected="">');
+		expect(html).toContain("~/src/acme/api");
+		expect(form({ templates: templates.slice(0, 1) })).not.toContain('aria-label="Template"');
+	});
+
+	it("carries the first prompt, worktree and high stakes over, and has no Sandboxed", () => {
+		const html = form({ prompt: "fix the build", worktree: true });
+		expect(html).toContain("fix the build");
+		expect(html).toContain("New git worktree");
+		expect(html).toContain('aria-label="Worktree branch name"');
+		expect(html).toContain("High stakes");
+		expect(html).not.toContain("Sandboxed");
+		expect(form({ canHighStakes: false })).not.toContain("High stakes");
+	});
+
+	it("disables New session with the reason while the host has the most fresh VMs", () => {
+		const html = form({ disabledReason: "MacBook already runs 3 fresh VMs" });
+		expect(html).toContain("MacBook already runs 3 fresh VMs");
+		expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*New session/);
+		expect(form()).not.toMatch(/<button[^>]*disabled=""[^>]*>.*New session/);
+	});
+
+	it("shows the progress with a Cancel that deletes the half-made VM", () => {
+		const html = renderToStaticMarkup(
+			<FreshVmProgress
+				progress={{ stage: "cloning", message: "Booting the clone…" }}
+				template="web"
+				onCancel={noop}
+			/>,
+		);
+		expect(html).toContain("Starting a fresh VM from web");
+		expect(html).toContain("Booting the clone…");
+		expect(html).toContain("Cancel");
+	});
+
+	it("is a place in the folder list when a template is offered, disabled with the reason at the limit", () => {
+		const list = (fresh: Parameters<typeof FolderList>[0]["fresh"]) =>
+			renderToStaticMarkup(
+				<FolderList
+					state={{ status: "ready", value: [] }}
+					canScratch={false}
+					onPick={noop}
+					fresh={fresh}
+					onRetry={noop}
+				/>,
+			);
+		const offered = list({ onPick: noop, disabledReason: null, template: "web" });
+		expect(offered).toContain("Run in a fresh VM");
+		expect(offered).toContain("A throwaway copy of web");
+		expect(offered).not.toMatch(/<button[^>]*disabled=""[^>]*>.*Run in a fresh VM/);
+		const full = list({ onPick: noop, disabledReason: "3 fresh VMs already run", template: "web" });
+		expect(full).toContain("3 fresh VMs already run");
+		expect(full).toMatch(/<button[^>]*disabled=""[^>]*>.*Run in a fresh VM/);
+		expect(list(undefined)).not.toContain("Run in a fresh VM");
+	});
+
+	it("badges a fresh VM's computer", () => {
+		expect(renderToStaticMarkup(<FreshVmBadge />)).toContain("fresh VM");
+	});
+});
+
 describe("vmActionsFor", () => {
 	it("offers what a status allows", () => {
 		expect(vmActionsFor("running")).toEqual({ start: false, stop: true, pair: true, reset: true });
 		expect(vmActionsFor("stopped")).toEqual({ start: true, stop: false, pair: false, reset: true });
 		expect(vmActionsFor("creating")).toEqual({ start: false, stop: false, pair: false, reset: false });
 		expect(vmActionsFor("failed").reset).toBe(true);
+		expect(vmActionsFor("running", false).pair).toBe(false);
 	});
 });
 

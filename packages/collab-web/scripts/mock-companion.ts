@@ -62,7 +62,11 @@
  * Virtual machines (./mock-vm) are on unless `--vm off` (a companion without `omp vm`: no capability, no Virtual machines group in Settings →
  * Computers, no *New virtual machine*). Two canned VMs; a create runs through a few progress lines, then pairs the new computer through a link
  * to this mock room, and start, stop, reset and delete take a moment. `--vm-github missing` reports the GitHub App as not set up, which shows
- * the `omp vm github setup` hint and refuses creating. Nothing starts a process.
+ * the `omp vm github setup` hint and refuses creating. Nothing starts a process, except for fresh VMs: the canned template `web-template`
+ * (and any template made from the app) can be cloned, and each clone is another mock companion of its own (this script with `--fresh-guest`,
+ * its own room and relay port), paired through the clone's link. Start a session in it, then delete that session (the VM computer's
+ * Delete): once none is left the clone's companion exits, the clone leaves the VM list, and the app forgets the computer. Folders of
+ * the template's repositories are made under `<--dir>/vm-home/src`.
  */
 
 import * as fs from "node:fs/promises";
@@ -99,8 +103,9 @@ import { createMockStakes } from "./mock-stakes";
 import { createMockStart } from "./mock-start";
 import { createMockSettle } from "./mock-settle";
 import { createMockDisk } from "./mock-disk";
-import { createMockVm } from "./mock-vm";
+import { createMockVm, type MockGuest } from "./mock-vm";
 import { createMockDelete } from "./mock-delete";
+import type { VmEntry } from "@oh-my-pi/pi-wire/vm";
 
 const POLL_MS = 3000;
 const argv = Bun.argv.slice(2);
@@ -115,6 +120,8 @@ const webUrl = flag("--web", "http://localhost:3000/");
 const machine = flag("--machine", "");
 const joinedSessionId = flag("--session-id", "");
 const topicMode = argv.includes("--topic");
+/** This mock is the companion inside a fresh VM that another mock cloned: no fixture sessions of its own, and it exits once the session started in it has ended. */
+const freshGuest = argv.includes("--fresh-guest");
 const only = flag("--hosts", "")
 	.split(",")
 	.filter(n => n !== "")
@@ -171,6 +178,7 @@ const idle: CompanionIdleSession[] = [
 		busy: false,
 	},
 ];
+if (freshGuest) idle.length = 0;
 /** cwd → when its pull request finished: the `merged-feature` session settles when the rule is on. */
 const prDone = new Map<string, number>([["/work/merged-feature", now - HOUR / 2]]);
 
@@ -239,12 +247,14 @@ if (deletion !== undefined && only.length === 0 && !orgExisted) await sessionOrg
 
 /** The vendor agents and their sessions: live ones are in `hosts`, ended ones are listed and resumed from here. */
 const foreign = createMockForeign({ hosts });
+/** The room opening any started session joins (a clone's companion gets the same). */
+const sessionLink = flag("--session-link", "");
 /** The folders and model-comparison requests, over a throw-away git repository in the state directory. */
 const fanout = await createMockFanout({
 	dir,
 	hosts,
 	onChange: () => broadcast(),
-	sessionLink: flag("--session-link", "") || undefined,
+	sessionLink: sessionLink || undefined,
 	foreign,
 });
 /** Starting sessions (in the folders, in new worktrees, or without a project) over real folders; `folders` adds the scratch ones. */
@@ -368,10 +378,69 @@ const vmFlag = flag("--vm", "on");
 if (vmFlag !== "on" && vmFlag !== "off") throw new Error("--vm takes on or off");
 const vmGithub = flag("--vm-github", "ready");
 if (vmGithub !== "ready" && vmGithub !== "missing") throw new Error("--vm-github takes ready or missing");
+const GUEST_EMPTY_MS = 5_000;
+const vmHome = path.join(dir, "vm-home");
+
+/** The first `pair a device:` link a clone's mock companion prints; the rest of its output is dropped. */
+async function readPairUrl(stream: ReadableStream<Uint8Array>): Promise<string> {
+	const reader = stream.getReader();
+	const decoder = new TextDecoder();
+	let text = "";
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) throw new Error("The mock VM's companion exited before it was ready.");
+		text += decoder.decode(value, { stream: true });
+		const match = /pair a device: (\S+)/.exec(text);
+		if (match?.[1] === undefined) continue;
+		void (async () => {
+			while (!(await reader.read()).done);
+		})();
+		return match[1];
+	}
+}
+
+/** A clone's companion: this script again, in a room and on a relay port of its own. */
+async function startGuest(clone: VmEntry): Promise<MockGuest> {
+	for (const repo of clone.repos) await fs.mkdir(path.join(vmHome, "src", repo), { recursive: true });
+	const proc = Bun.spawn(
+		[
+			process.execPath,
+			import.meta.path,
+			"--fresh-guest",
+			"--machine",
+			`vm-${clone.name}`,
+			"--hosts",
+			"0",
+			"--vm",
+			"off",
+			"--port",
+			"0",
+			"--dir",
+			path.join(dir, "fresh", clone.name),
+			"--web",
+			webUrl,
+			...(sessionLink === "" ? [] : ["--session-link", sessionLink]),
+		],
+		{ stdin: "ignore", stdout: "pipe", stderr: "inherit" },
+	);
+	try {
+		const pairUrl = await Promise.race([
+			readPairUrl(proc.stdout),
+			Bun.sleep(30_000).then(() => Promise.reject(new Error("The mock VM's companion did not start."))),
+		]);
+		return { pairUrl, exited: proc.exited, stop: () => proc.kill() };
+	} catch (err) {
+		proc.kill();
+		throw err;
+	}
+}
+
 const vm =
 	vmFlag === "on"
 		? createMockVm({
 				github: vmGithub,
+				home: vmHome,
+				guest: startGuest,
 				onChange: () => broadcast(),
 				pairUrl: () =>
 					formatPairingUrl(webUrl, roomLink, encodeBase64Url(crypto.getRandomValues(new Uint8Array(16)))),
@@ -699,18 +768,32 @@ socket.onOpen = () => {
 };
 socket.connect();
 
-const timer = setInterval(() => {
-	void sessionOrg.tick([...hosts, ...idle.map(session => ({ ...session, inputRequired: false }))]);
-	void stakes.tick();
-	broadcast();
-}, POLL_MS);
-
-process.on("SIGINT", () => {
+function stop(): never {
 	clearInterval(timer);
+	vm?.stop();
 	quiz.stop();
 	spar.stop();
 	bakeoff.stop();
 	socket.close();
 	relay.stop();
 	process.exit(0);
-});
+}
+
+/** A fresh VM's companion: the session started in it has come and gone. */
+let guestSessionSeen = false;
+let guestEmptySince = 0;
+const timer = setInterval(() => {
+	void sessionOrg.tick([...hosts, ...idle.map(session => ({ ...session, inputRequired: false }))]);
+	void stakes.tick();
+	broadcast();
+	if (!freshGuest) return;
+	if (hosts.some(h => h.instanceId.startsWith("start-"))) {
+		guestSessionSeen = true;
+		guestEmptySince = 0;
+	} else if (guestSessionSeen) {
+		guestEmptySince ||= Date.now();
+		if (Date.now() - guestEmptySince >= GUEST_EMPTY_MS) stop();
+	}
+}, POLL_MS);
+
+process.on("SIGINT", stop);

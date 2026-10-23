@@ -329,15 +329,18 @@ export class InstallationTokens {
 		await this.#opts.save?.(credentials.config);
 	}
 
-	async #revokeToken(token: string): Promise<void> {
+	/** Whether GitHub accepted the revocation; a failure is logged, never thrown. */
+	async #revokeToken(token: string): Promise<boolean> {
 		try {
 			await githubApi<void>(`${GITHUB_API}/installation/token`, {
 				fetch: this.#fetch(),
 				method: "DELETE",
 				bearer: token,
 			});
+			return true;
 		} catch (error) {
 			this.#opts.log?.(`GitHub token revoke failed: ${error instanceof Error ? error.message : String(error)}`);
+			return false;
 		}
 	}
 
@@ -348,7 +351,7 @@ export class InstallationTokens {
 		const cached = this.#cache.get(key);
 		if (!cached) return;
 		this.#cache.delete(key);
-		await this.#revokeToken(cached.token);
+		if (await this.#revokeToken(cached.token)) this.#opts.log?.(`GitHub token for ${key} revoked`);
 	}
 
 	async revokeAll(): Promise<void> {

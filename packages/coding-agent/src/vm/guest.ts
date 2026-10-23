@@ -233,6 +233,124 @@ echo "omp-vm: provisioning done"
 `;
 }
 
+/** The companion's systemd user unit (`omp companion --install`). */
+const GUEST_COMPANION_UNIT = "omp-collab-companion.service";
+/** A fresh VM asks the host to delete it this long after its last companion-started session ended. */
+export const GUEST_DONE_IDLE_SECONDS = 120;
+/** ... or this long after boot when no session ever started. */
+export const GUEST_DONE_BOOT_SECONDS = 30 * 60;
+const GUEST_DONE_UNIT = "omp-vm-done.service";
+const GUEST_DONE_SCRIPT = ".omp-vm/done-watcher.sh";
+
+/**
+ * The fresh VM's done-watcher (POSIX sh): once a companion-started session (tmux `omp-<8 hex>`) has existed and none
+ * does for {@link GUEST_DONE_IDLE_SECONDS}, or none appeared within {@link GUEST_DONE_BOOT_SECONDS} of boot, it asks the
+ * host to delete this VM (`POST /vm/done` on the shim). It keeps asking until the VM is gone.
+ */
+export function guestDoneWatcherScript(): string {
+	return `#!/bin/sh
+# Written by \`omp vm clone\`: ends this fresh VM when its session is over.
+idle_limit=${GUEST_DONE_IDLE_SECONDS}
+boot_limit=${GUEST_DONE_BOOT_SECONDS}
+seen=0
+idle_since=
+while sleep 10; do
+	up=$(cut -d. -f1 /proc/uptime)
+	if tmux ls -F '#{session_name}' 2>/dev/null | grep -Eq '^omp-[0-9a-f]{8}$'; then
+		seen=1
+		idle_since=
+		continue
+	fi
+	if [ "$seen" = 1 ]; then
+		[ -n "$idle_since" ] || idle_since=$up
+		[ $((up - idle_since)) -ge "$idle_limit" ] || continue
+	else
+		[ "$up" -ge "$boot_limit" ] || continue
+	fi
+	curl -fsS -X POST ${GUEST_SHIM_URL}/vm/done >/dev/null || echo "omp-vm: the host did not accept /vm/done" >&2
+done
+`;
+}
+
+/** systemd user unit that runs {@link guestDoneWatcherScript}. */
+export function guestDoneWatcherUnit(): string {
+	return [
+		"[Unit]",
+		"Description=omp VM: delete this fresh VM when its session ends",
+		"",
+		"[Service]",
+		`ExecStart=%h/${GUEST_DONE_SCRIPT}`,
+		"Restart=always",
+		"RestartSec=5",
+		"",
+		"[Install]",
+		"WantedBy=default.target",
+		"",
+	].join("\n");
+}
+
+export interface GuestCloneOptions {
+	/** The clone's VM name; its hostname is `vm-<name>`. */
+	name: string;
+	/** Providers the host can serve now. */
+	providers: string[];
+}
+
+/** Root part of giving a clone its own identity: hostname, `/etc/hosts` and machine id (cloud-init renewed the SSH host keys). */
+export function guestCloneSystemScript(opts: GuestCloneOptions): string {
+	const hostname = shellQuote(`vm-${opts.name}`);
+	return `set -euo pipefail
+echo "omp-vm: new hostname and machine id"
+hostnamectl set-hostname ${hostname}
+sed -i '/^127\\.0\\.1\\.1[[:space:]]/d' /etc/hosts
+printf '127.0.1.1 %s\\n' ${hostname} >> /etc/hosts
+tr -d - < /proc/sys/kernel/random/uuid > /etc/machine-id
+chmod 0444 /etc/machine-id
+ln -sf /etc/machine-id /var/lib/dbus/machine-id
+`;
+}
+
+/**
+ * User part: drops everything the template's companion made (room, paired devices, invites, sessions, worktrees,
+ * install id), refreshes model config and repositories, installs the done-watcher and starts the companion, which
+ * then creates a room of its own.
+ */
+export function guestCloneUserScript(opts: GuestCloneOptions): string {
+	return `set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+echo "omp-vm: resetting the companion"
+systemctl --user stop ${GUEST_COMPANION_UNIT} || true
+mkdir -p ~/.omp/agent
+find ~/.omp/agent -maxdepth 1 -name 'collab-companion*' ! -name collab-companion-disk.json -exec rm -rf {} +
+rm -rf ~/.omp/agent/sessions ~/.omp/agent/worktrees ~/.omp/install-id
+cat > ~/.omp/agent/models.yml <<'OMP_VM_EOF'
+${guestModelsYaml(opts.providers)}OMP_VM_EOF
+echo "omp-vm: updating repositories"
+for dir in ~/src/*/*/; do
+	[ -d "$dir/.git" ] || continue
+	timeout 120 git -C "$dir" fetch --prune origin || echo "omp-vm: warning: git fetch failed in $dir" >&2
+done
+echo "omp-vm: installing the done-watcher"
+mkdir -p ~/.omp-vm ~/.config/systemd/user
+cat > ~/${GUEST_DONE_SCRIPT} <<'OMP_VM_EOF'
+${guestDoneWatcherScript()}OMP_VM_EOF
+chmod 0755 ~/${GUEST_DONE_SCRIPT}
+cat > ~/.config/systemd/user/${GUEST_DONE_UNIT} <<'OMP_VM_EOF'
+${guestDoneWatcherUnit()}OMP_VM_EOF
+systemctl --user daemon-reload
+systemctl --user enable --now ${GUEST_DONE_UNIT} >/dev/null 2>&1
+echo "omp-vm: starting the companion"
+systemctl --user start ${GUEST_COMPANION_UNIT}
+for _ in $(seq 1 30); do
+	[ -f ~/.omp/agent/collab-companion.json ] && break
+	sleep 1
+done
+[ -f ~/.omp/agent/collab-companion.json ] || { echo "omp-vm: the companion made no room" >&2; exit 1; }
+echo "omp-vm: new identity done"
+`;
+}
+
 /** Free-space limit for the VM companion's disk guard: a tenth of the disk, at least 2 GB. */
 export function guestDiskLimitGb(diskGiB: number): number {
 	return Math.max(2, Math.round(diskGiB / 10));

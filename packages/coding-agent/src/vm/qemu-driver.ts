@@ -145,6 +145,19 @@ export interface CloudInitSpec {
 	instanceId: string;
 }
 
+/** A cloud-init instance id no other instance has: a new one makes cloud-init treat the guest as a new machine. */
+export function newInstanceId(name: string): string {
+	return `vm-${name}-${crypto.randomBytes(4).toString("hex")}`;
+}
+
+/**
+ * The seed for a clone of an instance whose guest already trusts `publicKey`: a new instance id (cloud-init then
+ * regenerates the SSH host keys and applies the new hostname and `/etc/hosts`), everything else as at creation.
+ */
+export function buildCloneCloudInit(name: string, user: string, publicKey: string): CloudInitSpec {
+	return { name, user, publicKey, instanceId: newInstanceId(name) };
+}
+
 /** `meta-data` for the NoCloud seed. */
 export function buildMetaData(spec: CloudInitSpec): string {
 	return `instance-id: ${spec.instanceId}\nlocal-hostname: vm-${spec.name}\n`;
@@ -584,13 +597,23 @@ export function createQemuDriver(opts: { home?: string } = {}): VmDriver {
 		if (result.code !== 0) throw new Error(`qemu failed to start: ${(result.stderr || result.stdout).trim()}`);
 	}
 
-	async function waitForSsh(name: string, dir: string, log: (line: string) => void): Promise<void> {
+	/**
+	 * Waits until `exec` works. `forgetHostKey`: a clone's sshd may be restarted with new host keys while it boots, so
+	 * each probe learns the key afresh instead of trusting the one an earlier probe saw.
+	 */
+	async function waitForSsh(
+		name: string,
+		dir: string,
+		log: (line: string) => void,
+		forgetHostKey = false,
+	): Promise<void> {
 		const deadline = Date.now() + SSH_READY_TIMEOUT_MS;
 		let lastError = "";
 		for (;;) {
 			if (!(await livePid(dir))) {
 				throw new Error("qemu exited before ssh came up");
 			}
+			if (forgetHostKey) await fs.rm(path.join(dir, "known_hosts"), { force: true });
 			const result = await exec(name, ["true"], { timeoutMs: 20_000 });
 			if (result.code === 0) return;
 			lastError = result.stderr.trim();
@@ -771,7 +794,7 @@ export function createQemuDriver(opts: { home?: string } = {}): VmDriver {
 				name: record.name,
 				user,
 				publicKey: await Bun.file(`${keyPath}.pub`).text(),
-				instanceId: `vm-${record.name}-${crypto.randomBytes(4).toString("hex")}`,
+				instanceId: newInstanceId(record.name),
 			};
 			o.log("building cloud-init seed");
 			await buildSeedIso(dir, buildUserData(cloudInit), buildMetaData(cloudInit));
@@ -788,6 +811,55 @@ export function createQemuDriver(opts: { home?: string } = {}): VmDriver {
 					throw new Error(`cloud-init failed (exit ${status.code}): ${(status.stdout + status.stderr).trim()}`);
 				}
 				if (status.code === 2) o.log(`cloud-init finished with recoverable errors: ${status.stdout.trim()}`);
+			} catch (error) {
+				await killInstance(dir);
+				throw error;
+			}
+		},
+
+		async clone(source, o) {
+			const { record } = o;
+			const dir = instanceDir(record.name);
+			const sourceDir = instanceDir(source);
+			const sourceInstance = readInstance(source);
+			if (!sourceInstance) throw new Error(`VM instance ${source} does not exist`);
+			if (await livePid(sourceDir)) throw new Error(`${source} must be stopped to clone it`);
+			const ready = await check();
+			if (!ready.ok) throw new Error(`qemu driver unavailable: ${ready.reason}`);
+			if (fsSync.existsSync(dir)) throw new Error(`VM instance ${record.name} already exists in ${dir}`);
+			await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+			o.log(`cloning ${source}'s disk`);
+			// The disk is an overlay on the immutable, checksum-named base image: a copy (a reflink on APFS, so no
+			// data moves) is independent of the source afterwards. The guest already trusts the instance key.
+			const copy = (file: string): Promise<void> =>
+				fs.copyFile(path.join(sourceDir, file), path.join(dir, file), fsSync.constants.COPYFILE_FICLONE);
+			await Promise.all([copy("disk.qcow2"), copy("id_ed25519"), copy("id_ed25519.pub")]);
+			await fs.chmod(path.join(dir, "id_ed25519"), 0o600);
+			// No known_hosts (the clone's host keys are new) and no efi-vars.fd (`boot` creates it, as at first boot).
+			const keyPath = path.join(dir, "id_ed25519");
+			o.log("building cloud-init seed");
+			const seed = buildCloneCloudInit(record.name, sourceInstance.user, await Bun.file(`${keyPath}.pub`).text());
+			await buildSeedIso(dir, buildUserData(seed), buildMetaData(seed));
+			await boot(record, dir, o, sourceInstance.user);
+			try {
+				o.log("waiting for ssh");
+				await waitForSsh(record.name, dir, () => {}, true);
+				o.log("waiting for cloud-init");
+				const deadline = Date.now() + SSH_READY_TIMEOUT_MS;
+				for (;;) {
+					const status = await exec(record.name, ["cloud-init", "status", "--wait"], {
+						timeoutMs: SSH_READY_TIMEOUT_MS,
+					});
+					if (status.code === 0 || status.code === 2) break;
+					// 255 is ssh itself failing: sshd restarted with the new host keys under the connection.
+					if (status.code !== 255 || Date.now() > deadline) {
+						throw new Error(`cloud-init failed (exit ${status.code}): ${(status.stdout + status.stderr).trim()}`);
+					}
+					await fs.rm(path.join(dir, "known_hosts"), { force: true });
+					await sleep(2000);
+				}
+				// The host keys are final now: the next connection learns them.
+				await fs.rm(path.join(dir, "known_hosts"), { force: true });
 			} catch (error) {
 				await killInstance(dir);
 				throw error;

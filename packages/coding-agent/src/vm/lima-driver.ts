@@ -152,6 +152,23 @@ export function createLimaDriver(opts: LimaDriverOptions = {}): VmDriver {
 			if ((await this.state(options.record.name)) === "running") return;
 			await boot(options, false);
 		},
+		async clone(source, options) {
+			const { record, dir, hostSocket, log } = options;
+			if ((await this.state(source)) !== "stopped")
+				throw new Error(`${source} must exist and be stopped to clone it`);
+			if ((await this.state(record.name)) !== "absent")
+				throw new Error(`a Lima instance named ${record.name} already exists`);
+			// Written as `boot` does, so later boots re-apply the template with `limactl edit`.
+			await Bun.write(path.join(dir, "lima.yaml"), limaTemplate(record, hostSocket, opts.base));
+			const onOutput = (chunk: string): void => forwardLimaLog(chunk, log);
+			const cloned = await run(
+				["clone", "--tty=false", source, record.name, "--set", limaSetExpression(record, hostSocket)],
+				{ onOutput },
+			);
+			if (cloned.code !== 0) throw new Error(`limactl clone failed: ${lastLines(cloned.stderr)}`);
+			const started = await run(["start", "--tty=false", record.name], { onOutput });
+			if (started.code !== 0) throw new Error(`limactl start failed: ${lastLines(started.stderr)}`);
+		},
 		async stop(name) {
 			if ((await this.state(name)) !== "running") return;
 			const result = await run(["stop", name]);

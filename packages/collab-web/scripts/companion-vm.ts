@@ -3,7 +3,8 @@
  * the VM library: it runs `omp vm …` with its own `omp`, so what the app does is exactly what the command line does.
  *
  *   omp vm list --json                     the VMs and whether one can be created (`canVms` is "this works")
- *   omp vm create <name> --repo … --json   NDJSON progress, the last line `done` (with `pairUrl`) or `error`
+ *   omp vm create <name> --repo … [--template] --json   NDJSON progress, the last line `done` (with `pairUrl`, except a template) or `error`
+ *   omp vm clone <template> --name <name> --json         a fresh VM from a template: the same lines, `done` with `pairUrl`
  *   omp vm start|stop|reset|delete <name> --json    the same
  *   omp vm pair <name> --json              {"url","expiresAt"}
  *   omp vm serve                           the supervisor: serves every VM's host socket; kept running here
@@ -118,6 +119,7 @@ interface VmListed {
 
 const GERUND: Record<VmJobAction, string> = {
 	create: "Creating",
+	clone: "Cloning",
 	start: "Starting",
 	stop: "Stopping",
 	reset: "Resetting",
@@ -234,6 +236,7 @@ function createArgs(options: VmCreateOptions): string[] {
 	if (options.diskGiB !== undefined) args.push("--disk", String(options.diskGiB));
 	if (options.network !== undefined) args.push("--network", options.network);
 	if (options.dailyCostUsd !== undefined) args.push("--daily-cost", String(options.dailyCostUsd));
+	if (options.template === true) args.push("--template");
 	args.push("--json");
 	return args;
 }
@@ -571,6 +574,14 @@ export function createVmFeature(options: VmFeatureOptions): VmFeature {
 					await requireAvailable();
 					startJob(create.name, "create", createArgs(create), create);
 					return { t: "vm-create", reqId, accepted: true };
+				}
+				case "vm-clone": {
+					const template = requireName(request.template);
+					const name = requireName(request.name);
+					if (template === name) throw new Error("A fresh VM needs a name of its own.");
+					await requireAvailable();
+					startJob(name, "clone", ["clone", template, "--name", name, "--json"]);
+					return { t: "vm-clone", reqId: request.reqId, accepted: true };
 				}
 				case "vm-action": {
 					await act(requireName(request.name), request.action);

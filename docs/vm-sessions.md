@@ -42,17 +42,18 @@ Inside the VM the repositories are cloned under `~/src/<owner>/<repo>`. Until a 
 | `omp vm github setup [--owner <org>]` | Creates the GitHub App through GitHub's manifest flow (a browser page, then the App's install page) and records its installations. `--app-id <id> --key <pem>` adopts an existing App instead |
 | `omp vm github status` | The App and the accounts it is installed on |
 | `omp vm github protect <owner/repo> [--yes]` | Creates two rulesets with your own `gh`: the default branch blocks deletion, force pushes and direct updates; `v*` and `collab-v*` tags block creation, update and deletion. Repository admins bypass both, so your own pushes keep working; the App does not |
-| `omp vm create <name> --repo owner/repo […]` | Creates, boots and provisions the VM and prints a pairing link. Flags: `--cpus` (4), `--memory` GiB (8), `--disk` GiB (60, sparse), `--network open\|allowlist`, `--allow-host <host>` (allowlist extras, repeatable), `--model provider/id` (repeatable; default all), `--daily-tokens N`, `--daily-cost USD`, `--branch-prefix <prefix>` (the VM pushes only branches whose names start with it) |
-| `omp vm list` | VMs and their status (`creating`, `running`, `stopped`, `failed`, `missing`) |
+| `omp vm create <name> --repo owner/repo […]` | Creates, boots and provisions the VM and prints a pairing link. Flags: `--cpus` (4), `--memory` GiB (8), `--disk` GiB (60, sparse), `--network open\|allowlist`, `--allow-host <host>` (allowlist extras, repeatable), `--model provider/id` (repeatable; default all), `--daily-tokens N`, `--daily-cost USD`, `--branch-prefix <prefix>` (the VM pushes only branches whose names start with it), `--template` (provision a [template](#fresh-vms): no pairing, left stopped) |
+| `omp vm clone <template> --name <name>` | Starts a [fresh VM](#fresh-vms): a copy-on-write clone of the stopped template with an identity of its own, paired like `create` (prints a pairing link). Deleted when its session ends |
+| `omp vm list` | VMs and their status (`creating`, `running`, `stopped`, `failed`, `missing`); templates are marked `[template]`, fresh VMs `[fresh from <template>, expires <time>]` |
 | `omp vm start\|stop <name>` | Boots or shuts down the VM. `start` also refreshes the VM's model config with the providers you are signed in to now |
 | `omp vm shell <name>` | A login shell inside the VM |
-| `omp vm pair <name>` | A fresh one-time pairing link from the VM's companion |
-| `omp vm reset <name>` | Deletes the VM and builds it again from a fresh image, keeping its name, repositories and limits. Nothing carries over from the old guest, pairing included (a compromised guest could have paired a device of its own): it prints a new pairing link, and the old GitHub token is revoked. Remove the old computer from your devices |
+| `omp vm pair <name>` | A fresh one-time pairing link from the VM's companion (refused for a template) |
+| `omp vm reset <name>` | Deletes the VM and builds it again from a fresh image, keeping its name, repositories and limits. Nothing carries over from the old guest, pairing included (a compromised guest could have paired a device of its own): it prints a new pairing link, and the old GitHub token is revoked. Remove the old computer from your devices. A template is rebuilt the same way, then stopped without pairing; a fresh VM cannot be reset (delete it and clone again) |
 | `omp vm delete <name>` | Deletes the VM and its disk; the supervisor closes its sockets and revokes its GitHub token. Paired devices show the computer offline; remove it there |
 | `omp vm logs <name>` | The last provisioning transcript |
 | `omp vm serve` | The supervisor, in the foreground (the companion runs it; see below) |
 
-`create`, `start`, `stop`, `reset` and `delete` with `--json` write NDJSON: `{"t":"progress","step","message"}` lines, then `{"t":"done",…}` or `{"t":"error","message"}` (exit 1). `list --json` prints `{ready, vms}`; `pair --json` prints `{url, expiresAt}`. The companion runs these commands for the app.
+`create`, `clone`, `start`, `stop`, `reset` and `delete` with `--json` write NDJSON: `{"t":"progress","step","message"}` lines, then `{"t":"done",…}` or `{"t":"error","message"}` (exit 1). `list --json` prints `{ready, vms}`; `pair --json` prints `{url, expiresAt}`. The companion runs these commands for the app.
 
 ## Architecture
 
@@ -119,6 +120,43 @@ Ubuntu 24.04 (arm64 on Apple silicon, amd64 elsewhere), provisioned over `limact
 
 Chromium is not installed (Ubuntu ships it only as a snap), so the companion's *Preview* reports itself unavailable in VMs.
 
+## Fresh VMs
+
+A *fresh VM* runs one session in a throwaway clone of a provisioned VM and is deleted when the session ends, so work on something you do not trust (an untrusted pull request, a dependency you want to try) never touches a VM you keep. The clone starts in seconds, because the slow part (packages, omp, repository clones) happened once, in a *template*.
+
+```sh
+omp vm create base --repo acme/api --template   # once: provisions like `create`, never pairs, stays stopped
+omp vm clone base --name base-1                 # a fresh VM; prints a pairing link, like `create`
+```
+
+**Template.** `--template` provisions as `create` does, then stops the VM without pairing it (nothing in it ever ran a session). It keeps its place in `omp vm list` (`[template]`) and `start`, `stop`, `shell`, `reset` and `delete` work on it, for updating its packages or repositories; `pair` refuses it. Clone from it only while it is stopped. A template takes its disk (sparse) and no memory while stopped.
+
+**Clone.** `omp vm clone <template> --name <name>` refuses unless the template exists, is a template, is `ready` and stopped, the name is valid and free, and fewer than three fresh VMs exist (`VM_MAX_FRESH`: each takes the template's memory while it runs). The record copies the template's repositories, CPUs, memory, disk, network, driver, `--allow-host`, `--model` grants, budget and `--branch-prefix`, and adds `fresh: {from, expiresAt}` (24 hours from now). The driver copies the template's disk, copy-on-write where the host allows: Lima's `limactl clone` (the clone's `host.sock` goes into its own `lima.yaml`), and for QEMU a reflink copy (`COPYFILE_FICLONE`: APFS, btrfs, XFS) of the disk overlay, which is independent of the template afterwards because it sits on the immutable, checksum-named base image. Both boot as a new cloud-init instance (QEMU with a new seed: new instance id, hostname `vm-<name>`).
+
+**Its own identity.** A copied disk carries the template's identity, so before pairing the CLI resets it, over the driver's `exec`:
+
+| Reset | Why |
+| --- | --- |
+| The companion's room id, key, Web Push keys, paired devices, pending invites, lock and local state (`collab-companion*` except the disk-guard limit), sessions, worktrees and `~/.omp/install-id` are deleted; the companion starts again and makes a new room | The app keys computers by room id: a copied room would replace the template's entry, and the clone would trust whatever devices the template had |
+| Hostname `vm-<name>`, `/etc/hosts`, a new `/etc/machine-id` | The app names the computer after the hostname; a copied machine id would make the clone the same machine to systemd and the journal |
+| SSH host keys | Done by cloud-init for the new instance id (checked on Lima and QEMU) |
+| `~/.omp/agent/models.yml` from the providers you are signed in to now | A login or logout since the template was built reaches the clone |
+| `git fetch` of each repository under `~/src` (through the GitHub proxy; failure is a warning) | The template's clones are as old as the template |
+
+It then installs the *done-watcher*, a systemd user unit in the clone only, and pairs: the same one-time link as `create`.
+
+**Teardown.** The supervisor deletes a fresh VM, as `omp vm delete` would (instance and disk removed, sockets closed, GitHub token revoked), when any of these happens; neither the app nor the companion is needed:
+
+| Trigger | |
+| --- | --- |
+| The session ended | The done-watcher in the guest calls `POST /vm/done` on the VM's host socket, once a companion-started session (tmux `omp-<8 hex>`) has existed and none has for 2 minutes, or when none appeared within 30 minutes of boot. The route exists only for a fresh VM (any other answers 404) and only on that VM's own socket, so a VM can end only itself; a VM still being created answers 409 |
+| Time is up | `fresh.expiresAt` (24 hours, `VM_FRESH_TTL_MS`) passed, session or not |
+| It failed | Its phase is `failed` and nothing has touched it for 10 minutes (a failed clone is kept that long for `omp vm logs`) |
+
+A VM being created is never deleted by `/vm/done` or by a failure sweep: the CLI job owns it. A delete the supervisor starts is skipped by a second trigger. The supervisor must be running (the companion keeps it up); if it is not, an expired VM goes at the next start.
+
+A fresh VM is a VM like the others while it lives: shared VM limits (budget, grants, branch prefix, network) apply, it is served by the same supervisor, and it shows in `omp vm list`.
+
 ## Model access and subscriptions
 
 Subscriptions keep working; no API key is needed. The gateway uses what `omp login` stored on the host and builds the provider-specific request there (Anthropic's OAuth headers and Claude Code system block, Codex's account header). The VM sends `{modelId, context}`; it never sees an access or refresh token and cannot change the request shape. Verified end to end with a Claude subscription: a session in a VM, started from the app, edited a file and committed.
@@ -184,6 +222,7 @@ Assume the agent in a VM is fully compromised (prompt injection, a malicious dep
 | Repository source and transcripts in the VM | VM disk | Can leave in `open` mode, or to an allowed host |
 | Your LAN | | Reachable in `open` mode on macOS; not otherwise |
 | Devices paired with the VM's companion | Phone, browser, desktop app | The VM's companion is a peer the app talks to; it can show crafted content and refuse or fake answers about itself, and cannot act on other computers (each computer is its own room and key) |
+| A fresh VM and its template | Disk copy; the template is stopped | A fresh VM's changes live on its own disk, room and token, and die with it: they never reach the template or another fresh VM. Nothing in a template ever ran an agent session, so each clone starts clean (the template's room, devices and install id are deleted from the clone before it pairs). A session that never ends is cut off at `fresh.expiresAt`. Anything the session exfiltrated through the VM's egress is as exposed as in any VM |
 
 ## Measurements
 
@@ -199,6 +238,11 @@ On an Apple silicon Mac (macOS 27), Lima built from `master`, QEMU 11.1:
 | `reset`, `allowlist` (QEMU), image cached | 1 min 45 s |
 | QEMU boot to SSH, image cached | 13 s |
 | Model call from the VM (Claude Haiku, `omp -p`) | 2–4 s |
+| `create --template`, `open` (Lima, 2 CPUs, 4 GiB), including stopping it | 1 min 21 s |
+| `clone`, `open` (Lima), clone to pairing link | 15–17 s |
+| `create --template`, `allowlist` (QEMU), image cached | 2 min 5 s |
+| `clone`, `allowlist` (QEMU), clone to pairing link (the guest's own boot is about 34 s of it) | 1 min 4 s |
+| Session over to the VM deleted (the done-watcher's two minutes, then the supervisor's delete) | about 2 min 10 s |
 
 ## Implementation
 
@@ -208,7 +252,8 @@ On an Apple silicon Mac (macOS 27), Lima built from `master`, QEMU 11.1:
 | Records and paths | `src/vm/types.ts`, `src/vm/store.ts`, `src/vm/paths.ts` |
 | Drivers | `src/vm/driver.ts` (interface), `src/vm/lima-driver.ts`, `src/vm/qemu-driver.ts`, `src/vm/drivers.ts` (choice) |
 | Guest provisioning | `src/vm/guest.ts` |
-| Supervisor | `src/vm/supervisor.ts` |
+| Supervisor | `src/vm/supervisor.ts` (host socket routes, `POST /vm/done`, the sweep) |
+| Fresh VMs | `src/vm/fresh.ts` (clone refusals, sweep rule), `src/vm/lifecycle.ts` (delete), `clone` in the drivers, the clone's identity reset and done-watcher in `src/vm/guest.ts` |
 | Egress proxy | `src/vm/egress-proxy.ts` |
 | GitHub App | `src/vm/github*.ts` |
 | Gateway budgets | `packages/ai/src/auth-gateway/budget.ts`, `clients.ts`, `dispatch.ts` |
@@ -218,7 +263,6 @@ On an Apple silicon Mac (macOS 27), Lima built from `master`, QEMU 11.1:
 ## Not done
 
 - **Vendor agents in the VM.** Claude Code and Codex use their own logins, not omp's; the VM's *Agents* screen shows them as not signed in. They might use the gateway's `/v1/messages` and `/v1/responses` routes through `ANTHROPIC_BASE_URL` and a custom Codex provider; untested.
-- **Ephemeral per-session VMs** (a copy-on-write clone of a provisioned VM per session), for untrusted pull requests.
 - **Force-push detection.** The proxy sees ref names and object ids, not history, so a VM can force-push its own non-default branches.
 - **Signed commits.** Commits pushed with git are unsigned; commits made through GitHub's API on the App's behalf would be signed.
-- **Recent folders.** A fresh VM lists no folders under *Start session* until a session ran in one.
+- **Recent folders.** A newly created VM lists no folders under *Start session* until a session ran in one.

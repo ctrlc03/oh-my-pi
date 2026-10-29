@@ -292,6 +292,7 @@ export function useBlocks({
 				const block = get(id);
 				if (block !== undefined) latest.current.onSendToAgent?.(blocksQuote([block]));
 			},
+			read: setTextId,
 			openSheet: setSheetId,
 			hide: canHide ? hideApi : undefined,
 		};
@@ -558,7 +559,7 @@ export function useBlocks({
 					api={api}
 					canSend={onSendToAgent !== undefined}
 					onEdit={onEdit}
-					onSelectText={() => setTextId(sheetBlock.id)}
+					onRead={() => setTextId(sheetBlock.id)}
 					onChanges={onChanges}
 					onSelect={() => {
 						setSelectMode(true);

@@ -21,9 +21,11 @@ function blockLabel(block: Block): string {
 }
 
 /**
- * A block's text, laid out for the OS's own selection (the long press on the transcript opens the
- * actions sheet before the OS can start one there). `text` is what *Copy* copies, Markdown for every kind
- * of block (a tool call is its fenced command and output), rendered as the transcript renders Markdown.
+ * A block's whole text in a near-full-screen reader, in a column a comfortable width to read; opened by
+ * *Read in full* (the block's hover button, or the touch long-press sheet). `text` is what *Copy* copies,
+ * Markdown for every kind of block (a tool call is its fenced command and output), rendered as the
+ * transcript renders Markdown. The OS's own selection works here, which the transcript's long press
+ * otherwise pre-empts on touch screens.
  *
  * `data-native-select` keeps the transcript's gestures and the tooltip layer's press-and-hold out of it.
  */
@@ -45,7 +47,7 @@ export function BlockTextSheet({
 		flash("all");
 	};
 	return (
-		<Sheet label="Block text" size="wide" onClose={onClose}>
+		<Sheet label="Read in full" size="full" onClose={onClose}>
 			<div className="tr-textsheet" data-native-select>
 				<div className="sh-sheet-head">
 					<div className="sh-sheet-title">{blockLabel(block)}</div>
@@ -60,7 +62,9 @@ export function BlockTextSheet({
 					</span>
 				</div>
 				<div className="tr-textsheet-body">
-					<Markdown text={text} />
+					<div className="tr-textsheet-col">
+						<Markdown text={text} />
+					</div>
 				</div>
 			</div>
 		</Sheet>

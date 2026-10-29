@@ -255,7 +255,7 @@ describe("multi-block copy", () => {
 	});
 });
 
-describe("Select text", () => {
+describe("Read in full", () => {
 	it("is offered for every block that has text to copy", () => {
 		const folded: Block = {
 			kind: "run",

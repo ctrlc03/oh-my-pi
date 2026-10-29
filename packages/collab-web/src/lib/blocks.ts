@@ -388,7 +388,7 @@ export function blocksMarkdown(blocks: readonly Block[], options: MarkdownOption
 	return blocks.map(block => blockMarkdown(block, labeled, options)).join("\n\n");
 }
 
-/** Whether *Copy* has text for the block: *Select text* is offered exactly then. */
+/** Whether *Copy* has text for the block: *Read in full* is offered exactly then. */
 export function blockHasText(block: Block): boolean {
 	return /\S/.test(blocksMarkdown([block]));
 }

@@ -1165,7 +1165,7 @@
 	opacity: 0.4;
 }
 
-/* ---- text sheet: a block's text, selectable with the OS's own handles ---- */
+/* ---- reader: a block's whole text, in a column made for reading, selectable with the OS's own handles ---- */
 
 .tr-textsheet {
 	display: flex;
@@ -1178,10 +1178,11 @@
 .tr-textsheet-body {
 	flex: 1 1 auto;
 	min-height: 0;
-	padding: 12px;
+	padding: 20px 16px;
 	overflow: auto;
 	overscroll-behavior: contain;
-	font-size: 14px;
+	font-size: 15px;
+	line-height: 1.65;
 	color: var(--fg);
 	background: var(--bg-overlay);
 	border: 1px solid var(--border);
@@ -1189,6 +1190,12 @@
 	-webkit-user-select: text;
 	user-select: text;
 	-webkit-touch-callout: default;
+}
+
+/* Lines past ~80 characters are hard to follow back to their start: the column stops there, centred. */
+.tr-textsheet-col {
+	max-width: 80ch;
+	margin: 0 auto;
 }
 
 /* Touch: 16px text, the size a finger reads and aims at. */

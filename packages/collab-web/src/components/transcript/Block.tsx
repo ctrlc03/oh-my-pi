@@ -1,4 +1,5 @@
 import {
+	BookOpen,
 	Check,
 	ChevronRight,
 	Copy,
@@ -14,7 +15,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { type Block, hasOutput, type ToolMeta } from "../../lib/blocks";
+import { type Block, blockHasText, hasOutput, type ToolMeta } from "../../lib/blocks";
 import { fmtDuration } from "../../lib/format";
 import type { HiddenSlot } from "../../lib/hidden-messages";
 import { normalizeWs } from "../../tool-render/util";
@@ -45,6 +46,8 @@ export interface BlockApi {
 	copy(id: string, what: CopyWhat): Promise<boolean>;
 	share(id: string): Promise<"shared" | "copied" | "failed">;
 	send(id: string): void;
+	/** Open the block's whole text in a full-height reader. */
+	read(id: string): void;
 	/** Open the touch action sheet for the block. */
 	openSheet(id: string): void;
 	/** Absent where messages cannot be hidden. */
@@ -125,8 +128,8 @@ function ActionButton({
 
 /**
  * The quiet buttons of a block, shown while it is hovered, focused or selected: copy (a tool also
- * copies its command or its output alone), send to the message box and share. `extra` adds the
- * prompt's own edit button.
+ * copies its command or its output alone), read in full, send to the message box and share. `extra`
+ * adds the prompt's own edit button.
  */
 export function BlockActions({
 	id,
@@ -174,6 +177,11 @@ export function BlockActions({
 			>
 				<Copy size={13} />
 			</ActionButton>
+			{blockHasText(block) && (
+				<ActionButton label="Read in full" done={false} onClick={() => api.read(id)}>
+					<BookOpen size={13} />
+				</ActionButton>
+			)}
 			{isCall && ctx.canSend && (
 				<ActionButton label="Send to agent" done={false} onClick={() => api.send(id)}>
 					<Send size={13} />

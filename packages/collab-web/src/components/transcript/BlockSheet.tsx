@@ -1,4 +1,5 @@
 import {
+	BookOpen,
 	Check,
 	CheckSquare,
 	Copy,
@@ -11,7 +12,6 @@ import {
 	Send,
 	Share2,
 	SquareTerminal,
-	TextSelect,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
@@ -44,8 +44,8 @@ function SheetRow({
 }
 
 /**
- * A block's actions on a touch screen, opened by a long press: the copies, *Select text* (the block's
- * text in a sheet the OS can select from), send to the message box, share, edit (a prompt), and
+ * A block's actions on a touch screen, opened by a long press: the copies, *Read in full* (the block's
+ * whole text in a full-height sheet the OS can select from), send to the message box, share, edit (a prompt), and
  * *Select*, which starts the phone's multi-select mode on this block.
  */
 export function BlockSheet({
@@ -54,7 +54,7 @@ export function BlockSheet({
 	canSend,
 	onEdit,
 	onChanges,
-	onSelectText,
+	onRead,
 	onSelect,
 	onClose,
 }: {
@@ -63,7 +63,7 @@ export function BlockSheet({
 	canSend: boolean;
 	onEdit?: (entryId: string) => void;
 	onChanges?: (entryId: string) => void;
-	onSelectText(): void;
+	onRead(): void;
 	onSelect(): void;
 	onClose(): void;
 }): ReactNode {
@@ -111,7 +111,7 @@ export function BlockSheet({
 					onClick={() => void copy("both")}
 				/>
 				{blockHasText(block) && (
-					<SheetRow icon={<TextSelect size={16} />} label="Select text" onClick={() => act(onSelectText)} />
+					<SheetRow icon={<BookOpen size={16} />} label="Read in full" onClick={() => act(onRead)} />
 				)}
 				{canSend && (
 					<SheetRow

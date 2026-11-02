@@ -12,6 +12,10 @@
 - The VM supervisor logs `GitHub token for <vm> revoked` when it revokes a VM's installation token.
 - The shell sandbox now denies reading and writing the VM folder (`~/.omp/agent/vm`: the GitHub App key, VM SSH keys).
 
+### Changed
+
+- Browser tool: upgraded `puppeteer-core` to 25.16, so the browser tool now downloads Chrome for Testing 156 (was 150), picking up six milestones of Chrome security fixes
+
 ## [18.12.6] - 2026-10-21
 
 ### Added

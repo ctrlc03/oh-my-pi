@@ -84,7 +84,7 @@
 			"oxlint": "^1.80.0",
 			"playwright-core": "1.64.0",
 			"prettier": "^3.9.5",
-			"puppeteer-core": "25.3.0",
+			"puppeteer-core": "25.16.0",
 			"react": "19.2.7",
 			"react-dom": "19.2.7",
 			"regexp-tree": "^0.1.27",
@@ -234,6 +234,6 @@
 	"packageManager": "bun@>=1.4",
 	"patchedDependencies": {
 		"@ark/schema@0.56.2": "patches/@ark%2Fschema@0.56.2.patch",
-		"puppeteer-core@25.3.0": "patches/puppeteer-core@25.3.0.patch"
+		"puppeteer-core@25.16.0": "patches/puppeteer-core@25.16.0.patch"
 	}
 }

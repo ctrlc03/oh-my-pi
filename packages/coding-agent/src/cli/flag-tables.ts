@@ -110,19 +110,19 @@ function parseMaxTimeSeconds(value: string): number {
 	);
 }
 
-function parseMaxCostUsd(value: string): number {
-	const usd = parseUsdAmount(value);
-	if (usd !== undefined) return usd;
-	throw new CliUsageError(
-		`Invalid --max-cost value: ${JSON.stringify(value)}. Expected a positive amount in USD, e.g. 2.50.`,
-	);
-}
-
 function parseMaxTokens(value: string): number {
 	const tokens = parseTokenCount(value);
 	if (tokens !== undefined) return tokens;
 	throw new CliUsageError(
 		`Invalid --max-tokens value: ${JSON.stringify(value)}. Expected a positive token count like 200000 or 200k.`,
+	);
+}
+
+function parseCostUsd(flag: string, value: string): number {
+	const usd = parseUsdAmount(value);
+	if (usd !== undefined) return usd;
+	throw new CliUsageError(
+		`Invalid ${flag} value: ${JSON.stringify(value)}. Expected a positive USD amount, e.g. 0.50.`,
 	);
 }
 
@@ -182,11 +182,18 @@ export const STRING_SETTERS: Record<string, StringSetter> = {
 	"--max-time": (result, value) => {
 		result.maxTime = parseMaxTimeSeconds(value);
 	},
-	"--max-cost": (result, value) => {
-		result.maxCostUsd = parseMaxCostUsd(value);
-	},
 	"--max-tokens": (result, value) => {
 		result.maxTokens = parseMaxTokens(value);
+	},
+	"--warn-cost": (result, value) => {
+		result.warnCost = parseCostUsd("--warn-cost", value);
+	},
+	"--max-cost": (result, value) => {
+		// Arms both the request-level cost gate (`session.maxCost`) and the turn-level spend cap
+		// (`session.maxCostUsd`, `/budget`, collab spend state) at the same amount.
+		const usd = parseCostUsd("--max-cost", value);
+		result.maxCost = usd;
+		result.maxCostUsd = usd;
 	},
 	"--service-tier": (result, value) => {
 		if (!isServiceTierOpenAISettingValue(value)) {
@@ -343,6 +350,7 @@ export const VALUELESS_FLAGS: ReadonlySet<string> = new Set([
 	"--no-pty",
 	"--hide-thinking",
 	"--advisor",
+	"--wait-async",
 	"--external-thinking",
 	"--prewalk",
 	"--no-prewalk",
@@ -352,6 +360,7 @@ export const VALUELESS_FLAGS: ReadonlySet<string> = new Set([
 	"--no-extensions",
 	"--no-skills",
 	"--no-rules",
+	"--no-context-files",
 	"--no-title",
 	"--no-ui",
 	"--auto-approve",

@@ -37,6 +37,36 @@
 - `@oh-my-pi/pi-wire/schedule`: the schedule types shared by the companion, the web app and omp (`Schedule`, `ScheduleWhen` with `cron` and `interval` kinds, `CatchUpPolicy`, `createdBy`), the cron parser and next-run maths with daylight-saving rules (`parseCron`, `nextRunAfter`, `nextRuns`, `parseScheduleWhen`), their wording (`describeCron`, `describeWhen`, `formatRunTime`), and the companion's local schedule channel contract (`SCHEDULE_IPC_FILE`, `ScheduleIpcRequest`, `ScheduleIpcReply`).
 - `BlueprintExcerptRef` (a `BlueprintRef` with optional `from`/`to`, 1-based inclusive) on the refs of `blueprint-excerpt`, `quiz-excerpt`, `spar-excerpt` and `bakeoff-excerpt`, the optional `BlueprintExcerpt.total` (lines in the file) in the answer, and `BLUEPRINT_EXCERPT_STEP` (20), `BLUEPRINT_EXCERPT_MAX_LINES` (2,000 an excerpt) and `BLUEPRINT_EXCERPT_MAX_RANGES` (20 ranged refs a request): a viewer can show more of the code around a citation. An older companion ignores the range and answers the default window without `total`, so a viewer offers no "show more" (protocol version unchanged).
 - `@oh-my-pi/pi-wire/disk`: the disk guard format (`DiskGuardSettings` with its limits and defaults, `DiskState`, `DiskVolume`, `DiskCandidate`, `DiskArtifact`, `DiskClean`, `DiskHealth`, `diskMarginBytes`, the `DISK_ROUTE` a low-space notification opens), the companion requests `disk-guard`, `disk-scan` and `disk-clean`, the `canDiskGuard` capability and `disk` (`DiskHealth`) on the `hosts` frame. Every new field is optional, so an older companion or app ignores them.
+## [18.16.0] - 2026-11-02
+
+### Added
+
+- Added the collab envelope helpers `packEnvelope`, `unpackEnvelope` and `rewriteEnvelopePeer`
+
+## [18.14.2] - 2026-10-31
+
+### Added
+
+- Added `nums` to `code` props (`TspCodeProps`): each line's number, so one block can show non-contiguous lines with `…` gap rows where the numbers jump.
+- Added the TSP `button` kind (`TspButtonProps`: label, icon, keycaps, `default`/`primary`/`quiet`/`danger` variants, `sm`/`md` sizes, pressed, disabled with a reason, busy) and `tabs` `variant: "segmented"`.
+
+## [18.14.0] - 2026-10-29
+
+### Added
+
+- Added the TSP `json` kind for displaying raw JSON values as interactive, expandable trees in the terminal.
+- Added `TspEditorProps.typeahead` support so programs that cannot yet read input can preserve typed text, display it at the caret, and submit it when input becomes available.
+
+## [18.13.3] - 2026-10-28
+
+### Changed
+
+- Updated Bun engine requirement to ≥1.4.4
+
+### Removed
+
+- Removed `TspPalette` definition and `t` verb from the protocol specification
+
 ## [18.12.3] - 2026-10-19
 
 ### Added

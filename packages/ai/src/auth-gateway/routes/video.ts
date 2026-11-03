@@ -15,7 +15,7 @@ import {
 	recordGatewayUsage,
 	resolveGatewayApiKey,
 } from "../dispatch";
-import { gatewayResponseHeaders, json, resolveClientIdentity } from "../http";
+import { gatewayResponseHeaders, json, resolveClientIdentity, codedErrorResponse } from "../http";
 
 interface ResolvedVideoRequest {
 	model: Model<Api>;
@@ -26,7 +26,7 @@ interface ResolvedVideoRequest {
 }
 
 function aborted(): Response {
-	return videoServer.formatError(499, "request_aborted", "client closed request");
+	return codedErrorResponse(499, "request_aborted", "client closed request");
 }
 
 async function resolveVideoJob(
@@ -42,27 +42,23 @@ async function resolveVideoJob(
 		identity = videoServer.decodeGatewayJobId(gatewayId);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		return videoServer.formatError(400, "invalid_request_error", message);
+		return codedErrorResponse(400, "invalid_request_error", message);
 	}
 	const model = bootOpts.resolveModel(`${identity.provider}/${identity.modelId}`);
 	if (!model) {
-		return videoServer.formatError(
+		return codedErrorResponse(
 			404,
 			"invalid_request_error",
 			`Unknown model: ${identity.provider}/${identity.modelId}`,
 		);
 	}
 	if (model.api !== "openrouter-video") {
-		return videoServer.formatError(
-			400,
-			"invalid_request_error",
-			`Model ${model.id} does not support video generation`,
-		);
+		return codedErrorResponse(400, "invalid_request_error", `Model ${model.id} does not support video generation`);
 	}
 	const sessionId = deterministicUuid(`video\u0000${model.provider}/${model.id}`);
 	const apiKey = await resolveGatewayApiKey(bootOpts, model, sessionId, controller.signal, peer);
 	if (controller.signal.aborted) return aborted();
-	if ("status" in apiKey) return videoServer.formatError(apiKey.status, apiKey.type, apiKey.message);
+	if ("status" in apiKey) return codedErrorResponse(apiKey.status, apiKey.type, apiKey.message);
 	return { model, upstreamId: identity.upstreamId, sessionId, apiKey, controller };
 }
 
@@ -168,12 +164,12 @@ export async function handleVideoSubmit(
 	} catch (error) {
 		if (controller.signal.aborted) return aborted();
 		const message = error instanceof Error ? error.message : String(error);
-		return videoServer.formatError(400, "invalid_request_error", message);
+		return codedErrorResponse(400, "invalid_request_error", message);
 	}
 	const model = bootOpts.resolveModel(parsed.modelId);
-	if (!model) return videoServer.formatError(404, "invalid_request_error", `Unknown model: ${parsed.modelId}`);
+	if (!model) return codedErrorResponse(404, "invalid_request_error", `Unknown model: ${parsed.modelId}`);
 	if (model.api !== "openrouter-video") {
-		return videoServer.formatError(
+		return codedErrorResponse(
 			400,
 			"invalid_request_error",
 			`Model ${parsed.modelId} does not support video generation`,
@@ -182,7 +178,7 @@ export async function handleVideoSubmit(
 	const sessionId = deterministicUuid(`video\u0000${model.provider}/${model.id}`);
 	const apiKey = await resolveGatewayApiKey(bootOpts, model, sessionId, controller.signal, peer);
 	if (controller.signal.aborted) return aborted();
-	if ("status" in apiKey) return videoServer.formatError(apiKey.status, apiKey.type, apiKey.message);
+	if ("status" in apiKey) return codedErrorResponse(apiKey.status, apiKey.type, apiKey.message);
 	logger.info("auth-gateway request", {
 		requestId,
 		format: "video-submit",
@@ -213,7 +209,7 @@ export async function handleVideoSubmit(
 		if (controller.signal.aborted) return aborted();
 		const classified = classifyGatewayError(error);
 		logger.warn("auth-gateway video submit failed", { format: "video-submit", error: classified.message, peer });
-		return videoServer.formatError(classified.status, classified.type, classified.message);
+		return codedErrorResponse(classified.status, classified.type, classified.message);
 	}
 }
 
@@ -246,7 +242,7 @@ export async function handleVideoPoll(
 		if (resolved.controller.signal.aborted) return aborted();
 		const classified = classifyGatewayError(error);
 		logger.warn("auth-gateway video poll failed", { format: "video-poll", error: classified.message, peer });
-		return videoServer.formatError(classified.status, classified.type, classified.message);
+		return codedErrorResponse(classified.status, classified.type, classified.message);
 	}
 }
 
@@ -273,6 +269,6 @@ export async function handleVideoContent(
 		if (resolved.controller.signal.aborted) return aborted();
 		const classified = classifyGatewayError(error);
 		logger.warn("auth-gateway video content failed", { format: "video-content", error: classified.message, peer });
-		return videoServer.formatError(classified.status, classified.type, classified.message);
+		return codedErrorResponse(classified.status, classified.type, classified.message);
 	}
 }

@@ -27,7 +27,7 @@ import {
 	recordGatewayUsage,
 	resolveGatewayApiKey,
 } from "../dispatch";
-import { gatewayResponseHeaders, json, resolveClientIdentity } from "../http";
+import { gatewayResponseHeaders, json, noStoreErrorResponse, resolveClientIdentity } from "../http";
 
 export async function handleSystemOne(
 	bootOpts: AuthGatewayRouteOptions,
@@ -37,7 +37,7 @@ export async function handleSystemOne(
 	const startedAt = performance.now();
 	const requestId = crypto.randomUUID();
 	const controller = mirrorRequestAbort(req);
-	const aborted = (): Response => systemOne.formatError(499, "request_aborted", "client closed request");
+	const aborted = (): Response => noStoreErrorResponse(499, "request_aborted", "client closed request");
 	if (controller.signal.aborted) return aborted();
 	const overBudget = gatewayBudgetRefusal(bootOpts);
 	if (overBudget) return systemOne.formatError(overBudget.status, overBudget.type, overBudget.message);
@@ -47,7 +47,7 @@ export async function handleSystemOne(
 		body = await req.json();
 	} catch (error) {
 		if (controller.signal.aborted) return aborted();
-		return systemOne.formatError(400, "invalid_request_error", `Invalid JSON body: ${String(error)}`);
+		return noStoreErrorResponse(400, "invalid_request_error", `Invalid JSON body: ${String(error)}`);
 	}
 	if (controller.signal.aborted) return aborted();
 
@@ -57,15 +57,15 @@ export async function handleSystemOne(
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		// TypeSafe answers body validation failures with 422.
-		return systemOne.formatError(422, "invalid_request_error", message);
+		return noStoreErrorResponse(422, "invalid_request_error", message);
 	}
 
 	const model = bootOpts.resolveModel(parsed.modelId);
 	if (!model) {
-		return systemOne.formatError(404, "invalid_request_error", `Unknown model: ${parsed.modelId}`);
+		return noStoreErrorResponse(404, "invalid_request_error", `Unknown model: ${parsed.modelId}`);
 	}
 	if (!isJudgmentApi(model.api)) {
-		return systemOne.formatError(
+		return noStoreErrorResponse(
 			422,
 			"invalid_request_error",
 			`Model ${parsed.modelId} does not answer System One judgments`,
@@ -75,11 +75,7 @@ export async function handleSystemOne(
 	try {
 		checkNativeJudgmentImages(model, parsed.request, parsed.imageAssets);
 	} catch (error) {
-		return systemOne.formatError(
-			422,
-			"invalid_request_error",
-			error instanceof Error ? error.message : String(error),
-		);
+		return noStoreErrorResponse(422, "invalid_request_error", error instanceof Error ? error.message : String(error));
 	}
 	const client = resolveClientIdentity(req.headers);
 	// Judgments carry no conversation to derive a session from. One sticky
@@ -89,7 +85,7 @@ export async function handleSystemOne(
 
 	const apiKey = await resolveGatewayApiKey(bootOpts, model, sessionId, controller.signal, peer);
 	if (controller.signal.aborted) return aborted();
-	if ("status" in apiKey) return systemOne.formatError(apiKey.status, apiKey.type, apiKey.message);
+	if ("status" in apiKey) return noStoreErrorResponse(apiKey.status, apiKey.type, apiKey.message);
 
 	const judge = createNativeJudge(model, {
 		apiKey: buildGatewayApiKeyResolver(bootOpts, model, sessionId, apiKey, controller.signal, "systemone", peer),
@@ -132,6 +128,6 @@ export async function handleSystemOne(
 				? { status: 422, type: "invalid_request_error", message }
 				: classifyGatewayError(error);
 		logger.warn("auth-gateway judgment failed", { format: "systemone", error: classified.message, peer });
-		return systemOne.formatError(classified.status, classified.type, classified.message);
+		return noStoreErrorResponse(classified.status, classified.type, classified.message);
 	}
 }

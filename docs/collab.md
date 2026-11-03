@@ -30,19 +30,18 @@ The guest's previous session is restored on `/leave` (or when the host stops).
 
 ### Commands
 
-| Command           | Effect                                                                              |
-| ----------------- | ----------------------------------------------------------------------------------- |
-| `/collab`         | Start full-control sharing; reuse a control room or replace a view-only room        |
-| `/collab <relay>` | Start sharing through a specific relay (`relay.example.com`, `ws://localhost:7475`) |
-| `/collab view [relay]` | Start read-only sharing, or print the existing room's read-only link/QR        |
-| `/collab status`  | Show link + participants                                                            |
-| `/collab stop`    | Stop sharing                                                                        |
-| `/collab list`    | List every active local Collab host (no links)                                      |
-| `/join <link>`    | Join a shared session as a guest                                                    |
-| `/leave`          | Leave (guest) or stop sharing (host)                                                |
+| Command                | Effect                                                                              |
+| ---------------------- | ----------------------------------------------------------------------------------- |
+| `/collab`              | Start full-control sharing; reuse a control room or replace a view-only room        |
+| `/collab <relay>`      | Start sharing through a specific relay (`relay.example.com`, `ws://localhost:7475`) |
+| `/collab view [relay]` | Start read-only sharing, or print the existing room's read-only link/QR             |
+| `/collab status`       | Show link + participants                                                            |
+| `/collab stop`         | Stop sharing                                                                        |
+| `/collab list`         | List every active local Collab host (no links)                                      |
+| `/join <link>`         | Join a shared session as a guest                                                    |
+| `/leave`               | Leave (guest) or stop sharing (host)                                                |
 
 `/collab start [relay]` is also accepted. Passing a relay while a reusable room is active does not move that room to another relay; stop it first to change the relay.
-
 
 ### Sharing every session automatically
 
@@ -147,7 +146,6 @@ Guests with a full link can:
 Guests with a view-only link can read everything live — back-transcript, streaming text, tool cards, subagent transcripts — but the host rejects prompting, interrupting, agent control, and session controls from them.
 
 Advisor records are not guest-visible subagents: they are excluded from roster snapshots and transcript fetches, and advisor chat/kill/revive commands are rejected.
-
 
 Other session/machine commands remain host-only: `/resume`, `/branch`, bash (`!`), python (`$`), skills, etc. Typed `/model` and `/compact` stay host-only in a TUI guest; the web client's session controls are the guest route. Guests keep a small local allowlist (`/dump`, `/export`, `/copy`, `/open`, `/help`, `/hotkeys`, `/theme`, `/settings`, `/leave`, `/collab`, `/exit`, `/quit`).
 
@@ -608,7 +606,7 @@ A *bake-off* asks several models to each do better than a design or a change, th
 | `collab.autoStart`    | `off`                 | `view` / `control`: host every interactive session as it starts and publish it to the local registry            |
 | `collab.guestsCanSaveApprovals` | `false`     | A guest's "Always allow (this project)" / "Deny always (this project)" choice saves a project rule instead of applying to that call only |
 | `share.serverUrl`     | `https://my.omp.sh/s` | Share viewer/upload base used by `/share` (links are `<base>/<id>#<key>`)                                      |
-| `share.store`         | `blob`                | `/share` uploads to the blob server; `gist` uses an authenticated secret gist with blob fallback             |
+| `share.store`         | `blob`                | `/share` uploads to the blob server; `gist` uses an authenticated secret gist with blob fallback               |
 | `share.redactSecrets` | `true`                | Run the secret obfuscator over `/share` snapshots before upload                                                |
 
 ## Installing with one line

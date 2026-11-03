@@ -7,7 +7,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import type { Api, AuthStorage, Model } from "@oh-my-pi/pi-ai";
+import type { AuthStorage } from "@oh-my-pi/pi-ai";
 import {
 	type AuthGatewayClient,
 	type AuthGatewayClientScope,
@@ -21,11 +21,13 @@ import {
 } from "@oh-my-pi/pi-ai/auth-gateway";
 import { type FileLockHandle, isEnoent, logger, tryAcquireFileLock } from "@oh-my-pi/pi-utils";
 import {
+	type GatewayModelIndex,
 	gatewayRoutableModels,
 	gatewayRoutableProviders,
 	indexModelsByRequestId,
 	resolveGatewayModel,
 } from "../cli/auth-gateway-cli";
+import { cfgModelProviderOrder } from "../config/model-settings";
 import { ModelRegistry } from "../config/model-registry";
 import { Settings } from "../config/settings";
 import { discoverAuthStorage } from "../sdk";
@@ -147,8 +149,7 @@ class VmGateway {
 	#registry: ModelRegistry | undefined;
 	#router: AuthGatewayRouter | undefined;
 	#table: AuthGatewayClientTable | undefined;
-	#modelById = new Map<string, Model<Api>>();
-	#routable: Model<Api>[] = [];
+	#index: GatewayModelIndex = indexModelsByRequestId([], new Set());
 	#clients: AuthGatewayClient[] = [];
 	/** VM name → its in-memory bearer, never written anywhere. */
 	readonly #tokens = new Map<string, string>();
@@ -230,13 +231,13 @@ class VmGateway {
 			this.#reindex();
 			this.#router = createAuthGatewayRouter({
 				storage,
-				resolveModel: id => resolveGatewayModel(id, this.#modelById, this.#routable),
-				listModels: () => new Set(this.#modelById.values()),
+				resolveModel: (id, options) => resolveGatewayModel(id, this.#index, options),
+				listModels: () => this.#index.qualified.values(),
 				usageLedger: new FileUsageLedger(this.#root),
 			});
 			this.#table = new AuthGatewayClientTable(storage.sessions, []);
 			this.#table.set(this.#clients);
-			logger.debug("vm gateway ready", { models: this.#modelById.size });
+			logger.debug("vm gateway ready", { models: this.#index.qualified.size });
 		})();
 		this.#ready.catch(err => {
 			logger.error("vm gateway init failed", { error: String(err) });
@@ -248,8 +249,11 @@ class VmGateway {
 	/** Recomputes the served models, so a login or logout on the host reaches running VMs. */
 	#reindex(): void {
 		if (!this.#registry || !this.#storage || !this.#settings) return;
-		this.#routable = gatewayRoutableModels(this.#registry);
-		this.#modelById = indexModelsByRequestId(this.#routable, gatewayRoutableProviders(this.#storage, this.#settings));
+		this.#index = indexModelsByRequestId(
+			gatewayRoutableModels(this.#registry),
+			gatewayRoutableProviders(this.#storage, this.#settings),
+			cfgModelProviderOrder.get(this.#settings),
+		);
 	}
 
 	close(): void {

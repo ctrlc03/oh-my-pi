@@ -120,6 +120,8 @@ omp completions fish > ~/.config/fish/completions/omp.fish
 
 ## Run the fork from source
 
+Needs bun 1.4.4 or newer.
+
 ```sh
 git clone https://github.com/ctrlc03/oh-my-pi.git
 cd oh-my-pi
@@ -153,8 +155,10 @@ OMP is licensed under the [MIT License](LICENSE).
 
 Third-party and vendored code, including `crates/vendor/brush-core` and the
 third-party portions identified in `crates/pi-builtins/LICENSE`, remains under
-its respective upstream license. See `THIRD-PARTY-NOTICES.txt` and
-component-local notices for attribution and additional terms.
+its respective upstream license. Each shipped component carries its own
+`THIRD-PARTY-NOTICES.txt`: the CLI (`packages/coding-agent`), the native addon
+(`packages/natives`), and robomp (`python/robomp`). `omp --license` prints the
+CLI's and the addon's.
 
 © 2025 Mario Zechner  
 © 2025-2026 Can Bölük  

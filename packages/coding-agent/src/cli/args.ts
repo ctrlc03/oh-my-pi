@@ -44,10 +44,14 @@ export interface Args {
 	planYolo?: boolean;
 	planYoloInto?: string;
 	maxTime?: number;
-	/** `--max-cost`: spend cap in USD for this session (see `session.maxCostUsd`). */
-	maxCostUsd?: number;
 	/** `--max-tokens`: token cap for this session (see `session.maxTokens`). */
 	maxTokens?: number;
+	/** `--warn-cost`: warn once when the session tree's spend reaches this many USD (`session.warnCost`). */
+	warnCost?: number;
+	/** `--max-cost`: stop sending model requests at this spend in USD (`session.maxCost`, the cost gate). */
+	maxCost?: number;
+	/** `--max-cost`, also: the turn-level spend cap that `/budget` and collab spend state read (`session.maxCostUsd`). */
+	maxCostUsd?: number;
 	apiKey?: string;
 	systemPrompt?: string;
 	systemPromptTemplate?: string;
@@ -56,6 +60,8 @@ export interface Args {
 	serviceTier?: ServiceTierOpenAISettingValue;
 	hideThinking?: boolean;
 	advisor?: boolean;
+	/** Print mode: wake the session with background-job results before exiting (`async.printWake`). */
+	waitAsync?: boolean;
 	externalThinking?: boolean;
 	continue?: boolean;
 	resume?: string | true;
@@ -92,6 +98,7 @@ export interface Args {
 	noSkills?: boolean;
 	skills?: string[];
 	noRules?: boolean;
+	noContextFiles?: boolean;
 	noTitle?: boolean;
 	/** RPC modes only: run extensions without a UI; `rpc-ui` tool UI remains enabled. */
 	noUi?: boolean;
@@ -364,6 +371,8 @@ export function parseArgs(inputArgs: string[], extensionFlags?: Map<string, { ty
 			result.hideThinking = true;
 		} else if (arg === "--advisor") {
 			result.advisor = true;
+		} else if (arg === "--wait-async") {
+			result.waitAsync = true;
 		} else if (arg === "--external-thinking") {
 			result.externalThinking = true;
 		} else if (arg === "--prewalk") {
@@ -382,6 +391,8 @@ export function parseArgs(inputArgs: string[], extensionFlags?: Map<string, { ty
 			result.noSkills = true;
 		} else if (arg === "--no-rules") {
 			result.noRules = true;
+		} else if (arg === "--no-context-files") {
+			result.noContextFiles = true;
 		} else if (arg === "--no-title") {
 			result.noTitle = true;
 		} else if (arg === "--no-ui") {

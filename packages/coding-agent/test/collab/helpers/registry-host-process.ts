@@ -19,6 +19,7 @@ import {
 	publishCollabHost,
 	publishCollabIdle,
 } from "../../../src/collab/registry";
+postmortem.installProcessHandlers();
 
 const dirArg = process.argv[2];
 const marker = process.argv[3] ?? process.env.OMP_SMOKE_MARKER ?? "smoke";

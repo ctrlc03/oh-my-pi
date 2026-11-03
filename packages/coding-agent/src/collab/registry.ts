@@ -35,6 +35,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { type } from "@oh-my-pi/omptype";
 import { IpcConnection, IpcServer, ipcEndpoint } from "@oh-my-pi/pi-natives";
 import { getBaseConfigRoot, isEnoent, isFsError } from "@oh-my-pi/pi-utils";
 import type { AgentRef } from "@oh-my-pi/pi-wire";
@@ -260,6 +261,22 @@ interface DiscoveryMetadata {
 }
 
 const INSTANCE_ID_PATTERN = /^[a-z0-9-]{8,64}$/;
+const InstanceId = type(INSTANCE_ID_PATTERN);
+const Access = type("'view' | 'control'");
+const Model = type({ "+": "delete", provider: "string", id: "string" }).or("null");
+const Agent = type({ "+": "delete", id: "string", name: "string" });
+
+const DiscoveryMetadataShape = type({
+	"+": "delete",
+	version: "number",
+	// Entry flavour for version 2 and later; a non-string reads as absent.
+	"kind?": "unknown",
+	instanceId: InstanceId,
+	pid: "number.integer > 0",
+	endpoint: "string > 0",
+	createdAt: "number",
+	token: "string > 0",
+});
 
 function parseDiscoveryMetadata(text: string): DiscoveryMetadata | null {
 	let raw: unknown;
@@ -268,23 +285,9 @@ function parseDiscoveryMetadata(text: string): DiscoveryMetadata | null {
 	} catch {
 		return null;
 	}
-	if (typeof raw !== "object" || raw === null) return null;
-	const meta = raw as Record<string, unknown>;
-	if (typeof meta.version !== "number") return null;
-	if (typeof meta.instanceId !== "string" || !INSTANCE_ID_PATTERN.test(meta.instanceId)) return null;
-	if (typeof meta.pid !== "number" || !Number.isInteger(meta.pid) || meta.pid <= 0) return null;
-	if (typeof meta.endpoint !== "string" || meta.endpoint.length === 0) return null;
-	if (typeof meta.createdAt !== "number") return null;
-	if (typeof meta.token !== "string" || meta.token.length === 0) return null;
-	return {
-		version: meta.version,
-		kind: typeof meta.kind === "string" ? meta.kind : undefined,
-		instanceId: meta.instanceId,
-		pid: meta.pid,
-		endpoint: meta.endpoint,
-		createdAt: meta.createdAt,
-		token: meta.token,
-	};
+	const meta = DiscoveryMetadataShape(raw);
+	if (meta instanceof type.errors) return null;
+	return { ...meta, kind: typeof meta.kind === "string" ? meta.kind : undefined };
 }
 
 function tokenMatches(expected: string, presented: unknown): boolean {
@@ -295,90 +298,53 @@ function tokenMatches(expected: string, presented: unknown): boolean {
 	return crypto.timingSafeEqual(a, b);
 }
 
-function isAccess(value: unknown): value is CollabAccess {
-	return value === "view" || value === "control";
-}
-
-/** `undefined` for a malformed model, `null` for no model. */
-function parseModel(value: unknown): CollabHostSnapshot["model"] | undefined {
-	if (value === null) return null;
-	if (typeof value !== "object") return undefined;
-	const { provider, id } = value as Record<string, unknown>;
-	if (typeof provider !== "string" || typeof id !== "string") return undefined;
-	return { provider, id };
-}
-
-/** The vendor agent of a foreign host's snapshot; a malformed value reads as absent (an omp host). */
-function parseAgent(value: unknown): AgentRef | undefined {
-	if (typeof value !== "object" || value === null) return undefined;
-	const { id, name } = value as Record<string, unknown>;
-	if (typeof id !== "string" || typeof name !== "string") return undefined;
-	return { id, name };
-}
-
-function parseSnapshot(raw: unknown): CollabHostSnapshot | null {
-	if (typeof raw !== "object" || raw === null) return null;
-	const host = raw as Record<string, unknown>;
-	if (typeof host.instanceId !== "string" || !INSTANCE_ID_PATTERN.test(host.instanceId)) return null;
-	if (typeof host.generation !== "number" || !Number.isInteger(host.generation) || host.generation < 1) return null;
-	if (typeof host.pid !== "number" || !Number.isInteger(host.pid)) return null;
-	if (typeof host.sessionId !== "string") return null;
-	if (host.sessionName !== null && typeof host.sessionName !== "string") return null;
-	if (typeof host.cwd !== "string") return null;
-	const model = parseModel(host.model);
-	if (model === undefined) return null;
-	if (typeof host.startedAt !== "number") return null;
-	if (typeof host.participants !== "number") return null;
-	if (typeof host.relayConnected !== "boolean") return null;
-	if (typeof host.inputRequired !== "boolean") return null;
+const SnapshotShape = type({
+	"+": "delete",
+	instanceId: InstanceId,
+	generation: "number.integer >= 1",
+	pid: "number.integer",
+	sessionId: "string",
+	sessionName: "string | null",
+	cwd: "string",
+	model: Model,
+	startedAt: "number",
+	participants: "number",
+	relayConnected: "boolean",
+	inputRequired: "boolean",
 	// `busy` was added after the protocol version shipped, and the version is a
 	// hard gate on both sides: bumping it would make every host invisible to a
 	// differently versioned lister on the same machine. So an older host's
 	// snapshot simply omits the field, and a missing one reads as unknown
 	// (`null`) rather than rejecting an otherwise healthy host.
-	if (host.busy !== undefined && host.busy !== null && typeof host.busy !== "boolean") return null;
-	if (!isAccess(host.access)) return null;
-	const agent = parseAgent(host.agent);
-	return {
-		instanceId: host.instanceId,
-		generation: host.generation,
-		pid: host.pid,
-		sessionId: host.sessionId,
-		sessionName: host.sessionName,
-		cwd: host.cwd,
-		model,
-		startedAt: host.startedAt,
-		participants: host.participants,
-		relayConnected: host.relayConnected,
-		inputRequired: host.inputRequired,
-		busy: typeof host.busy === "boolean" ? host.busy : null,
-		access: host.access,
-		...(agent === undefined ? {} : { agent }),
-	};
+	"busy?": "boolean | null",
+	// The vendor agent of a foreign host; a malformed value reads as absent (an omp host).
+	"agent?": "unknown",
+	access: Access,
+});
+
+function parseSnapshot(raw: unknown): CollabHostSnapshot | null {
+	const parsed = SnapshotShape(raw);
+	if (parsed instanceof type.errors) return null;
+	const { agent: rawAgent, ...snapshot } = parsed;
+	const agent = Agent(rawAgent);
+	return { ...snapshot, busy: snapshot.busy ?? null, ...(agent instanceof type.errors ? {} : { agent }) };
 }
 
+const IdleSnapshotShape = type({
+	"+": "delete",
+	instanceId: InstanceId,
+	pid: "number.integer > 0",
+	sessionId: "string",
+	sessionName: "string | null",
+	cwd: "string",
+	model: Model,
+	startedAt: "number",
+	busy: "boolean",
+});
+
 function parseIdleSnapshot(raw: unknown): CollabIdleSnapshot | null {
-	if (typeof raw !== "object" || raw === null) return null;
-	const idle = raw as Record<string, unknown>;
-	if (typeof idle.instanceId !== "string" || !INSTANCE_ID_PATTERN.test(idle.instanceId)) return null;
-	if (typeof idle.pid !== "number" || !Number.isInteger(idle.pid) || idle.pid <= 0) return null;
-	if (typeof idle.sessionId !== "string") return null;
-	if (idle.sessionName !== null && typeof idle.sessionName !== "string") return null;
-	if (typeof idle.cwd !== "string") return null;
-	const model = parseModel(idle.model);
-	if (model === undefined) return null;
-	if (typeof idle.startedAt !== "number") return null;
-	if (typeof idle.busy !== "boolean") return null;
-	return {
-		instanceId: idle.instanceId,
-		pid: idle.pid,
-		sessionId: idle.sessionId,
-		sessionName: idle.sessionName,
-		cwd: idle.cwd,
-		model,
-		startedAt: idle.startedAt,
-		busy: idle.busy,
-	};
+	const idle = IdleSnapshotShape(raw);
+	return idle instanceof type.errors ? null : idle;
 }
 
 function boundField(value: string): string {
@@ -470,7 +436,7 @@ function hostDispatch(source: CollabHostRegistrySource): RequestDispatch {
 		}
 		if (op === "snapshot") return { ok: true, snapshot: boundSnapshot(snapshot) };
 		if (op !== "link") return { ok: false, error: "invalid_operation" };
-		if (!isAccess(access)) return { ok: false, error: "invalid_access" };
+		if (!Access.allows(access)) return { ok: false, error: "invalid_access" };
 		// A capability is bound to the exact generation the caller listed: a room
 		// that rotated underneath a stale card must not hand out its successor.
 		if (generation !== snapshot.generation) return { ok: false, error: "stale_generation" };
@@ -497,7 +463,7 @@ function idleDispatch(source: CollabIdleRegistrySource): RequestDispatch {
 			}
 		}
 		if (op !== "start") return { ok: false, error: "invalid_operation" };
-		if (!isAccess(access)) return { ok: false, error: "invalid_access" };
+		if (!Access.allows(access)) return { ok: false, error: "invalid_access" };
 		try {
 			const started = await source.start(access);
 			return { ok: true, generation: started.generation, access: started.access, url: started.url };

@@ -9,7 +9,7 @@
  * relay's port. The target's pi_natives addon(s) must already
  * sit in `packages/natives/native/` (`OMP_NATIVE_CARGO_PROFILE=ci bun scripts/bazel-natives.ts host` builds the
  * host's; x64 hosts honor `OMP_NATIVE_X64_VARIANT=baseline|modern`). Same compile as `ci-release-build-binaries.ts`
- * (`compileCodingAgent`, embedded natives, stats bundle, tool views), with the collab entry point.
+ * (`compileCodingAgent`, embedded natives, stats bundle, export viewer), with the collab entry point.
  *
  * Environment:
  *   OMP_RELEASE_REPO  GitHub repository `omp update` follows (default ctrlc03/oh-my-pi; CI passes ${{ github.repository }}).
@@ -91,7 +91,7 @@ async function main(): Promise<void> {
 	// Generate inside the try so the finally restores the empty checked-in placeholders even when a step throws.
 	try {
 		await runCommand(["bun", "run", "gen:stats"]);
-		await runCommand(["bun", "--cwd=packages/collab-web", "run", "gen:tool-views"]);
+		await runCommand(["bun", "--cwd=packages/collab-web", "run", "gen:export-viewer"]);
 		await buildApp(appDir, { local: true });
 		const app = await embeddedAppFiles(appDir);
 		console.log(

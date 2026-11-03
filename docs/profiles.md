@@ -81,7 +81,7 @@ While a profile with `approvalMode`, `approval`, `pathRules` or `outsideProject`
 ## Switching
 
 - `/profile` lists the profiles (the active one is marked, plus any load warnings); `/profile <name>` switches. Completion offers the names.
-- `app.profile.cycle` (default `Alt+O`) cycles to the next profile in list order. Rebind it in `keybindings.yml` ([Keybindings](./keybindings.md)).
+- `app.profile.cycle` (default `Alt+Shift+O`) cycles to the next profile in list order. Rebind it in `keybindings.yml` ([Keybindings](./keybindings.md)).
 - The status line's `mode` segment shows the active profile when it is not `build`.
 - The choice is saved in the session and restored on resume, branch navigation and `/new`; a new session starts in `profile.default` (default: `build`).
 - A switch while the agent is working is queued and applies when the turn ends; `/profile` then shows the queued name.

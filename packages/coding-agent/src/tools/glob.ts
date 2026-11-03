@@ -78,6 +78,8 @@ export interface GlobOperationsOptions {
 	hidden: boolean;
 	/** Honour gitignore files. Resolved from the caller's `gitignore`, defaulting to true. */
 	gitignore: boolean;
+	/** Restrict matches to this entry type, including symlinks to that type. */
+	fileType?: natives.FileType;
 	/** Aborts when the caller cancels or when the tool's scan deadline expires.
 	 * Backends are expected to stop on it; the tool does not wait for one that
 	 * does not, but it still stops reporting at the deadline. */
@@ -116,6 +118,7 @@ interface GlobTarget {
 	searchPath: string;
 	globPattern: string;
 	hasGlob: boolean;
+	directoryOnly?: boolean;
 }
 
 interface NativePreparedTarget {
@@ -238,7 +241,7 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 			const internalRouter = InternalUrlRouter.instance();
 			// Internal URLs resolve inside the native walk, bounded by the tier this call was approved at.
 			const urlFilesystem = new InternalUrlFilesystem({
-				context: sessionResolveContext(this.session, { signal }),
+				context: sessionResolveContext(this.session, { signal, containSkillPaths: true }),
 				tier: resolveToolTier(this, params),
 			});
 			const normalizedPatterns = aliasResolvedPatterns.map(pattern => internalRouter.normalize(pattern));
@@ -273,6 +276,7 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 						searchPath: target.basePath,
 						globPattern: target.globPattern,
 						hasGlob: target.hasGlob,
+						directoryOnly: target.directoryOnly,
 					}))
 				: [
 						(() => {
@@ -281,6 +285,7 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 								searchPath: resolveSearchBase(parsed.basePath, this.session.cwd),
 								globPattern: parsed.globPattern,
 								hasGlob: parsed.hasGlob,
+								directoryOnly: parsed.directoryOnly,
 							};
 						})(),
 					];
@@ -456,6 +461,7 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 							if (stat.timedOut) return [] as string[];
 							if (stat.value.isFile()) return [formatScopePath(target.searchPath)];
 						}
+						const fileType = target.directoryOnly ? natives.FileType.Dir : undefined;
 						const results = await runCustom(
 							Promise.resolve(
 								customOps.glob(target.globPattern, target.searchPath, {
@@ -463,12 +469,13 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 									limit: effectiveLimit,
 									hidden: includeHidden,
 									gitignore: useGitignore,
+									fileType,
 									signal: combinedSignal,
 								}),
 							),
 						);
 						if (results.timedOut) return [] as string[];
-						return results.value.map(matchPath => formatMatchPath(matchPath, target.searchPath));
+						return results.value.map(matchPath => formatMatchPath(matchPath, target.searchPath, fileType));
 					}),
 				);
 				const seen = new Set<string>();
@@ -594,6 +601,7 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 						{
 							pattern: target.globPattern,
 							path: target.searchPath,
+							fileType: target.directoryOnly ? natives.FileType.Dir : undefined,
 							hidden: includeHidden,
 							maxResults: effectiveLimit,
 							sortByMtime: true,
@@ -605,6 +613,7 @@ export class GlobTool implements AgentTool<typeof findSchema, GlobToolDetails> {
 							// native auto-recursion so `dir/*` does not silently match
 							// `dir/sub/nested.ts`.
 							recursive: false,
+							followLinks: target.searchPath.startsWith("skill://"),
 							signal: combinedSignal,
 							timeoutMs,
 							filesystem: urlFilesystem.shellFilesystem(),

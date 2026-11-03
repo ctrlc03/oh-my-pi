@@ -823,7 +823,7 @@ export class MnemopiSessionState {
 		return true;
 	}
 
-	async recallForCompaction(messages: AgentMessage[]): Promise<string | undefined> {
+	async recallForCompaction(messages: AgentMessage[], signal?: AbortSignal): Promise<string | undefined> {
 		const flat = withLoopPhase("mnemopi.recall", () => flattenAgentMessages(messages));
 		const lastUser = flat.findLast(message => message.role === "user");
 		if (!lastUser) return undefined;
@@ -831,7 +831,7 @@ export class MnemopiSessionState {
 			const query = composeRecallQuery(lastUser.content, flat, this.config.recallContextTurns);
 			return truncateRecallQuery(query, lastUser.content, this.config.recallMaxQueryChars);
 		});
-		return await this.recallForContext(truncated);
+		return await this.recallForContext(truncated, signal);
 	}
 
 	async maybeRetainOnAgentEnd(_messages: AgentMessage[]): Promise<void> {
@@ -1321,7 +1321,7 @@ function deriveSharedRecallFallbackQuery(
 	if (tokens.length === 0) return undefined;
 	let broadened = stripLiteralBankPhrase(query, tokens);
 	for (const token of tokens) {
-		broadened = broadened.replace(new RegExp(`\\b${escapeRegExp(token)}\\b`, "gi"), " ");
+		broadened = broadened.replace(new RegExp(`\\b${RegExp.escape(token)}\\b`, "gi"), " ");
 	}
 	broadened = cleanupBroadenedRecallQuery(broadened);
 	const normalizedBroadened = normalizeRecallQuery(broadened);
@@ -1336,7 +1336,7 @@ function tokenizeBankName(bank: string): string[] {
 function stripLiteralBankPhrase(query: string, tokens: readonly string[]): string {
 	if (tokens.length < 2) return query;
 	const separators = "[\\s_-]+";
-	const phrase = tokens.map(token => escapeRegExp(token)).join(separators);
+	const phrase = tokens.map(token => RegExp.escape(token)).join(separators);
 	return query.replace(new RegExp(`\\b${phrase}\\b`, "gi"), " ");
 }
 
@@ -1355,9 +1355,6 @@ function normalizeRecallQuery(query: string): string {
 		.trim();
 }
 
-function escapeRegExp(text: string): string {
-	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 function createMemory(config: MnemopiBackendConfig, bank: string): Mnemopi {
 	const providerOptions = config.providerOptions as Record<string, unknown>;
 	const { Mnemopi } = requireMnemopi();

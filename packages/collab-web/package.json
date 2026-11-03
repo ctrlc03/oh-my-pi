@@ -31,7 +31,7 @@
     "companion": "bun scripts/companion.ts",
     "relay": "bun scripts/local-relay.ts",
     "build": "bun scripts/build-app.ts",
-    "gen:tool-views": "bun scripts/build-tool-views.ts",
+    "gen:export-viewer": "bun scripts/build-export-viewer.ts",
     "prepack": "bun run build",
     "test": "bun test --parallel",
     "e2e:personal": "OMP_E2E_PERSONAL=1 bun test test/e2e-personal --timeout 600000",
@@ -92,7 +92,7 @@
     "puppeteer-core": "catalog:"
   },
   "engines": {
-    "bun": ">=1.3.14"
+    "bun": ">=1.4.4"
   },
   "files": [
     "dist",

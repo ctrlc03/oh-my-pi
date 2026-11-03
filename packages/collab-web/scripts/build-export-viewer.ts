@@ -41,7 +41,15 @@ export async function buildExportViewer(options: ExportViewerBuildOptions = {}):
 		target: "browser",
 		format: "iife",
 		minify: true,
-		define: { "process.env.NODE_ENV": JSON.stringify("production") },
+		// The viewer loads as a classic script, so `import.meta` (excalidraw's worker URL, jotai's
+		// `import.meta.env`) is a SyntaxError there. Bun also inlines `__dirname` as the absolute
+		// node_modules path, which made the pinned bytes depend on the checkout location.
+		define: {
+			"process.env.NODE_ENV": JSON.stringify("production"),
+			"import.meta.url": "undefined",
+			"import.meta.env": "undefined",
+			__dirname: JSON.stringify("/"),
+		},
 		plugins: [
 			{
 				name: "shared-export-markdown",

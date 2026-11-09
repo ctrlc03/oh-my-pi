@@ -1174,5 +1174,7 @@ export type RelayControlToGuest = { t: "room-closed" };
 export type RelayControlMessage = RelayControlToHost | RelayControlToGuest;
 
 export * from "./pr-watch";
+export * from "./shell-trace";
+export * from "./shell-viz";
 export * from "./stream";
 export * from "./tsp";

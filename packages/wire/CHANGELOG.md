@@ -37,6 +37,25 @@
 - `@oh-my-pi/pi-wire/schedule`: the schedule types shared by the companion, the web app and omp (`Schedule`, `ScheduleWhen` with `cron` and `interval` kinds, `CatchUpPolicy`, `createdBy`), the cron parser and next-run maths with daylight-saving rules (`parseCron`, `nextRunAfter`, `nextRuns`, `parseScheduleWhen`), their wording (`describeCron`, `describeWhen`, `formatRunTime`), and the companion's local schedule channel contract (`SCHEDULE_IPC_FILE`, `ScheduleIpcRequest`, `ScheduleIpcReply`).
 - `BlueprintExcerptRef` (a `BlueprintRef` with optional `from`/`to`, 1-based inclusive) on the refs of `blueprint-excerpt`, `quiz-excerpt`, `spar-excerpt` and `bakeoff-excerpt`, the optional `BlueprintExcerpt.total` (lines in the file) in the answer, and `BLUEPRINT_EXCERPT_STEP` (20), `BLUEPRINT_EXCERPT_MAX_LINES` (2,000 an excerpt) and `BLUEPRINT_EXCERPT_MAX_RANGES` (20 ranged refs a request): a viewer can show more of the code around a citation. An older companion ignores the range and answers the default window without `total`, so a viewer offers no "show more" (protocol version unchanged).
 - `@oh-my-pi/pi-wire/disk`: the disk guard format (`DiskGuardSettings` with its limits and defaults, `DiskState`, `DiskVolume`, `DiskCandidate`, `DiskArtifact`, `DiskClean`, `DiskHealth`, `diskMarginBytes`, the `DISK_ROUTE` a low-space notification opens), the companion requests `disk-guard`, `disk-scan` and `disk-clean`, the `canDiskGuard` capability and `disk` (`DiskHealth`) on the `hosts` frame. Every new field is optional, so an older companion or app ignores them.
+## [18.18.6] - 2026-11-09
+
+### Added
+
+- `actions.hold` (`TspMenuEntry[]`): what a long press on a touch screen offers, beside `actions.menu`; and `toast`'s `action` / `label` props for a button on the toast
+
+## [18.18.0] - 2026-11-07
+
+### Changed
+
+- `ShellTrace` fields that carry values from the run (argv, assignments, redirect targets, unlocated unit sources, diagnostics) are `ShellTraceBytes`: a string when the bytes are UTF-8, otherwise the raw byte values. `isShellTrace` accepts both forms
+
+## [18.17.0] - 2026-11-06
+
+### Added
+
+- Added shell trace visualization: `ShellTrace` model and TSP `shell` kind for shell runs, node state, and layout.
+- Code views gain score-based line shading, labeled collapsible folds with notes, tones, and hover cards, and an overview strip.
+
 ## [18.16.0] - 2026-11-02
 
 ### Added

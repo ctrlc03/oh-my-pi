@@ -79,10 +79,6 @@ async function main(): Promise<void> {
 	const tag = process.env.OMP_BUILD_TAG || DEV_BUILD_TAG;
 
 	const require = createRequire(import.meta.url);
-	const transformersManifest: { version?: unknown } = require("@huggingface/transformers/package.json");
-	if (typeof transformersManifest.version !== "string") {
-		throw new Error("@huggingface/transformers package manifest has no string version");
-	}
 	const agentManifest: { version: string } = require("../packages/coding-agent/package.json");
 	checkBuildTag(tag, agentManifest.version);
 
@@ -102,7 +98,6 @@ async function main(): Promise<void> {
 			repoRoot,
 			entrypoint: path.join(repoRoot, "packages", "collab-web", "scripts", "omp-collab.ts"),
 			outfile,
-			transformersVersion: transformersManifest.version,
 			native: target,
 			target: target.target,
 			minifyIdentifiers: true,

@@ -22,6 +22,8 @@ export interface StandaloneJudge {
 	native: boolean;
 	/** What the role resolves to first (kind, whether it was assigned explicitly, label); undefined when no model is available. */
 	describe: JudgeDescription | undefined;
+	/** The project settings the judge was resolved from, for the command's own options. */
+	settings: Settings;
 	/** Release the auth store; the judge must not be used afterwards. */
 	close(): void;
 }
@@ -54,6 +56,7 @@ export async function openStandaloneJudge(
 			}),
 			native: hasNativeJudge(settings, registry),
 			describe: describeJudge(settings, registry),
+			settings,
 			close: () => authStorage.close(),
 		};
 	} catch (error) {

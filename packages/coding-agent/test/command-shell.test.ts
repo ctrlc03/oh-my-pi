@@ -75,8 +75,9 @@ describe("shell output in markdown commands", () => {
 		expect(text).toBe(hostile);
 		expect(fs.existsSync(marker)).toBe(false);
 
+		// A quote opens a quoted arg only at its start; mid-word apostrophes stay literal (upstream 9496b86b51).
 		const all = await run(`/cmd a "b c" '$(touch' ${marker}')'`, command("!`printf '[%s]' $ARGUMENTS`"));
-		expect(all.text).toBe(`[a][b c][$(touch][${marker})]`);
+		expect(all.text).toBe(`[a][b c][$(touch][${marker}')']`);
 		expect(fs.existsSync(marker)).toBe(false);
 	});
 

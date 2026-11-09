@@ -109,9 +109,9 @@ describe("CollabController idle registry entry", () => {
 		Reflect.deleteProperty(controller, "host");
 		expect(await idleIds()).toEqual(self);
 
-		ctx.collabGuest = {} as InteractiveModeContext["collabGuest"];
+		Object.assign(ctx, { collabGuest: {} as InteractiveModeContext["collabGuest"] });
 		expect(await idleIds()).toEqual([]);
-		ctx.collabGuest = undefined;
+		Object.assign(ctx, { collabGuest: undefined });
 		expect(await idleIds()).toEqual(self);
 
 		(ctx.session as unknown as { isSessionTransitioning: boolean }).isSessionTransitioning = true;
@@ -149,7 +149,7 @@ describe("CollabController idle registry entry", () => {
 		});
 
 		// A guest is not listed as startable, and a request that raced the join is refused outright.
-		ctx.collabGuest = {} as InteractiveModeContext["collabGuest"];
+		Object.assign(ctx, { collabGuest: {} as InteractiveModeContext["collabGuest"] });
 		start.mockClear();
 		await expect(registry.startCollabSession(controller.instanceId, "control", { dir: tmp })).rejects.toMatchObject({
 			code: "not_found",

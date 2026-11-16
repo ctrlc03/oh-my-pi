@@ -27,6 +27,17 @@ export function saveIdeDock(docked: boolean): void {
 	writeJson(IDE_DOCK_KEY, docked ? true : null);
 }
 
+/** Docked editor maximized: it fills the main area and the transcript is hidden (boolean, per device). */
+export const IDE_MAX_KEY = "omp.collab.ide-maximized";
+
+export function loadIdeMaximized(): boolean {
+	return readJson(IDE_MAX_KEY) === true;
+}
+
+export function saveIdeMaximized(maximized: boolean): void {
+	writeJson(IDE_MAX_KEY, maximized ? true : null);
+}
+
 /** Why `next` cannot open beside the main session, or null. One room cannot have two clients: both would send its queued prompts. */
 export function besideConflict(mainLink: string | null, next: string): string | null {
 	const room = roomIdOf(next);

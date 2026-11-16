@@ -93,6 +93,8 @@ export interface PaletteActions {
 	openGithub: (() => void) | null;
 	openRun: (() => void) | null;
 	openEditor: (() => void) | null;
+	/** The explorer open on its Search view; null unless the paired computer searches file contents. */
+	searchFiles: (() => void) | null;
 	/** Undo and redo of the last turn; undefined unless the app offers them. */
 	turnUndo: TurnUndoControl | undefined;
 	onLeave(): void;
@@ -296,7 +298,22 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 				FileDiff,
 				actions.openChanges,
 			],
-			["app:editor", "Browse and edit files", "Computer", ["editor", "code"], SquareCode, actions.openEditor],
+			[
+				"app:editor",
+				"Open explorer",
+				"Computer",
+				["editor", "code", "files", "browse", "tree"],
+				SquareCode,
+				actions.openEditor,
+			],
+			[
+				"app:search-files",
+				"Search in files",
+				"Computer",
+				["find", "grep", "content", "explorer", "repository"],
+				Search,
+				actions.searchFiles,
+			],
 			[
 				"app:codemap",
 				"Code map of the repository",

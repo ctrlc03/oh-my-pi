@@ -1,43 +1,42 @@
-import type { Extension, Text, TransactionSpec } from "@codemirror/state";
-import { EditorState, Transaction } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
 import {
-	ChevronDown,
-	ChevronRight,
 	FileCode,
-	Folder,
+	ListTree,
 	LoaderCircle,
 	LocateFixed,
+	Maximize2,
 	MessageSquarePlus,
+	Minimize2,
 	PanelLeft,
 	PanelRight,
 	PanelRightClose,
 	PenLine,
-	RefreshCw,
 	Save,
-	TriangleAlert,
 	Swords,
+	TriangleAlert,
 	X,
 } from "lucide-react";
 import type { KeyboardEvent, ReactNode, RefObject } from "react";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { CodemapNode, CompanionClient, FileTree } from "../../lib/companion";
 import { FileChangedError } from "../../lib/companion";
 import { openDiagramFile } from "../../lib/diagram-store";
 import { diagramFileKind } from "../../lib/diagrams";
-import { importChunk } from "../../lib/stale-build";
+import type { EditorEnginePref } from "../../lib/editor-prefs";
+import { useEditorEnginePref } from "../../lib/editor-prefs";
+import type { LspLocation, LspQuery } from "../../lib/repo-intel";
 import { useRequest } from "../../lib/use-request";
 import { matchesMedia } from "../../lib/zoom";
 import { useMedia, WIDE_QUERY } from "../codemap/shared";
 import { DownloadButton } from "../shell/DownloadButton";
 import { Sheet } from "../shell/Sheet";
 import { DockPane } from "../shell/SplitPane";
-import type { EditorHooks } from "./editor";
-import { baseExtensions, fromDisk, markChanged, selectedLines, tabExtensions, wordAt } from "./editor";
-import type { TreeDir } from "./file-tree";
-import { ancestors, baseName, buildTree, quickOpen } from "./file-tree";
-import { languageFor } from "./languages";
-import { diffText } from "./text-diff";
+import type { EditorDoc, EditorEngine, EditorView, EditorViewHooks, EngineName, HoverAnswer, Pos } from "./backend";
+import { chooseEngine, loadEngine, readyEngine } from "./backend";
+import type { DiagnosticCounts } from "./backend/lsp-map";
+import { chooseDefinitionTarget, countDiagnostics, unavailableNote } from "./backend/lsp-map";
+import type { ExplorerSidebarHandle } from "./ExplorerSidebar";
+import { ExplorerSidebar } from "./ExplorerSidebar";
+import { ancestors, baseName, quickOpen } from "./file-tree";
 import "./ide.css";
 
 export interface IdeSheetProps {
@@ -48,14 +47,22 @@ export interface IdeSheetProps {
 	target: { path: string; line?: number } | null;
 	/** View-only link: browse and read, never save. */
 	readOnly: boolean;
-	/** The code map is available: go to definition looks symbols up in it. */
+	/** The code map is available: go to definition looks symbols up in it when no language server answers. */
 	canDefinition: boolean;
+	/** The companion runs language servers: hover, go to definition, find references and problems. */
+	canLsp: boolean;
+	/** The companion searches file contents: the explorer's Search view. */
+	canSearch: boolean;
 	/** Edits the agent completed so far: a change checks the open files at once instead of at the next poll. */
 	edits: number;
 	/** Put text in the message box; null for view-only links. */
 	onSendToAgent: ((text: string) => void) | null;
 	/** Docking the editor beside the transcript is possible: the header offers the toggle. null: it is always a sheet. */
 	dock?: { docked: boolean; onDockedChange(docked: boolean): void } | null;
+	/** The docked editor can take the whole main area: the header offers the button. null or absent: not offered. */
+	maximize?: { maximized: boolean; onMaximizedChange(maximized: boolean): void } | null;
+	/** The explorer view to open on (Search also focuses its query box); absent: the last one, or Files. */
+	initialView?: "files" | "search";
 	/** Spar with a design: the file's path relative to the repository (markdown and text files only). null: not offered. */
 	onSparDesign?: ((path: string) => void) | null;
 	onClose(): void;
@@ -69,6 +76,8 @@ const MAX_POLLED = 20;
 const QUICK_OPEN_ROWS = 40;
 /** Files a design is likely to be written in: the header offers sparring with them. */
 const DESIGN_FILE = /\.(md|mdx|markdown|txt|rst|adoc)$/i;
+/** Problems are asked for this long after the last edit. */
+const DIAGNOSTICS_DEBOUNCE_MS = 800;
 
 type Conflict = { kind: "changed"; version: string } | { kind: "gone" };
 
@@ -89,6 +98,11 @@ interface Tab {
 	conflict: Conflict | null;
 	/** Lines the last update from disk changed (highlighted until the next edit). */
 	changed: number;
+	/** The language server that answered for this file, and what it found; null before it has. */
+	server: string | null;
+	problems: DiagnosticCounts | null;
+	/** Said once in the status bar when no language server handles the file. */
+	lspNote: string | null;
 }
 
 /**
@@ -98,33 +112,22 @@ interface Tab {
 interface Memory {
 	tabs: Tab[];
 	active: string | null;
-	/** Editor state of every tab but the active one, whose state lives in the view. */
-	states: Record<string, EditorState>;
-	/** Each tab's text as last read from or written to disk; `dirty` compares against it. */
-	disk: Record<string, Text>;
+	/** Each tab's document: its text, undo history and marks. Outlives the view showing it. */
+	docs: Record<string, EditorDoc>;
+	/** Bumped by every edit to a tab's text, so an answer about older text is not applied. */
+	revisions: Record<string, number>;
+	/** Tabs whose file no language server handles: nothing more is asked for them. */
+	noServer: Record<string, true>;
 	expanded: Record<string, true>;
 	/** Absolute tree root once the tree loaded. */
 	root: string | null;
-	/** Read by the shared extensions on every event, so restored states reach the mounted sheet. */
-	hooks: EditorHooks;
-	base: Extension[];
 }
 
 const memories: Record<string, Memory> = {};
 
 function memoryFor(instanceId: string): Memory {
 	if (Object.hasOwn(memories, instanceId)) return memories[instanceId]!;
-	const memory: Memory = {
-		tabs: [],
-		active: null,
-		states: {},
-		disk: {},
-		expanded: {},
-		root: null,
-		hooks: { definition() {}, changed() {} },
-		base: [],
-	};
-	memory.base = baseExtensions(() => memory.hooks);
+	const memory: Memory = { tabs: [], active: null, docs: {}, revisions: {}, noServer: {}, expanded: {}, root: null };
 	memories[instanceId] = memory;
 	return memory;
 }
@@ -150,10 +153,74 @@ function fenceFor(text: string): string {
 	return "`".repeat(Math.max(3, longest + 1));
 }
 
+/** One answer of the definition list: where it goes, or why it cannot be opened. */
+interface DefinitionRow {
+	key: string;
+	label: string;
+	where: string;
+	signature?: string;
+	/** Root-relative; null: outside the repository, listed but not openable. */
+	open: { path: string; line: number; character?: number } | null;
+}
+
+interface DefinitionState {
+	word: string;
+	/** null while looking. */
+	rows: DefinitionRow[] | null;
+	error?: string;
+	/** Where the rows came from, for the empty message. */
+	source: "language server" | "code map";
+}
+
+function locationRow(location: LspLocation): DefinitionRow {
+	const line = location.range.start.line;
+	const where = `${location.path}:${line}`;
+	return {
+		key: `${where}:${location.range.start.character}`,
+		label: location.preview ?? baseName(location.path),
+		where,
+		open: location.inRepo ? { path: location.path, line, character: location.range.start.character } : null,
+	};
+}
+
 /**
- * The editor: the session folder's files in a tree, open files in tabs, saving
+ * Move the documents `mem` holds to `engine` (the editor setting changed): each is rebuilt from the text on
+ * disk with the user's unsaved text applied on top, so dirty tabs stay dirty. Undo history and the marks of
+ * lines changed on disk do not carry over.
+ */
+async function adoptDocs(mem: Memory, engine: EditorEngine, scope: string): Promise<void> {
+	for (const tab of mem.tabs) {
+		const old = mem.docs[tab.path];
+		if (old === undefined || old.engine === engine.name) continue;
+		const language = await engine.loadLanguage(tab.request);
+		const doc = engine.createDoc({
+			path: tab.path,
+			scope,
+			text: old.cleanText(),
+			crlf: old.crlf,
+			writable: old.writable,
+			language,
+			unsaved: old.isDirty() ? old.text() : undefined,
+		});
+		mem.docs[tab.path] = doc;
+		mem.tabs = mem.tabs.map(t => (t.path === tab.path ? { ...t, changed: 0 } : t));
+		old.dispose();
+	}
+}
+
+/** The engine the setting asks for in this browser right now. */
+function wantedEngine(pref: EditorEnginePref): EngineName {
+	return chooseEngine(pref, {
+		finePointer: matchesMedia("(pointer: fine)"),
+		wide: matchesMedia(WIDE_QUERY),
+	});
+}
+
+/**
+ * The editor: the session folder's files in the explorer, open files in tabs, saving
  * through the companion. A save is refused when the file changed on disk since it
  * was read; files the agent edits reload in clean tabs with the changed lines marked.
+ * The editing surface is Monaco on desktops and CodeMirror elsewhere (see `backend/`).
  */
 export function IdeSheet({
 	client,
@@ -161,9 +228,13 @@ export function IdeSheet({
 	target,
 	readOnly,
 	canDefinition,
+	canLsp,
+	canSearch,
 	edits,
 	onSendToAgent,
 	dock,
+	maximize,
+	initialView,
 	onSparDesign,
 	onClose,
 }: IdeSheetProps): ReactNode {
@@ -171,24 +242,39 @@ export function IdeSheet({
 	const [, rerender] = useReducer((n: number) => n + 1, 0);
 	const host = useRef<HTMLDivElement>(null);
 	const viewRef = useRef<EditorView | null>(null);
+	const hooksRef = useRef<EditorViewHooks | null>(null);
 	const docked = dock?.docked === true;
-	// A docked pane is narrower than the window: the file list overlays the editor as on narrow screens.
+	const maximized = maximize?.maximized === true;
+	// A docked pane is narrower than the window: the explorer overlays the editor as on narrow screens,
+	// unless the pane is maximized.
 	const viewportWide = useMedia(WIDE_QUERY);
-	const wide = viewportWide && !docked;
-	const [treeOpen, setTreeOpen] = useState(() => mem.tabs.length === 0 || wide);
+	const wide = viewportWide && (!docked || maximized);
+	const [treeOpen, setTreeOpen] = useState(() => mem.tabs.length === 0 || wide || initialView !== undefined);
+	// Maximizing makes room for the explorer beside the editor: show it.
+	useEffect(() => {
+		if (maximized) setTreeOpen(true);
+	}, [maximized]);
+	const [sidebarView, setSidebarView] = useState(initialView);
+	const sidebar = useRef<ExplorerSidebarHandle>(null);
 	const [expanded, setExpanded] = useState(mem.expanded);
 	const [opening, setOpening] = useState<string | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
 	const [cursor, setCursor] = useState({ line: 1, col: 1, selected: 0 });
-	const [definition, setDefinition] = useState<{ word: string; hits: CodemapNode[] | null; error?: string } | null>(
-		null,
-	);
+	const [definition, setDefinition] = useState<DefinitionState | null>(null);
+	const [references, setReferences] = useState<{ title: string; locations: LspLocation[] } | null>(null);
+
+	const pref = useEditorEnginePref();
+	const [engine, setEngine] = useState<EditorEngine | null>(() => {
+		const ready = readyEngine(wantedEngine(pref));
+		return ready !== null && mem.tabs.every(tab => mem.docs[tab.path]?.engine === ready.name) ? ready : null;
+	});
+	const engineRef = useRef(engine);
+	engineRef.current = engine;
 
 	const loadTree = useCallback(() => client.requestTree(instanceId), [client, instanceId]);
 	const { state: treeState, reload: reloadTree } = useRequest<FileTree>(loadTree);
 	const tree = treeState.status === "ready" ? treeState.value : null;
 	if (tree !== null) mem.root = tree.root;
-	const rootDir = useMemo(() => (tree === null ? null : buildTree(tree.files)), [tree]);
 
 	const notify = useCallback((text: string) => setNotice(text), []);
 	useEffect(() => {
@@ -201,35 +287,59 @@ export function IdeSheet({
 		mem.expanded = expanded;
 	}, [mem, expanded]);
 
+	// The sidebar reads its starting view when it mounts: once it has, forget the request.
+	useEffect(() => {
+		if (treeOpen && sidebarView !== undefined) setSidebarView(undefined);
+	}, [treeOpen, sidebarView]);
+
 	const findTab = (path: string): Tab | undefined => mem.tabs.find(tab => tab.path === path);
 	const patchTab = (path: string, patch: Partial<Tab>): void => {
 		if (findTab(path) === undefined) return;
 		mem.tabs = mem.tabs.map(tab => (tab.path === path ? { ...tab, ...patch } : tab));
 		rerender();
 	};
-	const stateOf = (path: string): EditorState => {
-		const view = viewRef.current;
-		return path === mem.active && view !== null ? view.state : mem.states[path]!;
-	};
-	const applyTo = (path: string, spec: TransactionSpec): void => {
-		const view = viewRef.current;
-		if (path === mem.active && view !== null) view.dispatch(spec);
-		else mem.states[path] = mem.states[path]!.update(spec).state;
+	const activeDoc = (): EditorDoc | null => (mem.active === null ? null : (mem.docs[mem.active] ?? null));
+
+	const syncCursor = (): void => {
+		const doc = activeDoc();
+		if (doc !== null) setCursor(doc.cursor());
 	};
 
-	const syncCursor = (view: EditorView): void => {
-		const { head, from, to } = view.state.selection.main;
-		const line = view.state.doc.lineAt(head);
-		setCursor({ line: line.number, col: head - line.from + 1, selected: to - from });
-	};
+	// ---- the engine: chosen by the setting and the browser, loaded on demand, documents moved to it ----
+	useEffect(() => {
+		const name = wantedEngine(pref);
+		if (engineRef.current?.name === name) return;
+		let stale = false;
+		// The view goes first: the documents it shows are about to change hands.
+		viewRef.current?.destroy();
+		viewRef.current = null;
+		engineRef.current = null;
+		setEngine(null);
+		void (async () => {
+			let next: EditorEngine;
+			try {
+				next = await loadEngine(name);
+			} catch (err) {
+				if (name === "codemirror") throw err;
+				notify(`Monaco could not be loaded (${messageOf(err)}); using CodeMirror`);
+				next = await loadEngine("codemirror");
+			}
+			await adoptDocs(mem, next, instanceId);
+			if (stale) return;
+			engineRef.current = next;
+			setEngine(next);
+		})().catch((err: unknown) => notify(`Could not start the editor: ${messageOf(err)}`));
+		return () => {
+			stale = true;
+		};
+	}, [pref, mem, instanceId, notify]);
 
-	const activate = (path: string, line?: number): void => {
+	const activate = (path: string, line?: number, character?: number): void => {
 		const view = viewRef.current;
 		if (view === null || findTab(path) === undefined) return;
 		if (mem.active !== path) {
-			if (mem.active !== null && findTab(mem.active) !== undefined) mem.states[mem.active] = view.state;
-			view.setState(mem.states[path]!);
 			mem.active = path;
+			view.show(mem.docs[path]!);
 			setExpanded(prev => {
 				const next = { ...prev };
 				for (const dir of ancestors(path)) next[dir] = true;
@@ -237,40 +347,195 @@ export function IdeSheet({
 			});
 			rerender();
 		}
-		if (line !== undefined) {
-			const doc = view.state.doc;
-			const at = doc.line(Math.min(Math.max(line, 1), doc.lines)).from;
-			view.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: "center" }) });
-		}
-		syncCursor(view);
+		if (line !== undefined) view.reveal({ line, character });
+		syncCursor();
 		if (!matchesMedia(WIDE_QUERY)) setTreeOpen(false);
 	};
 
-	const openFile = async (request: string, line?: number): Promise<void> => {
+	// ---- language server: problems, hover, go to definition, find references ----
+	const diagnosticTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+	useEffect(() => {
+		const timers = diagnosticTimers.current;
+		return () => {
+			for (const timer of timers.values()) clearTimeout(timer);
+			timers.clear();
+		};
+	}, []);
+
+	/** The file has no language server: say so once, and ask nothing more for it. */
+	const markNoServer = (path: string): void => {
+		if (mem.noServer[path] === true) return;
+		mem.noServer[path] = true;
+		patchTab(path, { server: null, problems: null, lspNote: unavailableNote(path) });
+	};
+
+	const lspQuery = (op: LspQuery["op"], doc: EditorDoc, position: Pos): LspQuery => ({
+		op,
+		path: doc.path,
+		position,
+		text: doc.isDirty() ? doc.text() : undefined,
+	});
+
+	const refreshProblems = async (path: string): Promise<void> => {
+		const doc = mem.docs[path];
+		if (!canLsp || doc === undefined || mem.noServer[path] === true || findTab(path) === undefined) return;
+		const revision = mem.revisions[path] ?? 0;
+		try {
+			const result = await client.requestDiagnostics(instanceId, path, doc.isDirty() ? doc.text() : undefined);
+			if (mem.docs[path] !== doc) return;
+			if (result.kind === "unavailable") {
+				markNoServer(path);
+				return;
+			}
+			// No fresh report: keep what is shown. Edited since asking: the next request answers for the new text.
+			if (result.diagnostics === null || (mem.revisions[path] ?? 0) !== revision) return;
+			doc.setDiagnostics(result.diagnostics);
+			patchTab(path, { server: result.server, problems: countDiagnostics(result.diagnostics), lspNote: null });
+		} catch {
+			// Offline or the companion is restarting: the next edit or save asks again.
+		}
+	};
+	const scheduleProblems = (path: string, delay: number): void => {
+		if (!canLsp) return;
+		const timers = diagnosticTimers.current;
+		clearTimeout(timers.get(path));
+		timers.set(
+			path,
+			setTimeout(() => {
+				timers.delete(path);
+				void refreshProblems(path);
+			}, delay),
+		);
+	};
+
+	const hover = async (doc: EditorDoc, position: Pos, signal: AbortSignal): Promise<HoverAnswer | null> => {
+		if (mem.noServer[doc.path] === true) return null;
+		const result = await client.requestLsp(instanceId, lspQuery("hover", doc, position));
+		if (signal.aborted) return null;
+		if (result.kind === "unavailable") {
+			markNoServer(doc.path);
+			return null;
+		}
+		if (result.kind !== "hover" || result.markdown === null || result.markdown.trim() === "") return null;
+		return { markdown: result.markdown, range: result.range };
+	};
+
+	const openLocation = (path: string, line: number, character?: number): void =>
+		void openFile(absolutePath(mem, path), line, character);
+
+	const definitionAt = async (doc: EditorDoc, position: Pos): Promise<void> => {
+		if (!canLsp && !canDefinition) {
+			notify("Go to definition needs a language server or the code map on the paired computer");
+			return;
+		}
+		const word = doc.wordAt(position) ?? "";
+		if (canLsp && mem.noServer[doc.path] !== true) {
+			setDefinition({ word, rows: null, source: "language server" });
+			try {
+				const result = await client.requestLsp(instanceId, lspQuery("definition", doc, position));
+				if (result.kind === "unavailable") markNoServer(doc.path);
+				const target = chooseDefinitionTarget(result);
+				if (target.kind === "open") {
+					setDefinition(null);
+					openLocation(target.path, target.line, target.character);
+					return;
+				}
+				if (target.kind === "list") {
+					setDefinition({ word, rows: target.locations.map(locationRow), source: "language server" });
+					return;
+				}
+			} catch {
+				// The server is not answering: the code map may still know the name.
+			}
+		}
+		if (word === "") {
+			setDefinition(null);
+			return;
+		}
+		if (!canDefinition) {
+			setDefinition({ word, rows: [], source: "language server" });
+			return;
+		}
+		setDefinition({ word, rows: null, source: "code map" });
+		try {
+			const hits = (await client.searchCodemap(instanceId, word)).filter(
+				hit => hit.kind === "symbol" && hit.line !== undefined,
+			);
+			const exact = hits.filter(hit => lastSegment(hit.label) === word);
+			const picks = exact.length > 0 ? exact : hits;
+			if (picks.length === 1) {
+				setDefinition(null);
+				openLocation(picks[0]!.path, picks[0]!.line!);
+			} else {
+				setDefinition({ word, rows: picks.map(codemapRow), source: "code map" });
+			}
+		} catch (err) {
+			setDefinition({ word, rows: [], error: messageOf(err), source: "code map" });
+		}
+	};
+
+	const referencesAt = async (doc: EditorDoc, position: Pos): Promise<void> => {
+		if (!canLsp) {
+			notify("Find references needs a language server on the paired computer");
+			return;
+		}
+		if (mem.noServer[doc.path] === true) {
+			notify(unavailableNote(doc.path));
+			return;
+		}
+		const word = doc.wordAt(position) ?? "symbol";
+		try {
+			const result = await client.requestLsp(instanceId, lspQuery("references", doc, position));
+			if (result.kind === "unavailable") {
+				markNoServer(doc.path);
+				notify(unavailableNote(doc.path));
+			} else if (result.kind === "locations") {
+				setReferences({ title: `References to ${word}`, locations: result.locations });
+				setTreeOpen(true);
+			}
+		} catch (err) {
+			notify(`Could not find references: ${messageOf(err)}`);
+		}
+	};
+
+	const openFile = async (request: string, line?: number, character?: number): Promise<void> => {
+		const used = engineRef.current;
+		if (used === null) {
+			notify("The editor is still loading");
+			return;
+		}
 		const known = mem.tabs.find(tab => tab.request === request || absolutePath(mem, tab.path) === request);
 		if (known !== undefined) {
-			activate(known.path, line);
+			activate(known.path, line, character);
 			return;
 		}
 		setOpening(request);
 		try {
-			const entry = languageFor(request);
-			const [file, language] = await Promise.all([
+			const [file, firstLanguage] = await Promise.all([
 				client.requestFile(instanceId, request),
-				entry === null ? null : importChunk(() => entry.load()).catch(() => null),
+				used.loadLanguage(request),
 			]);
+			let language = firstLanguage;
 			if (file.text === null) {
 				notify(`${file.path} is a binary file`);
 				return;
 			}
 			if (findTab(file.path) === undefined) {
+				// The setting changed while the file was coming: build the document for the engine now in charge.
+				const now = engineRef.current;
+				if (now === null) {
+					notify("The editor is still loading");
+					return;
+				}
+				if (now !== used) language = await now.loadLanguage(request);
 				const writable = file.writable && !readOnly;
-				const state = EditorState.create({
-					doc: file.text,
-					extensions: [mem.base, tabExtensions(language, writable, file.text.includes("\r\n"))],
+				mem.docs[file.path] = now.createDoc({
+					path: file.path,
+					scope: instanceId,
+					text: file.text,
+					writable,
+					language,
 				});
-				mem.states[file.path] = state;
-				mem.disk[file.path] = state.doc;
 				mem.tabs = [
 					...mem.tabs,
 					{
@@ -279,15 +544,19 @@ export function IdeSheet({
 						version: file.version,
 						writable,
 						truncated: file.truncated,
-						language: entry?.name ?? null,
+						language: language.name,
 						dirty: false,
 						saving: false,
 						conflict: null,
 						changed: 0,
+						server: null,
+						problems: null,
+						lspNote: null,
 					},
 				];
+				scheduleProblems(file.path, 0);
 			}
-			activate(file.path, line);
+			activate(file.path, line, character);
 		} catch (err) {
 			notify(`Could not open ${baseName(request)}: ${messageOf(err)}`);
 		} finally {
@@ -301,14 +570,19 @@ export function IdeSheet({
 		if (tab.dirty && !confirm(`Discard unsaved changes to ${baseName(path)}?`)) return;
 		const index = mem.tabs.indexOf(tab);
 		mem.tabs = mem.tabs.filter(t => t !== tab);
-		delete mem.states[path];
-		delete mem.disk[path];
+		const doc = mem.docs[path];
+		delete mem.docs[path];
+		delete mem.revisions[path];
+		delete mem.noServer[path];
+		clearTimeout(diagnosticTimers.current.get(path));
+		diagnosticTimers.current.delete(path);
 		if (mem.active === path) {
 			const next = mem.tabs[Math.min(index, mem.tabs.length - 1)];
 			mem.active = null;
 			if (next !== undefined) activate(next.path);
-			else viewRef.current?.setState(EditorState.create({ extensions: mem.base }));
+			else viewRef.current?.show(null);
 		}
+		doc?.dispose();
 		rerender();
 	};
 
@@ -318,19 +592,15 @@ export function IdeSheet({
 		if (tab === undefined) return;
 		const file = await client.requestFile(instanceId, tab.request);
 		const now = findTab(path);
-		if (now === undefined) return;
+		const doc = mem.docs[path];
+		if (now === undefined || doc === undefined) return;
 		if (file.text === null) {
 			patchTab(path, { conflict: { kind: "gone" } });
 			return;
 		}
-		const { edits: changes, changedLines } = diffText(stateOf(path).doc.toString(), file.text.replace(/\r\n/g, "\n"));
-		applyTo(path, {
-			changes,
-			effects: markChanged.of(marked ? changedLines : []),
-			// An agent's edit to a clean file is not the user's to undo; discarded edits are.
-			annotations: [fromDisk.of(true), Transaction.addToHistory.of(now.dirty)],
-		});
-		mem.disk[path] = stateOf(path).doc;
+		// An agent's edit to a clean file is not the user's to undo; discarded edits are.
+		const changedLines = doc.applyDisk(file.text, { mark: marked, undoable: now.dirty });
+		mem.revisions[path] = (mem.revisions[path] ?? 0) + 1;
 		patchTab(path, {
 			version: file.version,
 			dirty: false,
@@ -338,21 +608,25 @@ export function IdeSheet({
 			truncated: file.truncated,
 			changed: marked ? changedLines.length : 0,
 		});
+		if (path === mem.active) syncCursor();
+		scheduleProblems(path, 0);
 	};
 
 	/** Write the tab's text. `base`: overwrite the disk version the user chose to replace. */
 	const save = async (path: string | null, base?: string): Promise<void> => {
 		const tab = path === null ? undefined : findTab(path);
-		if (path === null || tab === undefined || !tab.writable || tab.saving) return;
+		const doc = path === null ? undefined : mem.docs[path];
+		if (path === null || tab === undefined || doc === undefined || !tab.writable || tab.saving) return;
 		if (!tab.dirty && base === undefined) return;
-		const state = stateOf(path);
+		const snapshot = doc.snapshot();
 		patchTab(path, { saving: true });
 		try {
-			const version = await client.writeFile(instanceId, tab.request, state.sliceDoc(), base ?? tab.version);
-			mem.disk[path] = state.doc;
+			const version = await client.writeFile(instanceId, tab.request, snapshot.text, base ?? tab.version);
+			doc.markClean(snapshot);
 			if (findTab(path) !== undefined) {
-				patchTab(path, { version, saving: false, conflict: null, dirty: !stateOf(path).doc.eq(state.doc) });
+				patchTab(path, { version, saving: false, conflict: null, dirty: doc.isDirty() });
 				notify(`Saved ${baseName(path)}`);
+				scheduleProblems(path, 0);
 			}
 		} catch (err) {
 			if (err instanceof FileChangedError) {
@@ -367,35 +641,10 @@ export function IdeSheet({
 		}
 	};
 
-	const definitionAt = async (pos: number): Promise<void> => {
-		if (mem.active === null) return;
-		if (!canDefinition) {
-			notify("Go to definition needs the code map on the paired computer");
-			return;
-		}
-		const word = wordAt(stateOf(mem.active), pos);
-		if (word === null) return;
-		setDefinition({ word, hits: null });
-		try {
-			const hits = (await client.searchCodemap(instanceId, word)).filter(
-				hit => hit.kind === "symbol" && hit.line !== undefined,
-			);
-			const exact = hits.filter(hit => lastSegment(hit.label) === word);
-			const picks = exact.length > 0 ? exact : hits;
-			if (picks.length === 1) {
-				setDefinition(null);
-				void openFile(absolutePath(mem, picks[0]!.path), picks[0]!.line);
-			} else {
-				setDefinition({ word, hits: picks });
-			}
-		} catch (err) {
-			setDefinition({ word, hits: [], error: messageOf(err) });
-		}
-	};
-
 	const sendSelection = (): void => {
-		if (onSendToAgent === null || mem.active === null) return;
-		const { from, to, text } = selectedLines(stateOf(mem.active));
+		const doc = activeDoc();
+		if (onSendToAgent === null || mem.active === null || doc === null) return;
+		const { from, to, text } = doc.selectedLines();
 		const fence = fenceFor(text);
 		const ext = mem.active.slice(mem.active.lastIndexOf(".") + 1);
 		const lines = from === to ? `${from}` : `${from}-${to}`;
@@ -404,44 +653,79 @@ export function IdeSheet({
 		if (!docked) onClose();
 	};
 
-	// The extensions call through `mem.hooks`: point it at this render's closures.
+	const quickInput = useRef<HTMLInputElement>(null);
+	const searchFiles = (): void => {
+		if (treeOpen) {
+			sidebar.current?.focusSearch();
+		} else {
+			setSidebarView("search");
+			setTreeOpen(true);
+		}
+	};
+	const shortcut = (kind: "save" | "quick-open" | "search-files"): void => {
+		if (kind === "save") void save(mem.active);
+		else if (kind === "quick-open") quickInput.current?.focus();
+		else searchFiles();
+	};
+
+	// The view calls through `hooksRef`: point it at this render's closures.
 	useLayoutEffect(() => {
-		mem.hooks = {
-			definition: pos => void definitionAt(pos),
-			changed: view => {
-				const path = mem.active;
-				if (path === null) return;
-				const tab = findTab(path);
-				const dirty = !view.state.doc.eq(mem.disk[path]!);
-				if (tab !== undefined && (tab.dirty !== dirty || (tab.changed > 0 && dirty))) {
-					patchTab(path, dirty ? { dirty, changed: 0 } : { dirty });
+		hooksRef.current = {
+			changed: (doc, text) => {
+				const tab = findTab(doc.path);
+				if (text) {
+					mem.revisions[doc.path] = (mem.revisions[doc.path] ?? 0) + 1;
+					scheduleProblems(doc.path, DIAGNOSTICS_DEBOUNCE_MS);
+					const dirty = doc.isDirty();
+					// Typing clears the lines marked as changed on disk.
+					if (tab !== undefined && (tab.dirty !== dirty || tab.changed > 0))
+						patchTab(doc.path, { dirty, changed: 0 });
 				}
-				syncCursor(view);
+				if (doc.path === mem.active) syncCursor();
 			},
+			definition: (doc, position) => void definitionAt(doc, position),
+			references: (doc, position) => void referencesAt(doc, position),
+			shortcut,
+			hover: canLsp ? hover : undefined,
 		};
 	});
 
-	// One view for the sheet's lifetime; tabs swap their states in and out of it.
+	// One view for the engine's lifetime in this sheet; tabs swap their documents in and out of it.
 	useLayoutEffect(() => {
 		const parent = host.current;
-		if (parent === null) return;
-		const active = mem.active === null ? undefined : mem.states[mem.active];
-		const view = new EditorView({ parent, state: active ?? EditorState.create({ extensions: mem.base }) });
+		if (parent === null || engine === null) return;
+		const view = engine.createView(parent, () => hooksRef.current!);
 		viewRef.current = view;
-		if (mem.active !== null) syncCursor(view);
+		const doc = activeDoc();
+		view.show(doc);
+		if (doc !== null) syncCursor();
 		return () => {
-			if (mem.active !== null) mem.states[mem.active] = view.state;
-			view.destroy();
-			viewRef.current = null;
+			// The engine effect may have torn it down already.
+			if (viewRef.current === view) {
+				view.destroy();
+				viewRef.current = null;
+			}
 		};
-	}, [mem]);
+	}, [mem, engine]);
+
+	useEffect(() => {
+		viewRef.current?.setMaximized(maximized);
+	}, [engine, maximized]);
+
+	// A fresh view starts without the problems of the old one: ask again for the file in front.
+	useEffect(() => {
+		if (engine !== null && canLsp && mem.active !== null) scheduleProblems(mem.active, 0);
+	}, [engine, canLsp]);
 
 	const openRef = useRef(openFile);
 	openRef.current = openFile;
-	// Open the requested file, now and whenever the app asks for another.
+	// Open the requested file, now and whenever the app asks for another (once the editor is up).
+	const handledTarget = useRef<typeof target>(null);
 	useEffect(() => {
-		if (target !== null) void openRef.current(target.path, target.line);
-	}, [target]);
+		if (engine === null || target === null || handledTarget.current === target) return;
+		handledTarget.current = target;
+		void openRef.current(target.path, target.line);
+	}, [target, engine]);
 
 	// Notice files changed on disk: an agent's edit reloads a clean tab and marks a dirty one.
 	const checking = useRef(false);
@@ -491,26 +775,23 @@ export function IdeSheet({
 		void checkRef.current();
 	}, [edits]);
 
-	const quickInput = useRef<HTMLInputElement>(null);
 	const onSheetKey = (e: KeyboardEvent<HTMLDivElement>): void => {
-		if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+		if (!(e.metaKey || e.ctrlKey) || e.altKey || e.isDefaultPrevented()) return;
 		const key = e.key.toLowerCase();
-		if (key === "p") {
+		if (key === "p" && !e.shiftKey) {
 			e.preventDefault();
-			quickInput.current?.focus();
-		} else if (key === "s") {
+			shortcut("quick-open");
+		} else if (key === "s" && !e.shiftKey) {
 			e.preventDefault();
-			void save(mem.active);
+			shortcut("save");
+		} else if (key === "f" && e.shiftKey) {
+			e.preventDefault();
+			shortcut("search-files");
 		}
 	};
 
 	const active = mem.active === null ? undefined : findTab(mem.active);
-	const dirtyPaths = useMemo(() => {
-		const out: Record<string, true> = {};
-		for (const tab of mem.tabs) if (tab.dirty) out[tab.path] = true;
-		return out;
-		// `mem.tabs` is replaced, never mutated: its identity tracks the dirty set.
-	}, [mem.tabs]);
+	const expandedSet = useMemo(() => new Set(Object.keys(expanded)), [expanded]);
 	const toggleDir = useCallback((path: string) => {
 		setExpanded(prev => {
 			const next = { ...prev };
@@ -519,7 +800,19 @@ export function IdeSheet({
 			return next;
 		});
 	}, []);
-	const openFromTree = useCallback((rel: string) => void openRef.current(absolutePath(mem, rel)), [mem]);
+	const openFromExplorer = useCallback(
+		(rel: string, line?: number, character?: number) => void openRef.current(absolutePath(mem, rel), line, character),
+		[mem],
+	);
+	const clearReferences = useCallback(() => setReferences(null), []);
+	const openActiveDefinition = (): void => {
+		const doc = activeDoc();
+		if (doc !== null) void definitionAt(doc, doc.head());
+	};
+	const findActiveReferences = (): void => {
+		const doc = activeDoc();
+		if (doc !== null) void referencesAt(doc, doc.head());
+	};
 
 	const frame = (
 		<div className="sh-ide" onKeyDown={onSheetKey}>
@@ -528,27 +821,36 @@ export function IdeSheet({
 					type="button"
 					className={treeOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
 					onClick={() => setTreeOpen(open => !open)}
-					aria-label={treeOpen ? "Hide files" : "Show files"}
+					aria-label={treeOpen ? "Hide the explorer" : "Show the explorer"}
 					aria-pressed={treeOpen}
-					title="Files"
+					title="Explorer"
 				>
 					<PanelLeft size={16} />
 				</button>
-				<QuickOpen inputRef={quickInput} files={tree?.files ?? null} onOpen={openFromTree} />
+				<QuickOpen inputRef={quickInput} files={tree?.files ?? null} onOpen={openFromExplorer} />
 				<span className="sh-ide-actions">
-					{canDefinition && (
+					{(canDefinition || canLsp) && (
 						<button
 							type="button"
 							className="sh-btn sh-btn-icon"
-							onClick={() => {
-								const view = viewRef.current;
-								if (view !== null) void definitionAt(view.state.selection.main.head);
-							}}
+							onClick={openActiveDefinition}
 							disabled={active === undefined}
 							aria-label="Go to definition"
 							title="Go to definition (F12, or Cmd/Ctrl+click)"
 						>
 							<LocateFixed size={16} />
+						</button>
+					)}
+					{canLsp && (
+						<button
+							type="button"
+							className="sh-btn sh-btn-icon"
+							onClick={findActiveReferences}
+							disabled={active === undefined}
+							aria-label="Find references"
+							title="Find references (Shift+F12)"
+						>
+							<ListTree size={16} />
 						</button>
 					)}
 					{onSendToAgent !== null && (
@@ -612,42 +914,43 @@ export function IdeSheet({
 							{docked ? <PanelRightClose size={16} /> : <PanelRight size={16} />}
 						</button>
 					)}
+					{maximize != null && (
+						<button
+							type="button"
+							className={maximized ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
+							onClick={() => maximize.onMaximizedChange(!maximized)}
+							aria-pressed={maximized}
+							aria-label={maximized ? "Restore the editor size" : "Maximize the editor"}
+							title={maximized ? "Restore the editor size" : "Maximize the editor"}
+						>
+							{maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+						</button>
+					)}
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>
 			</div>
-			<div className="sh-ide-body" data-tree={treeOpen ? "open" : "closed"} data-wide={wide ? "true" : "false"}>
+			<div className="sh-ide-body">
 				{treeOpen && (
-					<aside className="sh-ide-tree" aria-label="Files">
-						{treeState.status === "loading" && (
-							<div className="sh-companion-empty sh-file-status">
-								<LoaderCircle size={14} className="sh-spin" /> Listing files…
-							</div>
-						)}
-						{treeState.status === "error" && (
-							<div className="sh-tree-error">
-								<div className="sh-connect-error">{treeState.message}</div>
-								<button type="button" className="sh-btn" onClick={reloadTree}>
-									<RefreshCw size={14} /> Retry
-								</button>
-							</div>
-						)}
-						{rootDir !== null && (
-							<TreeView
-								dir={rootDir}
-								depth={0}
-								expanded={expanded}
-								active={mem.active}
-								dirty={dirtyPaths}
-								onToggle={toggleDir}
-								onOpen={openFromTree}
-							/>
-						)}
-						{tree?.truncated === true && (
-							<div className="sh-file-note">Only the first {tree.files.length} files are listed.</div>
-						)}
-					</aside>
+					<ExplorerSidebar
+						ref={sidebar}
+						client={client}
+						instanceId={instanceId}
+						tree={tree}
+						treeError={treeState.status === "error" ? treeState.message : null}
+						onReloadTree={reloadTree}
+						activePath={mem.active}
+						expanded={expandedSet}
+						onToggleDir={toggleDir}
+						canSearch={canSearch}
+						edits={edits}
+						onOpen={openFromExplorer}
+						references={references}
+						onClearReferences={clearReferences}
+						overlay={!wide}
+						initialView={sidebarView}
+					/>
 				)}
 				<section className="sh-ide-main">
 					<div className="sh-ide-tabs" role="tablist">
@@ -705,7 +1008,12 @@ export function IdeSheet({
 						</div>
 					)}
 					<div ref={host} className="sh-ide-editor" hidden={active === undefined} />
-					{active === undefined && (
+					{engine === null && (
+						<div className="sh-companion-empty sh-file-status">
+							<LoaderCircle size={14} className="sh-spin" /> Loading the editor…
+						</div>
+					)}
+					{active === undefined && engine !== null && (
 						<div className="sh-ide-empty">
 							<FileCode size={28} />
 							<div>Pick a file from the list, or press Cmd/Ctrl+P to find one.</div>
@@ -714,9 +1022,10 @@ export function IdeSheet({
 					{definition !== null && (
 						<DefinitionList
 							definition={definition}
-							onPick={hit => {
+							onPick={row => {
+								if (row.open === null) return;
 								setDefinition(null);
-								void openFile(absolutePath(mem, hit.path), hit.line);
+								openLocation(row.open.path, row.open.line, row.open.character);
 							}}
 							onClose={() => setDefinition(null)}
 						/>
@@ -735,6 +1044,18 @@ export function IdeSheet({
 									</span>
 								)}
 								{!active.writable && <span>Read-only</span>}
+								{active.server !== null && active.problems !== null && (
+									<span className="sh-ide-status-lsp" title={`Language server: ${active.server}`}>
+										{active.server}
+										<span data-severity="error">
+											{active.problems.errors} error{active.problems.errors === 1 ? "" : "s"}
+										</span>
+										<span data-severity="warning">
+											{active.problems.warnings} warning{active.problems.warnings === 1 ? "" : "s"}
+										</span>
+									</span>
+								)}
+								{active.lspNote !== null && <span className="sh-ide-status-lsp">{active.lspNote}</span>}
 								<span>{active.language ?? "Plain text"}</span>
 								<span>
 									Ln {cursor.line}, Col {cursor.col}
@@ -759,6 +1080,16 @@ export function IdeSheet({
 			{frame}
 		</Sheet>
 	);
+}
+
+function codemapRow(hit: CodemapNode): DefinitionRow {
+	return {
+		key: `${hit.path}:${hit.line}:${hit.label}`,
+		label: hit.label,
+		where: `${hit.path}:${hit.line}`,
+		signature: hit.signature,
+		open: { path: hit.path, line: hit.line! },
+	};
 }
 
 function ConflictBar({
@@ -804,11 +1135,11 @@ function DefinitionList({
 	onPick,
 	onClose,
 }: {
-	definition: { word: string; hits: CodemapNode[] | null; error?: string };
-	onPick(hit: CodemapNode): void;
+	definition: DefinitionState;
+	onPick(row: DefinitionRow): void;
 	onClose(): void;
 }): ReactNode {
-	const { word, hits, error } = definition;
+	const { word, rows, error, source } = definition;
 	return (
 		<div className="sh-ide-defs" role="dialog" aria-label={`Definitions of ${word}`}>
 			<div className="sh-ide-defs-head">
@@ -819,25 +1150,31 @@ function DefinitionList({
 					<X size={14} />
 				</button>
 			</div>
-			{hits === null && (
+			{rows === null && (
 				<div className="sh-companion-empty sh-file-status">
 					<LoaderCircle size={14} className="sh-spin" /> Looking it up…
 				</div>
 			)}
 			{error !== undefined && <div className="sh-connect-error">{error}</div>}
-			{hits !== null && error === undefined && hits.length === 0 && (
-				<div className="sh-file-note">No definition of {word} in the code map.</div>
+			{rows !== null && error === undefined && rows.length === 0 && (
+				<div className="sh-file-note">
+					No definition of {word} in the {source}.
+				</div>
 			)}
-			{hits !== null && hits.length > 0 && (
+			{rows !== null && rows.length > 0 && (
 				<ul className="sh-ide-defs-list">
-					{hits.map(hit => (
-						<li key={`${hit.path}:${hit.line}:${hit.label}`}>
-							<button type="button" className="sh-ide-def" onClick={() => onPick(hit)}>
-								<span className="sh-ide-def-label">{hit.label}</span>
-								<span className="sh-ide-def-where">
-									{hit.path}:{hit.line}
-								</span>
-								{hit.signature !== undefined && <code className="sh-ide-def-sig">{hit.signature}</code>}
+					{rows.map(row => (
+						<li key={row.key}>
+							<button
+								type="button"
+								className="sh-ide-def"
+								onClick={() => onPick(row)}
+								disabled={row.open === null}
+								title={row.open === null ? "Outside the repository: it cannot be opened here" : undefined}
+							>
+								<span className="sh-ide-def-label">{row.label}</span>
+								<span className="sh-ide-def-where">{row.where}</span>
+								{row.signature !== undefined && <code className="sh-ide-def-sig">{row.signature}</code>}
 							</button>
 						</li>
 					))}
@@ -919,71 +1256,3 @@ function QuickOpen({
 		</div>
 	);
 }
-
-interface TreeViewProps {
-	dir: TreeDir;
-	depth: number;
-	expanded: Record<string, true>;
-	active: string | null;
-	dirty: Record<string, true>;
-	onToggle(path: string): void;
-	onOpen(path: string): void;
-}
-
-/** One folder's entries; folders render their children only while expanded. */
-const TreeView = memo(function TreeView({
-	dir,
-	depth,
-	expanded,
-	active,
-	dirty,
-	onToggle,
-	onOpen,
-}: TreeViewProps): ReactNode {
-	return (
-		<ul className="sh-ide-tree-list" role={depth === 0 ? "tree" : "group"}>
-			{dir.dirs.map(child => {
-				const open = expanded[child.path] === true;
-				return (
-					<li key={child.path} role="treeitem" aria-expanded={open}>
-						<button
-							type="button"
-							className="sh-ide-tree-row"
-							style={{ paddingInlineStart: 6 + depth * 12 }}
-							onClick={() => onToggle(child.path)}
-						>
-							{open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-							<Folder size={13} className="sh-ide-tree-folder" />
-							<span className="sh-ide-tree-name">{child.name}</span>
-						</button>
-						{open && (
-							<TreeView
-								dir={child}
-								depth={depth + 1}
-								expanded={expanded}
-								active={active}
-								dirty={dirty}
-								onToggle={onToggle}
-								onOpen={onOpen}
-							/>
-						)}
-					</li>
-				);
-			})}
-			{dir.files.map(path => (
-				<li key={path} role="treeitem" aria-selected={path === active}>
-					<button
-						type="button"
-						className={path === active ? "sh-ide-tree-row sh-ide-tree-row-on" : "sh-ide-tree-row"}
-						style={{ paddingInlineStart: 6 + depth * 12 + 17 }}
-						onClick={() => onOpen(path)}
-						title={path}
-					>
-						<span className="sh-ide-tree-name">{baseName(path)}</span>
-						{dirty[path] === true && <span className="sh-ide-dot sh-ide-dot-on" aria-label="Unsaved" />}
-					</button>
-				</li>
-			))}
-		</ul>
-	);
-});

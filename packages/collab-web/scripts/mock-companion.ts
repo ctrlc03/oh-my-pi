@@ -37,7 +37,11 @@
  * and benchmark for the bake-off form. `browse-folders` (Start session → Choose another folder…) runs the real browsing code over a throw-away
  * home folder in `<--dir>/home` (./mock-start). The review board (./mock-review-board) answers `pr-stack`, `pr-own-diff` (the quiz stack's #2243-#2245
  * have their own diffs against the PR below; any other number is alone) and `review-notes` (a session quote for a file's first hunk, a weak
- * one for its second, and with *Explain* a model's words for the rest). Every other request is refused. Ctrl+C stops it.
+ * one for its second, and with *Explain* a model's words for the rest). The editor and Explorer (./mock-repo-intel) work over one canned
+ * TypeScript project every session shares, held in memory: `tree`, `file`, version-checked saves, `git` and `git-diff` (the project
+ * starts with an edited `src/auth/session.ts` and an untracked `src/lib/retry.ts`), `file-search`, and a fake language server (hover
+ * with a code fence, go to definition, references with one outside the repository, and an error and a warning in `session.ts`).
+ * Every other request is refused. Ctrl+C stops it.
  *
  * `--personal fresh|enabled` (default `off`: nothing is advertised or answered, as before) adds the Personal agent (./mock-personal): `fresh`
  * is advertised and not set up (Settings → Personal agent → Set up), `enabled` is set up with sample memories, About you, proposals,
@@ -99,6 +103,7 @@ import { createMockForeign, mockForeignHosts } from "./mock-foreign";
 import { createMockPersonal } from "./mock-personal";
 import { TOPIC_CWD, TOPIC_SESSION_ID } from "./fixture-topic";
 import { createMockQuiz, mockStackPrs } from "./mock-quiz";
+import { createMockRepoIntel } from "./mock-repo-intel";
 import { createMockSearch } from "./mock-search";
 import { createMockReviewBoard } from "./mock-review-board";
 import { createMockSpar } from "./mock-spar";
@@ -318,6 +323,8 @@ const MOCK_PRS: GithubItem[] = (
 /** The review board: a stack's pull requests (and any other one alone) with their own diffs, and notes per hunk. */
 const reviewBoard = createMockReviewBoard(number => MOCK_PRS.find(pr => pr.number === number)?.title);
 /** The all-sessions list and message search, over canned sessions. */
+/** The editor and Explorer over one canned TypeScript project (./mock-repo-intel): tree, files, saves, changes, search and a fake language server. */
+const repoIntel = createMockRepoIntel(instanceId => hosts.find(h => h.instanceId === instanceId)?.cwd);
 const search = createMockSearch(hosts, () => [
 	...foreign.searchable(),
 	...(deletion?.listed() ?? []),
@@ -526,6 +533,7 @@ function hostsFrame(): CompanionReply {
 		...fanout.capabilities,
 		...starts.capabilities,
 		...search.capabilities,
+		...repoIntel.capabilities,
 		...reviewBoard.capabilities,
 		...blueprint.capabilities,
 		...quiz.capabilities,
@@ -621,7 +629,23 @@ socket.onFrame = (frame, fromPeer) => {
 				),
 		);
 	else if (search.handles(frame)) socket.send(search.answer(frame), fromPeer);
-	else if (blueprint.handles(frame)) {
+	else if (repoIntel.handles(frame)) {
+		try {
+			socket.send(repoIntel.answer(frame), fromPeer);
+		} catch (err) {
+			// A refused save names the file's current version, like the real companion's.
+			const changed = (err as { changed?: string }).changed;
+			socket.send(
+				{
+					t: "error",
+					reqId: frame.reqId,
+					message: err instanceof Error ? err.message : String(err),
+					...(changed === undefined ? {} : { changed }),
+				},
+				fromPeer,
+			);
+		}
+	} else if (blueprint.handles(frame)) {
 		try {
 			socket.send(blueprint.answer(frame), fromPeer);
 		} catch (err) {

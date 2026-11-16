@@ -110,6 +110,10 @@ const BY_NAME: Record<string, LanguageEntry> = {
 	".envrc": SHELL,
 };
 
+/** The extensions and file names with a grammar (the Monaco engine keeps a parallel table; a test compares them). */
+export const GRAMMAR_EXTENSIONS: readonly string[] = Object.keys(BY_EXTENSION);
+export const GRAMMAR_FILE_NAMES: readonly string[] = Object.keys(BY_NAME);
+
 /** The language of `path`, or null for plain text. */
 export function languageFor(path: string): LanguageEntry | null {
 	const name = path.slice(path.lastIndexOf("/") + 1);

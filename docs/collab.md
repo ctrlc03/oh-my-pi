@@ -476,6 +476,31 @@ The app offers Personal only to a computer whose `hosts` frame says `canPersonal
 - **Routes.** Personal's push routes (`personal`, `personal/inbox`, `personal/memory`, `personal/about`, `personal/settings`) have no `:`; the service worker and the app's route parser accept them besides the usual `kind:id` form.
 - **Mock.** `scripts/mock-companion.ts --personal fresh|enabled --personal-login ready|missing --personal-chat-tree on|off` serves every `personal-*` request from memory (`scripts/mock-personal.ts`); `--personal-chat-tree on` (the default) advertises `canPersonalChatTree` and answers a fake chat's numbers in chat-tree mode, `off` stands for an older companion.
 
+## Explorer
+
+The web client's *Explorer* (header button, the session sheet, or *Open explorer* / *Search in files* in ⌘K) browses and edits the open session's repository on a paired computer. It is the IDE sheet with an activity bar of four views:
+
+- **Files.** The repository tree (`tree`) with git badges (modified, added, untracked, deleted, conflicted; folders carry a dot when something below them changed) and a filter box. Cmd/Ctrl+P opens *Go to file*.
+- **Changes.** The working tree against `HEAD`, grouped as merge conflicts, staged changes, changes and untracked files, each file expandable to an inline diff; it reuses the working-tree requests (`git`, `git-diff`).
+- **Search.** Content search over the repository (`file-search`) with toggles for case, whole word and regular expression and a glob filter for paths. Results are grouped by file; a row opens the file at the match. Cmd/Ctrl+Shift+F focuses it.
+- **References.** The result of *Find references*, grouped by file.
+
+On a wide screen the views sit beside the editor; on a phone or in a docked pane they overlay it. A docked pane has a *Maximize* button that gives it the whole main area (Escape restores it; the choice is kept in `omp.collab.ide-maximized`).
+
+**Editors.** With a fine pointer on a screen at least 901px wide the editor is Monaco (VS Code's editor); otherwise it is CodeMirror. *Settings → Appearance → Code editor* (`Automatic`, `Monaco`, `CodeMirror`) overrides the choice and is kept in `omp.collab.editor`. Monaco is a separate lazy bundle in `dist/monaco-assets/` (built by `scripts/build-monaco-assets.ts`, with its worker; the service worker caches it on first use instead of precaching it), so phones never download it. Its built-in TypeScript, JSON, CSS and HTML services are off; language features come from the companion's language servers. Saving is unchanged: `file-write` with the version check, offered only to writers on a companion that can edit; read-only links stay read-only.
+
+**Language servers.** Both editors offer hover, go to definition (F12 or Cmd/Ctrl+click; the code map answers when no server does), find references (Shift+F12, into the *References* view) and diagnostics (squiggles plus error and warning counts in the status bar, refreshed on open, after edits, after a save and after the agent changes the file). A definition or reference outside the repository is listed but cannot be opened.
+
+Companion requests (each names the session by `instanceId`, is scoped to its repository and refused outside it):
+
+| Request | Flag | Answer |
+| --- | --- | --- |
+| `file-search` `{ search: { query, regex?, caseSensitive?, wholeWord?, glob? } }` | `canRepoSearch` | `{ matches: [{ path, line, character?, text }], files, limited }`. Runs omp's native grep (`.gitignore` honoured, binaries skipped): at most 1,000 matches, 100 per file, lines cut at 300 characters, 20 s. |
+| `lsp` `{ query: { op: "hover" \| "definition" \| "references", path, position, text? } }` | `canLsp` | `{ kind: "hover", server, markdown, range? }`, `{ kind: "locations", server, locations: [{ path, inRepo, range, preview? }] }` or `{ kind: "unavailable", reason }`. `text` is the unsaved buffer. |
+| `lsp-diagnostics` `{ path, text? }` | `canLsp` | `{ kind: "diagnostics", server, diagnostics }` (`null`: no fresh report in time) or `unavailable`. |
+
+Positions are 1-based lines and 0-based UTF-16 characters. The companion runs the same language servers as omp's `lsp` tool (`packages/collab-web/scripts/companion-lsp.ts`): started on first use per repository, stopped 10 minutes after its last request, at most two repositories' servers at once, and none for a sandboxed session. The mock companion answers all three over a small TypeScript project (`scripts/mock-repo-intel.ts`).
+
 ## Diagrams
 
 The web client draws diagrams client-side; nothing about them crosses the wire.

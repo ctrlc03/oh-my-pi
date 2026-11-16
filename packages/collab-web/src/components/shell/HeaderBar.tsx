@@ -174,7 +174,7 @@ export const HeaderBar = memo(function HeaderBar({
 	const bar: Record<TopBarId, { aria: string; run: (() => void) | null }> = {
 		settings: { aria: "Open settings", run: () => openSettings() },
 		find: { aria: "Find in session", run: onToggleSearch },
-		editor: { aria: "Editor", run: onOpenEditor },
+		editor: { aria: "Explorer", run: onOpenEditor },
 		codemap: { aria: "Code map", run: onOpenCodemap },
 		quizzes: { aria: "Open quizzes", run: onOpenQuizzes },
 		github: { aria: "Open issues and pull requests", run: onOpenGithub },

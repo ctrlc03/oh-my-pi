@@ -7,16 +7,18 @@
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting } from "@codemirror/language";
+import { lintGutter } from "@codemirror/lint";
 import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
 import type { Extension, Range } from "@codemirror/state";
 import { Annotation, EditorState, StateEffect, StateField } from "@codemirror/state";
-import type { DecorationSet, KeyBinding } from "@codemirror/view";
+import type { DecorationSet, KeyBinding, Tooltip } from "@codemirror/view";
 import {
 	Decoration,
 	drawSelection,
 	EditorView,
 	highlightActiveLine,
 	highlightActiveLineGutter,
+	hoverTooltip,
 	highlightSpecialChars,
 	keymap,
 	lineNumbers,
@@ -111,27 +113,56 @@ const theme = EditorView.theme({
 		padding: "3px 8px",
 	},
 	".cm-panel.cm-search [name=close]": { color: "var(--fg-muted)", fontSize: "18px" },
+	".cm-tooltip": {
+		color: "var(--fg)",
+		backgroundColor: "var(--bg-overlay)",
+		border: "1px solid var(--border-strong)",
+		borderRadius: "var(--radius-sm)",
+		boxShadow: "var(--shadow-overlay)",
+	},
+	".cm-tooltip .cm-diagnostic": { fontFamily: "var(--font-ui)", fontSize: "12.5px", padding: "4px 8px" },
+	".cm-diagnostic-error": { borderLeft: "3px solid var(--err)" },
+	".cm-diagnostic-warning": { borderLeft: "3px solid var(--warn)" },
+	".cm-diagnostic-info": { borderLeft: "3px solid var(--accent)" },
+	".cm-lintRange-error": { backgroundImage: "none", textDecoration: "underline wavy var(--err)" },
+	".cm-lintRange-warning": { backgroundImage: "none", textDecoration: "underline wavy var(--warn)" },
+	".cm-lintRange-info": { backgroundImage: "none", textDecoration: "underline wavy var(--accent)" },
+	".cm-gutter-lint": { width: "10px" },
 	".sh-ide-changed": {
 		backgroundColor: "color-mix(in srgb, var(--ok) 13%, transparent)",
 		boxShadow: "inset 3px 0 var(--ok)",
 	},
 });
 
-/** Save (Cmd/Ctrl+S) is bound on the sheet, so it also works with the focus outside the editor. */
+/**
+ * What the extensions tell their owner. Save (Cmd/Ctrl+S) is not here: it is bound on the sheet, so it
+ * also works with the focus outside the editor.
+ */
 export interface EditorHooks {
 	/** F12, or Cmd/Ctrl+click on a word. */
-	definition(pos: number): void;
-	/** The document or selection changed. */
-	changed(view: EditorView): void;
+	definition(view: EditorView, pos: number): void;
+	/** Shift+F12. */
+	references(view: EditorView, pos: number): void;
+	/** The document or selection changed (`text`: the document did). */
+	changed(view: EditorView, text: boolean): void;
+	/** Hover for the language server: the tooltip for a position, or null for none. */
+	hover(view: EditorView, pos: number): Promise<Tooltip | null> | null;
 }
 
-/** Shared by every tab of one sheet; `hooks` is read on each event, so it may be a ref's current value. */
+/** Shared by every tab; `hooks` is read on each event, so the owner may re-point it. */
 export function baseExtensions(hooks: () => EditorHooks): Extension[] {
 	const actions: KeyBinding[] = [
 		{
 			key: "F12",
 			run: view => {
-				hooks().definition(view.state.selection.main.head);
+				hooks().definition(view, view.state.selection.main.head);
+				return true;
+			},
+		},
+		{
+			key: "Shift-F12",
+			run: view => {
+				hooks().references(view, view.state.selection.main.head);
 				return true;
 			},
 		},
@@ -140,6 +171,7 @@ export function baseExtensions(hooks: () => EditorHooks): Extension[] {
 		lineNumbers(),
 		highlightActiveLineGutter(),
 		foldGutter(),
+		lintGutter(),
 		highlightSpecialChars(),
 		history(),
 		drawSelection(),
@@ -162,18 +194,19 @@ export function baseExtensions(hooks: () => EditorHooks): Extension[] {
 			...foldKeymap,
 			indentWithTab,
 		]),
+		hoverTooltip((view, pos) => hooks().hover(view, pos), { hoverTime: 350 }),
 		EditorView.domEventHandlers({
 			mousedown(event, view) {
 				if (!(event.metaKey || event.ctrlKey) || event.button !== 0) return false;
 				const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
 				if (pos === null) return false;
 				event.preventDefault();
-				hooks().definition(pos);
+				hooks().definition(view, pos);
 				return true;
 			},
 		}),
 		EditorView.updateListener.of(update => {
-			if (update.docChanged || update.selectionSet) hooks().changed(update.view);
+			if (update.docChanged || update.selectionSet) hooks().changed(update.view, update.docChanged);
 		}),
 	];
 }

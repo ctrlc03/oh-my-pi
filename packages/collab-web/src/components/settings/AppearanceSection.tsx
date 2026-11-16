@@ -14,6 +14,7 @@ import {
 	ZOOM_STEPS,
 } from "../../lib/appearance";
 import { useFontAvailability } from "../../lib/fonts";
+import { type EditorEnginePref, setEditorEnginePref, useEditorEnginePref } from "../../lib/editor-prefs";
 import { resetPaneSizes } from "../../lib/pane-size";
 import { type ThemePreference, useThemePreference } from "../../lib/theme";
 import { useHasPaneSizes } from "../../lib/use-pane-layout";
@@ -35,6 +36,12 @@ const TEXT_SIZES: readonly { value: TextSize; label: string }[] = [
 	{ value: "default", label: "Default" },
 	{ value: "large", label: "Large" },
 	{ value: "xlarge", label: "Extra large" },
+];
+
+const EDITOR_ENGINES: readonly { value: EditorEnginePref; label: string }[] = [
+	{ value: "auto", label: "Automatic" },
+	{ value: "monaco", label: "Monaco" },
+	{ value: "codemirror", label: "CodeMirror" },
 ];
 
 const SPACINGS: readonly { value: Spacing; label: string }[] = [
@@ -73,6 +80,7 @@ function isDefault(appearance: Appearance): boolean {
 export function AppearanceSection(): ReactNode {
 	const { preference, setPreference } = useThemePreference();
 	const appearance = useAppearance();
+	const editorEngine = useEditorEnginePref();
 	const available = useFontAvailability();
 	const hasPaneSizes = useHasPaneSizes();
 	const fonts = FONT_OPTIONS.map(option => ({
@@ -140,6 +148,17 @@ export function AppearanceSection(): ReactNode {
 						options={codeFonts}
 						sample="Aa 0O1l {}"
 						onChange={codeFont => setAppearance({ codeFont })}
+					/>
+				</SettingsRow>
+				<SettingsRow
+					label="Code editor"
+					hint="Monaco is VS Code's editor: multi-cursor, a minimap, a command palette (F1). Automatic uses it on desktop browsers with a mouse and CodeMirror, which is lighter, elsewhere. Open files keep their text when this changes."
+				>
+					<Choice
+						label="Code editor"
+						value={editorEngine}
+						options={EDITOR_ENGINES}
+						onChange={setEditorEnginePref}
 					/>
 				</SettingsRow>
 				<SettingsRow label="Line spacing" hint="The air between lines and between blocks in the conversation.">

@@ -99,77 +99,6 @@
 	border-radius: var(--radius);
 }
 
-.sh-ide-tree {
-	flex: none;
-	width: 250px;
-	padding: 4px 0;
-	overflow: auto;
-	background: var(--bg-raised);
-	border-right: 1px solid var(--border);
-}
-
-/* Narrow screens: the list slides over the editor instead of squeezing it. */
-.sh-ide-body[data-wide="false"] .sh-ide-tree {
-	position: absolute;
-	z-index: 2;
-	top: 0;
-	bottom: 0;
-	left: 0;
-	width: min(300px, 86%);
-	box-shadow: var(--shadow-overlay);
-}
-
-.sh-ide-tree-list {
-	margin: 0;
-	padding: 0;
-	list-style: none;
-}
-
-.sh-ide-tree-row {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	width: 100%;
-	padding-block: 3px;
-	padding-inline-end: 8px;
-	font-size: 13px;
-	color: var(--fg-muted);
-	text-align: left;
-	background: none;
-	border: 0;
-}
-
-.sh-ide-tree-row:hover {
-	color: var(--fg);
-	background: var(--hover);
-}
-
-.sh-ide-tree-row-on {
-	color: var(--fg);
-	background: var(--selected);
-}
-
-.sh-ide-tree-row svg {
-	flex: none;
-}
-
-.sh-ide-tree-folder {
-	color: var(--fg-faint);
-}
-
-.sh-ide-tree-name {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.sh-ide-tree .sh-file-note,
-.sh-ide-tree .sh-file-status,
-.sh-ide-tree .sh-tree-error {
-	margin: 8px;
-}
-
 .sh-ide-main {
 	position: relative;
 	display: flex;
@@ -317,7 +246,9 @@
 /* ---- editor ---- */
 .sh-ide-editor {
 	flex: 1;
+	min-width: 0;
 	min-height: 0;
+	overflow: hidden;
 	font-size: calc(12.5px * var(--reading-scale));
 }
 
@@ -452,6 +383,99 @@
 	white-space: nowrap;
 }
 
+.sh-ide-def:disabled {
+	color: var(--fg-faint);
+	cursor: not-allowed;
+}
+
+.sh-ide-def:disabled:hover {
+	background: none;
+}
+
+/* ---- Monaco ---- */
+.sh-ide-editor .monaco-editor {
+	--vscode-font-family: var(--font-ui);
+}
+
+/* Lines the last update from disk changed (the CodeMirror editor has its own rule in editor.ts). */
+.sh-ide-mm-changed {
+	background: color-mix(in srgb, var(--ok) 13%, transparent);
+}
+
+.sh-ide-mm-changed-bar {
+	margin-left: 3px;
+	width: 3px !important;
+	background: var(--ok);
+}
+
+/* ---- language server hover in CodeMirror (Monaco draws its own) ---- */
+.sh-ide-hover {
+	max-width: min(560px, 90vw);
+	max-height: 280px;
+	padding: 6px 10px;
+	overflow: auto;
+	font-family: var(--font-ui);
+	font-size: 12.5px;
+}
+
+.sh-ide-hover .tr-code pre {
+	margin: 4px 0;
+	font-family: var(--font-mono);
+	white-space: pre-wrap;
+}
+
+.sh-ide-hover .tr-copy {
+	display: none;
+}
+
+.sh-ide-hover .hljs-comment,
+.sh-ide-hover .hljs-quote {
+	color: var(--syn-comment);
+	font-style: italic;
+}
+
+.sh-ide-hover .hljs-keyword,
+.sh-ide-hover .hljs-selector-tag,
+.sh-ide-hover .hljs-doctag,
+.sh-ide-hover .hljs-name,
+.sh-ide-hover .hljs-section {
+	color: var(--syn-keyword);
+}
+
+.sh-ide-hover .hljs-string,
+.sh-ide-hover .hljs-regexp,
+.sh-ide-hover .hljs-addition {
+	color: var(--syn-string);
+}
+
+.sh-ide-hover .hljs-number,
+.sh-ide-hover .hljs-literal,
+.sh-ide-hover .hljs-symbol,
+.sh-ide-hover .hljs-bullet {
+	color: var(--syn-number);
+}
+
+.sh-ide-hover .hljs-type,
+.sh-ide-hover .hljs-built_in,
+.sh-ide-hover .hljs-title.class_ {
+	color: var(--syn-type);
+}
+
+.sh-ide-hover .hljs-title,
+.sh-ide-hover .hljs-link {
+	color: var(--syn-function);
+}
+
+.sh-ide-hover .hljs-attr,
+.sh-ide-hover .hljs-attribute,
+.sh-ide-hover .hljs-property {
+	color: var(--syn-attr);
+}
+
+.sh-ide-hover .hljs-meta {
+	color: var(--syn-meta);
+}
+
 /* ---- status bar ---- */
 .sh-ide-status {
 	display: flex;
@@ -483,6 +507,19 @@
 	color: var(--fg);
 }
 
+.sh-ide-status-lsp {
+	display: inline-flex;
+	gap: 8px;
+}
+
+.sh-ide-status-lsp [data-severity="error"] {
+	color: var(--err);
+}
+
+.sh-ide-status-lsp [data-severity="warning"] {
+	color: var(--warn);
+}
+
 @media (max-width: 640px) {
 	.sh-ide-status > span:not(.sh-ide-status-path, .sh-ide-notice, .sh-ide-status-changed) {
 		display: none;
@@ -496,10 +533,6 @@
 	}
 	.sh-ide-editor {
 		font-size: max(16px, calc(12.5px * var(--reading-scale)));
-	}
-	.sh-ide-tree-row {
-		min-height: 36px;
-		font-size: 14px;
 	}
 	.sh-ide-tab-close {
 		width: 32px;

@@ -10,12 +10,17 @@ import type { IdeSheetProps } from "./IdeSheet";
 type IdeSheetComponent = ComponentType<IdeSheetProps>;
 
 let loaded: Promise<IdeSheetComponent> | undefined;
+/** The component once the chunk has arrived: a remounted sheet (a new `key`) shows at once instead of through the placeholder. */
+let ready: IdeSheetComponent | undefined;
 
 /** The editor sheet, fetched on first use and shared after that. A failed fetch is retried next time. */
 function loadIdeSheet(): Promise<IdeSheetComponent> {
 	// CodeMirror is large and only needed once the editor opens: keep it out of the entry bundle.
 	loaded ??= importChunk(() => import("./IdeSheet")).then(
-		module => module.IdeSheet,
+		module => {
+			ready = module.IdeSheet;
+			return module.IdeSheet;
+		},
 		(error: unknown) => {
 			loaded = undefined;
 			throw error;
@@ -27,7 +32,9 @@ function loadIdeSheet(): Promise<IdeSheetComponent> {
 /** `IdeSheet`, loaded when first shown; the sheet frame with a spinner stands in meanwhile. */
 export function LazyIdeSheet(props: IdeSheetProps): ReactNode {
 	// Held in an object: a bare component function would be taken for a state updater.
-	const [loadedSheet, setLoadedSheet] = useState<{ Sheet: IdeSheetComponent } | null>(null);
+	const [loadedSheet, setLoadedSheet] = useState<{ Sheet: IdeSheetComponent } | null>(() =>
+		ready === undefined ? null : { Sheet: ready },
+	);
 	const [error, setError] = useState<Error | null>(null);
 	const [attempt, setAttempt] = useState(0);
 	useEffect(() => {

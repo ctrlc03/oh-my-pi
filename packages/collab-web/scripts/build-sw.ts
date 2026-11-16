@@ -16,8 +16,9 @@
  * `max-age=600`, and a stale copy would pin the previous bundle into the new shell.
  * Requests made with `cache: "no-store"` (the app's own update check) pass through.
  *
- * The diagram engines (Mermaid, Excalidraw) and Excalidraw's fonts (`excalidraw-assets/`) are not
- * precached: the worker caches them on first use, so diagrams work offline after being shown once.
+ * The diagram engines (Mermaid, Excalidraw), Excalidraw's fonts (`excalidraw-assets/`) and the Monaco editor
+ * (`monaco-assets/`: engine, stylesheet, worker) are not precached: the worker caches them on first use, so
+ * diagrams and the desktop editor work offline after being shown once.
  *
  * It also shows the companion's Web Push notifications (see scripts/companion.ts):
  * a payload's `badge` sets the app icon badge, `reply` adds an inline text-reply action,
@@ -154,14 +155,14 @@ function navigate() {
 const BASE_PATH = new URL("./", self.location).pathname;
 
 /**
- * Build output fetched after install and cached on first use, so diagrams work offline once shown: the hashed
- * scripts, styles and fonts at the site root, Excalidraw's own files and the architecture map export's viewer. Query-less only: a URL with a query is never
+ * Build output fetched after install and cached on first use, so diagrams and the Monaco editor work offline once shown: the hashed
+ * scripts, styles and fonts at the site root, Excalidraw's own files, Monaco's, and the architecture map export's viewer. Query-less only: a URL with a query is never
  * stored (nothing else is cached for it), which also keeps the cache to the files this build ships.
  */
 function isRuntimeAsset(url) {
 	if (url.search !== "" || !url.pathname.startsWith(BASE_PATH)) return false;
 	const rel = url.pathname.slice(BASE_PATH.length);
-	if (rel.startsWith("excalidraw-assets/") || rel.startsWith("architecture-assets/")) return true;
+	if (rel.startsWith("excalidraw-assets/") || rel.startsWith("architecture-assets/") || rel.startsWith("monaco-assets/")) return true;
 	return !rel.includes("/") && (rel.endsWith(".js") || rel.endsWith(".css") || rel.endsWith(".woff2"));
 }
 

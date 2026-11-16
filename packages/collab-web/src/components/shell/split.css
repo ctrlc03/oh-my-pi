@@ -74,3 +74,31 @@
 .sh-split-dock > .sh-ide {
 	min-height: 0;
 }
+
+/* Maximized editor (`data-ide-max` on the layout row): the docked editor takes the whole row. The conversation
+ * stays mounted but takes no room and skips rendering (`content-visibility: hidden` keeps its scroll position and
+ * state for when the layout is restored); the agents rail and the session beside it are not drawn, and neither
+ * are their dividers. The sessions sidebar stays, so another session is one click away. */
+.sh-main[data-ide-max] > .sh-panel:not(.sh-split-pane) {
+	flex: 0 0 0;
+	width: 0;
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	overflow: hidden;
+	border-width: 0;
+	content-visibility: hidden;
+}
+
+.sh-main[data-ide-max] > .sh-rail,
+.sh-main[data-ide-max] > .sh-rail-backdrop,
+.sh-main[data-ide-max] > .sh-split-pane[data-pane="beside"],
+.sh-main[data-ide-max] > .sh-splitter:not([data-pane-splitter="sidebar"]) {
+	display: none;
+}
+
+.sh-main[data-ide-max] > .sh-split-pane[data-pane="editor"] {
+	flex: 1 1 0;
+	min-width: 0;
+	margin-left: 0;
+}

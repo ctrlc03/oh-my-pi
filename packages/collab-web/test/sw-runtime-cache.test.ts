@@ -19,6 +19,10 @@ describe("service worker runtime cache", () => {
 		expect(at("/", "abc123.css")).toBe(true);
 		expect(at("/", "excalidraw-assets/fonts/Virgil/Virgil-Regular.woff2")).toBe(true);
 		expect(at("/", "excalidraw-assets/index.css")).toBe(true);
+		expect(at("/", "monaco-assets/monaco.js")).toBe(true);
+		expect(at("/", "monaco-assets/editor.worker.js")).toBe(true);
+		expect(at("/", "monaco-assets/monaco.css")).toBe(true);
+		expect(at("/", "monaco-assets/monaco.js?x")).toBe(false);
 	});
 
 	it("works under a path prefix", () => {

@@ -65,6 +65,7 @@ import type {
 	HostFanout,
 } from "./fanout";
 import type { HiddenDoc } from "./hidden-messages";
+import type { FileSearchQuery, FileSearchResult, LspDiagnosticsResult, LspQuery, LspResult } from "./repo-intel";
 import type { PrOwnDiff, ReviewNotesQuery, ReviewNotesReply, StackPr } from "./review-board";
 import type { OrgDoc } from "./session-org";
 import { CollabSocket } from "./socket";
@@ -121,6 +122,10 @@ const REVIEW_NOTES_GENERATE_TIMEOUT_MS = 300_000;
 const CI_LOG_TIMEOUT_MS = 60_000;
 /** Listing a huge repository can take git a while. */
 const TREE_TIMEOUT_MS = 60_000;
+/** A content search over a large repository; the companion stops itself at 20s. */
+const FILE_SEARCH_TIMEOUT_MS = 30_000;
+/** The first language-server request starts the server and may wait for it to load the project. */
+const LSP_TIMEOUT_MS = 90_000;
 /** An attachment is one frame of up to ~13 MB, sent over a phone connection. */
 const UPLOAD_TIMEOUT_MS = 120_000;
 /** One download chunk is up to ~5.3 MB of base64, read from disk and sent over a phone connection. */
@@ -1181,6 +1186,12 @@ export type CompanionRequest =
 	| { t: "file-write"; reqId: number; instanceId: string; path: string; text: string; base: string }
 	/** Current versions of up to 20 files, to notice edits made behind an open editor. */
 	| { t: "file-versions"; reqId: number; instanceId: string; paths: string[] }
+	/** Search file contents in the session's repository (needs `canRepoSearch`). */
+	| { t: "file-search"; reqId: number; instanceId: string; search: FileSearchQuery }
+	/** Hover, definition or references from a language server for a file of the session's repository (needs `canLsp`). */
+	| { t: "lsp"; reqId: number; instanceId: string; query: LspQuery }
+	/** A language server's diagnostics for a file, after syncing `text` (the unsaved buffer) when given (needs `canLsp`). */
+	| { t: "lsp-diagnostics"; reqId: number; instanceId: string; path: string; text?: string }
 	/** Save a prompt attachment on the computer (needs `canUpload`); `data` is the file's base64. */
 	| { t: "upload"; reqId: number; instanceId: string; name: string; data: string }
 	/** Targets the companion can run in the session's repository root (needs `canRun`). */
@@ -1252,6 +1263,10 @@ export type CompanionReply =
 			canBakeoffFolder?: boolean;
 			/** The companion can list and edit files of a session's repository. */
 			canEdit?: boolean;
+			/** The companion can search file contents of a session's repository (`file-search`). */
+			canRepoSearch?: boolean;
+			/** The companion can run language servers for a session's repository (`lsp`, `lsp-diagnostics`). */
+			canLsp?: boolean;
 			/** The companion can screenshot local pages (it found Chrome or another Chromium browser). */
 			canPreview?: boolean;
 			/** The companion can list the session repository's issues and pull requests (`gh` signed in). */
@@ -1340,6 +1355,9 @@ export type CompanionReply =
 	| { t: "file-saved"; reqId: number; version: string }
 	/** In the order of the request's paths; null for a file that is missing or unreadable. */
 	| { t: "file-versions"; reqId: number; versions: (string | null)[] }
+	| { t: "file-search"; reqId: number; result: FileSearchResult }
+	| { t: "lsp"; reqId: number; result: LspResult }
+	| { t: "lsp-diagnostics"; reqId: number; result: LspDiagnosticsResult }
 	| { t: "folders"; reqId: number; folders: RecentFolder[] }
 	/** The folders of `path`, answering `browse-folders`. */
 	| { t: "folder-listing"; reqId: number; listing: FolderListing }
@@ -1565,6 +1583,10 @@ export interface CompanionSnapshot {
 	canBakeoffFolder: boolean;
 	/** The companion can list and edit files of a session's repository. */
 	canEdit: boolean;
+	/** The companion can search file contents of a session's repository. */
+	canRepoSearch: boolean;
+	/** The companion can run language servers for a session's repository. */
+	canLsp: boolean;
 	/** The companion can screenshot local pages. */
 	canPreview: boolean;
 	/** The companion can list the session repository's issues and pull requests. */
@@ -1684,6 +1706,8 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	canBakeoffFolder: false,
 	canCodemap: false,
 	canEdit: false,
+	canRepoSearch: false,
+	canLsp: false,
 	canPreview: false,
 	canGithub: false,
 	canPrReview: false,
@@ -1992,6 +2016,19 @@ export class CompanionClient {
 
 	async requestFileVersions(instanceId: string, paths: string[]): Promise<(string | null)[]> {
 		return (await this.#call({ t: "file-versions", instanceId, paths }, "file-versions")).versions;
+	}
+
+	async searchFiles(instanceId: string, search: FileSearchQuery): Promise<FileSearchResult> {
+		return (await this.#call({ t: "file-search", instanceId, search }, "file-search", FILE_SEARCH_TIMEOUT_MS)).result;
+	}
+
+	async requestLsp(instanceId: string, query: LspQuery): Promise<LspResult> {
+		return (await this.#call({ t: "lsp", instanceId, query }, "lsp", LSP_TIMEOUT_MS)).result;
+	}
+
+	async requestDiagnostics(instanceId: string, path: string, text?: string): Promise<LspDiagnosticsResult> {
+		return (await this.#call({ t: "lsp-diagnostics", instanceId, path, text }, "lsp-diagnostics", LSP_TIMEOUT_MS))
+			.result;
 	}
 
 	async requestFolders(): Promise<RecentFolder[]> {
@@ -2565,6 +2602,8 @@ export class CompanionClient {
 				canBakeoffFolder: frame.canBakeoffFolder ?? false,
 				canCodemap: frame.canCodemap ?? false,
 				canEdit: frame.canEdit ?? false,
+				canRepoSearch: frame.canRepoSearch ?? false,
+				canLsp: frame.canLsp ?? false,
 				canPreview: frame.canPreview ?? false,
 				canGithub: frame.canGithub ?? false,
 				canPrReview: frame.canPrReview ?? false,

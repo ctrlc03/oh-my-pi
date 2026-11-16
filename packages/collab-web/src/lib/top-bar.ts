@@ -26,12 +26,12 @@ export interface TopBarButton {
 /**
  * Every optional button. The first ten are the default bar, in order; the rest are actions that otherwise live
  * only in the ⋯ sheet, off until chosen. Sparring and Bake-off stand after Agents so a phone's compact bar keeps
- * Find, Editor, Code map and Agents.
+ * Find, Explorer, Code map and Agents.
  */
 export const TOP_BAR_BUTTONS = [
 	{ id: "settings", label: "Settings", on: true, phone: false },
 	{ id: "find", label: "Find in session", on: true, phone: true },
-	{ id: "editor", label: "Editor", on: true, phone: true },
+	{ id: "editor", label: "Explorer", on: true, phone: true },
 	{ id: "codemap", label: "Code map", on: true, phone: true },
 	{ id: "quizzes", label: "Quizzes", on: true, phone: false },
 	{ id: "github", label: "GitHub", on: true, phone: false },

@@ -143,6 +143,8 @@ import { browseFolders, checkStartFolder } from "./companion-browse";
 import { findFileSessions, repoRelativeFocus } from "./companion-file-sessions";
 import { fileVersions, listTree, writeRepoFile } from "./companion-files";
 import { git, gitDiff, gitSnapshot, isInside, readRepoFile, repoRoot } from "./companion-git";
+import { checkLspQuery, loadLsp, lspDiagnostics, lspQuery, shutdownLsp } from "./companion-lsp";
+import { loadRepoSearch, searchRepoFiles } from "./companion-repo-search";
 import {
 	canCreatePr,
 	createPullRequest,
@@ -732,6 +734,10 @@ const presence = new Map<number, { endpoint: string | null; visible: boolean }>(
 let lastHostsJson = "";
 /** The codemap module loaded; the hosts frame advertises code maps from then on. */
 let codemapReady = false;
+/** The native content search loaded: `file-search` is answered. */
+let repoSearchReady = false;
+/** The language-server client loaded: `lsp` and `lsp-diagnostics` are answered. */
+let lspReady = false;
 /** Chromium-based browser that screenshots previews; null until found, and when the computer has none. */
 let previewChrome: string | null = null;
 let pollTimer: Timer | undefined;
@@ -1242,6 +1248,8 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canBakeoffPatch: extras.canStart,
 		canBakeoffFolder: extras.canStart,
 		canEdit: true,
+		canRepoSearch: repoSearchReady,
+		canLsp: lspReady,
 		canPreview: previewChrome !== null,
 		// Reading issues and pull requests needs the same signed-in gh as opening one.
 		canGithub: extras.canPr,
@@ -2136,6 +2144,33 @@ room.onFrame = (frame, fromPeer) => {
 				reqId: frame.reqId,
 				versions: await fileVersions(await sessionCwd(frame.instanceId), frame.paths),
 			}));
+			return;
+		case "file-search":
+			respond(frame.reqId, async () => {
+				const session = await listedSession(frame.instanceId);
+				return { t: "file-search", reqId: frame.reqId, result: await searchRepoFiles(session.cwd, frame.search) };
+			});
+			return;
+		case "lsp":
+			respond(frame.reqId, async () => {
+				const query = checkLspQuery(frame.query);
+				const session = await listedSession(frame.instanceId);
+				return {
+					t: "lsp",
+					reqId: frame.reqId,
+					result: await lspQuery(session.cwd, session.sandboxed === true, query),
+				};
+			});
+			return;
+		case "lsp-diagnostics":
+			respond(frame.reqId, async () => {
+				const session = await listedSession(frame.instanceId);
+				return {
+					t: "lsp-diagnostics",
+					reqId: frame.reqId,
+					result: await lspDiagnostics(session.cwd, session.sandboxed === true, frame.path, frame.text),
+				};
+			});
 			return;
 		case "folders":
 			respond(frame.reqId, async () => ({
@@ -3058,6 +3093,15 @@ void loadCodemap().then(ready => {
 	// The hosts frame only goes out when its JSON changes; this is such a change.
 	if (ready) void refresh();
 });
+// Both load lazily and may fail on a checkout without the natives or the language-server client.
+void loadRepoSearch().then(ready => {
+	repoSearchReady = ready;
+	if (ready) void refresh();
+});
+void loadLsp().then(ready => {
+	lspReady = ready;
+	if (ready) void refresh();
+});
 void findChrome().then(found => {
 	previewChrome = found;
 	if (found !== null) void refresh();
@@ -3084,6 +3128,7 @@ function shutdown(): void {
 	// The warm preview browser and the speech worker are separate process trees: close them before exiting.
 	void Promise.allSettled([
 		closePreviewBrowser(),
+		shutdownLsp(),
 		voice.close(),
 		scheduleIpc.stop(),
 		blueprints.shutdown(),

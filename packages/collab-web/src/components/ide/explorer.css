@@ -1,0 +1,541 @@
+/* Explorer beside the editor (Files, Changes, Search, References). sh-ex-* namespace; token colours only. */
+
+.sh-explorer {
+	position: relative;
+	display: flex;
+	flex: none;
+	min-width: 0;
+	max-width: 70%;
+	background: var(--bg-raised);
+	border-right: 1px solid var(--border);
+}
+
+/* Over the editor (phones, a narrow dock) instead of beside it. */
+.sh-explorer[data-overlay="true"] {
+	position: absolute;
+	z-index: 2;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: min(320px, 88%);
+	max-width: none;
+	box-shadow: var(--shadow-overlay);
+}
+
+/* ---- view switcher ---- */
+.sh-ex-rail {
+	display: flex;
+	flex: none;
+	flex-direction: column;
+	gap: 2px;
+	width: 52px;
+	padding: 6px 4px;
+	background: var(--bg-inset);
+	border-right: 1px solid var(--border);
+}
+
+.sh-ex-view {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 2px;
+	padding: 6px 2px 5px;
+	color: var(--fg-faint);
+	background: none;
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.sh-ex-view:hover {
+	color: var(--fg);
+	background: var(--hover);
+}
+
+.sh-ex-view[aria-pressed="true"] {
+	color: var(--fg);
+	background: var(--selected);
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.sh-ex-view-icon {
+	position: relative;
+	display: grid;
+	place-items: center;
+}
+
+.sh-ex-view-count {
+	position: absolute;
+	top: -5px;
+	right: -9px;
+	min-width: 14px;
+	padding: 0 3px;
+	font: 600 9.5px / 14px var(--font-ui);
+	text-align: center;
+	color: var(--bg-inset);
+	background: var(--accent);
+	border-radius: 7px;
+}
+
+.sh-ex-view-label {
+	font-size: 10.5px;
+	line-height: 1.1;
+}
+
+/* ---- body ---- */
+.sh-ex-body {
+	display: flex;
+	flex: 1 1 0;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+
+.sh-ex-tools {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 2px;
+	min-height: 36px;
+	padding: 4px 6px;
+	border-bottom: 1px solid var(--border);
+}
+
+.sh-ex-scroll {
+	flex: 1 1 0;
+	min-height: 0;
+	padding-block: 4px;
+	overflow: auto;
+}
+
+.sh-ex-filter,
+.sh-ex-query {
+	display: flex;
+	flex: 1 1 auto;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	color: var(--fg-faint);
+}
+
+.sh-ex-filter {
+	position: relative;
+}
+
+.sh-ex-input {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: 4px 6px;
+	font: inherit;
+	font-size: 12.5px;
+	color: var(--fg);
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+}
+
+.sh-ex-input:focus {
+	outline: none;
+	border-color: var(--accent);
+}
+
+.sh-ex-input[aria-invalid="true"] {
+	border-color: var(--err);
+}
+
+.sh-ex-filter .sh-ex-input {
+	padding-inline: 24px;
+}
+
+.sh-ex-filter > svg {
+	position: absolute;
+	top: 50%;
+	left: 7px;
+	transform: translateY(-50%);
+	pointer-events: none;
+}
+
+.sh-ex-filter > .sh-ex-icon-btn {
+	position: absolute;
+	top: 50%;
+	right: 1px;
+	width: 22px;
+	height: 22px;
+	transform: translateY(-50%);
+}
+
+.sh-ex-icon-btn {
+	display: inline-grid;
+	flex: none;
+	place-items: center;
+	width: 26px;
+	height: 26px;
+	color: var(--fg-faint);
+	background: none;
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.sh-ex-icon-btn:hover:not(:disabled) {
+	color: var(--fg);
+	background: var(--hover);
+}
+
+.sh-ex-icon-btn:disabled {
+	opacity: 0.4;
+}
+
+.sh-ex-toggle[aria-pressed="true"] {
+	color: var(--accent);
+	background: var(--accent-muted);
+}
+
+.sh-ex-search {
+	display: flex;
+	flex: none;
+	flex-direction: column;
+	gap: 4px;
+	padding: 6px;
+	border-bottom: 1px solid var(--border);
+}
+
+.sh-ex-glob {
+	flex: none;
+	font-size: 12px;
+}
+
+.sh-ex-note {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin: 6px 8px;
+	font-size: 12.5px;
+	line-height: 1.45;
+	color: var(--fg-muted);
+}
+
+.sh-ex-note-err {
+	color: var(--err);
+}
+
+/* ---- rows ---- */
+.sh-ex-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sh-ex-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	width: 100%;
+	padding-block: 3px;
+	padding-inline: 8px;
+	font-size: 13px;
+	color: var(--fg-muted);
+	text-align: left;
+	background: none;
+	border: 0;
+}
+
+button.sh-ex-row:hover {
+	color: var(--fg);
+	background: var(--hover);
+}
+
+.sh-ex-row[data-active="true"],
+.sh-ex-row[data-cursor="true"] {
+	color: var(--fg);
+	background: var(--selected);
+}
+
+.sh-ex-row svg {
+	flex: none;
+}
+
+.sh-ex-folder {
+	color: var(--fg-faint);
+}
+
+.sh-ex-name {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-ex-name[data-tone="add"] {
+	color: var(--ok);
+}
+
+.sh-ex-name[data-tone="mod"] {
+	color: var(--warn);
+}
+
+.sh-ex-name[data-tone="del"] {
+	color: var(--err);
+}
+
+.sh-ex-name[data-tone="move"] {
+	color: var(--accent);
+}
+
+.sh-ex-dir {
+	flex: 1 1 0;
+	min-width: 0;
+	overflow: hidden;
+	font-size: 11.5px;
+	color: var(--fg-faint);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-ex-badge {
+	flex: none;
+	margin-inline-start: auto;
+	font: 600 11px / 1 var(--font-mono);
+}
+
+.sh-ex-badge[data-tone="add"] {
+	color: var(--ok);
+}
+
+.sh-ex-badge[data-tone="mod"] {
+	color: var(--warn);
+}
+
+.sh-ex-badge[data-tone="del"] {
+	color: var(--err);
+}
+
+.sh-ex-badge[data-tone="move"] {
+	color: var(--accent);
+}
+
+/* A folder that contains changes. */
+.sh-ex-dot {
+	flex: none;
+	width: 6px;
+	height: 6px;
+	margin-inline-start: auto;
+	background: var(--warn);
+	border-radius: 50%;
+}
+
+/* ---- groups: changes, search results, references ---- */
+.sh-ex-group {
+	padding-bottom: 4px;
+}
+
+.sh-ex-heading {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 6px 0 2px;
+	padding-inline: 10px;
+	font: 600 11px / 1.2 var(--font-ui);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--fg-faint);
+}
+
+.sh-ex-count {
+	flex: none;
+	margin-inline-start: auto;
+	padding: 0 6px;
+	font: 500 11px / 16px var(--font-ui);
+	color: var(--fg-muted);
+	background: var(--hover);
+	border-radius: 8px;
+}
+
+.sh-ex-heading .sh-ex-count {
+	margin-inline-start: 0;
+}
+
+.sh-ex-file-head {
+	font-weight: 500;
+	color: var(--fg);
+}
+
+.sh-ex-counts-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px 10px 6px;
+	font-size: 12px;
+	color: var(--fg-muted);
+}
+
+.sh-ex-more {
+	color: var(--warn);
+}
+
+.sh-ex-branch {
+	display: flex;
+	flex: 1 1 auto;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	padding-inline: 4px;
+	font-size: 12.5px;
+	color: var(--fg-muted);
+}
+
+.sh-ex-branch-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding-inline: 4px;
+	overflow: hidden;
+	font-size: 12.5px;
+	color: var(--fg);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-ex-branch .sh-ex-branch-name {
+	flex: 0 1 auto;
+	padding-inline: 0;
+}
+
+.sh-ex-add {
+	color: var(--ok);
+}
+
+.sh-ex-del {
+	color: var(--err);
+}
+
+.sh-ex-counts {
+	display: inline-flex;
+	flex: none;
+	gap: 6px;
+	margin-inline-start: auto;
+	font: 500 11px / 1 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+.sh-ex-change-head {
+	display: flex;
+	align-items: center;
+	padding-inline-start: 4px;
+}
+
+.sh-ex-change-head .sh-ex-row {
+	flex: 1 1 auto;
+	width: auto;
+	min-width: 0;
+	padding-inline-start: 2px;
+}
+
+.sh-ex-change-head .sh-ex-badge {
+	margin-inline-start: 0;
+	width: 14px;
+	text-align: center;
+}
+
+.sh-ex-change-head .sh-ex-counts {
+	margin-inline-start: auto;
+}
+
+.sh-ex-diff {
+	margin: 2px 0 6px 8px;
+	overflow-x: auto;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+}
+
+/* ---- search matches and reference locations ---- */
+.sh-ex-match {
+	align-items: baseline;
+	padding-inline-start: 20px;
+}
+
+.sh-ex-line {
+	flex: none;
+	min-width: 3ch;
+	font: 400 11px / 1.4 var(--font-mono);
+	color: var(--fg-faint);
+	text-align: right;
+}
+
+.sh-ex-text {
+	flex: 1 1 0;
+	min-width: 0;
+	overflow: hidden;
+	font: 400 12px / 1.4 var(--font-mono);
+	text-overflow: ellipsis;
+	white-space: pre;
+}
+
+.sh-ex-hit {
+	padding: 0;
+	color: var(--fg);
+	background: color-mix(in srgb, var(--warn) 35%, transparent);
+	border-radius: 2px;
+}
+
+/* References outside the repository: listed, not openable. */
+.sh-ex-group[data-outside="true"] {
+	opacity: 0.55;
+}
+
+.sh-ex-group[data-outside="true"] .sh-ex-match {
+	cursor: default;
+}
+
+/* ---- width divider ---- */
+.sh-ex-resize {
+	position: absolute;
+	z-index: 3;
+	top: 0;
+	right: -4px;
+	bottom: 0;
+	width: 8px;
+	cursor: col-resize;
+	outline: none;
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.sh-ex-resize::after {
+	content: "";
+	position: absolute;
+	inset-block: 0;
+	left: 3px;
+	width: 2px;
+	background: transparent;
+	transition: background-color 120ms ease-out;
+}
+
+.sh-ex-resize:hover::after,
+.sh-ex-resize[data-dragging]::after,
+.sh-ex-resize:focus-visible::after {
+	background: var(--accent);
+}
+
+/* The big editor sheet (undocked) takes the window on wide screens, minus a small margin: the explorer and the
+ * editor are worth more room than the 1200px other full sheets get. */
+@media (min-width: 901px) {
+	.sh-sheet-full:has(.sh-ide) {
+		width: calc(var(--view-w) - 24px);
+	}
+}
+
+/* Phones zoom into anything under 16px that takes focus. */
+@media (any-pointer: coarse) {
+	.sh-ex-input {
+		font-size: 16px;
+	}
+	button.sh-ex-row {
+		min-height: 36px;
+		font-size: 14px;
+	}
+	.sh-ex-icon-btn {
+		width: 34px;
+		height: 34px;
+	}
+}

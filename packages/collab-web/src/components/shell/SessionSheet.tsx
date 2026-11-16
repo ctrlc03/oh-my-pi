@@ -640,7 +640,7 @@ export function SessionSheet({
 				</div>
 				{onOpenEditor && (
 					<div className="sh-sheet-row">
-						<dt>Editor</dt>
+						<dt>Explorer</dt>
 						<dd>
 							<button type="button" className="sh-sheet-link" onClick={onOpenEditor}>
 								{readOnly ? "Browse the files" : "Browse and edit files"}

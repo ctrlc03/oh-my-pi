@@ -101,7 +101,9 @@ import {
 	type BesideControl,
 	focusedPane,
 	loadIdeDock,
+	loadIdeMaximized,
 	saveIdeDock,
+	saveIdeMaximized,
 	TWO_PANES_QUERY,
 	useBesideSession,
 	useClientWake,
@@ -610,14 +612,24 @@ function Session({
 	}, []);
 	// The editor replaces the read-only file viewer once the paired computer can save files.
 	const canEdit = companionClient !== null && hostId !== null && computer?.snap.canEdit === true;
-	const [editor, setEditor] = useState<{ target: { path: string; line?: number } | null } | null>(null);
-	const openEditor = useCallback(() => setEditor(open => open ?? { target: null }), []);
+	// `nonce` changes when "Search in files" is chosen while the editor is open: the sheet remounts on the Search view.
+	const [editor, setEditor] = useState<{
+		target: { path: string; line?: number } | null;
+		nonce: number;
+		initialView?: "files" | "search";
+	} | null>(null);
+	const openEditor = useCallback(() => setEditor(open => open ?? { target: null, nonce: 0 }), []);
+	const openFileSearch = useCallback(
+		() => setEditor(open => ({ target: open?.target ?? null, nonce: (open?.nonce ?? 0) + 1, initialView: "search" })),
+		[],
+	);
 	const openFile = useCallback(
 		(path: string, line?: number) => {
 			// Diagram files (.excalidraw, .mmd) open in the canvas, wherever a file path is shown.
 			if (diagramFileKind(path) !== null && companionClient !== null && hostId !== null) openDiagramFile(path);
-			else if (canEdit) setEditor({ target: { path, line } });
-			else setFile({ path, line });
+			else if (canEdit) {
+				setEditor(open => ({ target: { path, line }, nonce: open?.nonce ?? 0, initialView: open?.initialView }));
+			} else setFile({ path, line });
 		},
 		[canEdit, companionClient, hostId],
 	);
@@ -1221,6 +1233,7 @@ function Session({
 	// session is open and the screen is too narrow for both (the session keeps the room, the editor is a sheet).
 	const twoPanes = useMedia(TWO_PANES_QUERY);
 	const [ideDockPref, setIdeDockPref] = useState(loadIdeDock);
+	const [ideMaxPref, setIdeMaxPref] = useState(loadIdeMaximized);
 	const dockOffered = beside.available && (beside.pane === null || twoPanes);
 	const ideDock = useMemo(
 		() =>
@@ -1235,22 +1248,53 @@ function Session({
 				: null,
 		[dockOffered, ideDockPref],
 	);
+	const ideMaximize = useMemo(
+		() =>
+			ideDock?.docked === true
+				? {
+						maximized: ideMaxPref,
+						onMaximizedChange: (next: boolean): void => {
+							saveIdeMaximized(next);
+							setIdeMaxPref(next);
+						},
+					}
+				: null,
+		[ideDock?.docked, ideMaxPref],
+	);
 	const ideSheet =
 		editor !== null && canEdit ? (
 			<LazyIdeSheet
+				key={editor.nonce}
 				client={companionClient}
 				instanceId={hostId}
 				target={editor.target}
 				readOnly={snap.readOnly}
 				canDefinition={canCodemap}
+				canSearch={computer?.snap.canRepoSearch === true}
+				canLsp={computer?.snap.canLsp === true}
 				edits={editCount}
 				onSendToAgent={snap.readOnly ? null : sendToAgent}
 				dock={ideDock}
+				maximize={ideMaximize}
+				initialView={editor.initialView}
 				onSparDesign={canSparHere ? sparDesign : null}
 				onClose={() => setEditor(null)}
 			/>
 		) : null;
 	const ideDocked = ideSheet !== null && ideDock?.docked === true;
+	// Maximized, the docked editor takes the whole main area (split.css hides the conversation and the other panes).
+	const ideMaximized = ideDocked && ideMaxPref;
+	useEffect(() => {
+		if (!ideMaximized) return;
+		// Escape restores the layout, unless something on top (a sheet, the editor's own search or filter) claims it first.
+		const onKey = (event: KeyboardEvent): void => {
+			if (event.key !== "Escape" || event.defaultPrevented || document.querySelector(".sh-sheet") !== null) return;
+			saveIdeMaximized(false);
+			setIdeMaxPref(false);
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [ideMaximized]);
 	const besideOpen = beside.available && beside.pane !== null;
 
 	// Resizable panes: only the ones docked in the row (the sidebar and rail are overlays on narrow screens) get a divider.
@@ -1306,6 +1350,7 @@ function Session({
 			openGithub: canGithub ? openGithub : null,
 			openRun: canRun ? openRun : null,
 			openEditor: canEdit ? openEditor : null,
+			searchFiles: canEdit && computer?.snap.canRepoSearch === true ? openFileSearch : null,
 			turnUndo: turnUndo.control,
 			onLeave,
 		}),
@@ -1341,6 +1386,8 @@ function Session({
 			openBakeoffs,
 			openArchitecture,
 			openEditor,
+			openFileSearch,
+			computer?.snap.canRepoSearch,
 			openGithub,
 			openPane,
 			openPreview,
@@ -1427,7 +1474,12 @@ function Session({
 				screenCount={screens.length}
 				onOpenScreens={openScreens}
 			/>
-			<main ref={mainRef} className="sh-main" data-split={(besideOpen ? 1 : 0) + (ideDocked ? 1 : 0) || undefined}>
+			<main
+				ref={mainRef}
+				className="sh-main"
+				data-split={(besideOpen ? 1 : 0) + (ideDocked ? 1 : 0) || undefined}
+				data-ide-max={ideMaximized ? "true" : undefined}
+			>
 				{showSidebar && (
 					<>
 						<div className="sh-sidebar-backdrop" onClick={() => setSidebarOpen(false)} />

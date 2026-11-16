@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { getLogsDir, isCompiledBinary, logger, untilAborted, workerHostEntry } from "@oh-my-pi/pi-utils";
 import type { Subprocess } from "bun";
 import type { Browser, CDPSession } from "puppeteer-core";
+import { canonicalProjectDir } from "../../launch/paths";
 import { ToolAbortError } from "../tool-errors";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 import { findFreeCdpPort, findReusableCdp, gracefulKillTreeOnce, resolveSpawnArgs, waitForCdp } from "./attach";
@@ -17,11 +18,12 @@ import {
 	removeUserDataDir,
 	type UserAgentOverride,
 } from "./launch";
-import { reapOrphanSharedTargets, type SharedTargetScope } from "./orphan-registry";
+import { hasLiveSharedTargets, reapOrphanSharedTargets, type SharedTargetScope } from "./orphan-registry";
 import { ensureRelayDaemon, isLoopbackRelayUrl, restartRelayDaemon } from "./relay/daemon";
 import type { RelayKind } from "./relay/kind";
 import { UPDATE_RELAY_EXTENSION, waitForRelayExtension } from "./relay/probe";
-import { ensureSharedBrowser } from "./shared-daemon";
+import { closeSharedBrowser, ensureSharedBrowser, sharedBrowserDaemonName } from "./shared-daemon";
+import { SharedBrowserIdleShutdown } from "./shared-idle";
 import type { TernKind } from "./tern/kind";
 import { TernSocketClient } from "./tern/wire";
 import { WebKitHost } from "./webkit/host";
@@ -109,6 +111,35 @@ const browsers = new Map<string, BrowserHandle>();
  * `settled` resolves once the open settles or its caller aborts, whichever comes first.
  */
 const pendingOpens = new Map<string, { settled: Promise<void> }>();
+
+/**
+ * Scope of the project-shared headless browser a handle is attached to, the one browser omp launches itself
+ * and so the only one it may close when idle. Headed shared browsers, user-attached CDP browsers, relay and
+ * spawned apps have none.
+ */
+function idleShutdownScopeOf(handle: BrowserHandle): SharedTargetScope | undefined {
+	if (handle.kind.kind !== "headless" || !handle.kind.headless) return undefined;
+	return sharedTargetScopeOf(handle);
+}
+
+/** True while something in this process or another omp process still uses the shared browser of `scope`. */
+async function sharedBrowserInUse(scope: SharedTargetScope): Promise<boolean> {
+	for (const handle of browsers.values()) {
+		const held = sharedTargetScopeOf(handle);
+		if (held?.projectDir === scope.projectDir && held.daemonName === scope.daemonName) return true;
+	}
+	return await hasLiveSharedTargets(scope);
+}
+
+/**
+ * Closes the shared headless browser once its last tab is gone. The browser belongs to the daemon broker, so
+ * releasing every handle only drops this process's CDP connection; without this it ran until the last omp
+ * client in the project exited.
+ */
+const sharedIdle = new SharedBrowserIdleShutdown({
+	inUse: sharedBrowserInUse,
+	shutdown: scope => closeSharedBrowser(scope),
+});
 
 export function browserKey(kind: BrowserKind): string {
 	switch (kind.kind) {
@@ -209,6 +240,9 @@ export async function acquireBrowser(kind: BrowserKind, opts: AcquireBrowserOpti
 					error: err instanceof Error ? err.message : String(err),
 				});
 			});
+			// Nothing will ever hold or release this handle, so the shared headless browser it attached to idles out here.
+			const abandonedScope = idleShutdownScopeOf(handle);
+			if (abandonedScope) sharedIdle.scheduleShutdown(abandonedScope);
 			clearEntry();
 			throw new ToolAbortError("Browser open aborted");
 		}
@@ -431,6 +465,13 @@ export async function releaseBrowser(handle: BrowserHandle, opts: ReleaseBrowser
 		// under the same key; deleting blindly would orphan that new browser.
 		if (browsers.get(handle.key) === handle) browsers.delete(handle.key);
 		await disposeBrowserHandle(handle, opts);
+		// The shared headless browser is broker-owned, so dropping this process's last handle does not end it.
+		// Close it once no tab uses it: after a grace period, or at once on an explicit kill.
+		const idleScope = idleShutdownScopeOf(handle);
+		if (idleScope) {
+			if (opts.kill) await sharedIdle.shutdownNow(idleScope);
+			else sharedIdle.scheduleShutdown(idleScope);
+		}
 	}
 }
 
@@ -451,11 +492,13 @@ async function disposeBrowserHandle(handle: BrowserHandle, opts: ReleaseBrowserO
 	if (handle.kind.kind === "headless") {
 		if (handle.sharedDaemon) {
 			// The broker owns the Chromium; this process only drops its CDP
-			// connection. `kill` is scoped to spawned-app browsers — stopping the
-			// shared daemon here would tear down every other session's tabs. The
-			// daemon dies with the last omp client in the project (broker idle
-			// teardown), when its CDP endpoint stops answering after a failed tab
-			// cleanup (`stopSharedBrowserIfUnreachable`), or via an explicit stop
+			// connection, and `kill` does not stop the daemon here: other
+			// sessions' tabs may live in it. `releaseBrowser` closes the hidden
+			// shared browser through `sharedIdle` once no tab anywhere uses it
+			// (after a grace period, or at once for `kill`). Otherwise the daemon
+			// dies with the last omp client in the project (broker idle teardown),
+			// when its CDP endpoint stops answering after a failed tab cleanup
+			// (`stopSharedBrowserIfUnreachable`), or via an explicit stop
 			// (`write proc://<name>/kill`).
 			if (handle.browser.connected) {
 				try {
@@ -508,6 +551,12 @@ async function openSharedHeadlessHandle(
 	opts: AcquireBrowserOptions,
 ): Promise<PuppeteerBrowserHandle> {
 	const vp = opts.viewport ?? DEFAULT_VIEWPORT;
+	// An open during the idle grace period cancels the shutdown; one during a running shutdown waits for it
+	// and relaunches. Held until the handle is published, so no shutdown starts in between.
+	const idleScope: SharedTargetScope | undefined = kind.headless
+		? { projectDir: await canonicalProjectDir(opts.cwd), daemonName: sharedBrowserDaemonName(true) }
+		: undefined;
+	const endOpen = idleScope ? await sharedIdle.beginOpen(idleScope) : undefined;
 	try {
 		const shared = await ensureSharedBrowser({
 			projectDir: opts.cwd,
@@ -547,9 +596,13 @@ async function openSharedHeadlessHandle(
 			stealth: { browserSession: null, override: null },
 		};
 	} catch (err) {
+		// A failed open may still have launched the browser; nothing holds it, so let it idle out.
+		if (idleScope) sharedIdle.scheduleShutdown(idleScope);
 		if (err instanceof ToolAbortError || err instanceof ToolError) throw err;
 		if (opts.signal?.aborted) throw new ToolAbortError("Browser open aborted");
 		throw new ToolError(`Shared browser attach failed: ${err instanceof Error ? err.message : String(err)}`);
+	} finally {
+		endOpen?.();
 	}
 }
 

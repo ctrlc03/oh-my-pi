@@ -5,8 +5,10 @@
  * Chromium, the headless browser kind attaches to one broker-supervised Chrome
  * per project directory — sessions and subagents each open their own tabs in
  * it. The broker stops the daemon when the last omp client in the project
- * exits, so Chrome can never outlive omp, and concurrent acquisitions across
- * processes converge on a single launch instead of a launch storm.
+ * exits, and `closeSharedBrowser` closes it sooner when its last tab does (see
+ * `shared-idle`), so Chrome outlives neither omp nor, for long, its tabs.
+ * Concurrent acquisitions across processes converge on a single launch
+ * instead of a launch storm.
  */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -18,12 +20,15 @@ import type { DaemonSnapshot } from "@oh-my-pi/pi-tui/tools/daemon";
 import { throwIfAborted } from "../tool-errors";
 import { probeCdpStatus } from "./attach";
 import {
+	BROWSER_PROTOCOL_TIMEOUT_MS,
+	connectPuppeteer,
 	discardOwnedProfileSessions,
+	loadPuppeteer,
 	resolveSharedBrowserLaunchSpec,
 	type SharedBrowserLaunchSpec,
 	seedOwnedProfilePreferences,
 } from "./launch";
-import type { SharedTargetScope } from "./orphan-registry";
+import { clearSharedTargetRegistry, hasLiveSharedTargets, type SharedTargetScope } from "./orphan-registry";
 
 /** Chrome prints this on stderr once the CDP listener is up; the broker's ready probe captures the line. */
 const READY_LOG_PATTERN = String.raw`DevTools listening on ws://\S+`;
@@ -404,6 +409,140 @@ async function checkSharedBrowserReachable(scope: SharedTargetScope, deps: Share
 		return true;
 	} catch (error) {
 		logger.debug("Shared browser reachability check failed", {
+			daemon: scope.daemonName,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return false;
+	}
+}
+
+/** How long one idle shutdown waits for a competing start of the browser to release the profile claim. */
+const SHUTDOWN_CLAIM_WAIT_MS = 10_000;
+/** Bounds of the CDP close: attaching to the browser, and `Browser.close`. */
+const SHUTDOWN_CONNECT_TIMEOUT_MS = 5_000;
+const SHUTDOWN_CLOSE_TIMEOUT_MS = 5_000;
+/** How long a CDP close gets to take the daemon to a terminal state before the broker's stop (process-tree kill) steps in. */
+const SHUTDOWN_EXIT_WAIT_MS = 5_000;
+const SHUTDOWN_EXIT_POLL_MS = 100;
+
+/** Seams for {@link closeSharedBrowser}; the defaults hit the real broker and Chromium. */
+export interface SharedBrowserCloseDeps {
+	client?: DaemonBrokerClient;
+	/** Ask the browser to exit over CDP; rejects when it cannot. */
+	closeViaCdp?: (wsEndpoint: string) => Promise<void>;
+	/** Override {@link SHUTDOWN_EXIT_WAIT_MS}. */
+	exitWaitMs?: number;
+}
+
+function isTerminalDaemon(snapshot: DaemonSnapshot | undefined): boolean {
+	return snapshot?.state === "exited" || snapshot?.state === "failed";
+}
+
+/** Close Chromium the way a user quitting it would: `Browser.close` ends the main process and, with it, its helpers. */
+async function closeBrowserViaCdp(wsEndpoint: string): Promise<void> {
+	const puppeteer = await loadPuppeteer();
+	const browser = await withTimeout(
+		connectPuppeteer(puppeteer, {
+			browserWSEndpoint: wsEndpoint,
+			defaultViewport: null,
+			protocolTimeout: BROWSER_PROTOCOL_TIMEOUT_MS,
+		}),
+		SHUTDOWN_CONNECT_TIMEOUT_MS,
+		"Timed out connecting to the shared browser to close it",
+	);
+	try {
+		await withTimeout(browser.close(), SHUTDOWN_CLOSE_TIMEOUT_MS, "Timed out closing the shared browser");
+	} finally {
+		// A close that timed out leaves the socket open; `disconnect` is a no-op once it has closed.
+		await browser.disconnect().catch(() => undefined);
+	}
+}
+
+/** Poll the broker until the daemon reaches a terminal state or `waitMs` passes. */
+async function waitForDaemonExit(client: DaemonBrokerClient, name: string, waitMs: number): Promise<boolean> {
+	const deadline = Date.now() + waitMs;
+	for (;;) {
+		if (isTerminalDaemon(await describeQuietly(client, name, "Shared browser"))) return true;
+		if (Date.now() >= deadline) return false;
+		await Bun.sleep(SHUTDOWN_EXIT_POLL_MS);
+	}
+}
+
+/**
+ * Close the project-shared automation browser because nothing uses it any more
+ * (its last tab closed, or an explicit kill), so it does not outlive its
+ * tabs. Returns true once the daemon is confirmed ended and its target
+ * registry cleared; false when it was left running (another omp process still
+ * has tabs, another client holds the profile claim, or the close could not be
+ * confirmed). Best-effort: never throws.
+ *
+ * Runs under the same profile claim as {@link ensureSharedBrowser}, so no
+ * other process starts or adopts the browser between the final in-use check
+ * and the close; it then sees the daemon ended and launches a fresh one.
+ * Chromium is closed over CDP first so its crashpad and helper processes exit
+ * with it; only when that does not end the daemon does the broker's stop kill
+ * the process tree. Registry entries are cleared only on that confirmation,
+ * so a browser left running keeps the records that let a later reap find its
+ * orphaned targets.
+ */
+export async function closeSharedBrowser(
+	scope: SharedTargetScope,
+	deps: SharedBrowserCloseDeps = {},
+): Promise<boolean> {
+	try {
+		const client = deps.client ?? (await daemonClientForProject(scope.projectDir));
+		const userDataDir = sharedBrowserProfileDir(client.projectDir, scope.daemonName);
+		await fs.mkdir(userDataDir, { recursive: true });
+		let claim: FileLockHandle;
+		try {
+			claim = await acquireFileLock(userDataDir, {
+				retries: Math.ceil(SHUTDOWN_CLAIM_WAIT_MS / PROFILE_CLAIM_RETRY_MS),
+				retryDelayMs: PROFILE_CLAIM_RETRY_MS,
+			});
+		} catch (error) {
+			// Another client is starting or adopting the browser: it is in use again.
+			logger.debug("Shared browser stayed claimed; not closing it", {
+				daemon: scope.daemonName,
+				error: error instanceof Error ? error.message : String(error),
+			});
+			return false;
+		}
+		try {
+			// Final check under the claim: a tab another process opened since the grace period began.
+			if (await hasLiveSharedTargets(scope)) return false;
+			const existing = await describeQuietly(client, scope.daemonName, "Shared browser");
+			if (existing && !isTerminalDaemon(existing)) {
+				const wsEndpoint = wsEndpointOf(existing);
+				let ended = false;
+				if (wsEndpoint) {
+					try {
+						await (deps.closeViaCdp ?? closeBrowserViaCdp)(wsEndpoint);
+					} catch (error) {
+						logger.debug("Closing the shared browser over CDP failed", {
+							daemon: scope.daemonName,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					}
+					ended = await waitForDaemonExit(client, scope.daemonName, deps.exitWaitMs ?? SHUTDOWN_EXIT_WAIT_MS);
+				}
+				if (!ended) {
+					// Scoped to the generation we described: a browser another process replaced meanwhile is left running.
+					const stopped = await stopQuietly(client, scope.daemonName, "Shared browser", undefined, existing.id);
+					ended = isTerminalDaemon(stopped);
+				}
+				if (!ended) {
+					logger.warn("Shared browser did not stop after its last tab closed", { daemon: scope.daemonName });
+					return false;
+				}
+			}
+			await clearSharedTargetRegistry(scope);
+			logger.debug("Closed the idle project-shared browser", { daemon: scope.daemonName });
+			return true;
+		} finally {
+			claim.release();
+		}
+	} catch (error) {
+		logger.debug("Shared browser idle close failed", {
 			daemon: scope.daemonName,
 			error: error instanceof Error ? error.message : String(error),
 		});

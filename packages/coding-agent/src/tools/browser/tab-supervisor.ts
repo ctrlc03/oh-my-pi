@@ -1693,6 +1693,10 @@ async function releaseTabInner(tab: TabSession, name: string, opts: ReleaseTabOp
 			cleanupError = error;
 		}
 	}
+	// A confirmed-closed target is forgotten BEFORE the browser is released: dropping the last handle can
+	// close the idle shared browser at once (`kill`), and that must not see this tab's target as still in use.
+	const sharedScope = sharedTargetScopeOf(tab.browser);
+	if (sharedScope && !targetCloseFailed) void forgetSharedTarget(sharedScope, tab.targetId);
 	try {
 		await releaseBrowser(tab.browser, {
 			kill: opts.kill ?? false,
@@ -1703,8 +1707,7 @@ async function releaseTabInner(tab: TabSession, name: string, opts: ReleaseTabOp
 		cleanupError ??= error;
 	} finally {
 		tabs.delete(name);
-		const scope = sharedTargetScopeOf(tab.browser);
-		if (scope) {
+		if (sharedScope) {
 			if (targetCloseFailed) {
 				// The target outlived its close, so it is still open in the
 				// shared Chromium. Keep its durable ownership record — the only
@@ -1713,9 +1716,7 @@ async function releaseTabInner(tab: TabSession, name: string, opts: ReleaseTabOp
 				// Chromium that stopped answering its CDP endpoint holds every
 				// unclosable target and must be replaced, not left to grow until
 				// the last omp client in the project exits.
-				recheckSharedBrowser(scope);
-			} else {
-				void forgetSharedTarget(scope, tab.targetId);
+				recheckSharedBrowser(sharedScope);
 			}
 		} else if (targetCloseFailed) {
 			// Nothing here can retry it; a relay closes a tab of an offline browser once that browser reconnects.

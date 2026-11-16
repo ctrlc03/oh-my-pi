@@ -146,6 +146,59 @@ export async function forgetSharedTargets(scope: SharedTargetScope): Promise<voi
 	);
 }
 
+/** Ownership records of other omp processes in a registry dir; torn or malformed files are skipped. */
+async function readOtherOwnershipFiles(dir: string): Promise<{ file: string; record: OwnershipFile }[]> {
+	let entries: string[];
+	try {
+		entries = await fs.readdir(dir);
+	} catch (err) {
+		if (isEnoent(err)) return [];
+		throw err;
+	}
+	const found: { file: string; record: OwnershipFile }[] = [];
+	for (const entry of entries) {
+		if (!entry.endsWith(".json")) continue;
+		const file = path.join(dir, entry);
+		let record: OwnershipFile;
+		try {
+			record = (await Bun.file(file).json()) as OwnershipFile;
+		} catch {
+			continue;
+		}
+		if (typeof record?.pid !== "number" || !Array.isArray(record.targets) || record.pid === process.pid) continue;
+		found.push({ file, record });
+	}
+	return found;
+}
+
+/**
+ * True while any live omp process still owns a target in the shared browser:
+ * this process (by its in-memory set, which is updated before its file is) or
+ * another one (by its record, when its pid answers). A dead owner's targets do
+ * not count: they are orphans that go away with the browser.
+ */
+export async function hasLiveSharedTargets(scope: SharedTargetScope, isAlive = isPidAlive): Promise<boolean> {
+	const dir = registryDir(scope);
+	if ((ownedByDir.get(dir)?.size ?? 0) > 0) return true;
+	for (const { record } of await readOtherOwnershipFiles(dir)) {
+		if (record.targets.length > 0 && isAlive(record.pid)) return true;
+	}
+	return false;
+}
+
+/**
+ * Drop every ownership record of a shared browser that is confirmed gone:
+ * this process's claims, and the files of dead owners, whose targets went with
+ * the browser. Only call this on that confirmation, like {@link forgetSharedTargets}.
+ */
+export async function clearSharedTargetRegistry(scope: SharedTargetScope, isAlive = isPidAlive): Promise<void> {
+	await forgetSharedTargets(scope);
+	for (const { file, record } of await readOtherOwnershipFiles(registryDir(scope))) {
+		if (isAlive(record.pid)) continue;
+		await fs.rm(file, { force: true }).catch(() => undefined);
+	}
+}
+
 /** Options for {@link collectOrphanTargets}; the defaults hit the real registry, the seams are for tests. */
 export interface CollectOrphanOptions {
 	/** Wall clock; injectable for deterministic grace-window tests. */

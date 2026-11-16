@@ -1,5 +1,5 @@
 diff --git a/lib/puppeteer/api/ElementHandle.js b/lib/puppeteer/api/ElementHandle.js
-index 63c5df3..5a6bb8e 100644
+index 63c5df3c495c92d918a56e2059ed74255cf07a1a..5a6bb8e1c0654375e1775114bdef09428850139f 100644
 --- a/lib/puppeteer/api/ElementHandle.js
 +++ b/lib/puppeteer/api/ElementHandle.js
 @@ -103,6 +103,36 @@ import { throwIfDisposed } from '../util/decorators.js';
@@ -129,7 +129,7 @@ index 63c5df3..5a6bb8e 100644
                  ]);
                  return result;
 diff --git a/lib/puppeteer/api/Frame.js b/lib/puppeteer/api/Frame.js
-index 2d94da1..17b02ea 100644
+index 2d94da19ceda4482d6c5364582ce28a7b99afa8e..17b02eade4991b4566282a6ea888d98c601a0fdd 100644
 --- a/lib/puppeteer/api/Frame.js
 +++ b/lib/puppeteer/api/Frame.js
 @@ -119,6 +119,36 @@ export var FrameEvent;
@@ -258,10 +258,22 @@ index 2d94da1..17b02ea 100644
          /**
           * The full HTML contents of the frame, including the DOCTYPE.
 diff --git a/lib/puppeteer/cdp/ExecutionContext.js b/lib/puppeteer/cdp/ExecutionContext.js
-index c161965..2d8bf56 100644
+index c161965f31909e268841d5e57facb53d448c8db3..d08312f017a09d94c2636f1a3c260023d2680b61 100644
 --- a/lib/puppeteer/cdp/ExecutionContext.js
 +++ b/lib/puppeteer/cdp/ExecutionContext.js
-@@ -340,14 +340,19 @@ export class ExecutionContext extends EventEmitter {
+@@ -215,7 +215,10 @@ export class ExecutionContext extends EventEmitter {
+      */
+     get puppeteerUtil() {
+         let promise = Promise.resolve();
+-        if (!this.#bindingsInstalled) {
++        // xxx-stealth: ARIA queries run in the named utility world. Polling in the main
++        // world needs the utility pollers, not the page-visible query bindings.
++        // Do not install globals that page scripts can read or replace.
++        if (!this.#bindingsInstalled && this.#name) {
+             promise = Promise.all([
+                 this.#addBindingWithoutThrowing(ExecutionContext.getOrCreateAriaQuerySelectorBinding(this.#logger)),
+                 this.#addBindingWithoutThrowing(ExecutionContext.getOrCreateAriaQuerySelectorAllBinding(this.#logger)),
+@@ -340,14 +343,19 @@ export class ExecutionContext extends EventEmitter {
          return await this.#evaluate(false, pageFunction, ...args);
      }
      async #evaluate(returnByValue, pageFunction, ...args) {
@@ -284,7 +296,7 @@ index c161965..2d8bf56 100644
              const { exceptionDetails, result: remoteObject } = await this.#client
                  .send('Runtime.evaluate', {
                  expression: expressionWithSourceUrl,
-@@ -366,9 +371,8 @@ export class ExecutionContext extends EventEmitter {
+@@ -366,9 +374,8 @@ export class ExecutionContext extends EventEmitter {
              return this.#world.createCdpHandle(remoteObject);
          }
          const functionDeclaration = stringifyFunction(pageFunction);
@@ -297,7 +309,7 @@ index c161965..2d8bf56 100644
          try {
              callFunctionOnPromise = this.#client.send('Runtime.callFunctionOn', {
 diff --git a/lib/puppeteer/cdp/Frame.js b/lib/puppeteer/cdp/Frame.js
-index 9393eb1..2d97d23 100644
+index 9393eb10c4f2688f18b42dca3138dd3a5abf8b8b..2d97d2329bd99ebbc3e6b1e09d9462698a4177f2 100644
 --- a/lib/puppeteer/cdp/Frame.js
 +++ b/lib/puppeteer/cdp/Frame.js
 @@ -295,7 +295,7 @@ let CdpFrame = (() => {
@@ -319,7 +331,7 @@ index 9393eb1..2d97d23 100644
                      // @ts-expect-error: In a different context.
                      globalThis[name] = undefined;
 diff --git a/lib/puppeteer/cdp/FrameManager.js b/lib/puppeteer/cdp/FrameManager.js
-index f94964b..2fb0c28 100644
+index f94964b186105e8be9e78b2c7b4dd64faaddf26e..2fb0c28f67cd59d22c33bcaf290d2d7abf5f8a22 100644
 --- a/lib/puppeteer/cdp/FrameManager.js
 +++ b/lib/puppeteer/cdp/FrameManager.js
 @@ -66,6 +66,7 @@ import { DisposableStack, disposeSymbol } from '../util/disposable.js';
@@ -592,7 +604,7 @@ index f94964b..2fb0c28 100644
      async #createIsolatedWorld(session, name) {
          const key = `${session.id()}:${name}`;
 diff --git a/lib/puppeteer/cdp/IsolatedWorld.js b/lib/puppeteer/cdp/IsolatedWorld.js
-index 48a575b..f222696 100644
+index 48a575b08b525d4dfe514483f0a53af4e5e1b13c..f22269643a70016f795c638635877b605034b052 100644
 --- a/lib/puppeteer/cdp/IsolatedWorld.js
 +++ b/lib/puppeteer/cdp/IsolatedWorld.js
 @@ -22,6 +22,13 @@ export class IsolatedWorld extends Realm {
@@ -630,7 +642,7 @@ index 48a575b..f222696 100644
          const result = await firstValueFrom(fromEmitterEvent(this.#emitter, 'context').pipe(raceWith(fromEmitterEvent(this.#emitter, 'disposed').pipe(map(() => {
              // The message has to match the CDP message expected by the WaitTask class.
 diff --git a/lib/puppeteer/cdp/WebWorker.js b/lib/puppeteer/cdp/WebWorker.js
-index c16af2c..85729ab 100644
+index c16af2c8c5de931d34724a5198a2704120cdea56..85729abd0ecdda25e1d47edfa79f1ecd22313f9b 100644
 --- a/lib/puppeteer/cdp/WebWorker.js
 +++ b/lib/puppeteer/cdp/WebWorker.js
 @@ -32,8 +32,22 @@ export class CdpWebWorker extends WebWorker {
@@ -670,7 +682,7 @@ index c16af2c..85729ab 100644
      mainRealm() {
          return this.#world;
 diff --git a/lib/puppeteer/common/QueryHandler.js b/lib/puppeteer/common/QueryHandler.js
-index 8c406cf..185ef59 100644
+index 8c406cf90e0f9d899efaa5acb6a636a86f32e37e..185ef5954b2b95b708855ed68e8327a8c51f9e70 100644
 --- a/lib/puppeteer/common/QueryHandler.js
 +++ b/lib/puppeteer/common/QueryHandler.js
 @@ -152,8 +152,8 @@ export class QueryHandler {
@@ -704,10 +716,41 @@ index 8c406cf..185ef59 100644
                  catch (e_3) {
                      env_4.error = e_3;
 diff --git a/lib/puppeteer/common/WaitTask.js b/lib/puppeteer/common/WaitTask.js
-index c8a8126..89618d7 100644
+index c8a8126361f253aed00d0145ae588213b5dc8ce0..07c58972c96718f516eb03c95500b2613f0e74f5 100644
 --- a/lib/puppeteer/common/WaitTask.js
 +++ b/lib/puppeteer/common/WaitTask.js
-@@ -186,6 +186,9 @@ export class WaitTask {
+@@ -3,10 +3,11 @@
+  * Copyright 2022 Google Inc.
+  * SPDX-License-Identifier: Apache-2.0
+  */
++import { JSHandle } from '../api/JSHandle.js';
+ import { Deferred } from '../util/Deferred.js';
+ import { isErrorLike } from '../util/ErrorLike.js';
+ import { stringifyFunction } from '../util/Function.js';
+-import { TimeoutError } from './Errors.js';
++import { ProtocolError, TimeoutError } from './Errors.js';
+ import { LazyArg } from './LazyArg.js';
+ /**
+  * @internal
+@@ -166,6 +167,17 @@ export class WaitTask {
+             if (error.message.includes('Cannot find context with specified id')) {
+                 return;
+             }
++            // xxx-stealth: navigation can reuse the numeric context id
++            // before Page.frameNavigated invalidates the old utility handle.
++            // A user handle or root cannot survive replacement; keep its error.
++            if (
++                error instanceof ProtocolError &&
++                !this.#root &&
++                !this.#args.some(arg => arg instanceof JSHandle) &&
++                error.message.includes('Argument should belong to the same JavaScript world as target object')
++            ) {
++                return;
++            }
+             // Errors coming from WebDriver BiDi. TODO: Adjust messages after
+             // https://github.com/w3c/webdriver-bidi/issues/540 is resolved.
+             if (error.message.includes('DiscardedBrowsingContextError')) {
+@@ -186,6 +198,9 @@ export class WaitTask {
   */
  export class TaskManager {
      #tasks = new Set();
@@ -718,7 +761,7 @@ index c8a8126..89618d7 100644
          this.#tasks.add(task);
      }
 diff --git a/lib/puppeteer/common/util.js b/lib/puppeteer/common/util.js
-index 55f12f2..70f9700 100644
+index 55f12f2947e76c26060bbb4b39747f8e5c579d97..70f97005d958b20f0e137506d5e044f073746bc6 100644
 --- a/lib/puppeteer/common/util.js
 +++ b/lib/puppeteer/common/util.js
 @@ -70,7 +70,9 @@ export const withSourcePuppeteerURLIfNone = (functionName, object) => {
@@ -733,7 +776,7 @@ index 55f12f2..70f9700 100644
      const site = new Error().stack;
      Error.prepareStackTrace = original;
 diff --git a/lib/puppeteer/node/ChromeLauncher.js b/lib/puppeteer/node/ChromeLauncher.js
-index 88a539a..654401c 100644
+index 88a539acf0ed2497a205cb17a4e09c4fc2056f7c..654401c9d83520ac23dc6d37c2feb79721a810f2 100644
 --- a/lib/puppeteer/node/ChromeLauncher.js
 +++ b/lib/puppeteer/node/ChromeLauncher.js
 @@ -130,24 +130,12 @@ export class ChromeLauncher extends BrowserLauncher {
@@ -767,7 +810,7 @@ index 88a539a..654401c 100644
          ]
              .filter(feature => {
 diff --git a/lib/puppeteer/node/NodeWebSocketTransport.js b/lib/puppeteer/node/NodeWebSocketTransport.js
-index 1aaa976..e96b855 100644
+index 1aaa9765ee7380e1f2c96922d50991c624b996b2..e96b855af5f0c0febf4de64e0565e60df9451b2b 100644
 --- a/lib/puppeteer/node/NodeWebSocketTransport.js
 +++ b/lib/puppeteer/node/NodeWebSocketTransport.js
 @@ -39,7 +39,11 @@ export class NodeWebSocketTransport {

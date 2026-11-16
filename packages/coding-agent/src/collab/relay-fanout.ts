@@ -15,7 +15,7 @@
  */
 import { logger } from "@oh-my-pi/pi-utils";
 import type { CollabFrame, EncodedFrame, RelayControlMessage } from "./protocol";
-import { normalizeLocalRelayUrl, serializeFrame } from "./protocol";
+import { normalizeLocalRelayUrl, encodeFrame } from "./protocol";
 import { CollabSocket } from "./relay-client";
 
 /** Local peer ids are offset by this much; relays count from 1, so the ranges never meet. */
@@ -62,6 +62,8 @@ export class FanoutSocket {
 	 * belonged to it. Peers on the other relay are unaffected.
 	 */
 	onRoomRecreated?: (owns: (peerId: number) => boolean) => void;
+	/** A relay discarded a guest's backlog to keep the room alive; the guest must resync. Host-side peer id. */
+	onPeerOverload?: (peerId: number) => void;
 	/** The local relay was replaced by one on another port; carries its new `ws://127.0.0.1:<port>` base. */
 	onLocalRelayMoved?: (localRelayUrl: string) => void;
 
@@ -93,6 +95,9 @@ export class FanoutSocket {
 		};
 		primary.onClose = (reason, willReconnect) => this.onClose?.(reason, willReconnect);
 		primary.onRoomRecreated = () => this.onRoomRecreated?.(peerId => !isLocalPeer(peerId));
+		primary.onPeerOverload = peerId => {
+			if (!isLocalPeer(peerId)) this.onPeerOverload?.(peerId);
+		};
 		this.#primary = primary;
 	}
 
@@ -114,56 +119,77 @@ export class FanoutSocket {
 		return this.#localPeers.has(local) && this.#local?.isServing(local) === true;
 	}
 
+	/** False while targeted work for the peer is refused: it left, or was shed and its overload report is pending. */
+	isAdmitting(peerId: number): boolean {
+		if (!isLocalPeer(peerId)) return this.#primary.isAdmitting(peerId);
+		const local = peerId - LOCAL_PEER_BASE;
+		return this.#localPeers.has(local) && this.#local?.isAdmitting(local) === true;
+	}
+
 	connect(): void {
 		this.#primary.connect();
 		this.#startLocal();
 	}
 
-	send(frame: CollabFrame | EncodedFrame, targetPeer = 0, compress = false): void {
-		if (targetPeer === 0) {
-			this.#broadcast(frame);
-			return;
-		}
+	/** @returns whether the frame was admitted; a broadcast reports the public relay, which owns the room. */
+	send(frame: CollabFrame | EncodedFrame, targetPeer = 0, compress = false): boolean {
+		if (targetPeer === 0) return this.#broadcast(frame, (socket, encoded) => socket.send(encoded));
 		if (!isLocalPeer(targetPeer)) {
-			this.#primary.send(frame, targetPeer, compress);
-			return;
+			return compress ? this.#primary.send(frame, targetPeer, true) : this.#primary.send(frame, targetPeer);
 		}
 		const local = targetPeer - LOCAL_PEER_BASE;
-		if (this.#localPeers.has(local)) this.#local?.send(frame, local, compress);
+		if (!this.#localPeers.has(local) || this.#local === null) return false;
+		return compress ? this.#local.send(frame, local, true) : this.#local.send(frame, local);
 	}
 
-	/** Broadcast to the public relay, and to the local one only while a local guest is present. */
-	#broadcast(frame: CollabFrame | EncodedFrame): void {
+	/** Broadcast superseding every queued frame under `key`; see {@link CollabSocket.sendLatest}. */
+	sendLatest(key: string, frame: CollabFrame | EncodedFrame): boolean {
+		return this.#broadcast(frame, (socket, encoded) => socket.sendLatest(key, encoded));
+	}
+
+	/** Broadcast carrying no replica state; see {@link CollabSocket.broadcastAdvisory}. */
+	broadcastAdvisory(frame: CollabFrame | EncodedFrame): boolean {
+		return this.#broadcast(frame, (socket, encoded) => socket.broadcastAdvisory(encoded));
+	}
+
+	/**
+	 * Broadcast to the public relay, and to the local one only while a local guest is present. The
+	 * local relay is best effort: its refusal never changes the result.
+	 */
+	#broadcast(
+		frame: CollabFrame | EncodedFrame,
+		deliver: (socket: CollabSocket, frame: CollabFrame | EncodedFrame) => boolean,
+	): boolean {
 		const local = this.#local;
-		if (local === null || this.#localPeers.size === 0) {
-			this.#primary.send(frame);
-			return;
-		}
+		if (local === null || this.#localPeers.size === 0) return deliver(this.#primary, frame);
 		let encoded: EncodedFrame;
 		try {
-			encoded = typeof frame === "string" ? frame : serializeFrame(frame);
+			encoded = typeof frame === "string" ? frame : encodeFrame(frame);
 		} catch {
 			// The public socket reports an unserializable frame the way it always has.
-			this.#primary.send(frame);
-			return;
+			return deliver(this.#primary, frame);
 		}
-		this.#primary.send(encoded);
-		local.send(encoded);
+		const admitted = deliver(this.#primary, encoded);
+		deliver(local, encoded);
+		return admitted;
 	}
 
-	sendBatch(frames: Iterable<CollabFrame | EncodedFrame>, targetPeer = 0, compress = false): void {
+	/** @returns whether the batch was admitted; a broadcast reports the public relay. */
+	sendBatch(
+		frames: Iterable<CollabFrame | EncodedFrame>,
+		targetPeer: number,
+		retainedBytes: number,
+		compress = false,
+	): boolean {
 		if (targetPeer === 0) {
 			const items = [...frames];
-			this.#primary.sendBatch(items);
-			if (this.#local !== null && this.#localPeers.size > 0) this.#local.sendBatch(items);
-			return;
+			const admitted = this.#primary.sendBatch(items, 0, retainedBytes);
+			if (this.#local !== null && this.#localPeers.size > 0) this.#local.sendBatch(items, 0, retainedBytes);
+			return admitted;
 		}
-		if (!isLocalPeer(targetPeer)) {
-			this.#primary.sendBatch(frames, targetPeer, compress);
-			return;
-		}
+		if (!isLocalPeer(targetPeer)) return this.#primary.sendBatch(frames, targetPeer, retainedBytes, compress);
 		const local = targetPeer - LOCAL_PEER_BASE;
-		if (this.#localPeers.has(local)) this.#local?.sendBatch(frames, local, compress);
+		return this.#localPeers.has(local) && (this.#local?.sendBatch(frames, local, retainedBytes, compress) ?? false);
 	}
 
 	/** Discard what is still queued for a peer that left; see {@link CollabSocket.dropPeer}. */
@@ -222,6 +248,9 @@ export class FanoutSocket {
 			if (msg.t === "peer-joined") this.#localPeers.add(msg.peer);
 			else this.#localPeers.delete(msg.peer);
 			this.onControl?.({ t: msg.t, peer: msg.peer + LOCAL_PEER_BASE });
+		};
+		local.onPeerOverload = peerId => {
+			if (peerId > 0 && peerId < LOCAL_PEER_BASE) this.onPeerOverload?.(peerId + LOCAL_PEER_BASE);
 		};
 		local.onRoomRecreated = () => {
 			this.#localPeers.clear();
@@ -293,6 +322,7 @@ export class FanoutSocket {
 		local.onControl = undefined;
 		local.onClose = undefined;
 		local.onRoomRecreated = undefined;
+		local.onPeerOverload = undefined;
 		local.close();
 		this.#localPeers.clear();
 	}

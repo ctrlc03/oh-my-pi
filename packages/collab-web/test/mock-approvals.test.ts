@@ -29,8 +29,14 @@ describe("MockApprovals", () => {
 		const { approvals, frames, ask } = setup(false);
 		const reqId = ask("bun test a.test.ts");
 		const request = frames[0];
-		if (request?.t !== "ui-request" || request.request.kind !== "select") throw new Error("unreachable");
-		expect(request.request.approval?.choices.map(choice => choice.kind)).toEqual([
+		if (
+			request?.t !== "ui-request" ||
+			request.request.kind !== "select" ||
+			typeof request.request.approval !== "object"
+		) {
+			throw new Error("unreachable");
+		}
+		expect(request.request.approval.choices.map(choice => choice.kind)).toEqual([
 			"once",
 			"session",
 			"project",

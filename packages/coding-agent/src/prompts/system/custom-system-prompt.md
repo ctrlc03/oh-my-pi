@@ -6,11 +6,13 @@
 Skills are specialized knowledge. Scan descriptions for your task domain.
 If a skill applies, you MUST read `skill://<name>` before proceeding.
 <skills>
-{{#list skills join="\n"}}
+{{#each skills}}
+{{#unless @first}}
+{{/unless}}
 <skill name="{{name}}">
 {{description}}
 </skill>
-{{/list}}
+{{/each}}
 </skills>
 {{/if}}
 {{#if hasSkillUriAccess}}
@@ -45,4 +47,7 @@ Some values in tool output are redacted for security. They appear as placeholder
 <sandbox>
 {{sandboxNote}}
 </sandbox>
+{{/if}}
+{{#if resultShaping}}
+{{resultShaping}}
 {{/if}}

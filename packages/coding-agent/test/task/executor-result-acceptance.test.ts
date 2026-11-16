@@ -163,9 +163,7 @@ function createHarness(options?: { hangPrompt?: boolean; asyncJobManager?: Async
 		prepareForHeadlessAdvisorDrain: () => {},
 		waitForAdvisorCatchup: async () => true,
 		getLastAssistantMessage: () => messages[messages.length - 1],
-		hasPendingAsyncWork: () => false,
 		getAsyncJobSnapshot: () => ({ running: [], recent: [] }),
-		settleAsyncWork: async () => {},
 		abort: async () => {},
 		dispose: async () => {},
 		setIrcWakeTurnObserver: (
@@ -174,6 +172,7 @@ function createHarness(options?: { hangPrompt?: boolean; asyncJobManager?: Async
 			wakeObserver = observer;
 		},
 		trackIrcReply: () => {},
+		hasIrcInterrupts: () => false,
 		holdIrcWakes: () => () => {},
 		subscribeRunState: () => () => {},
 		isParentIrcSteer: () => false,

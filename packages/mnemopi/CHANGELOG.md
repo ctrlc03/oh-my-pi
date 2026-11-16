@@ -9,6 +9,19 @@
 - Added permanent retention: `workingMemoryLimit: Infinity` and `degradeEpisodic: false` keep every row, and invalidation is recorded with `invalid_by`.
 - Added provenance: `provenance`, `authorId` / `authorType` on writes, `excludeAuthorTypes` on recall (facts derived from excluded rows are excluded too), duplicate merging and consolidation per author, and `TRUSTED` / `UNTRUSTED` trust tiers.
 - Rows pinned (`metadata.pinned`) or retracted by the owner can no longer be invalidated, updated or forgotten; added `getPinned()`, and `get()` now returns `author_id`, `author_type` and `trust_tier`.
+## [18.20.3] - 2026-11-16
+
+### Added
+
+- Added configurable embedding query prefixes and input types for instruction-tuned and asymmetric embedding models, including Qwen3-Embedding, E5, and NVIDIA NIM.
+- Added the `embeddings.onRequestFailed` callback, allowing hosts to handle and surface failed embedding API requests.
+
+## [18.20.0] - 2026-11-12
+
+### Fixed
+
+- Fixed fact extraction storing decimals, prices, and IP-address fragments as `version` facts and leaving symbols such as `→` in `metric` fact keys ([#18886](https://github.com/can1357/oh-my-pi/issues/18886))
+
 ## [18.18.4] - 2026-11-09
 
 ### Fixed

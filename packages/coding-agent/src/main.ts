@@ -41,13 +41,15 @@ import { processFileArguments } from "./cli/file-processor";
 import { buildInitialMessage } from "./cli/initial-message";
 import { formatKeyHint, KeybindingsManager } from "@oh-my-pi/pi-tui/app-keybindings";
 import type { SessionPickerOptions } from "@oh-my-pi/pi-tui/apps/session-picker";
-import { currentBuildHost, fetchBuild } from "./cli/build-service";
+import { currentBuildHost, fetchBuild, OMP_BUILD } from "./cli/build-service";
 import { applyStartupCwd } from "./cli/startup-cwd";
 import { BUILD_TAG, IS_FORK_BUILD, RELEASE_REPO } from "./build-identity";
 import { compareForkTags, fetchLatestForkBuild } from "./cli/fork-release";
 import { runAutoUpdate } from "./cli/auto-update";
-import { getLatestRelease, isSourceCheckout, managedInstallName } from "./cli/update-cli";
+import { managedInstallName } from "./cli/managed-install";
+import { getLatestRelease, isSourceCheckout } from "./cli/update-cli";
 import { findConfigFile } from "./config";
+import { cfgNoJudge, cfgNoSpotlight, cfgOffline } from "./config/auxiliary-model-policy";
 import { ModelRegistry } from "./config/model-registry";
 import { formatModelSelectorValue } from "@oh-my-pi/pi-tui/overlays/model-selector";
 import {
@@ -157,7 +159,8 @@ import { cfgGoalEnabled } from "./goals/settings";
 import { cfgPlanDefaultOnStartup, cfgPlanEnabled } from "./plan-mode/settings";
 
 import { cfgAdvisorEnabled } from "./advisor/settings";
-import { cfgAsyncPrintWake, cfgToolsApprovalMode } from "./tools/settings";
+import { cfgAsyncPrintWake, cfgLaunchPersist, cfgToolsApprovalMode } from "./tools/settings";
+import { claimTerminal } from "./tools/browser/terminal-owner";
 import {
 	cfgAutocompleteMaxVisible,
 	cfgAutoResume,
@@ -287,9 +290,11 @@ async function checkForNewVersion(currentVersion: string): Promise<string | unde
 		const channel = cfgUpdateChannel.get(settings);
 		// A fork build updates from its own releases, never from the build service or npm.
 		if (IS_FORK_BUILD) {
-			const { tag } = await fetchLatestForkBuild(RELEASE_REPO, (await currentBuildHost()).fileName, {
-				timeoutMs: 5_000,
-			});
+			const { tag } = await fetchLatestForkBuild(
+				RELEASE_REPO,
+				OMP_BUILD.fileName(await currentBuildHost(), currentVersion),
+				{ timeoutMs: 5_000 },
+			);
 			return compareForkTags(tag, BUILD_TAG) > 0 ? tag : undefined;
 		}
 		// A compiled binary updates from the build service; naming the running
@@ -971,8 +976,8 @@ async function moveMissingCwdSessionIfNeeded(
 		return { status: "not-needed" };
 	}
 
-	// A removed worktree of this checkout's repository: its session belongs here, no question to ask.
-	if (!(await SessionManager.isFromRemovedWorktree(session, cwd, sessionDir))) {
+	// Filed under this folder (or a removed worktree of it): the session belongs here, no question to ask.
+	if (!(await SessionManager.isStrandedIn(session, cwd, sessionDir))) {
 		const movePromptResult = await askToMoveSession(session);
 		if (movePromptResult === "unavailable") {
 			throw new SessionResolutionError(
@@ -1948,6 +1953,9 @@ export async function runRootCommand(
 		const autoPrint =
 			(pipedInput !== undefined || !stdinIsTerminal) && !parsedArgs.print && parsedArgs.mode === undefined;
 		const isInteractive = !parsedArgs.print && !autoPrint && parsedArgs.mode === undefined;
+		// The TUI owns the Tern pane or cmux workspace it draws in; an omp its commands start sees the claim and
+		// keeps its browser tabs out of this session's pane.
+		if (isInteractive) claimTerminal();
 		// Before session resolution: resume, fork, and import act on these same
 		// startup-parse flags, so rejecting later would leave forked or imported
 		// transcripts (or an opened picker) behind a usage error.
@@ -1997,8 +2005,6 @@ export async function runRootCommand(
 		}
 
 		const settingsInstance = await settingsPromise;
-		// Process-lifetime: broker/account-policy edits reconfigure the shared credential store.
-		createAuthStorageSettingsSync(settingsInstance, authStorage);
 		if (parsedArgs.approvalMode) {
 			// Runtime override (not persisted): every `tools.approvalMode` read downstream
 			// sees this value. The wrapper still honours --auto-approve / --yolo on top of it.
@@ -2014,6 +2020,9 @@ export async function runRootCommand(
 		// Runtime overrides (not persisted): the session's cost gate reads its thresholds from settings.
 		if (parsedArgs.warnCost !== undefined) cfgSessionWarnCost.override(settingsInstance, parsedArgs.warnCost);
 		if (parsedArgs.maxCost !== undefined) cfgSessionMaxCost.override(settingsInstance, parsedArgs.maxCost);
+		if (parsedArgs.noJudge) cfgNoJudge.override(settingsInstance, true);
+		if (parsedArgs.noSpotlight) cfgNoSpotlight.override(settingsInstance, true);
+		if (parsedArgs.offline) cfgOffline.override(settingsInstance, true);
 		if (parsedArgs.mode === "rpc" || parsedArgs.mode === "rpc-ui") {
 			applyProtocolDefaults("rpc", settingsInstance);
 		} else if (parsedArgs.mode === "acp") {
@@ -2026,6 +2035,8 @@ export async function runRootCommand(
 			"modelRegistry:init",
 			() => new ModelRegistry(authStorage, undefined, { settings: settingsInstance }),
 		);
+		// Process-lifetime: broker/account-policy/paused-provider edits reconfigure the shared credential store.
+		createAuthStorageSettingsSync(settingsInstance, authStorage, modelRegistry);
 		// Credential-scoped catalogs (e.g. GitHub Copilot) load from their cache
 		// rows only after credentials resolve. `--model` and `enabledModels` below
 		// resolve against the registry before `createAgentSession` hydrates it, so
@@ -2068,6 +2079,12 @@ export async function runRootCommand(
 		// explicit --hide-thinking block display option still wins for output display.
 		if (parsedArgs.printThoughts && !isProtocolMode && !isInteractive) {
 			cfgOmitThinking.override(settingsInstance, false);
+		}
+		// Print, RPC and ACP hosts serve a caller (script, harness, editor) that outlives the
+		// session and uses the servers a run leaves running; keep them past this process's
+		// exit, as `nohup cmd &` is.
+		if (!isInteractive) {
+			cfgLaunchPersist.override(settingsInstance, true);
 		}
 		// Apply --hide-thinking CLI flag (ephemeral, not persisted)
 		if (parsedArgs.hideThinking) {
@@ -2317,14 +2334,14 @@ export async function runRootCommand(
 				process.exit(0);
 			}
 			// A preliminary row (indexed title, no content read) lacks the recorded
-			// cwd the removed-worktree check below needs.
+			// cwd the stranded-session check below needs.
 			const selected = (await readSessionInfo(picked.path)) ?? picked;
 			const continuation = await findSessionContinuation(selected.path);
 			if (continuation) resumedContinuations.push(continuation);
 			const chosen = continuation?.session ?? selected;
 			try {
 				sessionManager = await forkIfMovedAway(
-					(await SessionManager.isFromRemovedWorktree(chosen, cwd, parsedArgs.sessionDir))
+					(await SessionManager.isStrandedIn(chosen, cwd, parsedArgs.sessionDir))
 						? await openRelocatedSession(chosen, cwd, parsedArgs.sessionDir)
 						: await SessionManager.open(chosen.path),
 					parsedArgs.sessionDir,
@@ -2334,7 +2351,7 @@ export async function runRootCommand(
 				throw error;
 			}
 			const previousCwd = cwd;
-			// A relocated session's `chosen.cwd` is the removed worktree: missing, so the launch cwd stays.
+			// A relocated session's `chosen.cwd` is its gone directory: missing, so the launch cwd stays.
 			const recordedCwd = chosen.cwd || sessionManager.getRecordedCwd() || sessionManager.getCwd();
 			const resumedProject = await switchToResumedProject(
 				recordedCwd,
@@ -2379,7 +2396,7 @@ export async function runRootCommand(
 		daemonPresencePromise?.catch(() => {});
 
 		let startupTelemetry: CreateAgentSessionOptions["telemetry"];
-		let startupExtensions: CreateAgentSessionOptions["extensions"];
+		let startupTopLevelExtensions: CreateAgentSessionOptions["topLevelExtensions"];
 		// An interactive launch writes nothing to the terminal before its UI: the
 		// first paint clears the screen, and in Tern the surface would open over
 		// (and briefly flash) any line printed ahead of it.
@@ -2415,7 +2432,7 @@ export async function runRootCommand(
 			options.deferSkillDescriptionCompression = isInteractive;
 			options.settings = settingsInstance;
 			options.telemetry = startupTelemetry;
-			options.extensions = startupExtensions;
+			options.topLevelExtensions = startupTopLevelExtensions;
 			options.onPrewalkWarning = startupWarning;
 			return options;
 		};
@@ -2512,8 +2529,9 @@ export async function runRootCommand(
 			// file — and the same result is handed to createAgentSession via
 			// `preloadedExtensions` so the discovery work is not repeated.
 			if (isInteractive && !parsedArgs.trustedExtensions?.length) {
-				startupExtensions = sessionOptions.extensions = [
-					...(sessionOptions.extensions ?? []),
+				// Top-level only: subagents, `/tan` forks, and worker threads never inherit the bridge.
+				startupTopLevelExtensions = sessionOptions.topLevelExtensions = [
+					...(sessionOptions.topLevelExtensions ?? []),
 					createWarpEventBridgeExtension(),
 				];
 			}

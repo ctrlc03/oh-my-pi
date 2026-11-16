@@ -548,6 +548,8 @@ export interface AskToolApprovalOptions {
 	/** Whether a collab guest's project-scoped choice is honored (`collab.guestsCanSaveApprovals`). */
 	guestsCanSaveProject: boolean;
 	session: GrantSession;
+	/** The call's abort signal: closes the prompt so aborting the turn never waits on one nobody can answer. */
+	signal?: AbortSignal;
 }
 
 function choiceFromLabel(label: string | undefined): CollabApprovalChoiceKind {
@@ -563,7 +565,7 @@ function choiceFromLabel(label: string | undefined): CollabApprovalChoiceKind {
  * dismissal throw / deny exactly as the bare select does.
  */
 export async function askToolApproval(options: AskToolApprovalOptions): Promise<ToolApprovalOutcome> {
-	const { ui, prompt, tool, rules, store, guestsCanSaveProject, session } = options;
+	const { ui, prompt, tool, rules, store, guestsCanSaveProject, session, signal } = options;
 	const answer: { source: "local" | "remote" } = { source: "local" };
 	const onAnswer = (answered: "local" | "remote"): void => {
 		answer.source = answered;
@@ -573,8 +575,8 @@ export async function askToolApproval(options: AskToolApprovalOptions): Promise<
 	if (rules.length === 0 || !store) {
 		// The host's approval dialog when it has one (Ctrl+Enter approves); a plain select elsewhere.
 		const approved = ui.approve
-			? (await ui.approve(prompt, { onAnswer })) !== "deny"
-			: (await ui.select(prompt.full, [LEGACY_APPROVE, "Deny"], { onAnswer })) === LEGACY_APPROVE;
+			? (await ui.approve(prompt, { onAnswer, signal })) !== "deny"
+			: (await ui.select(prompt.full, [LEGACY_APPROVE, "Deny"], { onAnswer, signal })) === LEGACY_APPROVE;
 		return { approved, by: by(), choice: approved ? "once" : "deny", saved: [] };
 	}
 
@@ -587,7 +589,11 @@ export async function askToolApproval(options: AskToolApprovalOptions): Promise<
 		choices: CHOICE_ORDER.map(kind => ({ label: APPROVAL_LABELS[kind], kind })),
 	};
 	const chosen = choiceFromLabel(
-		await ui.select(`${prompt.full}\nRule saved by "always" choices: ${saves}`, labels, { approval, onAnswer }),
+		await ui.select(`${prompt.full}\nRule saved by "always" choices: ${saves}`, labels, {
+			approval,
+			onAnswer,
+			signal,
+		}),
 	);
 	let choice = chosen;
 	const warnings: string[] = [];

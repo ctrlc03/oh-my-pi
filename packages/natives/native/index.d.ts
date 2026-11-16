@@ -88,7 +88,8 @@ export declare class DesktopSession {
   /**
    * Sets when the current run ends, `remaining_ms` from now; each run sets
    * it before its first call. Input waiting for the user to pause in its app
-   * (macOS) or for a Wayland permission prompt gives up shortly before it.
+   * (macOS), for a Wayland permission prompt or for another session's input
+   * lock gives up shortly before it.
    */
   setRunDeadline(remainingMs: number): void
   capture(target: string, caps?: CaptureCaps | undefined | null): Promise<DesktopCapture>
@@ -107,7 +108,7 @@ export declare class DesktopSession {
    */
   drag(target: string, path: Array<DesktopPoint>, opts?: PointerOptions | undefined | null): Promise<DesktopDragResult>
   scroll(target: string, x: number, y: number, dx: number, dy: number, opts?: PointerOptions | undefined | null): Promise<DesktopFocusReturn | undefined | null>
-  typeText(target: string, text: string, opts?: PointerOptions | undefined | null): Promise<DesktopFocusReturn | undefined | null>
+  typeText(target: string, text: string, opts?: PointerOptions | undefined | null): Promise<DesktopTypeResult>
   keyChord(target: string, keys: Array<string>, opts?: PointerOptions | undefined | null): Promise<DesktopFocusReturn | undefined | null>
   raiseWindow(windowId: string): Promise<undefined>
   axSnapshot(target: string, opts?: AxSnapshotOptions | undefined | null): Promise<AxSnapshot>
@@ -139,7 +140,7 @@ export declare class DesktopSession {
    * Types `text` into the element: native text fields take it by AX
    * insertion, other elements as keystrokes once they hold keyboard focus.
    */
-  axType(reference: string, text: string, opts?: PointerOptions | undefined | null): Promise<DesktopFocusReturn | undefined | null>
+  axType(reference: string, text: string, opts?: PointerOptions | undefined | null): Promise<DesktopTypeResult>
   /** Presses a key chord in the element once it holds keyboard focus. */
   axKeyChord(reference: string, keys: Array<string>, opts?: PointerOptions | undefined | null): Promise<DesktopFocusReturn | undefined | null>
   /**
@@ -185,6 +186,25 @@ export declare class DiffStream {
   openFile(side: DiffSide, path: string, maxBytes?: number | undefined | null, signal?: unknown | undefined | null): Promise<DiffStreamProgress>
   /** Compute exact Myers runs and unified hunks off the JavaScript thread. */
   finish(context?: number | undefined | null): Promise<DiffStreamResult>
+}
+
+/** Watches one directory for changes until closed. */
+export declare class DirectoryWatcher {
+  /**
+   * Start watching `dir`, its whole subtree when `recursive`. Changes that
+   * happen once the promise resolves are reported. Opening the directory and
+   * arming the first read run off the JS thread (each is a round trip on a
+   * network share). Rejects when the directory cannot be opened or watched;
+   * on platforms other than Windows, always.
+   */
+  static start(dir: string, recursive: boolean, callback: (err: null | Error, changes: DirectoryChanges) => void): Promise<DirectoryWatcher>
+  /**
+   * Stop watching without waiting: the reader thread cancels its pending
+   * reads (a round trip on a network share) and exits on its own. Batches or
+   * an error it queued before stopping may still reach the callback
+   * afterwards; ignore them.
+   */
+  close(): void
 }
 
 /** One edit tool call's streaming session. */
@@ -469,6 +489,32 @@ export declare class NativeOAuthCallback {
   dispose(): Promise<undefined>
 }
 
+/** One loaded Phonon checkpoint, English normalization, CPU inference. */
+export declare class PhononTts {
+  /**
+   * Load the checkpoint in `modelDir`: `config.json`, `tokenizer.json`,
+   * `model.q8.gguf`, and voice embeddings under `voices/` (registered by
+   * file stem) plus `default-voice.safetensors` (registered as `default`).
+   *
+   * # Errors
+   * Rejects when a required file is missing or the weights fail to load.
+   */
+  static load(modelDir: string): Promise<PhononTts>
+  /** PCM sample rate of every synthesized buffer, in Hz. */
+  get sampleRate(): number
+  /** Registered voice names, sorted. */
+  get voices(): Array<string>
+  /**
+   * Synthesize `text` as mono `f32` PCM at [`Self::sample_rate`].
+   * Requests run one at a time; a concurrent call waits for the previous one.
+   *
+   * # Errors
+   * Rejects for an unregistered voice, a `durationDelta` the conditioner
+   * rejects, or a generation failure.
+   */
+  synthesize(text: string, options?: PhononSpeechOptions | undefined | null): Promise<Float32Array>
+}
+
 /**
  * The bytes crossing one shell run's pipeline pipes, during and after the run.
  *
@@ -625,9 +671,21 @@ export declare class Shell {
    * session's state (variables, functions, aliases, options, working
    * directory) as of its last command boundary: while a command runs, the
    * state that command started from. What the fork sets stays in the
-   * fork. Never waits for the running command.
+   * fork until `adopt()` carries it back. Never waits for the running
+   * command.
    */
   fork(): Shell
+  /**
+   * Carry what `fork` (a `fork()` of this shell whose `run` settled)
+   * changed, its variables, functions, aliases, options and traps, into
+   * this shell's session: at the end of the command it runs now, or at
+   * once between commands, and into every fork taken from here on. A name
+   * both changed keeps the value of the command that ended last. Returns
+   * `false` when there is nothing to carry from or into: the fork did not
+   * start from a session's state or lost its session, or this shell has
+   * none.
+   */
+  adopt(fork: Shell): boolean
   /**
    * Run a shell command using the provided options.
    *
@@ -831,8 +889,8 @@ export declare class VcsGitRepo {
   commitDetails(rev: string, signal?: unknown | undefined | null): Promise<VcsCommitDetails>
   /** List index or untracked paths. */
   lsFiles(others: boolean, excludeStandard: boolean, signal?: unknown | undefined | null): Promise<Array<string>>
-  /** List tree paths. */
-  lsTree(rev: string, paths: Array<string>, signal?: unknown | undefined | null): Promise<Array<string>>
+  /** List a tree's blobs and symlinks recursively with their modes. */
+  lsTree(rev: string, paths: Array<string>, signal?: unknown | undefined | null): Promise<Array<VcsTreeEntry>>
   /** List submodule paths. */
   submodulePaths(signal?: unknown | undefined | null): Promise<Array<string>>
   /** Read blob bytes. */
@@ -1573,16 +1631,25 @@ export interface DesktopCapabilities {
    * Native global Escape cancellation of takeover input (`takeover: true`,
    * held control, desktop/display-level input, raises, activating launches).
    * Without held control, background window input never watches the user's
-   * keys; it and Wayland stop only through the host interrupt.
+   * keys; it and Wayland stop only through the host interrupt. False on
+   * macOS while `secureInput` holds: the Escape monitor then sees no keys.
    */
   globalEscape: boolean
+  /**
+   * Secure Event Input is on (a focused password field, or a terminal's
+   * secure keyboard entry): macOS hides every key from event monitors, so
+   * the user's Escape and typing go unseen. Only macOS detects this.
+   */
+  secureInput: boolean
+  /** The app holding secure input, when macOS names its process. */
+  secureInputApp?: string
   capturePermission: string
   inputPermission: string
   axPermission: string
   displayCount: number
   /**
-   * The user session is locked (lock screen up). Only macOS detects this;
-   * other backends report `false`.
+   * The session is locked, or on Windows disconnected or on a secure
+   * desktop. Linux reports `false`.
    */
   screenLocked: boolean
   /**
@@ -1616,9 +1683,9 @@ export interface DesktopCapture {
   backend: string
   displayServer?: string
   /**
-   * The user session was locked when this frame was taken: a display
-   * capture shows the lock screen, and a window capture shows the window's
-   * last frame behind it. Only macOS detects this; others report `false`.
+   * The user session was unavailable when this frame was taken. On macOS,
+   * a display capture shows the lock screen and a window capture its last
+   * frame. Windows also detects disconnected sessions and secure desktops.
    */
   screenLocked: boolean
 }
@@ -1706,7 +1773,7 @@ export interface DesktopPoint {
 
 /**
  * Lock and display-sleep state of the user session, read live per call.
- * Only macOS detects either; other platforms report both as `false`.
+ * macOS detects both; Windows detects lock state; Linux reports both false.
  */
 export interface DesktopScreenState {
   screenLocked: boolean
@@ -1720,6 +1787,21 @@ export interface DesktopSessionOptions {
    * count, which `desktopEscapeStops` reads after they close.
    */
   escapeStopKey?: string
+}
+
+/** What a typing call did. */
+export interface DesktopTypeResult {
+  /**
+   * Why the text was sent but the target was not seen reading it before
+   * focus went back; absent when it was, or the backend does not wait for
+   * it (only Windows takeover typing does).
+   */
+  unconfirmed?: string
+  /**
+   * Where focus ended when typing ran in takeover; see
+   * [`DesktopFocusReturn`].
+   */
+  focusReturn?: DesktopFocusReturn
 }
 
 /** One capturable top-level window in global logical desktop coordinates. */
@@ -1862,6 +1944,36 @@ export interface DiffStreamResult {
  * post-pass dedupes whitespace across change boundaries.
  */
 export declare function diffWords(oldText: string, newText: string): Array<DiffChange>
+
+/** One change below the watched directory. */
+export interface DirectoryChange {
+  /** Path relative to the watched directory, with the platform's separators. */
+  path: string
+  action: DirectoryChangeAction
+  /**
+   * The entry is a directory. Always false for `modified`, which may also
+   * name a directory whose entries changed.
+   */
+  directory: boolean
+}
+
+/** What happened to an entry, as reported by the file system. */
+export declare enum DirectoryChangeAction {
+  Added = 'added',
+  Removed = 'removed',
+  Modified = 'modified',
+  /** The entry's old name in a rename. */
+  RenamedFrom = 'renamedFrom',
+  /** The entry's new name in a rename. */
+  RenamedTo = 'renamedTo'
+}
+
+/** Changes gathered by one read, in the order they happened. */
+export interface DirectoryChanges {
+  changes: Array<DirectoryChange>
+  /** Changes were lost (the change buffer overflowed); rescan the directory. */
+  overflow: boolean
+}
 
 /**
  * Whole-call apply outcome. `is_error` carries the model-facing failure in
@@ -2481,6 +2593,11 @@ export interface GrepResult {
   limitReached?: boolean
   /** Number of files skipped because they exceed the size limit. */
   skippedOversized?: number
+  /**
+   * Paths, relative to the search root, of files skipped as binary although
+   * their content matches; search one as an explicit path to read it as text.
+   */
+  binaryMatches?: Array<string>
 }
 
 /**
@@ -3234,6 +3351,20 @@ export interface PdfMarkdownResult {
  */
 export declare function pdfToMarkdown(input: Uint8Array): Promise<PdfMarkdownResult>
 
+/** Request options for [`PhononTts::synthesize`]. */
+export interface PhononSpeechOptions {
+  /**
+   * Registered voice name (a `voices/<name>.safetensors` stem); omit for the
+   * checkpoint's default voice.
+   */
+  voice?: string
+  /**
+   * `duration_delta` conditioner: negative speaks faster, positive slower.
+   * Omit for the model's natural rate (0).
+   */
+  durationDelta?: number
+}
+
 /** Retained bytes of a stream, as stream offsets `start..end`. */
 export interface PipeStreamChunk {
   /**
@@ -3558,6 +3689,15 @@ export interface SearchResult {
 }
 
 export declare function setHangulCompatJamoWidthOverride(value: number): void
+
+/**
+ * The commands the embedded shell adds to bash's own builtins, sorted.
+ *
+ * For a session started with `sessionEnv` over this process's environment,
+ * whose `PI_DISABLE_*` switches gate them. omp's bash tool lists them to the
+ * model.
+ */
+export declare function shellBuiltins(sessionEnv?: Record<string, string>): Array<string>
 
 /**
  * Options for executing a shell command via the embedded bash engine
@@ -3975,6 +4115,11 @@ export interface ShellVizOptions {
   speed: number
   selectedNode?: string
   expandedNodes: Array<string>
+  /**
+   * The script is a command still streaming in, not yet run: its
+   * unfinished end is drawn as it will most likely continue.
+   */
+  streaming?: boolean
 }
 
 /**
@@ -4247,6 +4392,12 @@ export interface VcsCommitOptions {
   allowEmpty?: boolean
   amend?: boolean
   files?: Array<string>
+  /** Build the commit from this index file instead of the repository's. */
+  indexPath?: string
+  /** Fail with `HeadMoved` unless HEAD resolves to this revision. */
+  expectedHead?: string
+  /** Skip the `pre-commit` and `commit-msg` hooks (`git commit --no-verify`). */
+  noVerify?: boolean
 }
 
 /** Detach copied Git metadata. */
@@ -4375,6 +4526,16 @@ export interface VcsStatusSummary {
   staged: number
   unstaged: number
   untracked: number
+}
+
+/** One blob or symlink of a tree listing. */
+export interface VcsTreeEntry {
+  path: string
+  /**
+   * Octal git mode as `git ls-tree` prints it: `100644`, `100755`, or
+   * `120000`.
+   */
+  mode: string
 }
 
 /** Validate hunk selections. */

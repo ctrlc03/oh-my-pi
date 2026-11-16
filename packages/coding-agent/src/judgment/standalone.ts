@@ -24,6 +24,8 @@ export interface StandaloneJudge {
 	describe: JudgeDescription | undefined;
 	/** The project settings the judge was resolved from, for the command's own options. */
 	settings: Settings;
+	/** Another judge over the same registry, session, and cache that tries `leadModel` first. */
+	leadJudge(leadModel: string): ChainJudge;
 	/** Release the auth store; the judge must not be used afterwards. */
 	close(): void;
 }
@@ -45,18 +47,20 @@ export async function openStandaloneJudge(
 		const registry = new ModelRegistry(authStorage);
 		await registry.refresh();
 		await loadCliExtensionProviders(registry, settings, cwd);
+		const deps: JudgeDeps = {
+			settings,
+			registry,
+			sessionId: Bun.randomUUIDv7(),
+			purpose,
+			cache: sharedJudgmentCache(),
+			onUsage: options.onUsage,
+		};
 		return {
-			judge: resolveJudge({
-				settings,
-				registry,
-				sessionId: Bun.randomUUIDv7(),
-				purpose,
-				cache: sharedJudgmentCache(),
-				onUsage: options.onUsage,
-			}),
+			judge: resolveJudge(deps),
 			native: hasNativeJudge(settings, registry),
 			describe: describeJudge(settings, registry),
 			settings,
+			leadJudge: leadModel => resolveJudge({ ...deps, leadModel }),
 			close: () => authStorage.close(),
 		};
 	} catch (error) {

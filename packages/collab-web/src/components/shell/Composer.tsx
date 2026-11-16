@@ -569,7 +569,7 @@ export const Composer = memo(function Composer({
 				{handsFree.status}
 				<div className="sh-ask-body">
 					<AskTitle title={uiRequest.title} />
-					{uiRequest.kind === "select" && approvalGrants && uiRequest.approval ? (
+					{uiRequest.kind === "select" && approvalGrants && typeof uiRequest.approval === "object" ? (
 						<ApprovalChoices
 							approval={uiRequest.approval}
 							onChoose={label => client.sendUiResponse(uiRequest.reqId, label)}

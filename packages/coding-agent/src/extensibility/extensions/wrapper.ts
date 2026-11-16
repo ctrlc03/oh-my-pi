@@ -503,34 +503,42 @@ export class ExtensionToolWrapper<TParameters extends TSchema = TSchema, TDetail
 			let outcome: ToolApprovalOutcome;
 			try {
 				// `always-ask-cached` owns its prompts (target grants, session answer); saved rules apply in the other modes.
+				// The call's signal closes the prompt: aborting the turn (Esc, a session switch) must not
+				// wait on an approval the user can no longer see or answer.
 				const grantRules =
 					savedGrantable && approvalGrants === undefined
 						? deriveGrantRules(this.tool, resolvedArgs, grantSession.cwd)
 						: [];
 				if (grantRules.length > 0) {
 					// Saved ("Always allow" / "Deny always") grants own the prompt when the call has a rule to save.
-					outcome = await askToolApproval({
-						ui: uiContext,
-						prompt: approvalPrompt(this.tool, resolvedArgs, approvalCheck.reason, safetyAppendix),
-						tool: this.tool.name,
-						rules: grantRules,
-						store: grants,
-						guestsCanSaveProject: guestsCanSaveApprovals,
-						session: grantSession,
-					});
+					outcome = await untilAborted(signal, () =>
+						askToolApproval({
+							ui: uiContext,
+							prompt: approvalPrompt(this.tool, resolvedArgs, approvalCheck.reason, safetyAppendix),
+							tool: this.tool.name,
+							rules: grantRules,
+							store: grants,
+							guestsCanSaveProject: guestsCanSaveApprovals,
+							session: grantSession,
+							signal,
+						}),
+					);
 				} else {
 					const answered: { source: "local" | "remote" } = { source: "local" };
-					let answer = await requestApproval(uiContext, this.tool, resolvedArgs, {
-						reason: approvalCheck.reason,
-						appendix: safetyAppendix,
-						sessionSubject: sessionScope?.subject,
-						grants: cacheTargets,
-						dialog: {
-							onAnswer: source => {
-								answered.source = source;
+					let answer = await untilAborted(signal, () =>
+						requestApproval(uiContext, this.tool, resolvedArgs, {
+							reason: approvalCheck.reason,
+							appendix: safetyAppendix,
+							sessionSubject: sessionScope?.subject,
+							grants: cacheTargets,
+							signal,
+							dialog: {
+								onAnswer: source => {
+									answered.source = source;
+								},
 							},
-						},
-					});
+						}),
+					);
 					if (
 						typeof answer === "object" &&
 						answer.always &&

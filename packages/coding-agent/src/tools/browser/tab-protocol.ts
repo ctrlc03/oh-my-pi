@@ -1,4 +1,6 @@
 import type { ImageContent, TextContent } from "@oh-my-pi/pi-ai";
+import type { ImageTokenization } from "@oh-my-pi/pi-catalog/compat/image-tokenization";
+import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 
 export type Transferable = Bun.Transferable;
 
@@ -35,11 +37,29 @@ export interface ScreenshotResult {
 	height: number;
 }
 
+/**
+ * What rescales an image between the tool and the session's model: the vendor's own resize and the edge the
+ * host passes. A screenshot is sized to pass both untouched, so positions on it stay positions on the page.
+ */
+export interface ScreenshotLimits {
+	/** The model's resize rule; unset when the catalog names none. */
+	tokenization?: ImageTokenization;
+	/** Longest edge the host passes to the model; unset when it keeps the image's size. */
+	maxEdge?: number;
+	/**
+	 * Set where the model's wire sends a screenshot's `detail: "original"` tag as it is. Elsewhere the wire
+	 * drops it and the provider's default level sizes the image.
+	 */
+	detail?: "original";
+}
+
 export interface SessionSnapshot {
 	cwd: string;
 	browserScreenshotDir?: string;
 	/** Force non-WebP screenshot encoding (e.g. for Ollama). Unset honors `OMP_NO_WEBP`. */
 	excludeWebP?: boolean;
+	/** Image limits of the session's active model; unset without one. */
+	screenshotLimits?: ScreenshotLimits;
 }
 
 /**
@@ -53,6 +73,23 @@ export type AttachPage = { kind: "create"; nearTargetId?: string } | { kind: "ow
 /** omp created the payload's page: closing the tab closes the page. */
 export function ownsPage(payload: WorkerInitPayload): boolean {
 	return payload.mode === "headless" || payload.page.kind !== "borrowed";
+}
+
+/** Globals every page has and omp's Bun runtime lacks: run code that cannot find one was written for the page. */
+const PAGE_ONLY_GLOBAL_RE =
+	/^(document|window|location|history|localStorage|sessionStorage|customElements|getComputedStyle|CSS|HTML\w*Element|Element|Node) is not defined$/;
+
+/**
+ * Whether run code itself, in omp's runtime, reached for a page-only global. An exception thrown in the page arrives
+ * as a plain `Error` that Puppeteer names after it, so it never counts. A floating rejection arrives wrapped: one
+ * reason as the wrapper's `cause`, or, once an in-process run returned, all of them in its `rejections`.
+ */
+export function isMissingPageGlobal(error: unknown): boolean {
+	if (error instanceof ReferenceError) return PAGE_ONLY_GLOBAL_RE.test(error.message);
+	if (!(error instanceof Error)) return false;
+	if (error.cause instanceof ReferenceError) return isMissingPageGlobal(error.cause);
+	const rejections = error instanceof ToolError ? error.context?.rejections : undefined;
+	return Array.isArray(rejections) && rejections.some(isMissingPageGlobal);
 }
 
 export type WorkerInitPayload =
@@ -75,7 +112,7 @@ export type WorkerInitPayload =
 			/** Explicit tab user agent applied during worker initialization. */
 			userAgent?: string;
 			/** Ignore invalid HTTPS certificates for this page. */
-			ignoreHttpsErrors?: boolean;
+			insecure?: boolean;
 	  }
 	| {
 			mode: "attach";
@@ -95,7 +132,7 @@ export type WorkerInitPayload =
 			/** Explicit tab user agent applied during worker initialization. */
 			userAgent?: string;
 			/** Ignore invalid HTTPS certificates for this page. */
-			ignoreHttpsErrors?: boolean;
+			insecure?: boolean;
 			/**
 			 * Post-timeout recycle: before adopting the page, dismiss any open JS dialog and
 			 * stop a pending navigation so a blocked target cannot stall worker init (which
@@ -148,6 +185,8 @@ export interface RunErrorPayload {
 	isAbort: boolean;
 	/** The worker could not restore tab-scoped browser state and must be recycled. */
 	recoverTab?: boolean;
+	/** The run's own code reached for a page-only global ({@link isMissingPageGlobal}). */
+	missingPageGlobal?: boolean;
 	/** `tab.goto` outlasted its budget; the page stays on what loaded. */
 	navigationTimeout?: boolean;
 	/** The page's renderer crashed; the worker runs nothing more and must be recycled. */

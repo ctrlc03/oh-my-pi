@@ -40,6 +40,7 @@ import type {
 	WireProfile,
 	WireLimitWindow,
 } from "@oh-my-pi/pi-wire";
+import { takeAutoRejoin } from "@oh-my-pi/pi-wire";
 import { CAN_INFLATE, importRoomKey } from "./codec";
 import { recordEvent } from "./diag-log";
 import { COLLAB_PROTO, encodeBase64Url, parseCollabLink } from "./link";
@@ -296,6 +297,7 @@ export class GuestClient {
 	#noticeSeq = 0;
 	#everConnected = false;
 	#welcomed = false;
+	#autoRejoins: number[] = [];
 	#welcomeTimer: Timer | null = null;
 	#snapshotProgressTimer: Timer | null = null;
 
@@ -638,8 +640,32 @@ export class GuestClient {
 
 	#handleOpen(): void {
 		recordEvent("session", this.#everConnected ? "reconnected" : "connected");
-		// Offer a delta resume when the replica is non-empty: the host answers with only the
-		// entries after `entryId` if it still has that entry in the same session.
+		this.#sendHello();
+		this.#phase = this.#everConnected ? "reconnecting" : "waiting";
+		this.#everConnected = true;
+		// Every connection must be welcomed. Before the first welcome a silent host (a relay
+		// still holding a dead host socket, a laptop asleep) is retried on a fresh connection,
+		// not given up on: a phone coming back from the background lands here routinely. Once
+		// joined, a reopened link says hello again through the auto-rejoin budget, then keeps
+		// retrying on fresh connections the same way.
+		if (this.#welcomed) {
+			this.#armRejoinTimer("reconnect");
+		} else {
+			this.#clearWelcomeTimer();
+			this.#welcomeTimer = setTimeout(() => {
+				this.#welcomeTimer = null;
+				this.#socket.reconnect("timed out waiting for the host's welcome");
+			}, WELCOME_TIMEOUT_MS);
+		}
+		this.#commit();
+	}
+
+	/**
+	 * Say hello to the host. Capabilities are per host connection; none are assumed until it welcomes
+	 * this hello. Offers a delta resume when the replica is non-empty: the host answers with only the
+	 * entries after `entryId` if it still has that entry in the same session.
+	 */
+	#sendHello(): void {
 		const last = this.#entries.at(-1);
 		const resume =
 			last !== undefined && this.#replicaSessionId !== null
@@ -647,7 +673,6 @@ export class GuestClient {
 				: undefined;
 		this.#resumeEntryId = resume?.entryId ?? null;
 		this.#connWelcomed = false;
-		// Capabilities are per host connection; none are assumed until it is welcomed.
 		this.#features = NO_FEATURES;
 		this.#commands = NO_COMMANDS;
 		this.#rewindPreview = null;
@@ -667,17 +692,37 @@ export class GuestClient {
 			resume,
 			zip: CAN_INFLATE ? true : undefined,
 		});
-		this.#phase = this.#everConnected ? "reconnecting" : "waiting";
-		this.#everConnected = true;
-		// Every connection must be welcomed. A host that stays silent (a relay still
-		// holding a dead host socket, a laptop asleep) is retried, not given up on:
-		// a phone coming back from the background lands here routinely.
+	}
+
+	/**
+	 * Say hello again after the host dropped this guest, within the auto-rejoin
+	 * budget. A welcome that does not follow retries through the same budget. Once
+	 * the budget is spent the session ends, leaving the rejoin to the user, or, for a
+	 * reopened link (`whenSpent: "reconnect"`), retries on a fresh connection.
+	 */
+	#rejoin(message: string, whenSpent: "end" | "reconnect" = "end"): void {
+		if (!takeAutoRejoin(this.#autoRejoins)) {
+			if (whenSpent === "reconnect") this.#socket.reconnect(message);
+			else this.#end(message);
+			return;
+		}
+		this.#clearSnapshotProgressTimer();
+		this.#pendingSnapshot = null;
+		this.#clearUiRequests();
+		this.#phase = "reconnecting";
+		this.#sendHello();
+		this.#armRejoinTimer(whenSpent);
+		this.#commit();
+	}
+
+	/** A post-join hello the host never welcomes retries through the rejoin budget. */
+	#armRejoinTimer(whenSpent: "end" | "reconnect" = "end"): void {
 		this.#clearWelcomeTimer();
 		this.#welcomeTimer = setTimeout(() => {
 			this.#welcomeTimer = null;
-			this.#socket.reconnect("timed out waiting for the host's welcome");
+			if (this.#phase === "live" || this.#phase === "ended") return;
+			this.#rejoin("timed out waiting for the host's welcome", whenSpent);
 		}, WELCOME_TIMEOUT_MS);
-		this.#commit();
 	}
 
 	#handleClose(reason: string, willReconnect: boolean): void {
@@ -686,6 +731,7 @@ export class GuestClient {
 		if (this.#phase === "ended") return;
 		recordEvent("session", "closed", willReconnect ? `${reason}, retrying` : reason);
 		if (willReconnect) {
+			// The reopened socket's hello arms its own timer.
 			this.#phase = "reconnecting";
 			// The next welcome restarts the snapshot; drop the partial one.
 			this.#pendingSnapshot = null;
@@ -741,8 +787,13 @@ export class GuestClient {
 			this.#applyFrame(frame);
 		} catch (err) {
 			console.warn("collab: failed to apply frame", frame.t, err);
-			if (frame.t === "welcome" && !this.#welcomed) {
-				this.#end(`failed to apply session snapshot: ${err instanceof Error ? err.message : String(err)}`);
+			if (frame.t === "welcome") {
+				const reason = `failed to apply session snapshot: ${err instanceof Error ? err.message : String(err)}`;
+				// A failed welcome must never go live through its snapshot chunks. A
+				// guest already in the session says hello again instead, which also
+				// drops any earlier welcome's snapshot and timer.
+				if (this.#welcomed) this.#rejoin(reason);
+				else this.#end(reason);
 				return;
 			}
 			this.#pushNotice("error", `Failed to apply a ${frame.t} frame`);
@@ -752,8 +803,12 @@ export class GuestClient {
 
 	#applyFrame(frame: HostFrame): void {
 		switch (frame.t) {
-			case "welcome":
+			case "welcome": {
 				recordEvent("session", "welcome", frame.resumed ? "resumed" : `full snapshot, ${frame.entryCount} entries`);
+				// Read every field that can throw on a malformed frame before any
+				// state changes, so a failed welcome leaves the guest as it was.
+				const agents = [...frame.agents];
+				const working = frame.state.isStreaming;
 				// A fresh welcome (first join or reconnect) restarts the snapshot.
 				// Entries already on screen stay until the new snapshot replaces
 				// them once complete, so a resync never blanks the transcript.
@@ -801,14 +856,14 @@ export class GuestClient {
 					}
 				}
 				this.#state = frame.state;
-				this.#agents = [...frame.agents];
+				this.#agents = agents;
 				this.#stream = null;
 				this.#streamDone = false;
 				this.#activeTools = new Map();
 				this.#progress = new Map();
 				this.#lifecycle = new Map();
 				this.#unlistedBusIds.clear();
-				this.#working = frame.state.isStreaming;
+				this.#working = working;
 				this.#readOnly = frame.readOnly === true;
 				this.#models = frame.models ?? null;
 				this.#profiles = frame.profiles ?? null;
@@ -826,6 +881,7 @@ export class GuestClient {
 				}
 				this.#endedReason = null;
 				break;
+			}
 			case "snapshot-chunk": {
 				// Buffer fragments and publish the transcript once, when the
 				// snapshot completes (as the TUI guest does). Intermediate chunks
@@ -1012,6 +1068,13 @@ export class GuestClient {
 				this.#end(frame.reason);
 				return; // #end already committed
 			case "error":
+				if (frame.resync) {
+					// The host dropped this guest but the relay link is intact. A hello
+					// still awaiting its welcome is retried by the welcome timer.
+					if (this.#phase === "ended" || this.#welcomeTimer !== null) break;
+					this.#rejoin(frame.message);
+					return; // #rejoin or #end already committed
+				}
 				if (!this.#welcomed) {
 					// Pre-welcome errors are the host's targeted reply to our
 					// hello (e.g. protocol mismatch): no welcome will follow.

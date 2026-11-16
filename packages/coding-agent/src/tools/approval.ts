@@ -751,13 +751,46 @@ export function formatApprovalPrompt(tool: ApprovalSubject, args: unknown, reaso
 	return [...approvalHeader(tool, reason), ...approvalDetails(tool, args)].join("\n");
 }
 
+const COMPOUND_COMMAND_COMPACT_MAX_SEGMENTS = 6;
+
+/** Compound `Command:` segment rows are indented; the rows after them (a sandbox escalation, its justification) always show. */
+function summarizeCompoundCommandDetails(details: readonly string[]): string {
+	const end = details.findIndex((line, index) => index > 0 && !line.startsWith("  "));
+	const segments = details.slice(1, end < 0 ? undefined : end);
+	const trailing = end < 0 ? [] : details.slice(end);
+	if (segments.length <= COMPOUND_COMMAND_COMPACT_MAX_SEGMENTS) {
+		return details.join("\n");
+	}
+	const firstPromptIndex = segments.findIndex(line => line.trimStart().startsWith("? "));
+	const elidedLeading = firstPromptIndex >= 5 ? firstPromptIndex - 3 : 0;
+	const rows: string[] = ["Command:"];
+	if (elidedLeading > 0) {
+		rows.push(`  ✓ … (${elidedLeading} allowed ${elidedLeading === 1 ? "segment" : "segments"})`);
+	}
+	const remaining = segments.slice(elidedLeading);
+	const slots = COMPOUND_COMMAND_COMPACT_MAX_SEGMENTS - (elidedLeading > 0 ? 1 : 0);
+	if (remaining.length <= slots) {
+		rows.push(...remaining);
+	} else {
+		const kept = Math.max(1, slots - 1);
+		const hidden = remaining.length - kept;
+		rows.push(...remaining.slice(0, kept), `  … (${hidden} more ${hidden === 1 ? "segment" : "segments"})`);
+	}
+	return [...rows, ...trailing].join("\n");
+}
+
 /**
  * The details as one row for a prompt that must stay small: each detail's first line, joined
  * by ` · `, ending in `…` when any detail has more lines. A label alone (`Code:`, its body on
- * the following lines) takes the body's first line after it.
+ * the following lines) takes the body's first line after it. Compound bash `Command:` segment
+ * rows stay on their own lines (with excess leading allowed rows elided so the first prompted
+ * segment is visible on mount).
  */
 function approvalSummary(details: readonly string[]): string | undefined {
 	if (details.length === 0) return undefined;
+	if (details[0] === "Command:" && details.length > 1) {
+		return summarizeCompoundCommandDetails(details);
+	}
 	let omitted = false;
 	const heads = details.map(detail => {
 		const lines = detail.split("\n", 3);
@@ -861,9 +894,10 @@ export function approvalPrompt(
  * keeps its room), else a select with the full prompt (RPC, ACP, extension hosts). `appendix`
  * lines follow the prompt on both. With a `sessionSubject`, both also offer to approve that
  * subject for the rest of the session; with `grants`, both offer the `always-ask-cached` grants
- * the call can record, and the prompt lists the folder a directory grant would cover. Anything
- * but an explicit approval is `deny`. `dialog` reaches the host's dialog (e.g. `onAnswer`, which
- * reports whether a collab guest answered).
+ * the call can record, and the prompt lists the folder a directory grant would cover. `signal`
+ * (the call's abort signal) closes the prompt, so aborting the turn never waits on a prompt
+ * nobody can see or answer. Anything but an explicit approval is `deny`. `dialog` reaches the
+ * host's dialog (e.g. `onAnswer`, which reports whether a collab guest answered).
  */
 export async function requestApproval(
 	ui: Pick<ExtensionUIContext, "select" | "approve">,
@@ -874,10 +908,11 @@ export async function requestApproval(
 		appendix?: readonly string[];
 		sessionSubject?: string;
 		grants?: boolean;
+		signal?: AbortSignal;
 		dialog?: ExtensionUIDialogOptions;
 	} = {},
 ): Promise<ExtensionApprovalAnswer> {
-	const { reason, appendix = [], sessionSubject, dialog } = options;
+	const { reason, appendix = [], sessionSubject, signal, dialog } = options;
 	const header = approvalHeader(tool, reason);
 	const details = approvalDetails(tool, args);
 	const session = sessionSubject === undefined ? undefined : `Approve ${sessionSubject} for this session`;
@@ -887,6 +922,8 @@ export async function requestApproval(
 	const listing = folder ? await approvalFolderListing(folder.key, APPROVAL_FOLDER_FULL_LISTING) : undefined;
 	const folderBlock = approvalFolderPromptBlock(folder?.label, listing, APPROVAL_FOLDER_FULL_LISTING);
 	const full = [...header, ...details, ...(folderBlock ? [folderBlock] : []), ...appendix].join("\n");
+	const dialogOptions: ExtensionUIDialogOptions | undefined =
+		signal || dialog ? { ...dialog, ...(signal ? { signal } : {}) } : undefined;
 	if (ui.approve) {
 		const summary = approvalSummary(details);
 		const compactBlock = approvalFolderPromptBlock(folder?.label, listing, APPROVAL_FOLDER_COMPACT_LISTING);
@@ -903,7 +940,7 @@ export async function requestApproval(
 				...(session ? { session } : {}),
 				...(grants.length > 0 ? { grants } : {}),
 			},
-			dialog,
+			dialogOptions,
 		);
 		if (answer === "once" || (answer === "session" && session)) return answer;
 		if (typeof answer === "object" && answer !== null && grants.some(grant => grant.scope === answer.grant)) {
@@ -912,7 +949,7 @@ export async function requestApproval(
 		return "deny";
 	}
 	const choices = { ...(session ? { session } : {}), ...(grants.length > 0 ? { grants } : {}) };
-	return approvalAnswerForChoice(choices, await ui.select(full, approvalChoiceLabels(choices), dialog));
+	return approvalAnswerForChoice(choices, await ui.select(full, approvalChoiceLabels(choices), dialogOptions));
 }
 
 /** The approve-this-call-only label: "Approve", or "Approve Once" beside grants that remember more. */

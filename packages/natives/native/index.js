@@ -27,6 +27,7 @@ export const AudioCapture = nativeBindings.AudioCapture ?? missingNativeClass("A
 export const AudioPlayback = nativeBindings.AudioPlayback ?? missingNativeClass("AudioPlayback");
 export const DesktopSession = adaptDesktopSession(nativeBindings.DesktopSession);
 export const DiffStream = nativeBindings.DiffStream ?? missingNativeClass("DiffStream");
+export const DirectoryWatcher = nativeBindings.DirectoryWatcher ?? missingNativeClass("DirectoryWatcher");
 export const EditSession = nativeBindings.EditSession ?? missingNativeClass("EditSession");
 export const EditStore = nativeBindings.EditStore ?? missingNativeClass("EditStore");
 export const FileLock = nativeBindings.FileLock ?? missingNativeClass("FileLock");
@@ -38,6 +39,7 @@ export const LiveWebRtcPeer = nativeBindings.LiveWebRtcPeer ?? missingNativeClas
 export const MacAppearanceObserver = nativeBindings.MacAppearanceObserver ?? missingNativeClass("MacAppearanceObserver");
 export const MacOSFrontApp = nativeBindings.MacOSFrontApp ?? missingNativeClass("MacOSFrontApp");
 export const NativeOAuthCallback = nativeBindings.NativeOAuthCallback ?? missingNativeClass("NativeOAuthCallback");
+export const PhononTts = nativeBindings.PhononTts ?? missingNativeClass("PhononTts");
 export const PipeStreams = nativeBindings.PipeStreams ?? missingNativeClass("PipeStreams");
 export const PowerAssertion = nativeBindings.PowerAssertion ?? missingNativeClass("PowerAssertion");
 export const Process = nativeBindings.Process ?? missingNativeClass("Process");
@@ -142,6 +144,7 @@ export const renderSnapcompactPng = nativeBindings.renderSnapcompactPng ?? missi
 export const runShellMain = nativeBindings.runShellMain ?? missingNativeExport("runShellMain");
 export const search = nativeBindings.search ?? missingNativeExport("search");
 export const setHangulCompatJamoWidthOverride = nativeBindings.setHangulCompatJamoWidthOverride ?? missingNativeExport("setHangulCompatJamoWidthOverride");
+export const shellBuiltins = nativeBindings.shellBuiltins ?? missingNativeExport("shellBuiltins");
 export const sliceWithWidth = nativeBindings.sliceWithWidth ?? missingNativeExport("sliceWithWidth");
 export const snapcompactSupportedChars = nativeBindings.snapcompactSupportedChars ?? missingNativeExport("snapcompactSupportedChars");
 export const structuredPatchHunks = nativeBindings.structuredPatchHunks ?? missingNativeExport("structuredPatchHunks");
@@ -178,6 +181,13 @@ export const AstMatchStrictness = {
 export const DiffSide = {
 	Old: "Old",
 	New: "New",
+};
+export const DirectoryChangeAction = {
+	Added: "added",
+	Removed: "removed",
+	Modified: "modified",
+	RenamedFrom: "renamedFrom",
+	RenamedTo: "renamedTo",
 };
 export const Ellipsis = {
 	Unicode: 0,

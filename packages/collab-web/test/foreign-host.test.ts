@@ -879,7 +879,9 @@ describe("foreign host: calls that leave the vendor's sandbox", () => {
 		const request = asked.uiRequest;
 		expect(request?.kind === "select" ? request.title.split("\n")[0] : "").toContain("Leaves the sandbox");
 		expect(request).toMatchObject({ options: ["Approve once", "Deny"] });
-		expect(request?.kind === "select" ? request.approval?.rule : "x").toBeUndefined();
+		expect(
+			request?.kind === "select" && typeof request.approval === "object" ? request.approval.rule : undefined,
+		).toBeUndefined();
 		rig.guest.sendUiResponse(request?.reqId ?? -1, "Approve once");
 		await waitFor(rig.guest, s => hasText(s, "done") && idle(s), "the first call");
 
@@ -929,9 +931,11 @@ describe("foreign host: session grants", () => {
 		rig.guest.sendPrompt("edit inside the folder");
 		const inside = await waitFor(rig.guest, s => s.uiRequest !== null, "the prompt for a file inside");
 		expect(inside.uiRequest).toMatchObject({ options: ["Approve once", "Approve for this session", "Deny"] });
-		expect(inside.uiRequest?.kind === "select" ? inside.uiRequest.approval?.rule : "").toBe(
-			`edit: ${path.join("src", "app.ts")}`,
-		);
+		expect(
+			inside.uiRequest?.kind === "select" && typeof inside.uiRequest.approval === "object"
+				? inside.uiRequest.approval.rule
+				: "",
+		).toBe(`edit: ${path.join("src", "app.ts")}`);
 		rig.guest.sendUiResponse(inside.uiRequest?.reqId ?? -1, "Approve for this session");
 		await waitFor(rig.guest, s => hasText(s, "done") && idle(s), "the edit");
 		rig.guest.sendPrompt("edit inside the folder again");

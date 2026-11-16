@@ -17,7 +17,13 @@ import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 import { formatBytes, formatDuration, formatNumber } from "@oh-my-pi/pi-utils";
 import { sessionResolveContext } from "../../internal-urls/context";
 import { InternalUrlFilesystem } from "../../internal-urls/url-filesystem";
-import { hasNativeJudge, journalJudgmentUsage, resolveJudge, sharedJudgmentCache } from "../../judgment";
+import {
+	hasNativeJudge,
+	type JudgeDeps,
+	journalJudgmentUsage,
+	resolveJudge,
+	sharedJudgmentCache,
+} from "../../judgment";
 import findDescription from "../../prompts/tools/find.md" with { type: "text" };
 import { SPOTLIGHT_ENTRY } from "../../spotlight/types";
 import type { ToolSession } from "..";
@@ -30,12 +36,13 @@ import {
 	searchPathTier,
 } from "../path-utils";
 import { searchApprovalCacheTargets } from "../search-approval-targets";
+import { cfgFindVerifyModel } from "../settings";
 import { toolResult } from "../tool-result";
 import { type CascadeResult, runCascade } from "./cascade";
 import { rankedHeat } from "./passages";
 import { resolveSearchRoot } from "./tree";
 
-import { cfgFindEnabled } from "../settings";
+import { cfgFindEnabled, cfgFindHitThreshold } from "../settings";
 
 const findSchema = type({
 	query: "string",
@@ -60,7 +67,10 @@ export const FIND_TIMEOUT_MS = 20_000;
 export function isFindEnabled(session: ToolSession): boolean {
 	const mode = cfgFindEnabled.get(session.settings);
 	if (mode !== "auto") return mode === "on";
-	return session.modelRegistry !== undefined && hasNativeJudge(session.settings, session.modelRegistry);
+	return (
+		session.modelRegistry !== undefined &&
+		hasNativeJudge(session.settings, session.modelRegistry, session.getActiveModel?.())
+	);
 }
 
 /** Semantic search tool: describe a behavior, get files and line ranges that implement it. */
@@ -113,16 +123,20 @@ export class FindTool implements AgentTool<typeof findSchema, FindToolDetails> {
 				: formatPathRelativeToCwd(root.path, cwd, { trailingSlash: root.type === "directory" });
 		const registry = this.session.modelRegistry;
 		if (!registry) throw new ToolError("find has no model registry to resolve a judge from");
-		const judge = resolveJudge({
+		const judgeDeps: JudgeDeps = {
 			settings: this.session.settings,
 			registry,
+			sessionModel: this.session.getActiveModel?.(),
 			sessionId: this.session.getSessionId?.() ?? undefined,
 			purpose: "find",
 			onUsage: journalJudgmentUsage(this.session.sessionManager),
 			telemetry: this.session.getTelemetry?.(),
 			cache: sharedJudgmentCache(),
 			costGate: this.session.costGate,
-		});
+		};
+		const judge = resolveJudge(judgeDeps);
+		const verifyModel = cfgFindVerifyModel.get(this.session.settings)?.trim();
+		const verifyJudge = verifyModel ? resolveJudge({ ...judgeDeps, leadModel: verifyModel }) : undefined;
 		const experiment = this.session.spotlight;
 		const started = performance.now();
 		// Denied (and unapproved prompt-gated) files are neither listed nor read by the judge.
@@ -142,11 +156,13 @@ export class FindTool implements AgentTool<typeof findSchema, FindToolDetails> {
 				query,
 				extraKeywords: params.grep_keywords,
 				judge,
+				verifyJudge,
 				spotlight: experiment ? { client: experiment.client, thinking: experiment.thinking } : undefined,
 				includeHidden: false,
 				visible: pathFilter && (filePath => filePath.includes("://") || !pathFilter.hides(filePath)),
 				signal,
 				deadline,
+				threshold: cfgFindHitThreshold.get(this.session.settings),
 				onProgress: message => {
 					phase = message;
 					onUpdate?.({ content: [{ type: "text", text: message }] });
@@ -184,11 +200,16 @@ export class FindTool implements AgentTool<typeof findSchema, FindToolDetails> {
 			...hit,
 			rel: formatPathRelativeToCwd(resolveSearchResultPath(root.path, hit.rel), cwd),
 		}));
+		const lexicalFallback = result.lexicalFallback.map(match => ({
+			...match,
+			rel: formatPathRelativeToCwd(resolveSearchResultPath(root.path, match.rel), cwd),
+		}));
 		const details: FindToolDetails = {
 			query,
 			keywords,
 			threshold,
 			hits,
+			lexicalFallback,
 			coverage,
 			stats,
 			timeout,
@@ -225,6 +246,10 @@ export class FindTool implements AgentTool<typeof findSchema, FindToolDetails> {
 				const span = range.start === range.end ? String(range.start) : `${range.start}-${range.end}`;
 				out.push(`  ${hit.rel}:${span}  ${range.p.toFixed(2)}  ${range.snippet}`);
 			}
+		}
+		if (coverage === "unavailable" && lexicalFallback.length > 0) {
+			out.push("", "unranked literal keyword matches (not semantically judged):");
+			for (const match of lexicalFallback) out.push(`  ${match.rel}:${match.line}  ${match.snippet}`);
 		}
 		const pathFilterNote = pathFilter?.note();
 		if (pathFilterNote) out.push("", pathFilterNote);

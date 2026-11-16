@@ -63,7 +63,6 @@ import {
 	toRestoredQueuedMessage,
 } from "../session/queued-messages";
 import type { SessionEntry } from "../session/session-entries";
-import { sessionApprovalGrantKeys } from "../tools/approval-cache";
 import { isRpcProxy, type RpcServe } from "./rpc";
 import {
 	SESSION_STATE_READERS as read,
@@ -473,7 +472,6 @@ export class SessionPublisher {
 		return {
 			providerSessionId: session.sessionId,
 			sessionName: manager.getSessionName(),
-			seanceSourceArtifactsDir: manager.getSeanceSourceArtifactsDir(),
 			leafId: manager.getLeafId(),
 			agentEffort: session.agent.state.thinkingLevel,
 			tools,
@@ -512,10 +510,6 @@ export class SessionPublisher {
 			todoPhases: toWireData(session.getTodoPhases()),
 			queuedMessages: toWireData(session.getQueuedMessages()),
 			restorableQueue: toWireData({ steering: steering.map(queuedEntry), followUp: followUp.map(queuedEntry) }),
-			approvals: {
-				scopes: session.extensionRunner?.sessionApprovalKeys() ?? [],
-				grants: sessionApprovalGrantKeys(session.settings.getAgentDir(), session.sessionManager.getSessionId()),
-			},
 			ephemeralMaxTokensPreservesRequest: session.ephemeralMaxTokensPreservesRequest(),
 			settings: settingsSource(session.settings),
 		};

@@ -172,6 +172,7 @@ import {
 	isClaudeCloakingUserId,
 	readAnthropicMetadataAccountId,
 	readAnthropicMetadataString,
+	rebindAnthropicMetadataUserId,
 	resolveAnthropicMetadataUserId,
 	stripClaudeToolPrefix,
 } from "./anthropic-identity";
@@ -2081,6 +2082,11 @@ const streamAnthropicOnce = (
 			}
 
 			let clientArgs: AnthropicClientOptionsArgs | undefined;
+			// Claude Code version the current client advertises on the wire. Captured
+			// when the client is built so a `claude_code_version_too_old` rejection is
+			// judged against the version that request sent, not the process-wide
+			// adopted one (concurrent first requests would otherwise race).
+			let sentClaudeCodeVersion = getClaudeCodeVersion();
 			let requestExtraBetas: readonly string[] = [];
 			let clientDefaultHeaders: Record<string, string> | undefined;
 			// Rebuild headers when a retry changes the advertised beta set.
@@ -2251,6 +2257,7 @@ const streamAnthropicOnce = (
 					disableStrictTools,
 					dropPromptCacheBetas: dropCacheControl || dropCacheControlOptions,
 				};
+				sentClaudeCodeVersion = getClaudeCodeVersion();
 				const created = createClient(model, clientArgs);
 				clientDefaultHeaders = created.defaultHeaders;
 				return created;
@@ -3383,12 +3390,13 @@ const streamAnthropicOnce = (
 						isOAuthToken &&
 						clientArgs &&
 						firstTokenTime === undefined &&
-						adoptRequiredClaudeCodeVersion(streamFailure)
+						adoptRequiredClaudeCodeVersion(streamFailure, sentClaudeCodeVersion)
 					) {
 						logger.warn("anthropic: Claude Code version rejected as too old, retrying with required version", {
 							model: model.id,
 							version: getClaudeCodeVersion(),
 						});
+						sentClaudeCodeVersion = getClaudeCodeVersion();
 						client = createClient(model, { ...clientArgs, disableStrictTools }).client;
 						// The version only changes client headers; a redemption keeps its frozen body.
 						if (!usingFallbackCredit) params = await prepareParams();
@@ -5268,12 +5276,19 @@ function buildParams(
 		tools = [];
 	}
 
-	// Pre-compute metadata.
-	const metadataAccountId = readAnthropicMetadataAccountId(options?.metadata);
+	// Pre-compute metadata. For a first-party Anthropic OAuth request the serving
+	// credential owns the device identity: a caller resolves metadata once per
+	// model call, so a rotation inside one stream would otherwise pair the new
+	// account's bearer with the previous account's `account_uuid`/`device_id`.
+	const servingAccountId = model.provider === "anthropic" ? options?.oauthIdentity?.accountId : undefined;
+	const metadataAccountId = readAnthropicMetadataAccountId(options?.metadata) ?? servingAccountId;
 	const metadataUserId = resolveAnthropicMetadataUserId(
-		readAnthropicMetadataString(options?.metadata, "user_id") ??
-			// Deliberately share the normalized affinity identity across Kimi's two transports.
-			(model.provider === "kimi-code" ? getOpenAIPromptCacheKey(options) : undefined),
+		rebindAnthropicMetadataUserId(
+			readAnthropicMetadataString(options?.metadata, "user_id") ??
+				// Deliberately share the normalized affinity identity across Kimi's two transports.
+				(model.provider === "kimi-code" ? getOpenAIPromptCacheKey(options) : undefined),
+			isOAuthToken ? servingAccountId : undefined,
+		),
 		isOAuthToken,
 		options?.sessionId,
 		metadataAccountId,

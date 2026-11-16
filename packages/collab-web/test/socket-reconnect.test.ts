@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, setSystemTime, vi } from "bun:test";
 import { GuestClient } from "../src/lib/client";
-import { encodeBase64Url } from "../src/lib/link";
+import { importRoomKey, seal } from "../src/lib/codec";
+import { encodeBase64Url, packEnvelope } from "../src/lib/link";
+import { CollabSocket } from "../src/lib/socket";
 
 const NativeWebSocket = globalThis.WebSocket;
 const LINK = `transient-network-room#${encodeBase64Url(new Uint8Array(32))}`;
@@ -32,7 +34,7 @@ class ScriptedWebSocket {
 		this.onopen?.(new Event("open"));
 	}
 
-	message(data: string): void {
+	message(data: string | Uint8Array): void {
 		this.onmessage?.(new MessageEvent("message", { data }));
 	}
 
@@ -200,5 +202,77 @@ describe("browser guest room recovery", () => {
 		} finally {
 			client.close();
 		}
+	});
+});
+
+describe("guest 4004 policy", () => {
+	const roomUrl = "wss://relay.example/r/transient-network-room";
+	const rawKey = new Uint8Array(32);
+
+	type Closes = [reason: string, willReconnect: boolean][];
+
+	/** A guest that has received one frame from its host; resolves once the socket delivered it. */
+	async function establishedGuest(): Promise<{ socket: CollabSocket<object, { t: string }>; closes: Closes }> {
+		const key = await importRoomKey(rawKey);
+		const socket = new CollabSocket<object, { t: string }>({ wsUrl: roomUrl, role: "guest", key });
+		const closes: Closes = [];
+		socket.onClose = (reason, willReconnect) => closes.push([reason, willReconnect]);
+		const delivered = Promise.withResolvers<void>();
+		socket.onFrame = () => delivered.resolve();
+		socket.connect();
+		instance(0).open();
+		instance(0).message(packEnvelope(0, await seal(key, { t: "welcome" })));
+		await delivered.promise;
+		return { socket, closes };
+	}
+
+	it("keeps retrying a missing room with growing backoff once a frame was received", async () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(0.5);
+		installScriptedWebSocket();
+		const { socket, closes } = await establishedGuest();
+
+		try {
+			// The host fell away and the relay dropped its room: not a bad link, however many times it answers 4004.
+			instance(0).relayClose(4004, "no such room");
+			expect(closes).toEqual([["no such room", true]]);
+
+			vi.advanceTimersByTime(1_000);
+			expect(ScriptedWebSocket.instances).toHaveLength(2);
+			instance(1).open();
+			instance(1).relayClose(4004, "no such room");
+			expect(closes.at(-1)).toEqual(["no such room", true]);
+
+			// The open did not reset the backoff: the next attempt is 2 s out, then 4 s.
+			vi.advanceTimersByTime(1_999);
+			expect(ScriptedWebSocket.instances).toHaveLength(2);
+			vi.advanceTimersByTime(1);
+			expect(ScriptedWebSocket.instances).toHaveLength(3);
+			instance(2).open();
+			instance(2).relayClose(4004, "no such room");
+			vi.advanceTimersByTime(3_999);
+			expect(ScriptedWebSocket.instances).toHaveLength(3);
+			vi.advanceTimersByTime(1);
+			expect(ScriptedWebSocket.instances).toHaveLength(4);
+			expect(closes.every(([, willReconnect]) => willReconnect)).toBe(true);
+		} finally {
+			socket.close();
+		}
+	});
+
+	it("treats a missing room as fatal on a link that never delivered a frame", () => {
+		vi.useFakeTimers();
+		installScriptedWebSocket();
+		const closes: [string, boolean][] = [];
+		const socket = new CollabSocket({ wsUrl: roomUrl, role: "guest", key: importRoomKey(rawKey) });
+		socket.onClose = (reason, willReconnect) => closes.push([reason, willReconnect]);
+
+		socket.connect();
+		instance(0).open();
+		instance(0).relayClose(4004, "no such room");
+
+		expect(closes).toEqual([["no such room", false]]);
+		vi.advanceTimersByTime(60_000);
+		expect(ScriptedWebSocket.instances).toHaveLength(1);
 	});
 });

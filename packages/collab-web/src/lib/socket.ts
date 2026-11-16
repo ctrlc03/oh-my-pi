@@ -37,6 +37,15 @@ const MAX_PENDING_SENDS = 256;
  * app-switcher glance or a notification pull-down, shorter than the OS's typical suspend.
  */
 const STALE_AFTER_HIDDEN_MS = 10_000;
+/**
+ * How often an open socket is pinged, where the runtime can ping (Bun: the companion, and any other non-browser
+ * host). A network that drops without a reset (Wi-Fi switch, sleep, the relay redeploying) leaves the socket reading
+ * as open and the relay without the host's room: nothing reveals it until a write, so an idle companion would stay
+ * unreachable until someone typed. Mirrors the omp host's relay client.
+ */
+export const RELAY_PING_INTERVAL_MS = 15_000;
+/** A socket that has heard nothing, not even a pong, for this long is replaced; see {@link RELAY_PING_INTERVAL_MS}. */
+export const RELAY_SILENCE_LIMIT_MS = 40_000;
 
 /**
  * Whether the OS suspends this page's sockets while it is hidden: true on touch devices
@@ -49,6 +58,16 @@ export function suspendsHiddenPages(): boolean {
 
 /** Bun's WebSocket constructor: the DOM typings this file compiles against know no options object. */
 type BunWebSocket = new (url: string, options: { proxy: string }) => WebSocket;
+
+/** Bun's WebSocket answers protocol pings and can drop a connection without a closing handshake; browsers' cannot. */
+interface PingableWebSocket extends WebSocket {
+	ping(): void;
+	terminate(): void;
+}
+
+function isPingable(ws: WebSocket): ws is PingableWebSocket {
+	return "ping" in ws && typeof ws.ping === "function" && "terminate" in ws && typeof ws.terminate === "function";
+}
 
 export interface CollabSocketOptions {
 	/** wss://host[:port]/r/<roomId> — no query string. */
@@ -86,8 +105,13 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 	#attempt = 0;
 	/** Terminal state: intentional close or fatal failure. Cleared by connect(). */
 	#closed = false;
-	/** Allows a previously joined guest to outlive room recreation races. */
-	#retryMissingRoom = false;
+	/**
+	 * The relay has told this guest its host is away (4001, or 4004 after one) and the host has not answered since:
+	 * holds the backoff across the relay accepting each upgrade only to close it. Cleared by the next decrypted frame.
+	 */
+	#hostAway = false;
+	/** This guest received a decrypted frame on this link, so its room existed: a later 4004 is the host being away, not a bad link. */
+	#joined = false;
 	/** Serializes seal() so frames hit the wire in send() order. */
 	#sendChain: Promise<void> = Promise.resolve();
 	/** Serializes open() so frames are delivered in arrival order. */
@@ -101,6 +125,9 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 	/** The current connection delivered a decrypted frame: its relay holds the room and works. */
 	#established = false;
 	#localTimer: Timer | undefined;
+	#heartbeatTimer: Timer | undefined;
+	/** When the current socket last received anything, pongs included. */
+	#lastHeard = 0;
 
 	constructor(opts: CollabSocketOptions) {
 		this.#opts = opts;
@@ -115,7 +142,8 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 		if (this.#ws || this.#retryTimer) return;
 		this.#closed = false;
 		this.#hiddenAt = null;
-		this.#retryMissingRoom = false;
+		this.#hostAway = false;
+		this.#joined = false;
 		this.#attempt = 0;
 		this.#openSocket();
 	}
@@ -162,6 +190,7 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 	 */
 	reconnect(reason: string): void {
 		if (this.#closed) return;
+		this.#stopHeartbeat();
 		// A local connection that never delivered anything was no good; do not pick it again at once.
 		if (this.#route === "local" && !this.#established) this.#markLocalDown("relay");
 		const ws = this.#ws;
@@ -206,9 +235,10 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 		const hadActivity = this.#ws !== null || this.#retryTimer !== undefined;
 		this.#clearRetry();
 		this.#clearLocalTimer();
+		this.#stopHeartbeat();
 		const wasClosed = this.#closed;
 		this.#closed = true;
-		this.#retryMissingRoom = false;
+		this.#hostAway = false;
 		this.#pendingSends.length = 0;
 		const ws = this.#ws;
 		this.#ws = null;
@@ -272,21 +302,29 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 		ws.onopen = () => {
 			if (this.#ws !== ws) return;
 			this.#clearLocalTimer();
-			if (!this.#retryMissingRoom) this.#attempt = 0;
+			this.#startHeartbeat(ws);
+			if (!this.#hostAway) this.#attempt = 0;
 			for (const envelope of this.#pendingSends) ws.send(envelope);
 			this.#pendingSends.length = 0;
 			this.onOpen?.();
 		};
 		ws.onmessage = (event: MessageEvent) => {
 			if (this.#ws !== ws) return;
+			this.#lastHeard = Date.now();
 			this.#handleMessage(ws, event.data);
 		};
+		if (isPingable(ws)) {
+			ws.addEventListener("pong", () => {
+				if (this.#ws === ws) this.#lastHeard = Date.now();
+			});
+		}
 		ws.onerror = () => {
 			// The paired close event carries the actionable state; nothing to do here.
 		};
 		ws.onclose = (event: CloseEvent) => {
 			if (this.#ws !== ws) return;
 			this.#clearLocalTimer();
+			this.#stopHeartbeat();
 			this.#ws = null;
 			// 4001 is the host leaving, which the public relay will report too: the normal path.
 			if (route === "local" && event.code !== 4001) {
@@ -298,6 +336,49 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 			}
 			this.#handleClose(event.code, event.reason);
 		};
+	}
+
+	/**
+	 * Pings `ws` every {@link RELAY_PING_INTERVAL_MS} (a no-op where the runtime cannot ping: browsers) and replaces it
+	 * once it has heard nothing for {@link RELAY_SILENCE_LIMIT_MS}. No close handshake can finish over a dead network, so
+	 * the socket is terminated and detached rather than awaiting a close event that may never come; the replacement hosts
+	 * the same room with the same key, so paired devices reconnect on their own.
+	 */
+	#startHeartbeat(ws: WebSocket): void {
+		this.#stopHeartbeat();
+		if (!isPingable(ws)) return;
+		this.#lastHeard = Date.now();
+		this.#heartbeatTimer = setInterval(() => {
+			if (this.#ws !== ws) {
+				this.#stopHeartbeat();
+				return;
+			}
+			if (Date.now() - this.#lastHeard <= RELAY_SILENCE_LIMIT_MS) {
+				try {
+					ws.ping();
+				} catch {
+					// A failed write surfaces as the socket's own close event.
+				}
+				return;
+			}
+			this.reconnect("relay stopped responding");
+			ws.onopen = null;
+			ws.onmessage = null;
+			ws.onerror = null;
+			ws.onclose = null;
+			try {
+				ws.terminate();
+			} catch {
+				// already gone
+			}
+		}, RELAY_PING_INTERVAL_MS);
+	}
+
+	#stopHeartbeat(): void {
+		if (this.#heartbeatTimer !== undefined) {
+			clearInterval(this.#heartbeatTimer);
+			this.#heartbeatTimer = undefined;
+		}
 	}
 
 	#handleMessage(ws: WebSocket, data: unknown): void {
@@ -330,7 +411,8 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 					return;
 				}
 				if (this.#ws !== ws) return;
-				this.#retryMissingRoom = false;
+				this.#hostAway = false;
+				this.#joined = true;
 				this.#attempt = 0;
 				this.#established = true;
 				this.onFrame?.(frame, envelope.peerId);
@@ -344,9 +426,12 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 		if (this.#closed) return;
 		const fatalReason = RELAY_CLOSE_REASONS[code];
 		const closeReason = fatalReason ?? (reason || `connection lost (code ${code})`);
-		const retryRoom = this.#opts.role === "guest" && (code === 4001 || (code === 4004 && this.#retryMissingRoom));
+		// A guest that has heard from its host on this link treats a missing room as the host being away (it reconnects
+		// through the relay, or the relay redeployed): keep retrying. A link that never connected is bad or expired.
+		const hostAway = this.#hostAway || this.#joined;
+		const retryRoom = this.#opts.role === "guest" && (code === 4001 || (code === 4004 && hostAway));
 		if (retryRoom) {
-			this.#retryMissingRoom = true;
+			this.#hostAway = true;
 			this.onClose?.(closeReason, true);
 			this.#scheduleRetry();
 			return;
@@ -367,6 +452,7 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 		this.#closed = true;
 		this.#clearRetry();
 		this.#clearLocalTimer();
+		this.#stopHeartbeat();
 		this.#pendingSends.length = 0;
 		const ws = this.#ws;
 		this.#ws = null;

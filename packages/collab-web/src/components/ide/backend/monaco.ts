@@ -251,7 +251,7 @@ class MonacoView implements EditorView {
 			padding: { top: 6, bottom: 6 },
 		});
 		this.#cleanups.push(
-			watchTheme(() => {
+			watchTheme(parent, () => {
 				const next = readTheme(parent);
 				editor.defineTheme(THEME, next.data);
 				editor.setTheme(THEME);

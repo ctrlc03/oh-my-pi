@@ -15,14 +15,15 @@ import {
 	TriangleAlert,
 	X,
 } from "lucide-react";
-import type { KeyboardEvent, ReactNode, RefObject } from "react";
+import type { CSSProperties, KeyboardEvent, ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { CodemapNode, CompanionClient, FileTree } from "../../lib/companion";
 import { FileChangedError } from "../../lib/companion";
 import { openDiagramFile } from "../../lib/diagram-store";
 import { diagramFileKind } from "../../lib/diagrams";
 import type { EditorEnginePref } from "../../lib/editor-prefs";
-import { useEditorEnginePref } from "../../lib/editor-prefs";
+import { useEditorEnginePref, useEditorThemePref } from "../../lib/editor-prefs";
+import { editorThemeVars } from "../../lib/editor-themes";
 import type { LspLocation, LspQuery } from "../../lib/repo-intel";
 import { useRequest } from "../../lib/use-request";
 import { matchesMedia } from "../../lib/zoom";
@@ -264,6 +265,8 @@ export function IdeSheet({
 	const [references, setReferences] = useState<{ title: string; locations: LspLocation[] } | null>(null);
 
 	const pref = useEditorEnginePref();
+	const editorTheme = useEditorThemePref();
+	const themeStyle = useMemo(() => editorThemeVars(editorTheme) as CSSProperties | null, [editorTheme]);
 	const [engine, setEngine] = useState<EditorEngine | null>(() => {
 		const ready = readyEngine(wantedEngine(pref));
 		return ready !== null && mem.tabs.every(tab => mem.docs[tab.path]?.engine === ready.name) ? ready : null;
@@ -815,7 +818,7 @@ export function IdeSheet({
 	};
 
 	const frame = (
-		<div className="sh-ide" onKeyDown={onSheetKey}>
+		<div className="sh-ide" data-editor-theme={editorTheme} style={themeStyle ?? undefined} onKeyDown={onSheetKey}>
 			<div className="sh-sheet-head sh-ide-head">
 				<button
 					type="button"

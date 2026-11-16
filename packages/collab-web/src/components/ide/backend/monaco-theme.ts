@@ -2,7 +2,8 @@
  * Monaco's theme and font from the app's tokens. Monaco wants hex colours, and the tokens are CSS variables
  * (some `color-mix()`es, some translucent), so each is resolved by the browser on a probe element and read
  * back as a computed colour. The theme follows `data-theme`, `data-accent`, `data-code-font` and
- * `data-text-size` on the root (and the device's colour scheme when no theme is set): {@link watchTheme}
+ * `data-text-size` on the root (and the device's colour scheme when no theme is set), and the editor theme the
+ * IDE sheet wears (`data-editor-theme`, whose inline variables override the tokens below it): {@link watchTheme}
  * calls back whenever one of them changes.
  */
 import { luminance, parseCssColor, toHex } from "./color";
@@ -176,8 +177,11 @@ export function readTheme(host: HTMLElement): ThemeSnapshot {
 /** The attributes of the root element the theme and font follow. */
 const WATCHED = ["data-theme", "data-accent", "data-code-font", "data-text-size"];
 
-/** Call `onChange` when the page's theme, accent, code font, text size or colour scheme changes. Returns the stop function. */
-export function watchTheme(onChange: () => void): () => void {
+/**
+ * Call `onChange` when the page's theme, accent, code font, text size, colour scheme or the editor theme of the sheet
+ * around `host` changes. Returns the stop function.
+ */
+export function watchTheme(host: HTMLElement, onChange: () => void): () => void {
 	let pending = 0;
 	// A burst of attribute writes (Reset appearance sets several) is one rebuild.
 	const schedule = (): void => {
@@ -186,6 +190,8 @@ export function watchTheme(onChange: () => void): () => void {
 	};
 	const observer = new MutationObserver(schedule);
 	observer.observe(document.documentElement, { attributes: true, attributeFilter: WATCHED });
+	const sheet = host.closest("[data-editor-theme]");
+	if (sheet !== null) observer.observe(sheet, { attributes: true, attributeFilter: ["data-editor-theme"] });
 	const scheme = matchMedia("(prefers-color-scheme: dark)");
 	const narrow = matchMedia("(max-width: 640px)");
 	scheme.addEventListener("change", schedule);

@@ -14,7 +14,14 @@ import {
 	ZOOM_STEPS,
 } from "../../lib/appearance";
 import { useFontAvailability } from "../../lib/fonts";
-import { type EditorEnginePref, setEditorEnginePref, useEditorEnginePref } from "../../lib/editor-prefs";
+import {
+	type EditorEnginePref,
+	setEditorEnginePref,
+	setEditorThemePref,
+	useEditorEnginePref,
+	useEditorThemePref,
+} from "../../lib/editor-prefs";
+import { EDITOR_THEME_GROUPS, EDITOR_THEME_IDS } from "../../lib/editor-themes";
 import { resetPaneSizes } from "../../lib/pane-size";
 import { type ThemePreference, useThemePreference } from "../../lib/theme";
 import { useHasPaneSizes } from "../../lib/use-pane-layout";
@@ -81,6 +88,7 @@ export function AppearanceSection(): ReactNode {
 	const { preference, setPreference } = useThemePreference();
 	const appearance = useAppearance();
 	const editorEngine = useEditorEnginePref();
+	const editorTheme = useEditorThemePref();
 	const available = useFontAvailability();
 	const hasPaneSizes = useHasPaneSizes();
 	const fonts = FONT_OPTIONS.map(option => ({
@@ -160,6 +168,31 @@ export function AppearanceSection(): ReactNode {
 						options={EDITOR_ENGINES}
 						onChange={setEditorEnginePref}
 					/>
+				</SettingsRow>
+				<SettingsRow
+					label="Code editor theme"
+					hint="Colours for the editor and the Explorer, in either editor. Match app follows the theme above; the others are VS Code style themes of their own, light or dark whatever the app is."
+				>
+					<select
+						className="sh-input"
+						aria-label="Code editor theme"
+						value={editorTheme}
+						onChange={event => {
+							const next = EDITOR_THEME_IDS.find(id => id === event.currentTarget.value);
+							if (next !== undefined) setEditorThemePref(next);
+						}}
+					>
+						<option value="app">Match app</option>
+						{EDITOR_THEME_GROUPS.map(group => (
+							<optgroup key={group.label} label={group.label}>
+								{group.themes.map(theme => (
+									<option key={theme.id} value={theme.id}>
+										{theme.label}
+									</option>
+								))}
+							</optgroup>
+						))}
+					</select>
 				</SettingsRow>
 				<SettingsRow label="Line spacing" hint="The air between lines and between blocks in the conversation.">
 					<Choice

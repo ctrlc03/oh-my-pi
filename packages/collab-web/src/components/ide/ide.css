@@ -9,6 +9,15 @@
 	min-height: 0;
 }
 
+/* An editor theme (lib/editor-themes.ts) sets the tokens as inline variables on the root, so the whole sheet follows
+ * it; the root also takes the theme's surface so the header's buttons read on it. */
+.sh-ide:not([data-editor-theme="app"]) {
+	padding: 8px;
+	color: var(--fg);
+	background: var(--bg);
+	border-radius: var(--radius);
+}
+
 /* ---- header ---- */
 .sh-ide-head {
 	flex: none;

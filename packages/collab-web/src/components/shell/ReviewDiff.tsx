@@ -2,21 +2,67 @@ import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
 	commentId,
+	commentLayout,
 	commentOnRows,
 	type DiffReview,
+	type DiffRow,
 	isLineRow,
 	lineLabel,
 	parseUnifiedDiff,
+	pickRow,
 	type ReviewComment,
 	type ReviewScope,
-	rowKey,
-	sameHunk,
+	type RowSelection,
 } from "../../lib/review-comments";
 import { lastRow, splitLines } from "../../lib/split-diff";
 
-interface Selection {
-	anchor: number;
-	head: number;
+/** How a diff row looks and behaves: pickable when it can take a comment, marked while a comment covers it. */
+export interface DiffRowState {
+	commentable: boolean;
+	selected: boolean;
+	marked: boolean;
+}
+
+/**
+ * The props of one diff row's element: its colour class (`extra` is the layout's own), and, when `commentable`,
+ * the tap and key handlers that pick it. Shared by the diff views and the review board.
+ */
+export function diffRowProps(
+	row: DiffRow,
+	extra: string,
+	state: DiffRowState,
+	pick: (extend: boolean) => void,
+): Record<string, unknown> {
+	const line = isLineRow(row);
+	const className = [
+		extra,
+		row.kind === "hunk" && "sh-udiff-hunk",
+		row.kind === "add" && "sh-udiff-add",
+		row.kind === "del" && "sh-udiff-del",
+		state.commentable && "sh-udiff-pick",
+		state.selected && "sh-udiff-sel",
+		line && state.marked && "sh-udiff-commented",
+	]
+		.filter(Boolean)
+		.join(" ");
+	return {
+		className,
+		...(state.commentable && {
+			role: "button",
+			tabIndex: 0,
+			"aria-pressed": state.selected,
+			onKeyDown: (e: KeyboardEvent) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				e.preventDefault();
+				pick(e.shiftKey);
+			},
+			onClick: (e: MouseEvent) => {
+				// Dragging across the text to copy it is not a tap on the line.
+				if (window.getSelection()?.isCollapsed === false) return;
+				pick(e.shiftKey);
+			},
+		}),
+	};
 }
 
 export interface UnifiedDiffProps {
@@ -38,33 +84,12 @@ export interface UnifiedDiffProps {
 export function UnifiedDiff({ diff, scope, path, review, side }: UnifiedDiffProps): ReactNode {
 	const rows = useMemo(() => parseUnifiedDiff(diff), [diff]);
 	const split = useMemo(() => (side ? splitLines(rows) : undefined), [side, rows]);
-	const [sel, setSel] = useState<Selection | null>(null);
+	const [sel, setSel] = useState<RowSelection | null>(null);
 	/** Text typed for the selection; null until typed, so the box shows the range's existing comment. */
 	const [draft, setDraft] = useState<string | null>(null);
 	const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
 	const comments = review?.comments;
-	const layout = useMemo(() => {
-		const index: Record<string, number> = {};
-		rows.forEach((row, i) => {
-			if (isLineRow(row)) index[rowKey(row)] = i;
-		});
-		const after: Record<number, Array<[string, ReviewComment]>> = {};
-		const marked: Record<number, true> = {};
-		// Comments whose lines the diff no longer has (the file changed since) stay reachable here.
-		const orphans: Array<[string, ReviewComment]> = [];
-		for (const [id, c] of Object.entries(comments ?? {})) {
-			if (c.scope !== scope || c.path !== path) continue;
-			const from = Object.hasOwn(index, c.from) ? index[c.from] : undefined;
-			const to = Object.hasOwn(index, c.to) ? index[c.to] : undefined;
-			if (from === undefined || to === undefined) {
-				orphans.push([id, c]);
-				continue;
-			}
-			(after[to] ??= []).push([id, c]);
-			for (let i = from; i <= to; i++) marked[i] = true;
-		}
-		return { after, marked, orphans };
-	}, [rows, comments, scope, path]);
+	const layout = useMemo(() => commentLayout(rows, comments, scope, path), [rows, comments, scope, path]);
 	if (diff.trim().length === 0) return <div className="sh-companion-empty">No textual changes.</div>;
 
 	const close = (): void => {
@@ -72,16 +97,9 @@ export function UnifiedDiff({ diff, scope, path, review, side }: UnifiedDiffProp
 		setDraft(null);
 	};
 	const pick = (i: number, extend: boolean): void => {
-		if (sel === null) {
-			setSel({ anchor: i, head: i });
-			setDraft(null);
-			return;
-		}
-		const single = sel.anchor === sel.head;
-		if (single && !extend && i === sel.anchor) return close();
-		if ((single || extend) && sameHunk(rows, sel.anchor, i)) return setSel({ anchor: sel.anchor, head: i });
-		setSel({ anchor: i, head: i });
-		setDraft(null);
+		const next = pickRow(rows, sel, i, extend);
+		setSel(next.sel);
+		if (next.fresh) setDraft(null);
 	};
 	const lo = sel === null ? 0 : Math.min(sel.anchor, sel.head);
 	const hi = sel === null ? 0 : Math.max(sel.anchor, sel.head);
@@ -113,38 +131,16 @@ export function UnifiedDiff({ diff, scope, path, review, side }: UnifiedDiffProp
 	const rowProps = (i: number, extra: string): Record<string, unknown> => {
 		const row = rows[i]!;
 		const line = isLineRow(row);
-		const commentable = review !== null && line;
-		const selected = line && sel !== null && i >= lo && i <= hi;
-		const className = [
+		return diffRowProps(
+			row,
 			extra,
-			row.kind === "hunk" && "sh-udiff-hunk",
-			row.kind === "add" && "sh-udiff-add",
-			row.kind === "del" && "sh-udiff-del",
-			commentable && "sh-udiff-pick",
-			selected && "sh-udiff-sel",
-			line && Object.hasOwn(layout.marked, i) && "sh-udiff-commented",
-		]
-			.filter(Boolean)
-			.join(" ");
-		const onKey = (e: KeyboardEvent): void => {
-			if (e.key !== "Enter" && e.key !== " ") return;
-			e.preventDefault();
-			pick(i, e.shiftKey);
-		};
-		return {
-			className,
-			...(commentable && {
-				role: "button",
-				tabIndex: 0,
-				"aria-pressed": selected,
-				onKeyDown: onKey,
-				onClick: (e: MouseEvent) => {
-					// Dragging across the text to copy it is not a tap on the line.
-					if (window.getSelection()?.isCollapsed === false) return;
-					pick(i, e.shiftKey);
-				},
-			}),
-		};
+			{
+				commentable: review !== null && line,
+				selected: line && sel !== null && i >= lo && i <= hi,
+				marked: Object.hasOwn(layout.marked, i),
+			},
+			extend => pick(i, extend),
+		);
 	};
 	/** Notes on the rows of one display line, then the comment box when the selection ends on it. */
 	const below = (i: number): ReactNode => (
@@ -231,7 +227,7 @@ export function UnifiedDiff({ diff, scope, path, review, side }: UnifiedDiffProp
 	);
 }
 
-interface CommentBoxProps {
+export interface CommentBoxProps {
 	value: string;
 	/** The lines being commented, e.g. `12-14`. */
 	label: string;
@@ -242,7 +238,15 @@ interface CommentBoxProps {
 	onCancel(): void;
 }
 
-function CommentBox({ value, label, hint, submitLabel, onChange, onSubmit, onCancel }: CommentBoxProps): ReactNode {
+export function CommentBox({
+	value,
+	label,
+	hint,
+	submitLabel,
+	onChange,
+	onSubmit,
+	onCancel,
+}: CommentBoxProps): ReactNode {
 	const input = useRef<HTMLTextAreaElement>(null);
 	useEffect(() => {
 		const el = input.current;
@@ -285,7 +289,7 @@ function CommentBox({ value, label, hint, submitLabel, onChange, onSubmit, onCan
 	);
 }
 
-interface ReviewNoteProps {
+export interface ReviewNoteProps {
 	comment: ReviewComment;
 	/** Text being edited, or null while the note is shown. */
 	editText: string | null;
@@ -296,7 +300,7 @@ interface ReviewNoteProps {
 	onDelete(): void;
 }
 
-function ReviewNote({
+export function ReviewNote({
 	comment,
 	editText,
 	onEdit,

@@ -2,6 +2,7 @@ import {
 	ChevronLeft,
 	Boxes,
 	CircleCheck,
+	Columns4,
 	CircleDashed,
 	CircleDot,
 	CircleX,
@@ -59,6 +60,8 @@ export interface GithubSheetProps {
 	onOpenQuiz?: ((id: string) => void) | null;
 	/** Start a sparring session on a pull request; null unless the paired computer can spar. */
 	onSparPr?: ((pr: { number: number; title: string }) => void) | null;
+	/** Open the review board on a pull request (and its stack); null unless the companion supports it. */
+	onReviewBoard?: ((number: number) => void) | null;
 	onClose(): void;
 }
 
@@ -104,6 +107,7 @@ export function GithubSheet({
 	onQuizPr,
 	onOpenQuiz,
 	onSparPr,
+	onReviewBoard,
 	onClose,
 }: GithubSheetProps): ReactNode {
 	const [kind, setKind] = useState<GithubKind>("issue");
@@ -145,6 +149,7 @@ export function GithubSheet({
 					onQuizPr={onQuizPr ?? null}
 					onOpenQuiz={onOpenQuiz ?? null}
 					onSparPr={onSparPr ?? null}
+					onReviewBoard={onReviewBoard ?? null}
 					onClose={onClose}
 				/>
 			)}
@@ -271,6 +276,7 @@ interface ItemDetailProps {
 	onQuizPr: ((pr: { number: number; title: string }) => void) | null;
 	onOpenQuiz: ((id: string) => void) | null;
 	onSparPr: ((pr: { number: number; title: string }) => void) | null;
+	onReviewBoard: ((number: number) => void) | null;
 	onClose(): void;
 }
 
@@ -287,6 +293,7 @@ function ItemDetail({
 	onQuizPr,
 	onOpenQuiz,
 	onSparPr,
+	onReviewBoard,
 	onClose,
 }: ItemDetailProps): ReactNode {
 	const load = useCallback(
@@ -386,6 +393,11 @@ function ItemDetail({
 							onClick={() => onQuizPr({ number: head.number, title: head.title })}
 						>
 							<GraduationCap size={14} /> Quiz me
+						</button>
+					)}
+					{item.kind === "pr" && onReviewBoard !== null && (
+						<button type="button" className="sh-btn" onClick={() => onReviewBoard(head.number)}>
+							<Columns4 size={14} /> Review board
 						</button>
 					)}
 					{item.kind === "pr" && onSparPr !== null && (

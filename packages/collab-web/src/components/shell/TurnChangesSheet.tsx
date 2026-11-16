@@ -3,6 +3,7 @@ import {
 	Check,
 	ChevronRight,
 	Columns2,
+	Columns4,
 	FileDiff,
 	LoaderCircle,
 	Receipt,
@@ -38,6 +39,7 @@ import {
 	viewKey,
 } from "../../lib/turn-changes";
 import type { ComposerHandle } from "./Composer";
+import type { BoardStart } from "../review-board/ReviewBoardSheet";
 import { UnifiedDiff } from "./ReviewDiff";
 import { Sheet } from "./Sheet";
 import "./turn-changes.css";
@@ -446,6 +448,8 @@ export interface TurnChangesSheetProps {
 	/** The turn the Turn tab opens on; the latest when null. */
 	initialEntryId: string | null;
 	onSendToAgent: ((text: string) => void) | null;
+	/** Opens the review board on this turn or the session; null where the board is not offered. */
+	onOpenBoard: ((start: BoardStart) => void) | null;
 	onClose(): void;
 }
 
@@ -463,6 +467,7 @@ export function TurnChangesSheet({
 	initialTab,
 	initialEntryId,
 	onSendToAgent,
+	onOpenBoard,
 	onClose,
 }: TurnChangesSheetProps): ReactNode {
 	const [tab, setTab] = useState<Tab>(initialTab);
@@ -557,6 +562,16 @@ export function TurnChangesSheet({
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">{tab === "receipts" ? "Receipts" : "Changes"}</div>
 				<span className="sh-sheet-head-actions">
+					{tab !== "receipts" && onOpenBoard !== null && (
+						<button
+							type="button"
+							className="sh-btn"
+							onClick={() => onOpenBoard({ view: "session", entryId: tab === "turn" ? turn?.id : undefined })}
+							title={tab === "turn" ? "Review this turn on the board" : "Review the session on the board"}
+						>
+							<Columns4 size={14} /> Open review board
+						</button>
+					)}
 					<button type="button" className="sh-btn sh-btn-icon" onClick={ask} aria-label="Refresh" title="Refresh">
 						<RefreshCw size={16} />
 					</button>
@@ -622,6 +637,7 @@ export function useTurnChanges(
 	sessionId: string | null,
 	composerRef: RefObject<ComposerHandle | null>,
 	registerPalette = false,
+	openBoard?: (start: BoardStart) => void,
 ): { onTurnChanges: ((entryId: string) => void) | undefined; sheet: ReactNode } {
 	const [open, setOpen] = useState<{ tab: Tab; entryId: string | null } | null>(null);
 	const usable = !snap.readOnly && snap.phase === "live";
@@ -691,6 +707,7 @@ export function useTurnChanges(
 				initialTab={open.tab}
 				initialEntryId={open.entryId}
 				onSendToAgent={snap.readOnly ? null : sendToAgent}
+				onOpenBoard={openBoard ?? null}
 				onClose={close}
 			/>
 		) : null;

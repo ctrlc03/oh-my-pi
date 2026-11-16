@@ -16,6 +16,7 @@ import { useComposerExtras } from "./composer-extras";
 import { useEditPrompt } from "./EditPromptSheet";
 import { useHiddenMessages } from "./HiddenMessages";
 import { useTurnChanges } from "./TurnChangesSheet";
+import { useReviewBoard } from "../review-board/use-review-board";
 import "./split.css";
 
 const PHASE_LABEL: Record<ConnectionPhase, string> = {
@@ -104,7 +105,15 @@ export function SplitPane({
 
 	const composerRef = useRef<ComposerHandle>(null);
 	const editPrompt = useEditPrompt(client, snap, composerRef);
-	const turnChanges = useTurnChanges(client, snap, sessionId, composerRef);
+	const boardCompanion = useMemo(
+		() =>
+			companionClient !== null && hostId !== null
+				? { client: companionClient, instanceId: hostId, canBoard: computer?.snap.canReviewBoard === true }
+				: null,
+		[companionClient, hostId, computer?.snap.canReviewBoard],
+	);
+	const reviewBoard = useReviewBoard(client, snap, sessionId, boardCompanion);
+	const turnChanges = useTurnChanges(client, snap, sessionId, composerRef, false, reviewBoard.open);
 	const hidden = useHiddenMessages(sessionId, computer);
 	const sendToAgent = useCallback((text: string) => composerRef.current?.insert(text), []);
 	const { newSince, seen: newSeen, markSeen, markTail } = useNewSince(client, roomId, snap.entries, live);
@@ -209,6 +218,7 @@ export function SplitPane({
 			</div>
 			{editPrompt.sheet}
 			{turnChanges.sheet}
+			{reviewBoard.sheet}
 			{hidden.bar}
 			<Composer
 				ref={composerRef}

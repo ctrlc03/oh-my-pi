@@ -65,6 +65,7 @@ import type {
 	HostFanout,
 } from "./fanout";
 import type { HiddenDoc } from "./hidden-messages";
+import type { PrOwnDiff, ReviewNotesQuery, ReviewNotesReply, StackPr } from "./review-board";
 import type { OrgDoc } from "./session-org";
 import { CollabSocket } from "./socket";
 
@@ -111,6 +112,11 @@ const TRANSCRIBE_SETUP_TIMEOUT_MS = 30 * 60_000;
 const GITHUB_TIMEOUT_MS = 30_000;
 /** A pull request's diff is fetched whole by `gh pr diff` (up to 60s), and a review or merge is one slow API write. */
 const PR_REVIEW_TIMEOUT_MS = 90_000;
+/** A pull request's own diff reads two pull requests from the remote before it diffs them. */
+const PR_OWN_DIFF_TIMEOUT_MS = 150_000;
+/** Session notes read recent session files; a `generate` run waits for model calls. */
+const REVIEW_NOTES_TIMEOUT_MS = 60_000;
+const REVIEW_NOTES_GENERATE_TIMEOUT_MS = 300_000;
 /** Failing-check logs: one `gh pr view`, then the log reads (each up to 25s on the computer). */
 const CI_LOG_TIMEOUT_MS = 60_000;
 /** Listing a huge repository can take git a while. */
@@ -1139,6 +1145,12 @@ export type CompanionRequest =
 	| { t: "pr-files"; reqId: number; instanceId: string; number: number }
 	/** One file's diff of a pull request at `head`, answered with a `diff` (needs `canPrReview`). */
 	| { t: "pr-diff"; reqId: number; instanceId: string; number: number; head: string; path: string }
+	/** The pull requests of the stack a pull request belongs to, bottom first, answered with `pr-stack` (needs `canReviewBoard`). */
+	| { t: "pr-stack"; reqId: number; instanceId: string; number: number }
+	/** A pull request's own changes against the pull request below it in its stack (its base when it is the bottom), answered with `pr-own-diff` (needs `canReviewBoard`). */
+	| { t: "pr-own-diff"; reqId: number; instanceId: string; number: number }
+	/** The agent's notes per hunk of the board's files, answered with `review-notes` (needs `canReviewBoard`). */
+	| { t: "review-notes"; reqId: number; instanceId: string; query: ReviewNotesQuery }
 	/** Post a review with inline comments; answered with a `link` to it. Refused for sandboxed sessions (needs `canPrReview`). */
 	| { t: "pr-review"; reqId: number; instanceId: string; number: number; review: PrReviewInput }
 	/**
@@ -1256,6 +1268,8 @@ export type CompanionReply =
 			canScheduleCron?: boolean;
 			/** The companion answers `git-message` and `git-settings`. */
 			canGitFlow?: boolean;
+			/** The companion answers `pr-stack`, `pr-own-diff` and `review-notes` (the review board). */
+			canReviewBoard?: boolean;
 			/** The companion can start one prompt on several models in separate worktrees (`fanout-*` requests). */
 			canFanout?: boolean;
 			/** The companion can serve files of a session's repository for download. */
@@ -1364,6 +1378,9 @@ export type CompanionReply =
 	| { t: "github"; reqId: number; repo: string; items: GithubItem[] }
 	| { t: "github-item"; reqId: number; item: GithubItemDetail }
 	| { t: "pr-files"; reqId: number; head: string; files: PrFile[] }
+	| { t: "pr-stack"; reqId: number; stack: StackPr[] }
+	| { t: "pr-own-diff"; reqId: number; diff: PrOwnDiff }
+	| { t: "review-notes"; reqId: number; reply: ReviewNotesReply }
 	| ({ t: "ci-log"; reqId: number } & CiLogReport)
 	/** Where the uploaded file was saved: an absolute path on the computer. */
 	| { t: "uploaded"; reqId: number; path: string }
@@ -1564,6 +1581,8 @@ export interface CompanionSnapshot {
 	canScheduleCron: boolean;
 	/** The companion writes commit and pull request text, and keeps git worktree settings (`git-message`, `git-settings`). */
 	canGitFlow: boolean;
+	/** The companion answers `pr-stack`, `pr-own-diff` and `review-notes` (the review board). */
+	canReviewBoard: boolean;
 	/** The companion can start one prompt on several models in separate worktrees. */
 	canFanout: boolean;
 	/** The companion can serve files of a session's repository for download. */
@@ -1673,6 +1692,7 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	canSchedule: false,
 	canScheduleCron: false,
 	canGitFlow: false,
+	canReviewBoard: false,
 	canFanout: false,
 	canDownload: false,
 	canRun: false,
@@ -2289,6 +2309,30 @@ export class CompanionClient {
 		return { diff, truncated };
 	}
 
+	/** The pull requests of the stack `number` belongs to, bottom first (a lone pull request is a one-entry stack; needs `canReviewBoard` and `canPrReview`). */
+	async requestPrStack(instanceId: string, number: number): Promise<StackPr[]> {
+		return (await this.#call({ t: "pr-stack", instanceId, number }, "pr-stack", PR_REVIEW_TIMEOUT_MS)).stack;
+	}
+
+	/** A pull request's own changes: its head against the head of the pull request below it in the stack, or against its base. */
+	async requestPrOwnDiff(instanceId: string, number: number): Promise<PrOwnDiff> {
+		return (await this.#call({ t: "pr-own-diff", instanceId, number }, "pr-own-diff", PR_OWN_DIFF_TIMEOUT_MS)).diff;
+	}
+
+	/**
+	 * What the agent said about each hunk of the subject's files: quoted from the sessions that made the change, and, with
+	 * `generate`, written by a model for the hunks no session explains (needs `canReviewBoard`).
+	 */
+	async requestReviewNotes(instanceId: string, query: ReviewNotesQuery): Promise<ReviewNotesReply> {
+		return (
+			await this.#call(
+				{ t: "review-notes", instanceId, query },
+				"review-notes",
+				query.generate ? REVIEW_NOTES_GENERATE_TIMEOUT_MS : REVIEW_NOTES_TIMEOUT_MS,
+			)
+		).reply;
+	}
+
 	/** Post a review on GitHub; resolves with its URL. */
 	async submitPrReview(instanceId: string, number: number, review: PrReviewInput): Promise<string> {
 		return (await this.#call({ t: "pr-review", instanceId, number, review }, "link", PR_REVIEW_TIMEOUT_MS)).url;
@@ -2532,6 +2576,7 @@ export class CompanionClient {
 				canDownload: frame.canDownload ?? false,
 				canRun: frame.canRun ?? false,
 				canGitFlow: frame.canGitFlow ?? false,
+				canReviewBoard: frame.canReviewBoard ?? false,
 				canSearch: frame.canSearch ?? false,
 				canScratch: frame.canScratch ?? false,
 				canBackgroundStart: frame.canBackgroundStart ?? false,

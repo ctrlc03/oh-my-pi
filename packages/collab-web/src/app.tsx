@@ -27,6 +27,7 @@ import type { FanoutTarget } from "./components/shell/FanoutSheet";
 import { ConnectScreen } from "./components/shell/ConnectScreen";
 import { useEditPrompt } from "./components/shell/EditPromptSheet";
 import { useTurnChanges } from "./components/shell/TurnChangesSheet";
+import { useReviewBoard } from "./components/review-board/use-review-board";
 import { FileRestoreBar } from "./components/shell/FileRestoreBar";
 import { FileSheet } from "./components/shell/FileSheet";
 import { FixItHost } from "./components/shell/FixItHost";
@@ -671,7 +672,16 @@ function Session({
 	}, []);
 	const composerRef = useRef<ComposerHandle>(null);
 	const editPrompt = useEditPrompt(client, snap, composerRef);
-	const turnChanges = useTurnChanges(client, snap, sessionId, composerRef, true);
+	// The review board's companion: the computer that runs this session, when it can answer the board's requests.
+	const boardCompanion = useMemo(
+		() =>
+			companionClient !== null && hostId !== null
+				? { client: companionClient, instanceId: hostId, canBoard: computer?.snap.canReviewBoard === true }
+				: null,
+		[companionClient, hostId, computer?.snap.canReviewBoard],
+	);
+	const reviewBoard = useReviewBoard(client, snap, sessionId, boardCompanion, true);
+	const turnChanges = useTurnChanges(client, snap, sessionId, composerRef, true, reviewBoard.open);
 	const turnUndo = useTurnUndo(client, snap, composerRef);
 	const hidden = useHiddenMessages(sessionId, computer);
 	const canStashDraft = !snap.readOnly && snap.phase !== "ended";
@@ -1471,6 +1481,7 @@ function Session({
 					</div>
 					{editPrompt.sheet}
 					{turnChanges.sheet}
+					{reviewBoard.sheet}
 					{limitsOn && (
 						<LimitBar
 							limited={snap.state?.limited}
@@ -1635,6 +1646,7 @@ function Session({
 					onOpenQuiz={canQuizHere ? openStakesQuiz : null}
 					onSpar={canSparHere ? sparChanges : null}
 					onBakeoff={canBakeoffHere ? bakeoffChanges : null}
+					onOpenBoard={boardCompanion !== null ? () => reviewBoard.open({ view: "branch" }) : null}
 					onClose={() => setChangesOpen(false)}
 					initialTab={changesTab}
 				/>
@@ -1737,6 +1749,9 @@ function Session({
 					onQuizPr={canQuizHere ? quizPr : null}
 					onOpenQuiz={canQuizHere ? openStakesQuiz : null}
 					onSparPr={canSparHere ? sparPr : null}
+					onReviewBoard={
+						boardCompanion?.canBoard === true ? number => reviewBoard.open({ view: "pr", number }) : null
+					}
 					onClose={() => setGithubOpen(false)}
 				/>
 			)}

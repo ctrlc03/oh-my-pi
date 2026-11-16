@@ -9,7 +9,14 @@
 import type { BlueprintCommit, BlueprintExcerpt, BlueprintExcerptRef, BlueprintRef } from "@oh-my-pi/pi-wire/blueprint";
 import { QUIZ_MAX_PARTS, type QuizCreate, type QuizPart } from "@oh-my-pi/pi-wire/quiz";
 import type { BriefPart } from "./companion-quiz-agent";
-import { holdCommit, readBlob, releaseCommits, resolveTarget, stackBase } from "./companion-blueprint-git";
+import {
+	holdCommit,
+	readBlob,
+	releaseCommits,
+	type ResolvedTarget,
+	resolveTarget,
+	stackBase,
+} from "./companion-blueprint-git";
 import { checkCitations, readCitedFiles, type Side, Warnings } from "./companion-citations";
 import { assertRangeBudget, excerptOf, readExcerpts, splitLines } from "./companion-excerpt";
 import { partDiff } from "./companion-quiz-diff";
@@ -151,6 +158,24 @@ export interface ResolvePartsContext {
 }
 
 /**
+ * What a pull request changes is its head against `target.base`, the merge base with its base branch. A pull request
+ * stacked on the one below (its base branch is that one's head branch) shows its own changes only, whatever the
+ * branch below has become: its head against the merge base with the head of the one below.
+ * @throws Error when the stacked pull request shares no history with the one below or adds nothing to it.
+ */
+export async function ownBase(
+	root: string,
+	target: ResolvedTarget,
+	viewed: StackPr | null,
+	below: StackPr | undefined,
+	belowHead: BlueprintCommit | undefined,
+): Promise<BlueprintCommit | undefined> {
+	return below?.head && belowHead && viewed?.base === below.head
+		? await stackBase(root, target.head.commit, belowHead)
+		: target.base;
+}
+
+/**
  * The parts of a job as commits, held under private refs `<run id>/p<n>` until released ({@link releaseParts}): the pull
  * requests of a stack (a pull request stacked on the one below shows its own changes only), or the one resolved target.
  * @throws Error when there is nothing to compare, or a pull request has no base.
@@ -172,11 +197,7 @@ export async function resolveParts(context: ResolvePartsContext, run: Run, job: 
 		const target = await resolveTarget(job.root, { ref: `pr/${number}` });
 		const viewed = await source.view(number).catch(() => null);
 		const below = parts[parts.length - 1];
-		// A pull request stacked on the one below shows its own changes only, whatever the branch below has become.
-		const base =
-			below?.pr?.head && viewed?.base === below.pr.head
-				? await stackBase(job.root, target.head.commit, below.head)
-				: target.base;
+		const base = await ownBase(job.root, target, viewed, below?.pr, below?.head);
 		if (!base) throw new Error(`Could not find what pull request #${number} changes: it has no base.`);
 		const index = parts.length;
 		await holdCommit(job.root, `${run.id}/p${index}`, "head", target.head.commit);

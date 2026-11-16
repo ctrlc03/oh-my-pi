@@ -343,6 +343,12 @@ export async function resolveTarget(root: string, request: TargetRequest): Promi
 	};
 }
 
+/** The head of a pull request (fetched into its private ref), without its base: for a pull request only another's diff is taken against. */
+export async function resolvePrHead(root: string, number: number): Promise<BlueprintCommit> {
+	const fetched = await fetchPullRequest(root, number, undefined);
+	return { commit: fetched.head, ref: `pr/${number}`, subject: await commitSubject(root, fetched.head) };
+}
+
 async function firstResolving(root: string, revs: string[]): Promise<string | undefined> {
 	for (const rev of revs) if ((await resolveCommit(root, rev)) !== null) return rev;
 	return undefined;

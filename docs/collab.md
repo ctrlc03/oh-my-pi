@@ -193,6 +193,20 @@ The web client shows a *Changes* action on every prompt (and in the long-press b
 
 In the TUI, `/diff [turn [<n>] | session]` prints the diff (default: the latest turn; `turn <n>` counts prompts from 1) and `/receipts` lists the receipts. Both are host-only commands.
 
+### The review board
+
+The review board is a four-column view of a change set: the old code, the new code, the agent's reasoning for each hunk, and your comments. On a sheet narrower than about 1040px it drops to three columns (a unified diff, the note and the comments), and on a phone each hunk stacks its diff, note and comments. It opens on:
+
+- **A pull request**, as one part of its stack: chips list the stack bottom first, and each PR shows only its own changes against the PR below it (the bottom one against its base). The companion answers `pr-stack` and `pr-own-diff` from the same stack detection as quizzes, and needs `gh` like the other pull request views.
+- **The branch** against its merge-base, working tree included (the branch review's data).
+- **The session** or one of its turns (the *Changes* sheet's data; needs `turn-diff`).
+
+The agent's reasoning comes first from the sessions that made the change: for each hunk the companion (`review-notes`) finds the edit that wrote it, in the session or in one of its subagents, and quotes what the agent wrote just before that edit, plus its intent label. Thinking is never quoted. A quote that says little about the change is marked thin. *Explain N hunks* has a model write notes for the hunks with no quote or a thin one, using the same headless `omp -p` run as commit messages, with any quote as context. Each note says where it came from: *from session · title · turn N*, *generated from session …* or *generated*. Notes are cached under the companion's config (`cache/review-notes`) for the PR head or diff, so reopening the board costs nothing.
+
+Select lines in the diff, or use *Comment on this hunk*, to write a comment. Comments are kept in the browser per session and subject. *Queue as follow-up* or *Steer now* sends them to the session the board was opened from, as one prompt. The prompt names the PR and its stack position, the branch or the turn, and quotes each comment's lines, the diff excerpt and the note it replies to. Posting to GitHub stays with the pull request's confirm-first *Review* sheet.
+
+The board opens from a pull request's page in the GitHub sheet, from the *Changes* sheet (*Open review board*), from the branch review, and from the command palette: *Review board: this session*, *Review board: branch* and *Review board: PR…*.
+
 ### What fills the context
 
 A writer on a host that advertises `context-items` in `welcome.features` can see what fills the host's context window and prune items (the same ranking and pruning as the host's `/context` and `/context prune`, see [Compaction](./compaction.md#pruning-chosen-items-context)):

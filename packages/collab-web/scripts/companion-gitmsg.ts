@@ -36,7 +36,7 @@ const MAX_TITLE_CHARS = 120;
 const MAX_BODY_CHARS = 8_000;
 const MAX_NOTE_CHARS = 300;
 /** Lockfiles and generated bundles add bytes, not meaning. */
-const NOISE_FILE_RE =
+export const NOISE_FILE_RE =
 	/(?:^|\/)(?:[^/]*\.lock|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|[^/]*\.min\.(?:js|css))$/;
 
 /** The `smol` role, written `@smol` so it resolves to the role's default even when settings do not configure it. */

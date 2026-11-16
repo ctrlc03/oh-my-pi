@@ -39,7 +39,7 @@ export function viewKey(sessionId: string, view: TurnChangesView): string {
 }
 
 /** A file as the reader saw it: a change to it since (the latest turn is still running) clears its viewed mark. */
-export function fileSignature(file: TurnDiffFile): string {
+export function fileSignature(file: Omit<SignedFile, "path">): string {
 	return `${file.status}:${file.added ?? "-"}:${file.removed ?? "-"}:${file.diff.length}`;
 }
 
@@ -80,8 +80,15 @@ export function saveViewed(key: string, files: Readonly<Record<string, string>>)
 	writeJson(VIEWED_KEY, next.length === 0 ? null : next.slice(0, MAX_VIEWS));
 }
 
+/** What a viewed mark needs of a file: a turn's file or a review-board file. */
+export type SignedFile = Pick<TurnDiffFile, "path" | "diff"> & {
+	status: string;
+	added: number | null;
+	removed: number | null;
+};
+
 /** Paths among `files` whose viewed mark still matches what the file looks like now. */
-export function viewedPaths(files: readonly TurnDiffFile[], marks: Readonly<Record<string, string>>): Set<string> {
+export function viewedPaths(files: readonly SignedFile[], marks: Readonly<Record<string, string>>): Set<string> {
 	const viewed = new Set<string>();
 	for (const file of files) {
 		if (Object.hasOwn(marks, file.path) && marks[file.path] === fileSignature(file)) viewed.add(file.path);

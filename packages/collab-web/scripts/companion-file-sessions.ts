@@ -26,7 +26,7 @@ const MAX_RESULTS = 20;
 /** Files scanned at once. */
 const SCAN_CONCURRENCY = 4;
 /** Bytes of one session file scanned before giving up on it. */
-const MAX_FILE_BYTES = 128 * 1024 * 1024;
+export const MAX_FILE_BYTES = 128 * 1024 * 1024;
 /** Sessions not scanned by this time are left out. */
 const DEADLINE_MS = 10_000;
 const MAX_PATH_CHARS = 4096;
@@ -87,7 +87,7 @@ export async function repoRelativeFocus(cwd: string, focus: unknown): Promise<un
 }
 
 /** Tool-call paths (as written) of an edit or write call. */
-function callPaths(name: string, args: Record<string, unknown>): string[] {
+export function callPaths(name: string, args: Record<string, unknown>): string[] {
 	const paths: string[] = [];
 	const input = str(args.input) ?? str(args._input);
 	if (input) paths.push(...inputPaths(input));
@@ -103,7 +103,7 @@ function callPaths(name: string, args: Record<string, unknown>): string[] {
 }
 
 /** Lines of a file, streamed; stops after about `maxBytes`. */
-async function* fileLines(file: string, maxBytes: number): AsyncGenerator<string> {
+export async function* fileLines(file: string, maxBytes: number): AsyncGenerator<string> {
 	const decoder = new TextDecoder();
 	let rest = "";
 	let read = 0;
@@ -184,13 +184,23 @@ export interface FileSessionsOptions {
 	path: unknown;
 }
 
-/** Sessions of the file's repository that changed it, newest activity first. */
-export async function findFileSessions(options: FileSessionsOptions): Promise<FoundSession[]> {
-	const { root, abs, rel } = await resolveInRepo(options.cwd, options.path);
-	if (rel === "") throw new Error("not a file");
-	const deadline = Date.now() + DEADLINE_MS;
+/** A session of the repository: its file, and its working directory as the header spells it and with symlinks resolved. */
+export interface RepoSession {
+	found: FoundSession;
+	cwd: string;
+	realCwd: string;
+}
 
-	const candidates: { found: FoundSession; cwd: string; realCwd: string }[] = [];
+/**
+ * The recent sessions (omp's, the vendor agents') that ran inside the repository at `roots` (its checkouts: the
+ * primary one and its linked worktrees), newest first.
+ */
+export async function repoSessions(
+	options: Pick<FileSessionsOptions, "sessionsDir" | "extraSessionsDirs">,
+	roots: string | readonly string[],
+): Promise<RepoSession[]> {
+	const inside = typeof roots === "string" ? [roots] : roots;
+	const candidates: RepoSession[] = [];
 	const realCwds = new Map<string, string>();
 	const files = [
 		...(await recentSessionFiles(options.sessionsDir, HEADER_SCAN_FILES)),
@@ -216,7 +226,7 @@ export async function findFileSessions(options: FileSessionsOptions): Promise<Fo
 			realCwd = await fs.realpath(sessionCwd).catch(() => sessionCwd);
 			realCwds.set(sessionCwd, realCwd);
 		}
-		if (!isInside(root, realCwd)) continue;
+		if (!inside.some(root => isInside(root, realCwd))) continue;
 		candidates.push({
 			found: {
 				sessionId: head.id,
@@ -230,6 +240,15 @@ export async function findFileSessions(options: FileSessionsOptions): Promise<Fo
 			realCwd,
 		});
 	}
+	return candidates;
+}
+
+/** Sessions of the file's repository that changed it, newest activity first. */
+export async function findFileSessions(options: FileSessionsOptions): Promise<FoundSession[]> {
+	const { root, abs, rel } = await resolveInRepo(options.cwd, options.path);
+	if (rel === "") throw new Error("not a file");
+	const deadline = Date.now() + DEADLINE_MS;
+	const candidates = await repoSessions(options, root);
 
 	const hits: FoundSession[] = [];
 	for (let i = 0; i < candidates.length && hits.length < MAX_RESULTS && Date.now() < deadline; i += SCAN_CONCURRENCY) {

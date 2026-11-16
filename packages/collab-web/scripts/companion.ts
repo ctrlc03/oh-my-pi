@@ -171,6 +171,10 @@ import {
 import { checkNumber, checkRepo, ciFailures, repoFolders, repoSessions } from "./companion-cilog";
 import { githubItem, githubList } from "./companion-github";
 import { createPrReview } from "./companion-prreview";
+import { createPrStack } from "./companion-pr-stack";
+import { headlessRunner } from "./companion-headless";
+import { createReviewCache } from "./companion-review-cache";
+import { createReviewNotes } from "./companion-review-notes";
 import { buildInbox } from "./companion-inbox";
 import { consumeInvite, type DeviceRecord, DeviceRegistry, issueInvite, parseDevices } from "./companion-devices";
 import { installService, managedBy, openCommand, pairCommand, uninstallService } from "./companion-service";
@@ -480,6 +484,21 @@ const voice = createVoice(path.join(configDir, "agent", "config.yml"));
 /** Scripts and build targets started from the app; their output stays until the companion restarts. */
 const runs = createRunManager();
 const prReview = createPrReview();
+/** One model run for a board's notes (one file's hunks). */
+const REVIEW_NOTES_RUN_TIMEOUT_MS = 90_000;
+const prStack = createPrStack();
+/** Notes per hunk for the review board: quoted from sessions, or written by the same cheap model as generated commit messages. */
+const reviewNotes = createReviewNotes({
+	cache: createReviewCache(path.join(configDir, "cache", "review-notes")),
+	sessionsDirs: () => [sessionsDir, ...personal.sessionDirs().slice(1)],
+	generator: {
+		available: async () => (path.isAbsolute(ompBin) ? await Bun.file(ompBin).exists() : Bun.which(ompBin) !== null),
+		run: headlessRunner(REVIEW_NOTES_RUN_TIMEOUT_MS),
+		ompBin,
+		model: () => gitFlow.settings.messageModel,
+	},
+	now: Date.now,
+});
 
 // ── startup ──────────────────────────────────────────────────────────────────
 
@@ -1233,6 +1252,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canScheduleCron: extras.canStart,
 		canFanout: extras.canStart,
 		canGitFlow: true,
+		canReviewBoard: true,
 		canRun: process.platform !== "win32",
 		canDownload: true,
 		canSearch: true,
@@ -2836,6 +2856,32 @@ room.onFrame = (frame, fromPeer) => {
 					frame.path,
 				);
 				return { t: "diff", reqId: frame.reqId, diff, truncated };
+			});
+			return;
+		case "pr-stack":
+			respond(frame.reqId, async () => ({
+				t: "pr-stack",
+				reqId: frame.reqId,
+				stack: await prStack.stack(await sessionCwd(frame.instanceId), frame.number),
+			}));
+			return;
+		case "pr-own-diff":
+			respond(frame.reqId, async () => ({
+				t: "pr-own-diff",
+				reqId: frame.reqId,
+				diff: await prStack.ownDiff(await sessionCwd(frame.instanceId), frame.number),
+			}));
+			return;
+		case "review-notes":
+			respond(frame.reqId, async () => {
+				const session = await listedSession(frame.instanceId);
+				const reply = await reviewNotes.notes({
+					cwd: session.cwd,
+					sessionId: session.sessionId,
+					sessionTitle: session.sessionName ?? null,
+					query: frame.query,
+				});
+				return { t: "review-notes", reqId: frame.reqId, reply };
 			});
 			return;
 		case "pr-review":

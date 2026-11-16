@@ -85,6 +85,68 @@ export function sameHunk(rows: readonly DiffRow[], a: number, b: number): boolea
 	return true;
 }
 
+/** The rows a reader has picked in one file's diff: `anchor` is the first tap, `head` the last (either order). */
+export interface RowSelection {
+	anchor: number;
+	head: number;
+}
+
+/**
+ * The selection after a tap on row `i`: a first tap picks it, a second (or a shift-click) in the same hunk extends
+ * the range, tapping the lone selected row again clears it (null), and a tap in another hunk starts afresh.
+ * `fresh` is a new selection, whose draft text starts over.
+ */
+export function pickRow(
+	rows: readonly DiffRow[],
+	sel: RowSelection | null,
+	i: number,
+	extend: boolean,
+): { sel: RowSelection | null; fresh: boolean } {
+	if (sel === null) return { sel: { anchor: i, head: i }, fresh: true };
+	const single = sel.anchor === sel.head;
+	if (single && !extend && i === sel.anchor) return { sel: null, fresh: true };
+	if ((single || extend) && sameHunk(rows, sel.anchor, i))
+		return { sel: { anchor: sel.anchor, head: i }, fresh: false };
+	return { sel: { anchor: i, head: i }, fresh: true };
+}
+
+/** Where a file's comments sit among its diff rows. */
+export interface CommentLayout {
+	/** Comments by the row they end on. */
+	after: Record<number, Array<[string, ReviewComment]>>;
+	/** Rows some comment covers. */
+	marked: Record<number, true>;
+	/** Comments whose lines the diff no longer has (the file changed since): they stay reachable. */
+	orphans: Array<[string, ReviewComment]>;
+}
+
+export function commentLayout(
+	rows: readonly DiffRow[],
+	comments: Readonly<Record<string, ReviewComment>> | undefined,
+	scope: ReviewScope,
+	path: string,
+): CommentLayout {
+	const index: Record<string, number> = {};
+	rows.forEach((row, i) => {
+		if (isLineRow(row)) index[rowKey(row)] = i;
+	});
+	const after: CommentLayout["after"] = {};
+	const marked: CommentLayout["marked"] = {};
+	const orphans: CommentLayout["orphans"] = [];
+	for (const [id, c] of Object.entries(comments ?? {})) {
+		if (c.scope !== scope || c.path !== path) continue;
+		const from = Object.hasOwn(index, c.from) ? index[c.from] : undefined;
+		const to = Object.hasOwn(index, c.to) ? index[c.to] : undefined;
+		if (from === undefined || to === undefined) {
+			orphans.push([id, c]);
+			continue;
+		}
+		(after[to] ??= []).push([id, c]);
+		for (let i = from; i <= to; i++) marked[i] = true;
+	}
+	return { after, marked, orphans };
+}
+
 /** `tree`: working-tree tab; `branch`: branch-review tab; `pr`: a GitHub pull request's files; `turn`: what the agent changed in a turn or a session. */
 export type ReviewScope = "tree" | "branch" | "pr" | "turn";
 
@@ -150,10 +212,15 @@ function fenceFor(lines: readonly string[]): string {
 	return "`".repeat(longest + 1);
 }
 
-/** One prompt for the whole review: per file, each comment's lines quoted, then what to change. */
+/**
+ * One prompt for the whole review: per file, each comment's lines quoted, then what to change.
+ * `context` may name what a comment replies to (the agent's note on the hunk); it is quoted between the lines and
+ * the comment, which is then introduced as the reviewer's.
+ */
 export function buildReviewPrompt(
 	comments: readonly ReviewComment[],
 	heading = "Review comments on the changes:",
+	context?: (comment: ReviewComment) => string | null,
 ): string {
 	const byPath = new Map<string, ReviewComment[]>();
 	for (const c of comments) {
@@ -166,7 +233,9 @@ export function buildReviewPrompt(
 		group.sort((a, b) => a.start - b.start || a.end - b.end);
 		for (const c of group) {
 			const fence = fenceFor(c.lines);
-			blocks.push(`${path}:${lineLabel(c)}\n${fence}diff\n${c.lines.join("\n")}\n${fence}\n${c.text.trim()}`);
+			const replyTo = context?.(c) ?? null;
+			const body = replyTo === null ? c.text.trim() : `${replyTo}\n\nMy comment:\n${c.text.trim()}`;
+			blocks.push(`${path}:${lineLabel(c)}\n${fence}diff\n${c.lines.join("\n")}\n${fence}\n${body}`);
 		}
 	}
 	return blocks.join("\n\n");

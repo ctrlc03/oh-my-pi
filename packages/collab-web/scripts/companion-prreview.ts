@@ -30,8 +30,8 @@ const GH_DIFF_TIMEOUT_MS = 60_000;
 const GH_WRITE_TIMEOUT_MS = 60_000;
 const MAX_ERROR_CHARS = 800;
 /** GitHub lists at most 3000 files of a pull request. */
-const MAX_FILES = 3000;
-const MAX_FILE_DIFF_CHARS = 500_000;
+export const MAX_FILES = 3000;
+export const MAX_FILE_DIFF_CHARS = 500_000;
 const MAX_BODY_CHARS = 65_000;
 const MAX_REVIEW_COMMENTS = 100;
 const MAX_PATH_CHARS = 1024;

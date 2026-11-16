@@ -1,4 +1,4 @@
-import { ChevronRight, GraduationCap, Swords, Trophy, X } from "lucide-react";
+import { ChevronRight, Columns4, GraduationCap, Swords, Trophy, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import type { FileChange } from "../../lib/changes";
@@ -48,6 +48,8 @@ export interface ChangesSheetProps {
 	onSpar?: (() => void) | null;
 	/** Start a bake-off on this session's changes; null unless the paired computer can run bake-offs. */
 	onBakeoff?: (() => void) | null;
+	/** Open the review board on the branch; null unless the session has a companion host. */
+	onOpenBoard?: (() => void) | null;
 	onClose(): void;
 	/** Open on the branch review (commit, push, pull request), e.g. after keeping a model comparison's winner. */
 	initialTab?: "branch";
@@ -69,6 +71,7 @@ export function ChangesSheet({
 	onOpenQuiz,
 	onSpar,
 	onBakeoff,
+	onOpenBoard,
 	onClose,
 	initialTab,
 }: ChangesSheetProps): ReactNode {
@@ -122,6 +125,11 @@ export function ChangesSheet({
 					{onBakeoff && (
 						<button type="button" className="sh-btn" onClick={onBakeoff}>
 							<Trophy size={14} /> Bake off this change
+						</button>
+					)}
+					{onOpenBoard && tab === "branch" && (
+						<button type="button" className="sh-btn" onClick={onOpenBoard}>
+							<Columns4 size={14} /> Review board
 						</button>
 					)}
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">

@@ -24,6 +24,8 @@ export interface StackPr {
 	/** Base branch. */
 	base: string;
 	url?: string;
+	/** `open`, `closed` or `merged`; absent when the lookup did not say. */
+	state?: "open" | "closed" | "merged";
 	body?: string;
 }
 
@@ -43,7 +45,7 @@ export const MAX_STACK = QUIZ_MAX_PARTS;
 const MAX_LISTED = MAX_STACK * 3;
 const GH_TIMEOUT_MS = 15_000;
 const LIST_LIMIT = 30;
-const PR_FIELDS = "number,title,headRefName,baseRefName,url";
+const PR_FIELDS = "number,title,headRefName,baseRefName,url,state";
 const MAX_BODY_SCAN_LINES = 2_000;
 
 // ── stack lines of a PR body ─────────────────────────────────────────────────
@@ -258,11 +260,11 @@ async function viewSeed(seed: number, source: PrSource): Promise<StackPr> {
  * a window of that many PRs from the bottom, moved up just far enough to keep the seed in it. A seed that is not
  * part of a stack comes back alone with source `none`. Rejects only when the seed itself cannot be read.
  */
-export async function detectStack(
+export async function detectStackPrs(
 	seed: number,
 	source: PrSource,
 	options: { defaultBranch?: string } = {},
-): Promise<{ stack: QuizStackPr[]; source: QuizStackSource }> {
+): Promise<{ stack: StackPr[]; source: QuizStackSource }> {
 	const seedPr = await viewSeed(seed, source);
 	const isDefault = (branch: string) =>
 		!branch || branch === "main" || branch === "master" || branch === options.defaultBranch;
@@ -270,7 +272,7 @@ export async function detectStack(
 	const { below, above } = await walkBranches(seedPr, source, isDefault);
 	if (below.length + above.length > 0) {
 		const chain = [...below.reverse(), seedPr, ...above];
-		return { stack: windowAround(chain, below.length).map(toQuizPr), source: "branches" };
+		return { stack: windowAround(chain, below.length), source: "branches" };
 	}
 
 	const listed = parseStackLines(seedPr.body ?? "", seed);
@@ -289,17 +291,27 @@ export async function detectStack(
 		const found = orderAll(resolved.filter((pr): pr is StackPr => pr !== null));
 		if (found.length > 1) {
 			const index = found.findIndex(pr => pr.number === seed);
-			return { stack: windowAround(found, index).map(toQuizPr), source: "body" };
+			return { stack: windowAround(found, index), source: "body" };
 		}
 	}
-	return { stack: [toQuizPr(seedPr)], source: "none" };
+	return { stack: [seedPr], source: "none" };
+}
+
+/** {@link detectStackPrs} as the quiz stores it: no body, no state. */
+export async function detectStack(
+	seed: number,
+	source: PrSource,
+	options: { defaultBranch?: string } = {},
+): Promise<{ stack: QuizStackPr[]; source: QuizStackSource }> {
+	const { stack, source: found } = await detectStackPrs(seed, source, options);
+	return { stack: stack.map(toQuizPr), source: found };
 }
 
 // ── gh ───────────────────────────────────────────────────────────────────────
 
 function parsePr(value: unknown): StackPr | null {
 	if (!isRecord(value)) return null;
-	const { number, title, headRefName, baseRefName, url, body } = value;
+	const { number, title, headRefName, baseRefName, url, body, state } = value;
 	if (typeof number !== "number" || typeof headRefName !== "string" || typeof baseRefName !== "string") return null;
 	const pr: StackPr = {
 		number,
@@ -309,6 +321,8 @@ function parsePr(value: unknown): StackPr | null {
 	};
 	if (typeof url === "string") pr.url = url;
 	if (typeof body === "string") pr.body = body;
+	const lowered = typeof state === "string" ? state.toLowerCase() : "";
+	if (lowered === "open" || lowered === "closed" || lowered === "merged") pr.state = lowered;
 	return pr;
 }
 

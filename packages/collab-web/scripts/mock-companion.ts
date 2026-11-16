@@ -35,7 +35,9 @@
  * running and a failed one; new ones from the form tick to a finished verdict. `--bakeoff-judge native|local|endpoint|fallback|none|unreachable`
  * (default `endpoint`) is what the second opinion would use, and `--bakeoff-stage-ms` slows the ticks. `run-targets` lists a canned test
  * and benchmark for the bake-off form. `browse-folders` (Start session → Choose another folder…) runs the real browsing code over a throw-away
- * home folder in `<--dir>/home` (./mock-start). Every other request is refused. Ctrl+C stops it.
+ * home folder in `<--dir>/home` (./mock-start). The review board (./mock-review-board) answers `pr-stack`, `pr-own-diff` (the quiz stack's #2243-#2245
+ * have their own diffs against the PR below; any other number is alone) and `review-notes` (a session quote for a file's first hunk, a weak
+ * one for its second, and with *Explain* a model's words for the rest). Every other request is refused. Ctrl+C stops it.
  *
  * `--personal fresh|enabled` (default `off`: nothing is advertised or answered, as before) adds the Personal agent (./mock-personal): `fresh`
  * is advertised and not set up (Settings → Personal agent → Set up), `enabled` is set up with sample memories, About you, proposals,
@@ -98,6 +100,7 @@ import { createMockPersonal } from "./mock-personal";
 import { TOPIC_CWD, TOPIC_SESSION_ID } from "./fixture-topic";
 import { createMockQuiz, mockStackPrs } from "./mock-quiz";
 import { createMockSearch } from "./mock-search";
+import { createMockReviewBoard } from "./mock-review-board";
 import { createMockSpar } from "./mock-spar";
 import { createMockStakes } from "./mock-stakes";
 import { createMockStart } from "./mock-start";
@@ -312,6 +315,8 @@ const MOCK_PRS: GithubItem[] = (
 	updatedAt: now - HOUR,
 	url: `https://github.com/example/app/pull/${pr.number}`,
 }));
+/** The review board: a stack's pull requests (and any other one alone) with their own diffs, and notes per hunk. */
+const reviewBoard = createMockReviewBoard(number => MOCK_PRS.find(pr => pr.number === number)?.title);
 /** The all-sessions list and message search, over canned sessions. */
 const search = createMockSearch(hosts, () => [
 	...foreign.searchable(),
@@ -521,6 +526,7 @@ function hostsFrame(): CompanionReply {
 		...fanout.capabilities,
 		...starts.capabilities,
 		...search.capabilities,
+		...reviewBoard.capabilities,
 		...blueprint.capabilities,
 		...quiz.capabilities,
 		...spar.capabilities,
@@ -653,6 +659,15 @@ socket.onFrame = (frame, fromPeer) => {
 		);
 	else if (frame.t === "run-targets")
 		socket.send({ t: "run-targets", reqId: frame.reqId, targets: MOCK_RUN_TARGETS }, fromPeer);
+	else if (reviewBoard.handles(frame))
+		void reviewBoard.answer(frame).then(
+			reply => socket.send(reply, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
 	else if (stakes.handles(frame))
 		void stakes.answer(frame, `device-${fromPeer}`).then(
 			reply => socket.send(reply, fromPeer),

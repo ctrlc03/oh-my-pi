@@ -1,0 +1,639 @@
+/* ---- review board: old code | new code | the agent's reasoning | the reviewer's comments, per hunk ---- */
+
+.rb-title {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.rb-title-subject {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-weight: 400;
+	color: var(--fg-muted);
+}
+
+/* ---- subject: what is being reviewed ---- */
+.rb-subject {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.rb-subject-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+
+.rb-turn-select {
+	flex: 1;
+	min-width: 0;
+	max-width: 420px;
+}
+
+.rb-stack {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}
+
+.rb-chips {
+	display: flex;
+	flex: 1;
+	gap: 6px;
+	min-width: 0;
+	margin: 0;
+	padding: 2px;
+	overflow-x: auto;
+	list-style: none;
+}
+
+.rb-chip {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 32px;
+	max-width: 300px;
+	padding: 0 10px 0 6px;
+	font: 400 12.5px / 1 var(--font-ui);
+	color: var(--fg);
+	white-space: nowrap;
+	background: transparent;
+	border: 1px solid var(--border-strong);
+	border-radius: 16px;
+	cursor: pointer;
+}
+
+.rb-chip:hover {
+	background: var(--hover);
+}
+
+.rb-chip[aria-current="true"] {
+	background: var(--accent-muted);
+	border-color: var(--accent);
+}
+
+.rb-chip-pos {
+	display: grid;
+	place-items: center;
+	min-width: 18px;
+	height: 18px;
+	font-size: 11px;
+	color: var(--fg-muted);
+	background: color-mix(in srgb, var(--fg-faint) 18%, transparent);
+	border-radius: 9px;
+}
+
+.rb-chip-num {
+	font-family: var(--font-mono);
+	color: var(--fg-muted);
+}
+
+.rb-chip-title {
+	min-width: 0;
+	max-width: 150px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.rb-chip-size {
+	font: 400 11.5px / 1 var(--font-mono);
+}
+
+.rb-state-open {
+	color: var(--ok);
+}
+
+.rb-state-merged {
+	color: var(--accent);
+}
+
+.rb-state-closed {
+	color: var(--err);
+}
+
+.rb-against {
+	font-size: 12px;
+	color: var(--fg-muted);
+}
+
+.rb-working {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--fg-muted);
+}
+
+.rb-error {
+	color: var(--err);
+}
+
+/* ---- picking a pull request ---- */
+.rb-picker {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 10px;
+	min-height: 0;
+	overflow-y: auto;
+}
+
+.rb-picker-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+
+.rb-picker-number {
+	display: flex;
+	gap: 6px;
+	margin-left: auto;
+}
+
+.rb-picker-number .sh-input {
+	width: 130px;
+}
+
+.rb-picker-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.rb-picker-item {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-height: 44px;
+	padding: 6px 10px;
+	font: 400 13.5px / 1.3 var(--font-ui);
+	color: var(--fg);
+	text-align: left;
+	background: transparent;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	cursor: pointer;
+}
+
+.rb-picker-item:hover {
+	background: var(--hover);
+}
+
+.rb-picker-title {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.rb-picker-meta {
+	font-size: 12px;
+	color: var(--fg-faint);
+}
+
+/* ---- the board ---- */
+.rb-pane {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 8px;
+	min-height: 0;
+	--rb-colh: 30px;
+	--rb-fileh: 40px;
+}
+
+.rb-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 10px;
+}
+
+.rb-toolbar-fill {
+	flex: 1;
+}
+
+.rb-summary {
+	font: 400 12.5px / 1.4 var(--font-mono);
+	color: var(--fg-muted);
+}
+
+.rb-notice-line {
+	margin: 0;
+}
+
+.rb-main {
+	position: relative;
+	display: flex;
+	flex: 1;
+	min-height: 0;
+}
+
+/* The board scrolls; its column heads, file heads and per-hunk cells stick inside it. */
+.rb-body {
+	flex: 1;
+	min-width: 0;
+	padding-bottom: 8px;
+	overflow: auto;
+	overscroll-behavior: contain;
+}
+
+.rb-body[data-layout="four"] {
+	--rb-cols: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 0.8fr);
+}
+
+.rb-body[data-layout="three"] {
+	--rb-cols: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.rb-body[data-layout="stacked"] {
+	--rb-cols: minmax(0, 1fr);
+	--rb-colh: 0px;
+}
+
+.rb-colheads {
+	position: sticky;
+	top: 0;
+	z-index: 4;
+	display: grid;
+	grid-template-columns: var(--rb-cols);
+	height: var(--rb-colh);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--fg-faint);
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.rb-colhead {
+	display: flex;
+	align-items: center;
+	padding: 0 10px;
+	border-left: 1px solid var(--border);
+}
+
+.rb-colhead:first-child {
+	border-left: 0;
+}
+
+/* Four columns: "Old" and "New" each head one half of the code cell. */
+.rb-body[data-layout="four"] .rb-colheads {
+	grid-template-columns: var(--rb-cols);
+}
+
+.rb-file {
+	margin-bottom: 12px;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.rb-file[data-viewed] .sh-change-head {
+	opacity: 0.55;
+}
+
+.rb-file-head {
+	position: sticky;
+	top: var(--rb-colh);
+	z-index: 3;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	height: var(--rb-fileh);
+	padding: 0 6px 0 0;
+	background: var(--bg-raised);
+	border-bottom: 1px solid var(--border);
+	border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.rb-file-head .sh-change-head {
+	flex: 1;
+	min-width: 0;
+}
+
+.rb-file-count {
+	padding: 1px 7px;
+	font-size: 11px;
+	color: var(--accent);
+	background: var(--accent-muted);
+	border-radius: 9px;
+}
+
+.rb-hunk {
+	display: grid;
+	grid-template-columns: var(--rb-cols);
+	border-top: 1px solid var(--border);
+}
+
+.rb-file-head + .rb-hunk {
+	border-top: 0;
+}
+
+.rb-hunk[data-layout="four"] .rb-code-cell {
+	grid-column: 1 / 3;
+}
+
+.rb-cell {
+	min-width: 0;
+}
+
+.rb-note-cell,
+.rb-comments-cell {
+	border-left: 1px solid var(--border);
+}
+
+/* A long hunk keeps its note and comments in view while its code scrolls past. */
+.rb-sticky {
+	position: sticky;
+	top: calc(var(--rb-colh) + var(--rb-fileh) + 6px);
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	box-sizing: border-box;
+	max-height: calc(var(--viewport-height, 100vh) * 0.6);
+	padding: 8px 10px;
+	overflow-y: auto;
+}
+
+.rb-cell-label {
+	display: none;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--fg-faint);
+}
+
+.rb-code {
+	height: 100%;
+	padding: 0;
+	background: transparent;
+	border: 0;
+	border-radius: 0;
+}
+
+.rb-code .sh-file-code {
+	color: var(--fg);
+}
+
+.rb-hunk-head {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	background: color-mix(in srgb, var(--fg-faint) 8%, transparent);
+}
+
+.rb-sign {
+	user-select: none;
+}
+
+.rb-note {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 8px 10px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	font: 400 13px / 1.45 var(--font-ui);
+}
+
+.rb-note-source {
+	font-size: 11.5px;
+	color: var(--accent);
+}
+
+.rb-note[data-source="generated"] .rb-note-source {
+	color: var(--fg-faint);
+}
+
+.rb-note-intent {
+	font-weight: 600;
+}
+
+.rb-note-text {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.rb-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	font-size: 12.5px;
+	color: var(--fg-faint);
+}
+
+.rb-hint {
+	font-size: 12px;
+	color: var(--fg-faint);
+}
+
+.rb-hunk-comment {
+	align-self: flex-start;
+}
+
+.rb-comments-cell .sh-udiff-note {
+	position: static;
+	width: auto;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.rb-orphans {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 8px 10px;
+	border-top: 1px solid var(--border);
+}
+
+.rb-orphans-title {
+	font-size: 12px;
+	color: var(--fg-faint);
+}
+
+.rb-orphans .sh-udiff-note {
+	position: static;
+	width: auto;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.rb-notice {
+	margin: 0;
+	padding: 8px 10px;
+	font: 400 12px / 1.5 var(--font-mono);
+	white-space: pre-wrap;
+	color: var(--fg-muted);
+}
+
+/* ---- the file list: a drawer over the board ---- */
+.rb-scrim {
+	position: absolute;
+	inset: 0;
+	z-index: 5;
+	padding: 0;
+	background: rgba(0, 0, 0, 0.35);
+	border: 0;
+	cursor: default;
+}
+
+.rb-rail {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	z-index: 6;
+	display: flex;
+	flex-direction: column;
+	width: min(340px, 88%);
+	overflow-y: auto;
+	background: var(--bg-raised);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow-card);
+}
+
+.rb-rail ul {
+	margin: 0;
+	padding: 4px;
+	list-style: none;
+}
+
+.rb-rail-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 6px 6px 6px 12px;
+	font-weight: 600;
+	border-bottom: 1px solid var(--border);
+}
+
+.rb-rail-file {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	min-height: 36px;
+	padding: 4px 8px;
+	font: 400 12.5px / 1.3 var(--font-mono);
+	color: var(--fg);
+	text-align: left;
+	background: transparent;
+	border: 0;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+}
+
+.rb-rail-file:hover {
+	background: var(--hover);
+}
+
+.rb-rail-file[data-viewed] {
+	opacity: 0.55;
+}
+
+.rb-rail-file .sh-change-path {
+	flex: 1;
+	min-width: 0;
+}
+
+/* ---- the send bar ---- */
+.rb-send {
+	position: static;
+	flex-wrap: wrap;
+}
+
+/* ---- stacked: per hunk the unified diff, then the agent's note, then the comments ---- */
+.rb-hunk[data-layout="stacked"] .rb-note-cell,
+.rb-hunk[data-layout="stacked"] .rb-comments-cell {
+	border-top: 1px solid var(--border);
+	border-left: 0;
+}
+
+.rb-hunk[data-layout="stacked"] .rb-sticky {
+	position: static;
+	max-height: none;
+	overflow: visible;
+}
+
+.rb-hunk[data-layout="stacked"] .rb-cell-label {
+	display: block;
+}
+
+@media (max-width: 640px) {
+	.rb-hunk-comment,
+	.rb-send .sh-btn,
+	.rb-toolbar .sh-btn,
+	.rb-note .sh-btn,
+	.rb-empty .sh-btn,
+	.rb-chip {
+		min-height: 44px;
+	}
+
+	.rb-chip {
+		height: 44px;
+	}
+
+	.rb-picker-number {
+		width: 100%;
+		margin-left: 0;
+	}
+
+	.rb-picker-number .sh-input {
+		flex: 1;
+	}
+}
+
+/* Phones: the board gets the room, so the chrome around it shrinks to one line each. */
+@media (max-width: 640px) {
+	.rb-against,
+	.rb-summary {
+		display: none;
+	}
+
+	.rb-send .sh-review-bar-text {
+		flex: 1 0 100%;
+	}
+
+	.rb-send .sh-btn {
+		flex: 1;
+		padding: 0 8px;
+	}
+}
+
+/* A session note that says little: muted, with the way to get a better one. */
+.rb-note-weak {
+	opacity: 0.8;
+	border-style: dashed;
+}
+
+.rb-note-weak .rb-note-text {
+	color: var(--fg-muted);
+}
+
+.rb-note-thin {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	font-size: 12px;
+	color: var(--fg-faint);
+}

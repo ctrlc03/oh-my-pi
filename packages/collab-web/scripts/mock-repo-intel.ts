@@ -136,6 +136,36 @@ test("an expired session is refused", () => {
 - Tokens are HMAC-signed; rotate \`SESSION_SECRET\` to sign everyone out.
 - TODO: refresh sessions that are about to expire.
 `,
+	"contracts/Vault.sol": `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+/// @notice Holds deposits until their owner takes them back.
+contract Vault {
+	error NothingToWithdraw(address owner);
+
+	event Deposited(address indexed owner, uint256 amount);
+
+	mapping(address => uint256) public balances;
+	uint48 public immutable OPENED_AT;
+
+	constructor() {
+		OPENED_AT = uint48(block.timestamp);
+	}
+
+	function deposit() external payable {
+		balances[msg.sender] += msg.value;
+		emit Deposited(msg.sender, msg.value);
+	}
+
+	function withdraw() external {
+		uint256 amount = balances[msg.sender];
+		if (amount == 0) revert NothingToWithdraw(msg.sender);
+		balances[msg.sender] = 0;
+		(bool ok, ) = msg.sender.call{ value: amount }("");
+		require(ok, "transfer failed");
+	}
+}
+`,
 };
 
 /** Working-tree changes at the start: an edit to the session code and a file git has not seen. */

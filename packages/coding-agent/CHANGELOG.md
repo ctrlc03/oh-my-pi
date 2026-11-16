@@ -8,6 +8,7 @@
 
 ### Added
 
+- Added a built-in Solidity language server, `solidity`: `vscode-solidity-server --stdio` (the server of Juan Blanco's VS Code Solidity extension; install it with `bun add -g vscode-solidity-server` or `npm i -g vscode-solidity-server`) for `.sol` files in Hardhat, Foundry or any git repository. Hover, go to definition (including imports from `node_modules` and `lib`) and references work, and monorepos are supported. Its compile-as-you-type diagnostics and solhint linting are off by default: the server compiles with one solc version (the latest) rather than each file's pragma, so every file pinned to an older version would show a false error, and solhint ran with its recommended rules from the repository root instead of the project's own `.solhint.json`.
 - Bash redirects now write every writable internal URL, not just `local://` and `out://`: `: > proc://<id>/kill` cancels a job, and `agent://`, `cfg://`, `ssh://`, `xd://`, and other handler-written URLs take redirected text like the `write` tool, with the handler's answer shown in the result
 
 ### Changed

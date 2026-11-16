@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { chooseEngine } from "../src/components/ide/backend";
 import {
 	MONACO_EXTENSIONS,
@@ -46,6 +48,21 @@ describe("Monaco language table", () => {
 		expect(monacoLanguageOf("notes.txt")).toBeNull();
 		expect(monacoLanguageOf(".gitignore")).toBeNull();
 		expect(monacoLanguageOf("constructor")).toBeNull();
-		expect(MONACO_LANGUAGE_IDS).toContain("solidity");
+	});
+
+	it("uses ids Monaco registers, so each file gets its tokenizer", async () => {
+		// Monaco's ids are not always the language's name (Solidity is `sol`); an unknown id leaves the file unhighlighted.
+		const definitions = path.join(
+			path.dirname(require.resolve("monaco-editor/package.json")),
+			"esm/vs/languages/definitions",
+		);
+		const registered = new Set(["json"]); // registered by monaco-languages.ts itself
+		for (const dir of fs.readdirSync(definitions)) {
+			const register = path.join(definitions, dir, "register.js");
+			if (!fs.existsSync(register)) continue;
+			for (const match of (await Bun.file(register).text()).matchAll(/\bid: "([^"]+)"/g)) registered.add(match[1]!);
+		}
+		expect(MONACO_LANGUAGE_IDS.filter(id => !registered.has(id))).toEqual([]);
+		expect(monacoLanguageOf("contracts/Vault.sol")?.id).toBe("sol");
 	});
 });

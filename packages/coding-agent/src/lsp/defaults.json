@@ -507,5 +507,28 @@
 		"fileTypes": [".swift"],
 		"rootMarkers": [".swiftlint.yml", ".swiftlint.yaml", "Package.swift", "*.xcodeproj"],
 		"isLinter": true
+	},
+	"solidity": {
+		"command": "vscode-solidity-server",
+		"args": ["--stdio"],
+		"fileTypes": [".sol"],
+		"languageId": "solidity",
+		"rootMarkers": [
+			"hardhat.config.ts",
+			"hardhat.config.js",
+			"hardhat.config.cjs",
+			"foundry.toml",
+			"remappings.txt",
+			".git"
+		],
+		"settings": {
+			"solidity": {
+				"monoRepoSupport": true,
+				"enabledAsYouTypeCompilationErrorCheck": false,
+				"packageDefaultDependenciesDirectory": ["node_modules", "lib"],
+				"packageDefaultDependenciesContractsDirectory": ["src", "contracts", ""],
+				"linter": ""
+			}
+		}
 	}
 }

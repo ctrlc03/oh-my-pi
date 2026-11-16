@@ -31,7 +31,7 @@ const BY_EXTENSION: Readonly<Record<string, MonacoLanguage>> = {
 	tsx: TS,
 	rs: { id: "rust", name: "Rust" },
 	nr: { id: "rust", name: "Noir" },
-	sol: { id: "solidity", name: "Solidity" },
+	sol: { id: "sol", name: "Solidity" },
 	py: { id: "python", name: "Python" },
 	go: { id: "go", name: "Go" },
 	json: JSON_,

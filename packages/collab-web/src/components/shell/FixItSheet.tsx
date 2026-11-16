@@ -17,7 +17,7 @@ import type { FixTarget } from "../../lib/fix-route";
 import { applyOpenIntent, setOpenIntent } from "../../lib/inbox";
 import { extractLink } from "../../lib/rooms";
 import { useRequest } from "../../lib/use-request";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import "./fixit.css";
 
 export interface FixItSheetProps {
@@ -73,7 +73,7 @@ export function FixItSheet({ client, target, canStart, onOpenHost, onOpenLink, o
 	};
 
 	return (
-		<Sheet label="fix failing checks" size="wide" onClose={onClose}>
+		<Sheet label="fix failing checks" size="wide" pane="fixit" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<span className="sh-sheet-title">
 					<Wrench size={15} /> Fix it
@@ -93,6 +93,7 @@ export function FixItSheet({ client, target, canStart, onOpenHost, onOpenLink, o
 							<RefreshCw size={15} />
 						)}
 					</button>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close" title="Close">
 						<X size={15} />
 					</button>

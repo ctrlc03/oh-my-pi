@@ -254,7 +254,7 @@
 	order: 1;
 }
 
-.sh-diagram-close {
+.sh-diagram-head-end {
 	order: 2;
 }
 
@@ -278,7 +278,7 @@
 @media (any-pointer: coarse) {
 	.sh-diagram-action,
 	.sh-diagram-actions .sh-download .sh-btn,
-	.sh-diagram-close,
+	.sh-diagram-head-end .sh-btn,
 	.sh-pz-controls .sh-btn {
 		min-width: 44px;
 		min-height: 44px;

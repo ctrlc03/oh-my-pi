@@ -18,6 +18,7 @@ import type { FanoutModel } from "../../lib/fanout";
 import { isProjectless } from "../../lib/start-session";
 import { type RequestState, useRequest } from "../../lib/use-request";
 import { parseLimit } from "../quiz/quiz-flow";
+import { SheetPlacementButton } from "../shell/Sheet";
 import { SubjectPicker, useSubjectPick } from "../shell/SubjectPicker";
 import { createBakeoff, getBakeoffJudge } from "./bakeoff-api";
 import {
@@ -261,9 +262,12 @@ export function NewBakeoffForm({ computers, target, onBack, onStarted, onClose }
 				<button type="button" className="sh-btn sh-gh-back" onClick={onBack}>
 					<ChevronLeft size={16} /> Bake-off
 				</button>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
-					<X size={16} />
-				</button>
+				<span className="sh-sheet-head-actions">
+					<SheetPlacementButton />
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
+						<X size={16} />
+					</button>
+				</span>
 			</div>
 			<h2 className="bo-form-title">New bake-off</h2>
 			<div className="bo-form-body">

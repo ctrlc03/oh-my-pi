@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { CompanionClient, PrReviewEvent } from "../../lib/companion";
 import { toReviewComments } from "../../lib/pr-review";
 import type { ReviewComment } from "../../lib/review-comments";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import "./review.css";
 import "./pr-review.css";
 
@@ -67,12 +67,15 @@ export function PrReviewSheet({
 	};
 
 	return (
-		<Sheet label="submit review" size="wide" onClose={onClose}>
+		<Sheet label="submit review" size="wide" pane="pr-review" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<h2 className="sh-recents-title">Submit review · #{number}</h2>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close" title="Close">
-					<X size={15} />
-				</button>
+				<span className="sh-sheet-head-actions">
+					<SheetPlacementButton />
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close" title="Close">
+						<X size={15} />
+					</button>
+				</span>
 			</div>
 			<div className="sh-review-confirm" role="group" aria-label="Review">
 				<div className="sh-segmented" role="radiogroup" aria-label="Review verdict">

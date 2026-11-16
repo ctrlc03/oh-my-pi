@@ -48,7 +48,7 @@ export function LazyDiagramSheets(props: DiagramSheetsProps): ReactNode {
 
 	if (loadedSheet !== null) return <loadedSheet.Sheet {...props} />;
 	return (
-		<Sheet label="diagram" size="full" onClose={props.onClose}>
+		<Sheet label="diagram" size="full" pane="diagram" onClose={props.onClose}>
 			<DiagramHead title="Diagram" onClose={props.onClose} />
 			{error === null ? (
 				<div className="sh-companion-empty sh-file-status">

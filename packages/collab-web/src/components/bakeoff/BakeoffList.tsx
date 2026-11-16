@@ -19,6 +19,7 @@ import { relTime } from "../../lib/format";
 import { type ClientTarget, featureTargets, useStableTargets } from "../../lib/stable-targets";
 import { isProjectless } from "../../lib/start-session";
 import { useRequest } from "../../lib/use-request";
+import { SheetPlacementButton } from "../shell/Sheet";
 import { deleteBakeoff, listBakeoffs } from "./bakeoff-api";
 import {
 	costText,
@@ -151,6 +152,7 @@ export function BakeoffList({
 					>
 						<RefreshCw size={15} className={loading ? "sh-spin" : undefined} />
 					</button>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

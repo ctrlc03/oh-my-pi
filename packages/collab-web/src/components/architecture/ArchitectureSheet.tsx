@@ -54,7 +54,7 @@ export function ArchitectureSheet({
 	// The open session's checkout is only on its own computer: a map of another computer cannot open its lines there.
 	const onSessionComputer = screen.kind === "map" && screen.computerId === computerId;
 	return (
-		<Sheet label="architecture maps" size="full" onClose={onClose}>
+		<Sheet label="architecture maps" size="full" pane="architecture" onClose={onClose}>
 			{screen.kind === "home" && (
 				<MapList
 					computers={computers}

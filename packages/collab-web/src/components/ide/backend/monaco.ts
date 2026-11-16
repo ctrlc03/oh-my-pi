@@ -6,6 +6,7 @@
  * engine is chosen, so the main bundle and phones never carry it.
  */
 import "./monaco-languages";
+import { minimapShown } from "../../../lib/editor-layout";
 import type { LspDiagnostic } from "../../../lib/repo-intel";
 import { diffText } from "../text-diff";
 import { textPositionAt, toMarker } from "./lsp-map";
@@ -23,14 +24,17 @@ import type {
 	LineSelection,
 	LoadedLanguage,
 	Pos,
+	ViewLayout,
 } from "./types";
 
 type Model = editor.ITextModel;
 type Editor = editor.IStandaloneCodeEditor;
 
 const THEME = "omp";
-/** A pane at least this wide (CSS pixels) shows the minimap; a maximized one always does. */
-const MINIMAP_MIN_WIDTH = 800;
+/** Line height as a multiple of the font size (what `readTheme` and CodeMirror's `.cm-scroller` use). */
+const LINE_HEIGHT_RATIO = 1.55;
+
+const lineHeightFor = (fontSize: number): number => Math.round(fontSize * LINE_HEIGHT_RATIO);
 const LF = editor.EndOfLinePreference.LF;
 
 // The worker lives next to this file in the built app. The dev server serves no such file: there Monaco runs
@@ -213,7 +217,7 @@ class MonacoView implements EditorView {
 	doc: MonacoDoc | null = null;
 	readonly editor: Editor;
 	readonly #cleanups: (() => void)[] = [];
-	#maximized = false;
+	#layout: ViewLayout | null = null;
 	#minimap = false;
 
 	constructor(
@@ -321,7 +325,8 @@ class MonacoView implements EditorView {
 	}
 
 	#updateMinimap(): void {
-		const enabled = this.#maximized || this.parent.clientWidth >= MINIMAP_MIN_WIDTH;
+		const layout = this.#layout;
+		const enabled = minimapShown(layout?.minimap ?? null, layout?.roomy === true, this.parent.clientWidth);
 		if (enabled === this.#minimap) return;
 		this.#minimap = enabled;
 		this.editor.updateOptions({ minimap: { enabled } });
@@ -359,8 +364,16 @@ class MonacoView implements EditorView {
 		this.editor.focus();
 	}
 
-	setMaximized(maximized: boolean): void {
-		this.#maximized = maximized;
+	setLayout(layout: ViewLayout): void {
+		const previous = this.#layout;
+		this.#layout = layout;
+		this.editor.updateOptions({
+			fontSize: layout.fontSize,
+			lineHeight: lineHeightFor(layout.fontSize),
+			lineNumbers: layout.lineNumbers ? "on" : "off",
+		});
+		// New glyph sizes: Monaco measured the old ones.
+		if (previous?.fontSize !== layout.fontSize) void document.fonts.ready.then(() => editor.remeasureFonts());
 		this.#updateMinimap();
 	}
 

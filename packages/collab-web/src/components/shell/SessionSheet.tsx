@@ -36,7 +36,7 @@ import { PrWatch } from "./PrWatch";
 import { SandboxedChip } from "./CompanionCard";
 import { HighStakesChip, HighStakesRow, type StakesControl } from "./StakesControl";
 import { ModelList } from "./ModelControls";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import type { TurnUndoControl } from "./TurnUndo";
 
 const VIEWS: readonly { chat: boolean; label: string; Icon: LucideIcon }[] = [
@@ -249,7 +249,7 @@ export function SessionSheet({
 	};
 
 	return (
-		<Sheet label="session details" size="wide" onClose={onClose}>
+		<Sheet label="session details" size="wide" pane="session-details" onClose={onClose}>
 			{renaming === null ? (
 				<div className="sh-sheet-head">
 					<div className="sh-sheet-title">{title}</div>
@@ -265,6 +265,7 @@ export function SessionSheet({
 								<Pencil size={15} />
 							</button>
 						)}
+						<SheetPlacementButton />
 						<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 							<X size={16} />
 						</button>

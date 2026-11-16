@@ -8,6 +8,7 @@ import { shortenPath } from "../../lib/format";
 import { useRequest } from "../../lib/use-request";
 import { BranchSelect, PrList, RefFilter, RefsLoading, useRepoRefs, withGivenPr } from "../shell/RefPicker";
 import { ComputerPicker, useStartComputer } from "../shell/ComputerPicker";
+import { SheetPlacementButton } from "../shell/Sheet";
 import { createBlueprint } from "./blueprint-api";
 
 export type MapMode = "branch" | "pr" | "worktree";
@@ -143,9 +144,12 @@ export function NewMapForm({
 				<button type="button" className="sh-btn sh-gh-back" onClick={onBack}>
 					<ChevronLeft size={16} /> Maps
 				</button>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
-					<X size={16} />
-				</button>
+				<span className="sh-sheet-head-actions">
+					<SheetPlacementButton />
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
+						<X size={16} />
+					</button>
+				</span>
 			</div>
 			<h2 className="ar-form-title">New architecture map</h2>
 			<div className="ar-form-body">

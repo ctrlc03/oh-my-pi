@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CompanionClient } from "../../lib/companion";
 import { useRequest } from "../../lib/use-request";
 import type { ExcerptCache, ExcerptReader } from "../quiz/QuizCode";
+import { SheetPlacementButton } from "../shell/Sheet";
 import { PointView, type PointPending } from "./PointView";
 import { SparSummaryView } from "./SparSummaryView";
 import { againSpar, closeSpar, deleteSpar, getSpar, getSparExcerpts, listSpars, replySpar } from "./spar-api";
@@ -46,9 +47,12 @@ function SparHeader({ title, runLabel, onHistory, onClose }: HeaderProps): React
 			</button>
 			{title !== undefined && <span className="sp-head-title">{title}</span>}
 			{runLabel !== undefined && <span className="sp-head-run">{runLabel}</span>}
-			<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
-				<X size={16} />
-			</button>
+			<span className="sh-sheet-head-actions">
+				<SheetPlacementButton />
+				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
+					<X size={16} />
+				</button>
+			</span>
 		</div>
 	);
 }

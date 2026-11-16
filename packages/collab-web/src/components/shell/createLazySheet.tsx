@@ -2,13 +2,16 @@ import { LoaderCircle, X } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { importChunk } from "../../lib/stale-build";
+import type { PaneKind } from "../../lib/workspace";
 import { LoadFailure } from "./LoadFailure";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 
 /** What the stand-in sheet says while a sheet's code is fetched. */
 export interface LazySheetFrame {
 	/** The sheet's accessible label, lower case. */
 	label: string;
+	/** The kind the real sheet uses, so the stand-in is placed the same. */
+	pane: PaneKind;
 	/** The title in the stand-in's header. */
 	title: string;
 	/** The thing being loaded, for the status line: "the code map". */
@@ -55,12 +58,15 @@ export function createLazySheet<P extends { onClose(): void }>(
 
 		if (ready !== null) return <ready.Sheet {...props} />;
 		return (
-			<Sheet label={frame.label} size="wide" onClose={props.onClose}>
+			<Sheet label={frame.label} size="wide" pane={frame.pane} onClose={props.onClose}>
 				<div className="sh-sheet-head">
 					<div className="sh-sheet-title">{frame.title}</div>
-					<button type="button" className="sh-btn sh-btn-icon" onClick={props.onClose} aria-label="Close">
-						<X size={16} />
-					</button>
+					<span className="sh-sheet-head-actions">
+						<SheetPlacementButton />
+						<button type="button" className="sh-btn sh-btn-icon" onClick={props.onClose} aria-label="Close">
+							<X size={16} />
+						</button>
+					</span>
 				</div>
 				{error === null ? (
 					<div className="sh-companion-empty sh-file-status">

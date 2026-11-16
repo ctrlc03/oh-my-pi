@@ -19,6 +19,7 @@ import { fmtCost, relTime } from "../../lib/format";
 import { type ClientTarget, featureTargets, useStableTargets } from "../../lib/stable-targets";
 import { useRequest } from "../../lib/use-request";
 import { folderName } from "../quiz/quiz-flow";
+import { SheetPlacementButton } from "../shell/Sheet";
 import { deleteSpar, listSpars } from "./spar-api";
 import { groupByRepo, rowStatus } from "./spar-flow";
 
@@ -134,6 +135,7 @@ export function SparList({
 					>
 						<RefreshCw size={15} className={loading ? "sh-spin" : undefined} />
 					</button>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

@@ -69,7 +69,7 @@ export function SparSheet({
 
 	if (screen.kind === "new") {
 		return (
-			<Sheet label="sparring" size="full" onClose={onClose}>
+			<Sheet label="sparring" size="full" pane="spar" onClose={onClose}>
 				<NewSparForm
 					computers={computers}
 					target={screen.target}
@@ -98,7 +98,7 @@ export function SparSheet({
 			});
 		};
 		return (
-			<Sheet label="sparring" size="full" onClose={onClose}>
+			<Sheet label="sparring" size="full" pane="spar" onClose={onClose}>
 				{sparClient === null ? (
 					<div className="sp-center">
 						<div className="sp-alert" role="alert">
@@ -136,7 +136,7 @@ export function SparSheet({
 		);
 	}
 	return (
-		<Sheet label="sparring" size="full" onClose={onClose}>
+		<Sheet label="sparring" size="full" pane="spar" onClose={onClose}>
 			<SparList
 				computers={computers}
 				computerId={computerId}

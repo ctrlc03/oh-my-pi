@@ -86,7 +86,7 @@ export function QuizSheet({
 
 	if (screen.kind === "new") {
 		return (
-			<Sheet label="quizzes" size="full" onClose={onClose}>
+			<Sheet label="quizzes" size="full" pane="quiz" onClose={onClose}>
 				<NewQuizForm
 					computers={computers}
 					target={screen.target}
@@ -115,7 +115,7 @@ export function QuizSheet({
 			});
 		};
 		return (
-			<Sheet label="quizzes" size="full" onClose={onClose}>
+			<Sheet label="quizzes" size="full" pane="quiz" onClose={onClose}>
 				{quizClient === null ? (
 					<div className="qz-center">
 						<div className="qz-alert" role="alert">
@@ -172,7 +172,7 @@ export function QuizSheet({
 		);
 	}
 	return (
-		<Sheet label="quizzes" size="full" onClose={onClose}>
+		<Sheet label="quizzes" size="full" pane="quiz" onClose={onClose}>
 			<QuizList
 				computers={computers}
 				computerId={computerId}

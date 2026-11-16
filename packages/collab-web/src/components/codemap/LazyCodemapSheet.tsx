@@ -6,6 +6,6 @@ import type { CodemapSheetProps } from "./CodemapSheet";
  * only needed once the map is opened: keep them out of the entry bundle.
  */
 export const LazyCodemapSheet = createLazySheet<CodemapSheetProps>(
-	{ label: "code map", title: "Code map", noun: "the code map" },
+	{ label: "code map", pane: "codemap", title: "Code map", noun: "the code map" },
 	() => import("./CodemapSheet").then(module => module.CodemapSheet),
 );

@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
+import { SheetPlacementButton } from "../shell/Sheet";
 import "./diagram.css";
 
 export interface DiagramHeadProps {
@@ -22,9 +23,12 @@ export function DiagramHead({ title, titleHint, children, onClose }: DiagramHead
 				{title}
 			</div>
 			{children !== undefined && <span className="sh-diagram-actions">{children}</span>}
-			<button type="button" className="sh-btn sh-btn-icon sh-diagram-close" onClick={onClose} aria-label="Close">
-				<X size={16} />
-			</button>
+			<span className="sh-sheet-head-actions sh-diagram-head-end">
+				<SheetPlacementButton />
+				<button type="button" className="sh-btn sh-btn-icon sh-diagram-close" onClick={onClose} aria-label="Close">
+					<X size={16} />
+				</button>
+			</span>
 		</div>
 	);
 }

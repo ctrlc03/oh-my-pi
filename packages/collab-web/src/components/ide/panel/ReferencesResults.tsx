@@ -3,10 +3,11 @@ import type { ReactNode } from "react";
 import { useMemo } from "react";
 import type { LspLocation } from "../../../lib/repo-intel";
 import { baseName } from "../file-tree";
-import { groupLocations, resultCounts } from "./search-model";
+import { groupLocations, resultCounts } from "../explorer/search-model";
 
-export interface ReferencesViewProps {
-	references: { title: string; locations: LspLocation[] };
+export interface ReferencesResultsProps {
+	/** The editor's last find-references answer; null before the first. */
+	references: { title: string; locations: LspLocation[] } | null;
 	onOpen(path: string, line: number, character: number): void;
 	onClear(): void;
 }
@@ -15,14 +16,17 @@ export interface ReferencesViewProps {
  * The editor's last find-references answer: locations by file, with the line each one is on. Those in the repository
  * open on a click; the rest (a dependency, the standard library) are listed greyed with their absolute path.
  */
-export function ReferencesView({ references, onOpen, onClear }: ReferencesViewProps): ReactNode {
-	const { title, locations } = references;
-	const groups = useMemo(() => groupLocations(locations), [locations]);
+export function ReferencesResults({ references, onOpen, onClear }: ReferencesResultsProps): ReactNode {
+	const locations = references?.locations;
+	const groups = useMemo(() => (locations === undefined ? [] : groupLocations(locations)), [locations]);
+	if (references === null || locations === undefined) {
+		return <div className="sh-ex-note">Find references (Shift+F12) lists where a symbol is used.</div>;
+	}
 	return (
 		<>
 			<div className="sh-ex-tools">
-				<span className="sh-ex-branch-name" title={title}>
-					{title}
+				<span className="sh-ex-branch-name" title={references.title}>
+					{references.title}
 				</span>
 				<button
 					type="button"

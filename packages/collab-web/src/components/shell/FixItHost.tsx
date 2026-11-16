@@ -5,7 +5,7 @@ import { computerById, type ComputerHandle } from "../../lib/computers";
 import { type FixTarget, parseFixRoute } from "../../lib/fix-route";
 import { subscribeRoute } from "../../lib/notify-route";
 import { FixItSheet } from "./FixItSheet";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 
 export interface FixItHostProps {
 	/** Every paired computer; the flow runs on the one the route names. */
@@ -60,14 +60,17 @@ export function FixItHost({ computers, onOpenHost, onOpenLink }: FixItHostProps)
 	if (computer === undefined) message = "Pair this device with your computer to fix failing checks from here.";
 	else if (live) message = `The companion on ${where} is too old for this. Restart it to update.`;
 	return (
-		<Sheet label="fix failing checks" onClose={close}>
+		<Sheet label="fix failing checks" pane="fixit" onClose={close}>
 			<div className="sh-sheet-head">
 				<span className="sh-sheet-title">
 					Fix it · {target.repo}#{target.number}
 				</span>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={close} aria-label="Close" title="Close">
-					<X size={15} />
-				</button>
+				<span className="sh-sheet-head-actions">
+					<SheetPlacementButton />
+					<button type="button" className="sh-btn sh-btn-icon" onClick={close} aria-label="Close" title="Close">
+						<X size={15} />
+					</button>
+				</span>
 			</div>
 			<div className="sh-companion-empty">{message}</div>
 		</Sheet>

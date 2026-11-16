@@ -153,7 +153,7 @@ export function CanvasSheet({ title, name, source, onAttach, save, onClose }: Ca
 	const ready = load.status === "ready" ? load : null;
 	const sketching = source.kind === "blank";
 	return (
-		<Sheet label="canvas" size="full" onClose={requestClose}>
+		<Sheet label="canvas" size="full" pane="diagram" onClose={requestClose}>
 			<DiagramHead title={title} onClose={requestClose}>
 				{ready !== null && onAttach !== null && (
 					<button

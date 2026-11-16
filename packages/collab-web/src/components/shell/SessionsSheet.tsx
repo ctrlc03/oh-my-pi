@@ -16,7 +16,7 @@ import { ComputerChip } from "./ComputerChip";
 import { useDeleteSessions } from "./DeleteSessions";
 import { MessageSearch } from "./MessageSearch";
 import { useOpenElsewhere } from "./OpenElsewhere";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import "./review.css";
 import "./stats.css";
 
@@ -270,7 +270,7 @@ export function SessionsSheet({
 	}
 
 	return (
-		<Sheet label="All sessions" size="wide" onClose={onClose}>
+		<Sheet label="All sessions" size="wide" pane="sessions" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">All sessions</div>
 				<span className="sh-stats-head-actions">
@@ -284,6 +284,7 @@ export function SessionsSheet({
 					>
 						{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 					</button>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

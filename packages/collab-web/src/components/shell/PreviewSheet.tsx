@@ -11,7 +11,7 @@ import {
 import { relTime } from "../../lib/format";
 import { loadPreviewPrefs, savePreviewPrefs } from "../../lib/preview";
 import { openImage } from "../../tool-render";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import "./preview.css";
 
 /** The agent often saves several files in a row, and the dev server needs a moment to rebuild after the last one. */
@@ -202,7 +202,7 @@ export function PreviewSheet({ client, instanceId, sessionId, edits, onClose }: 
 	};
 
 	return (
-		<Sheet label="preview" size="full" onClose={onClose}>
+		<Sheet label="preview" size="full" pane="preview" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Preview</div>
 				<span className="sh-file-actions">
@@ -234,6 +234,7 @@ export function PreviewSheet({ client, instanceId, sessionId, edits, onClose }: 
 					>
 						<RefreshCw size={15} className={loading ? "sh-spin" : undefined} />
 					</button>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

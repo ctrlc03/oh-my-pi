@@ -51,13 +51,13 @@ describe("resolvePanes", () => {
 	it("serves the dragged pane first, so it can take room from the others", () => {
 		const wants = [
 			{ id: "beside" as const, px: 500 },
-			{ id: "editor" as const, px: 500 },
+			{ id: "dock" as const, px: 500 },
 		];
 		const normal = resolvePanes(1200, wants, null);
-		const dragged = resolvePanes(1200, wants, "editor");
+		const dragged = resolvePanes(1200, wants, "dock");
 		expect(normal[0]?.px).toBeGreaterThan(dragged[0]?.px ?? Infinity);
 		expect(dragged[1]?.px).toBeGreaterThan(normal[1]?.px ?? 0);
-		expect(dragged.map(s => s.id)).toEqual(["beside", "editor"]);
+		expect(dragged.map(s => s.id)).toEqual(["beside", "dock"]);
 	});
 
 	it("gives the minimums to a row too narrow for them", () => {

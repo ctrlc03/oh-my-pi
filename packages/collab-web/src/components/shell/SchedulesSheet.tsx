@@ -34,7 +34,7 @@ import { useRequest } from "../../lib/use-request";
 import { ComputerPicker, useStartComputer } from "./ComputerPicker";
 import { QuickReplies } from "./QuickReplies";
 import { blankWhenDraft, ScheduleWhenEditor, type WhenDraft, whenDraftOf, whenOf } from "./ScheduleWhenEditor";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import "./schedules.css";
 
 export interface SchedulesSheetProps {
@@ -224,7 +224,7 @@ export function SchedulesSheet({ computers, onOpenHost, onClose }: SchedulesShee
 	};
 
 	return (
-		<Sheet label="schedules" onClose={onClose}>
+		<Sheet label="schedules" pane="schedules" onClose={onClose}>
 			<div className="sh-sheet-head">
 				{draft !== null && busy !== "save" ? (
 					<button type="button" className="sh-btn sh-btn-icon" onClick={() => setDraft(null)} aria-label="Back">
@@ -247,6 +247,7 @@ export function SchedulesSheet({ computers, onOpenHost, onClose }: SchedulesShee
 							{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 						</button>
 					)}
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

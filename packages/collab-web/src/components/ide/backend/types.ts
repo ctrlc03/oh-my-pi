@@ -116,6 +116,17 @@ export interface EditorViewHooks {
 	hover?(doc: EditorDoc, pos: Pos, signal: AbortSignal): Promise<HoverAnswer | null>;
 }
 
+/** What the user's layout asks of the editing surface itself (the rest of the layout is the sheet's own). */
+export interface ViewLayout {
+	/** Editor font size in pixels; the line height follows at the app's 1.55 ratio. */
+	fontSize: number;
+	lineNumbers: boolean;
+	/** Monaco's minimap: `null` shows it when the pane is wide or `roomy`. CodeMirror has none. */
+	minimap: boolean | null;
+	/** The pane is a tab with the whole main area to itself: a wide editor offers extras (the minimap). */
+	roomy: boolean;
+}
+
 export interface EditorView {
 	readonly engine: EngineName;
 	/** Show `doc` (null: an empty editor, no tabs open). */
@@ -123,8 +134,8 @@ export interface EditorView {
 	/** Put the cursor at the position (clamped to the document) and bring it to the middle of the view. */
 	reveal(pos: { line: number; character?: number }): void;
 	focus(): void;
-	/** The pane is maximized: a wide editor offers extras (Monaco's minimap). */
-	setMaximized(maximized: boolean): void;
+	/** The layout menu's choices and the font size; called once the view exists and whenever one changes. */
+	setLayout(layout: ViewLayout): void;
 	/** Release the view; its documents survive. */
 	destroy(): void;
 }

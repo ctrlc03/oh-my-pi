@@ -30,7 +30,7 @@ import { fmtCost } from "../../lib/format";
 import { fanoutModelLabel, groupModelsByAgent, type ModelGroup, modelLabel } from "../../lib/agents";
 import { useRequest } from "../../lib/use-request";
 import { AgentChip } from "./AgentChip";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import "./fanout.css";
 
 /** Where a composer fan-out runs: the paired computer's repository of the session on screen. */
@@ -400,7 +400,7 @@ export function FanoutCompareSheet({ client, groupId, onOpen, onClose }: FanoutC
 	};
 
 	return (
-		<Sheet label="Compare models" size="wide" onClose={onClose}>
+		<Sheet label="Compare models" size="wide" pane="fanout" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Compare models</div>
 				<button
@@ -413,6 +413,7 @@ export function FanoutCompareSheet({ client, groupId, onOpen, onClose }: FanoutC
 				>
 					<RefreshCw size={15} className={state.status === "loading" ? "sh-spin" : undefined} />
 				</button>
+				<SheetPlacementButton />
 				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 					<X size={16} />
 				</button>

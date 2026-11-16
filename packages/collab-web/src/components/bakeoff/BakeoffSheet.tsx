@@ -95,7 +95,7 @@ export function BakeoffSheet({
 
 	if (screen.kind === "new") {
 		return (
-			<Sheet label="bake-off" size="full" onClose={onClose}>
+			<Sheet label="bake-off" size="full" pane="bakeoff" onClose={onClose}>
 				<NewBakeoffForm
 					computers={computers}
 					target={screen.target}
@@ -110,7 +110,7 @@ export function BakeoffSheet({
 		const owner = computerById(computers, screen.computerId);
 		return (
 			<>
-				<Sheet label="bake-off" size="full" onClose={onClose}>
+				<Sheet label="bake-off" size="full" pane="bakeoff" onClose={onClose}>
 					{(owner?.client ?? null) === null ? (
 						<div className="bo-sheet-center">
 							<div className="bo-sheet-alert" role="alert">
@@ -164,7 +164,7 @@ export function BakeoffSheet({
 		);
 	}
 	return (
-		<Sheet label="bake-off" size="full" onClose={onClose}>
+		<Sheet label="bake-off" size="full" pane="bakeoff" onClose={onClose}>
 			<BakeoffList
 				computers={computers}
 				computerId={computerId}

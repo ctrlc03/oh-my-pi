@@ -3,12 +3,8 @@ import {
 	ListTree,
 	LoaderCircle,
 	LocateFixed,
-	Maximize2,
 	MessageSquarePlus,
-	Minimize2,
 	PanelLeft,
-	PanelRight,
-	PanelRightClose,
 	PenLine,
 	Save,
 	Swords,
@@ -21,23 +17,45 @@ import type { CodemapNode, CompanionClient, FileTree } from "../../lib/companion
 import { FileChangedError } from "../../lib/companion";
 import { openDiagramFile } from "../../lib/diagram-store";
 import { diagramFileKind } from "../../lib/diagrams";
+import {
+	fontShortcut,
+	FONT_MAX,
+	FONT_MIN,
+	formatFontSize,
+	headTierFor,
+	minimapShown,
+	resetEditorLayout,
+	stepFontSize,
+	updateEditorLayout,
+	useEditorLayout,
+} from "../../lib/editor-layout";
 import type { EditorEnginePref } from "../../lib/editor-prefs";
 import { useEditorEnginePref, useEditorThemePref } from "../../lib/editor-prefs";
 import { editorThemeVars } from "../../lib/editor-themes";
-import type { LspLocation, LspQuery } from "../../lib/repo-intel";
+import type { LspDiagnostic, LspLocation, LspQuery } from "../../lib/repo-intel";
 import { useRequest } from "../../lib/use-request";
+import { usePanePlacement } from "../../lib/workspace";
 import { matchesMedia } from "../../lib/zoom";
 import { useMedia, WIDE_QUERY } from "../codemap/shared";
 import { DownloadButton } from "../shell/DownloadButton";
-import { Sheet } from "../shell/Sheet";
-import { DockPane } from "../shell/SplitPane";
+import { Sheet, SheetPlacementButton } from "../shell/Sheet";
+import { LayoutMenu, type MenuAction } from "./LayoutMenu";
 import type { EditorDoc, EditorEngine, EditorView, EditorViewHooks, EngineName, HoverAnswer, Pos } from "./backend";
 import { chooseEngine, loadEngine, readyEngine } from "./backend";
-import type { DiagnosticCounts } from "./backend/lsp-map";
 import { chooseDefinitionTarget, countDiagnostics, unavailableNote } from "./backend/lsp-map";
+import type { DefinitionRow, DefinitionState } from "./DefinitionList";
+import { DefinitionList } from "./DefinitionList";
 import type { ExplorerSidebarHandle } from "./ExplorerSidebar";
 import { ExplorerSidebar } from "./ExplorerSidebar";
 import { ancestors, baseName, quickOpen } from "./file-tree";
+import { explorerFits, loadWidth, memoryFor as explorerMemory, type SearchForm } from "./explorer/explorer-state";
+import { useFileSearch } from "./explorer/use-file-search";
+import { BottomPanel, type PanelTab } from "./panel/BottomPanel";
+import { ProblemsView } from "./panel/ProblemsView";
+import { ReferencesResults } from "./panel/ReferencesResults";
+import { SearchResults } from "./panel/SearchResults";
+import { problemRows } from "./problems";
+import { FALLBACK_FONT_SIZE, useEditorMetrics } from "./use-editor-metrics";
 import "./ide.css";
 
 export interface IdeSheetProps {
@@ -58,10 +76,6 @@ export interface IdeSheetProps {
 	edits: number;
 	/** Put text in the message box; null for view-only links. */
 	onSendToAgent: ((text: string) => void) | null;
-	/** Docking the editor beside the transcript is possible: the header offers the toggle. null: it is always a sheet. */
-	dock?: { docked: boolean; onDockedChange(docked: boolean): void } | null;
-	/** The docked editor can take the whole main area: the header offers the button. null or absent: not offered. */
-	maximize?: { maximized: boolean; onMaximizedChange(maximized: boolean): void } | null;
 	/** The explorer view to open on (Search also focuses its query box); absent: the last one, or Files. */
 	initialView?: "files" | "search";
 	/** Spar with a design: the file's path relative to the repository (markdown and text files only). null: not offered. */
@@ -101,7 +115,7 @@ interface Tab {
 	changed: number;
 	/** The language server that answered for this file, and what it found; null before it has. */
 	server: string | null;
-	problems: DiagnosticCounts | null;
+	diagnostics: readonly LspDiagnostic[] | null;
 	/** Said once in the status bar when no language server handles the file. */
 	lspNote: string | null;
 }
@@ -152,25 +166,6 @@ function fenceFor(text: string): string {
 	let longest = 0;
 	for (const run of text.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
 	return "`".repeat(Math.max(3, longest + 1));
-}
-
-/** One answer of the definition list: where it goes, or why it cannot be opened. */
-interface DefinitionRow {
-	key: string;
-	label: string;
-	where: string;
-	signature?: string;
-	/** Root-relative; null: outside the repository, listed but not openable. */
-	open: { path: string; line: number; character?: number } | null;
-}
-
-interface DefinitionState {
-	word: string;
-	/** null while looking. */
-	rows: DefinitionRow[] | null;
-	error?: string;
-	/** Where the rows came from, for the empty message. */
-	source: "language server" | "code map";
 }
 
 function locationRow(location: LspLocation): DefinitionRow {
@@ -233,8 +228,6 @@ export function IdeSheet({
 	canSearch,
 	edits,
 	onSendToAgent,
-	dock,
-	maximize,
 	initialView,
 	onSparDesign,
 	onClose,
@@ -244,17 +237,38 @@ export function IdeSheet({
 	const host = useRef<HTMLDivElement>(null);
 	const viewRef = useRef<EditorView | null>(null);
 	const hooksRef = useRef<EditorViewHooks | null>(null);
-	const docked = dock?.docked === true;
-	const maximized = maximize?.maximized === true;
-	// A docked pane is narrower than the window: the explorer overlays the editor as on narrow screens,
-	// unless the pane is maximized.
+	// Where the editor is shown: a floating sheet, a tab of the main area, or beside the conversation.
+	const placement = usePanePlacement("editor");
+	const layout = useEditorLayout();
 	const viewportWide = useMedia(WIDE_QUERY);
-	const wide = viewportWide && (!docked || maximized);
-	const [treeOpen, setTreeOpen] = useState(() => mem.tabs.length === 0 || wide || initialView !== undefined);
-	// Maximizing makes room for the explorer beside the editor: show it.
+	// The explorer is a column beside the code in every desktop placement; it overlays the code only on a small
+	// screen, or when the body would leave the code less than `EDITOR_MIN` beside it.
+	const [explorerWidth, setExplorerWidth] = useState(loadWidth);
+	const body = useRef<HTMLDivElement>(null);
+	const [bodyWidth, setBodyWidth] = useState<number | null>(null);
+	useLayoutEffect(() => {
+		const element = body.current;
+		if (element === null) return;
+		const observer = new ResizeObserver(() => setBodyWidth(element.clientWidth));
+		observer.observe(element);
+		setBodyWidth(element.clientWidth);
+		return () => observer.disconnect();
+	}, []);
+	const overlay = !viewportWide || (bodyWidth !== null && !explorerFits(bodyWidth, explorerWidth));
+	const overlayRef = useRef(overlay);
+	overlayRef.current = overlay;
+	// The font size is a CSS variable of the editing surface: CodeMirror inherits it, Monaco is told it.
+	useLayoutEffect(() => {
+		const element = host.current;
+		if (layout.fontSize === null) element?.style.removeProperty("--sh-ide-font-size");
+		else element?.style.setProperty("--sh-ide-font-size", `${layout.fontSize}px`);
+	}, [layout.fontSize]);
+	const metrics = useEditorMetrics(host, layout.fontSize);
+	const [treeOpen, setTreeOpen] = useState(() => mem.tabs.length === 0 || viewportWide || initialView !== undefined);
+	// A tab has the room for the explorer beside the editor: show it.
 	useEffect(() => {
-		if (maximized) setTreeOpen(true);
-	}, [maximized]);
+		if (placement === "tab") setTreeOpen(true);
+	}, [placement]);
 	const [sidebarView, setSidebarView] = useState(initialView);
 	const sidebar = useRef<ExplorerSidebarHandle>(null);
 	const [expanded, setExpanded] = useState(mem.expanded);
@@ -263,6 +277,27 @@ export function IdeSheet({
 	const [cursor, setCursor] = useState({ line: 1, col: 1, selected: 0 });
 	const [definition, setDefinition] = useState<DefinitionState | null>(null);
 	const [references, setReferences] = useState<{ title: string; locations: LspLocation[] } | null>(null);
+	const [panelTab, setPanelTab] = useState<PanelTab>("problems");
+	/** Open the bottom panel on `tab`. */
+	const showPanel = useCallback((tab: PanelTab) => {
+		setPanelTab(tab);
+		updateEditorLayout({ panelOpen: true });
+	}, []);
+	// The explorer holds the search's query and options; its matches are listed in the panel.
+	const explorer = explorerMemory(instanceId);
+	const [searchForm, setSearchFormState] = useState<SearchForm>(explorer.search);
+	const setSearchForm = useCallback(
+		(next: SearchForm) => {
+			explorer.search = next;
+			setSearchFormState(next);
+		},
+		[explorer],
+	);
+	const search = useFileSearch(client, instanceId, canSearch, searchForm);
+	// A search that runs brings its matches forward.
+	useEffect(() => {
+		if (search.runs > 0) showPanel("search");
+	}, [search.runs, showPanel]);
 
 	const pref = useEditorEnginePref();
 	const editorTheme = useEditorThemePref();
@@ -352,7 +387,7 @@ export function IdeSheet({
 		}
 		if (line !== undefined) view.reveal({ line, character });
 		syncCursor();
-		if (!matchesMedia(WIDE_QUERY)) setTreeOpen(false);
+		if (overlayRef.current) setTreeOpen(false);
 	};
 
 	// ---- language server: problems, hover, go to definition, find references ----
@@ -369,7 +404,7 @@ export function IdeSheet({
 	const markNoServer = (path: string): void => {
 		if (mem.noServer[path] === true) return;
 		mem.noServer[path] = true;
-		patchTab(path, { server: null, problems: null, lspNote: unavailableNote(path) });
+		patchTab(path, { server: null, diagnostics: null, lspNote: unavailableNote(path) });
 	};
 
 	const lspQuery = (op: LspQuery["op"], doc: EditorDoc, position: Pos): LspQuery => ({
@@ -393,7 +428,7 @@ export function IdeSheet({
 			// No fresh report: keep what is shown. Edited since asking: the next request answers for the new text.
 			if (result.diagnostics === null || (mem.revisions[path] ?? 0) !== revision) return;
 			doc.setDiagnostics(result.diagnostics);
-			patchTab(path, { server: result.server, problems: countDiagnostics(result.diagnostics), lspNote: null });
+			patchTab(path, { server: result.server, diagnostics: result.diagnostics, lspNote: null });
 		} catch {
 			// Offline or the companion is restarting: the next edit or save asks again.
 		}
@@ -494,7 +529,7 @@ export function IdeSheet({
 				notify(unavailableNote(doc.path));
 			} else if (result.kind === "locations") {
 				setReferences({ title: `References to ${word}`, locations: result.locations });
-				setTreeOpen(true);
+				showPanel("references");
 			}
 		} catch (err) {
 			notify(`Could not find references: ${messageOf(err)}`);
@@ -553,7 +588,7 @@ export function IdeSheet({
 						conflict: null,
 						changed: 0,
 						server: null,
-						problems: null,
+						diagnostics: null,
 						lspNote: null,
 					},
 				];
@@ -652,8 +687,8 @@ export function IdeSheet({
 		const ext = mem.active.slice(mem.active.lastIndexOf(".") + 1);
 		const lines = from === to ? `${from}` : `${from}-${to}`;
 		onSendToAgent(`\`${mem.active}:${lines}\`\n${fence}${ext}\n${text}\n${fence}\n`);
-		// Docked, the editor stays beside the message box the text just went to.
-		if (!docked) onClose();
+		// Beside the conversation or in a tab, the editor stays next to the message box the text just went to.
+		if (placement === "float") onClose();
 	};
 
 	const quickInput = useRef<HTMLInputElement>(null);
@@ -711,9 +746,16 @@ export function IdeSheet({
 		};
 	}, [mem, engine]);
 
+	// The layout's choices and the font size reach the editing surface.
 	useEffect(() => {
-		viewRef.current?.setMaximized(maximized);
-	}, [engine, maximized]);
+		if (metrics.fontSize === null) return;
+		viewRef.current?.setLayout({
+			fontSize: metrics.fontSize,
+			lineNumbers: layout.lineNumbers,
+			minimap: layout.minimap,
+			roomy: placement === "tab",
+		});
+	}, [engine, metrics.fontSize, layout.lineNumbers, layout.minimap, placement]);
 
 	// A fresh view starts without the problems of the old one: ask again for the file in front.
 	useEffect(() => {
@@ -778,8 +820,20 @@ export function IdeSheet({
 		void checkRef.current();
 	}, [edits]);
 
+	/** The font size one step from what the editor shows now (the app's own size until a choice is made). */
+	const stepFont = (direction: 1 | -1): void =>
+		updateEditorLayout({ fontSize: stepFontSize(metrics.fontSize ?? FALLBACK_FONT_SIZE, direction) });
+
 	const onSheetKey = (e: KeyboardEvent<HTMLDivElement>): void => {
 		if (!(e.metaKey || e.ctrlKey) || e.altKey || e.isDefaultPrevented()) return;
+		// The browser's own zoom keys are taken here only: with the focus in the sheet they size the editor's text.
+		const font = fontShortcut(e);
+		if (font !== null) {
+			e.preventDefault();
+			if (font === "reset") updateEditorLayout({ fontSize: null });
+			else stepFont(font === "bigger" ? 1 : -1);
+			return;
+		}
 		const key = e.key.toLowerCase();
 		if (key === "p" && !e.shiftKey) {
 			e.preventDefault();
@@ -816,10 +870,95 @@ export function IdeSheet({
 		const doc = activeDoc();
 		if (doc !== null) void referencesAt(doc, doc.head());
 	};
+	const problems = useMemo(
+		() => problemRows(mem.tabs.map(tab => ({ path: tab.path, diagnostics: tab.diagnostics }))),
+		[mem.tabs],
+	);
+	const activeCounts = active?.diagnostics == null ? null : countDiagnostics(active.diagnostics);
+	const issues = problems.filter(row => row.severity === "error" || row.severity === "warning").length;
+	const panelCounts: Record<PanelTab, number | null> = {
+		problems: issues > 0 ? issues : null,
+		references: references === null ? null : references.locations.length,
+		search: search.state.status === "done" ? search.state.result.matches.length : null,
+	};
+
+	// The header answers to the editor's own width (a pane beside the conversation is narrow on a wide screen):
+	// what does not fit moves into the Layout menu, and the file finder keeps its room.
+	const headTier = headTierFor(bodyWidth);
+	const menuActions: MenuAction[] = [];
+	if (headTier !== "full") {
+		menuActions.push(
+			{
+				id: "font-up",
+				label: "Larger text",
+				hint: "Cmd/Ctrl +",
+				icon: "A+",
+				disabled: metrics.fontSize !== null && metrics.fontSize >= FONT_MAX,
+				keepOpen: true,
+				onSelect: () => stepFont(1),
+			},
+			{
+				id: "font-down",
+				label: "Smaller text",
+				hint: "Cmd/Ctrl −",
+				icon: "A−",
+				disabled: metrics.fontSize !== null && metrics.fontSize <= FONT_MIN,
+				keepOpen: true,
+				onSelect: () => stepFont(-1),
+			},
+		);
+	}
+	if (headTier === "tight") {
+		if (canDefinition || canLsp) {
+			menuActions.push({
+				id: "definition",
+				label: "Go to definition",
+				hint: "F12",
+				icon: <LocateFixed size={14} />,
+				disabled: active === undefined,
+				onSelect: openActiveDefinition,
+			});
+		}
+		if (canLsp) {
+			menuActions.push({
+				id: "references",
+				label: "Find references",
+				hint: "Shift+F12",
+				icon: <ListTree size={14} />,
+				disabled: active === undefined,
+				onSelect: findActiveReferences,
+			});
+		}
+		if (onSendToAgent !== null) {
+			menuActions.push({
+				id: "ask",
+				label: "Ask the agent about the selection",
+				icon: <MessageSquarePlus size={14} />,
+				disabled: active === undefined,
+				onSelect: sendSelection,
+			});
+		}
+		if (onSparDesign != null && active !== undefined && DESIGN_FILE.test(active.path)) {
+			menuActions.push({
+				id: "spar",
+				label: "Spar with this design",
+				icon: <Swords size={14} />,
+				onSelect: () => onSparDesign(active.path),
+			});
+		}
+		if (active !== undefined && diagramFileKind(active.request) !== null) {
+			menuActions.push({
+				id: "canvas",
+				label: "Open in the canvas",
+				icon: <PenLine size={14} />,
+				onSelect: () => openDiagramFile(active.request),
+			});
+		}
+	}
 
 	const frame = (
 		<div className="sh-ide" data-editor-theme={editorTheme} style={themeStyle ?? undefined} onKeyDown={onSheetKey}>
-			<div className="sh-sheet-head sh-ide-head">
+			<div className="sh-sheet-head sh-ide-head" data-tier={headTier}>
 				<button
 					type="button"
 					className={treeOpen ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
@@ -832,7 +971,7 @@ export function IdeSheet({
 				</button>
 				<QuickOpen inputRef={quickInput} files={tree?.files ?? null} onOpen={openFromExplorer} />
 				<span className="sh-ide-actions">
-					{(canDefinition || canLsp) && (
+					{headTier !== "tight" && (canDefinition || canLsp) && (
 						<button
 							type="button"
 							className="sh-btn sh-btn-icon"
@@ -844,7 +983,7 @@ export function IdeSheet({
 							<LocateFixed size={16} />
 						</button>
 					)}
-					{canLsp && (
+					{headTier !== "tight" && canLsp && (
 						<button
 							type="button"
 							className="sh-btn sh-btn-icon"
@@ -856,7 +995,7 @@ export function IdeSheet({
 							<ListTree size={16} />
 						</button>
 					)}
-					{onSendToAgent !== null && (
+					{headTier !== "tight" && onSendToAgent !== null && (
 						<button
 							type="button"
 							className="sh-btn sh-btn-icon"
@@ -868,21 +1007,24 @@ export function IdeSheet({
 							<MessageSquarePlus size={16} />
 						</button>
 					)}
-					{onSparDesign != null && active !== undefined && DESIGN_FILE.test(active.path) && (
-						<button
-							type="button"
-							className="sh-btn"
-							onClick={() => onSparDesign(active.path)}
-							aria-label="Spar with this design"
-						>
-							<Swords size={14} />
-							<span>Spar</span>
-						</button>
-					)}
-					{active !== undefined && (
+					{headTier !== "tight" &&
+						onSparDesign != null &&
+						active !== undefined &&
+						DESIGN_FILE.test(active.path) && (
+							<button
+								type="button"
+								className="sh-btn"
+								onClick={() => onSparDesign(active.path)}
+								aria-label="Spar with this design"
+							>
+								<Swords size={14} />
+								<span>Spar</span>
+							</button>
+						)}
+					{headTier !== "tight" && active !== undefined && (
 						<DownloadButton client={client} instanceId={instanceId} path={active.request} />
 					)}
-					{active !== undefined && diagramFileKind(active.request) !== null && (
+					{headTier !== "tight" && active !== undefined && diagramFileKind(active.request) !== null && (
 						<button
 							type="button"
 							className="sh-btn"
@@ -905,36 +1047,55 @@ export function IdeSheet({
 							<span>Save</span>
 						</button>
 					)}
-					{dock != null && (
-						<button
-							type="button"
-							className={docked ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
-							onClick={() => dock.onDockedChange(!docked)}
-							aria-pressed={docked}
-							aria-label={docked ? "Show as a sheet" : "Open beside the transcript"}
-							title={docked ? "Show as a sheet" : "Open beside the transcript"}
-						>
-							{docked ? <PanelRightClose size={16} /> : <PanelRight size={16} />}
-						</button>
+					{headTier === "full" && (
+						<span className="sh-ide-font" role="group" aria-label="Editor font size">
+							<button
+								type="button"
+								className="sh-btn sh-btn-icon"
+								onClick={() => stepFont(-1)}
+								disabled={metrics.fontSize !== null && metrics.fontSize <= FONT_MIN}
+								aria-label="Smaller text"
+								title="Smaller text (Cmd/Ctrl+−)"
+							>
+								A−
+							</button>
+							<button
+								type="button"
+								className="sh-btn sh-btn-icon"
+								onClick={() => stepFont(1)}
+								disabled={metrics.fontSize !== null && metrics.fontSize >= FONT_MAX}
+								aria-label="Larger text"
+								title="Larger text (Cmd/Ctrl++)"
+							>
+								A+
+							</button>
+						</span>
 					)}
-					{maximize != null && (
-						<button
-							type="button"
-							className={maximized ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon"}
-							onClick={() => maximize.onMaximizedChange(!maximized)}
-							aria-pressed={maximized}
-							aria-label={maximized ? "Restore the editor size" : "Maximize the editor"}
-							title={maximized ? "Restore the editor size" : "Maximize the editor"}
-						>
-							{maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-						</button>
-					)}
+					<LayoutMenu
+						layout={layout}
+						minimapOn={minimapShown(layout.minimap, placement === "tab", metrics.width)}
+						hasMinimap={engine?.name === "monaco"}
+						actions={menuActions}
+						extra={
+							headTier === "tight" && active !== undefined ? (
+								<DownloadButton
+									client={client}
+									instanceId={instanceId}
+									path={active.request}
+									label="Download file"
+								/>
+							) : null
+						}
+						onToggle={(id, on) => updateEditorLayout({ [id]: on })}
+						onReset={resetEditorLayout}
+					/>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
 				</span>
 			</div>
-			<div className="sh-ide-body">
+			<div ref={body} className="sh-ide-body">
 				{treeOpen && (
 					<ExplorerSidebar
 						ref={sidebar}
@@ -946,51 +1107,56 @@ export function IdeSheet({
 						activePath={mem.active}
 						expanded={expandedSet}
 						onToggleDir={toggleDir}
-						canSearch={canSearch}
+						form={searchForm}
+						onForm={setSearchForm}
+						invalid={search.invalid}
 						edits={edits}
 						onOpen={openFromExplorer}
-						references={references}
-						onClearReferences={clearReferences}
-						overlay={!wide}
+						overlay={overlay}
+						width={explorerWidth}
+						onWidth={setExplorerWidth}
+						showRail={layout.rail}
 						initialView={sidebarView}
 					/>
 				)}
 				<section className="sh-ide-main">
-					<div className="sh-ide-tabs" role="tablist">
-						{mem.tabs.map(tab => (
-							<div
-								key={tab.path}
-								className={tab.path === mem.active ? "sh-ide-tab sh-ide-tab-on" : "sh-ide-tab"}
-								title={tab.path}
-							>
-								<button
-									type="button"
-									role="tab"
-									aria-selected={tab.path === mem.active}
-									className="sh-ide-tab-name"
-									onClick={() => activate(tab.path)}
+					{layout.tabs && (
+						<div className="sh-ide-tabs" role="tablist">
+							{mem.tabs.map(tab => (
+								<div
+									key={tab.path}
+									className={tab.path === mem.active ? "sh-ide-tab sh-ide-tab-on" : "sh-ide-tab"}
+									title={tab.path}
 								>
-									{baseName(tab.path)}
-									{tab.conflict !== null && <TriangleAlert size={12} className="sh-ide-tab-warn" />}
-								</button>
-								<button
-									type="button"
-									className="sh-ide-tab-close"
-									onClick={() => closeTab(tab.path)}
-									aria-label={`Close ${baseName(tab.path)}`}
-									data-dirty={tab.dirty ? "true" : "false"}
-								>
-									<span className="sh-ide-dot" aria-hidden />
-									<X size={12} />
-								</button>
-							</div>
-						))}
-						{opening !== null && (
-							<span className="sh-ide-tab sh-ide-tab-opening">
-								<LoaderCircle size={12} className="sh-spin" /> {baseName(opening)}
-							</span>
-						)}
-					</div>
+									<button
+										type="button"
+										role="tab"
+										aria-selected={tab.path === mem.active}
+										className="sh-ide-tab-name"
+										onClick={() => activate(tab.path)}
+									>
+										{baseName(tab.path)}
+										{tab.conflict !== null && <TriangleAlert size={12} className="sh-ide-tab-warn" />}
+									</button>
+									<button
+										type="button"
+										className="sh-ide-tab-close"
+										onClick={() => closeTab(tab.path)}
+										aria-label={`Close ${baseName(tab.path)}`}
+										data-dirty={tab.dirty ? "true" : "false"}
+									>
+										<span className="sh-ide-dot" aria-hidden />
+										<X size={12} />
+									</button>
+								</div>
+							))}
+							{opening !== null && (
+								<span className="sh-ide-tab sh-ide-tab-opening">
+									<LoaderCircle size={12} className="sh-spin" /> {baseName(opening)}
+								</span>
+							)}
+						</div>
+					)}
 					{active?.conflict != null && (
 						<ConflictBar
 							tab={active}
@@ -1010,76 +1176,132 @@ export function IdeSheet({
 							Showing the start of the file only: it is larger than the editor reads, so it is read-only.
 						</div>
 					)}
-					<div ref={host} className="sh-ide-editor" hidden={active === undefined} />
-					{engine === null && (
-						<div className="sh-companion-empty sh-file-status">
-							<LoaderCircle size={14} className="sh-spin" /> Loading the editor…
-						</div>
-					)}
-					{active === undefined && engine !== null && (
-						<div className="sh-ide-empty">
-							<FileCode size={28} />
-							<div>Pick a file from the list, or press Cmd/Ctrl+P to find one.</div>
-						</div>
-					)}
-					{definition !== null && (
-						<DefinitionList
-							definition={definition}
-							onPick={row => {
-								if (row.open === null) return;
-								setDefinition(null);
-								openLocation(row.open.path, row.open.line, row.open.character);
-							}}
-							onClose={() => setDefinition(null)}
+					<div className="sh-ide-code">
+						<div
+							ref={host}
+							className="sh-ide-editor"
+							data-line-numbers={layout.lineNumbers ? undefined : "off"}
+							hidden={active === undefined}
 						/>
-					)}
-					<div className="sh-ide-status">
-						{active === undefined ? (
-							<span>{tree === null ? "" : `${tree.files.length} files`}</span>
-						) : (
-							<>
-								<span className="sh-ide-status-path" title={active.path}>
-									{active.path}
-								</span>
-								{active.changed > 0 && (
-									<span className="sh-ide-status-changed">
-										{active.changed} line{active.changed === 1 ? "" : "s"} changed on disk
-									</span>
-								)}
-								{!active.writable && <span>Read-only</span>}
-								{active.server !== null && active.problems !== null && (
-									<span className="sh-ide-status-lsp" title={`Language server: ${active.server}`}>
-										{active.server}
-										<span data-severity="error">
-											{active.problems.errors} error{active.problems.errors === 1 ? "" : "s"}
-										</span>
-										<span data-severity="warning">
-											{active.problems.warnings} warning{active.problems.warnings === 1 ? "" : "s"}
-										</span>
-									</span>
-								)}
-								{active.lspNote !== null && <span className="sh-ide-status-lsp">{active.lspNote}</span>}
-								<span>{active.language ?? "Plain text"}</span>
-								<span>
-									Ln {cursor.line}, Col {cursor.col}
-									{cursor.selected > 0 ? ` (${cursor.selected} selected)` : ""}
-								</span>
-							</>
+						{engine === null && (
+							<div className="sh-companion-empty sh-file-status">
+								<LoaderCircle size={14} className="sh-spin" /> Loading the editor…
+							</div>
 						)}
-						{notice !== null && (
-							<span className="sh-ide-notice" role="status">
+						{active === undefined && engine !== null && (
+							<div className="sh-ide-empty">
+								<FileCode size={28} />
+								<div>Pick a file from the list, or press Cmd/Ctrl+P to find one.</div>
+							</div>
+						)}
+						{definition !== null && (
+							<DefinitionList
+								definition={definition}
+								size={layout.defsSize}
+								onSize={size => updateEditorLayout({ defsSize: size })}
+								onPick={row => {
+									if (row.open === null) return;
+									setDefinition(null);
+									openLocation(row.open.path, row.open.line, row.open.character);
+								}}
+								onClose={() => setDefinition(null)}
+							/>
+						)}
+						{!layout.status && notice !== null && (
+							<div className="sh-ide-toast" role="status">
 								{notice}
-							</span>
+							</div>
 						)}
 					</div>
+					<BottomPanel
+						tab={panelTab}
+						onTab={setPanelTab}
+						open={layout.panelOpen}
+						onOpenChange={panelOpen => updateEditorLayout({ panelOpen })}
+						height={layout.panelHeight}
+						onHeight={panelHeight => updateEditorLayout({ panelHeight })}
+						counts={panelCounts}
+					>
+						{panelTab === "problems" && (
+							<ProblemsView
+								rows={problems}
+								emptyNote={
+									canLsp
+										? "No problems in the open files."
+										: "Problems need a language server on the paired computer."
+								}
+								onOpen={activate}
+							/>
+						)}
+						{panelTab === "references" && (
+							<ReferencesResults references={references} onOpen={openFromExplorer} onClear={clearReferences} />
+						)}
+						{panelTab === "search" && (
+							<SearchResults
+								search={search}
+								canSearch={canSearch}
+								query={searchForm.query}
+								onOpen={openFromExplorer}
+							/>
+						)}
+					</BottomPanel>
+					{layout.status && (
+						<div className="sh-ide-status">
+							{active === undefined ? (
+								<span>{tree === null ? "" : `${tree.files.length} files`}</span>
+							) : (
+								<>
+									<span className="sh-ide-status-path" title={active.path}>
+										{active.path}
+									</span>
+									{active.changed > 0 && (
+										<span className="sh-ide-status-changed">
+											{active.changed} line{active.changed === 1 ? "" : "s"} changed on disk
+										</span>
+									)}
+									{!active.writable && <span>Read-only</span>}
+									{active.server !== null && activeCounts !== null && (
+										<button
+											type="button"
+											className="sh-ide-status-lsp sh-ide-status-btn"
+											title={`Language server: ${active.server}. Show the problems`}
+											onClick={() => showPanel("problems")}
+										>
+											{active.server}
+											<span data-severity="error">
+												{activeCounts.errors} error{activeCounts.errors === 1 ? "" : "s"}
+											</span>
+											<span data-severity="warning">
+												{activeCounts.warnings} warning{activeCounts.warnings === 1 ? "" : "s"}
+											</span>
+										</button>
+									)}
+									{active.lspNote !== null && <span className="sh-ide-status-lsp">{active.lspNote}</span>}
+									<span>{active.language ?? "Plain text"}</span>
+									<span>
+										Ln {cursor.line}, Col {cursor.col}
+										{cursor.selected > 0 ? ` (${cursor.selected} selected)` : ""}
+									</span>
+								</>
+							)}
+							{metrics.fontSize !== null && (
+								<span title="Editor font size (A−, A+, Cmd/Ctrl +, −, 0)">
+									{formatFontSize(metrics.fontSize)}
+								</span>
+							)}
+							{notice !== null && (
+								<span className="sh-ide-notice" role="status">
+									{notice}
+								</span>
+							)}
+						</div>
+					)}
 				</section>
 			</div>
 		</div>
 	);
-	return docked ? (
-		<DockPane label="editor">{frame}</DockPane>
-	) : (
-		<Sheet label="editor" size="full" onClose={onClose}>
+	return (
+		<Sheet label="editor" size="full" pane="editor" onClose={onClose}>
 			{frame}
 		</Sheet>
 	);
@@ -1128,60 +1350,6 @@ function ConflictBar({
 				<button type="button" className="sh-btn" onClick={onOverwrite} disabled={tab.saving}>
 					Keep mine
 				</button>
-			)}
-		</div>
-	);
-}
-
-function DefinitionList({
-	definition,
-	onPick,
-	onClose,
-}: {
-	definition: DefinitionState;
-	onPick(row: DefinitionRow): void;
-	onClose(): void;
-}): ReactNode {
-	const { word, rows, error, source } = definition;
-	return (
-		<div className="sh-ide-defs" role="dialog" aria-label={`Definitions of ${word}`}>
-			<div className="sh-ide-defs-head">
-				<span>
-					Definitions of <code>{word}</code>
-				</span>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close definitions">
-					<X size={14} />
-				</button>
-			</div>
-			{rows === null && (
-				<div className="sh-companion-empty sh-file-status">
-					<LoaderCircle size={14} className="sh-spin" /> Looking it up…
-				</div>
-			)}
-			{error !== undefined && <div className="sh-connect-error">{error}</div>}
-			{rows !== null && error === undefined && rows.length === 0 && (
-				<div className="sh-file-note">
-					No definition of {word} in the {source}.
-				</div>
-			)}
-			{rows !== null && rows.length > 0 && (
-				<ul className="sh-ide-defs-list">
-					{rows.map(row => (
-						<li key={row.key}>
-							<button
-								type="button"
-								className="sh-ide-def"
-								onClick={() => onPick(row)}
-								disabled={row.open === null}
-								title={row.open === null ? "Outside the repository: it cannot be opened here" : undefined}
-							>
-								<span className="sh-ide-def-label">{row.label}</span>
-								<span className="sh-ide-def-where">{row.where}</span>
-								{row.signature !== undefined && <code className="sh-ide-def-sig">{row.signature}</code>}
-							</button>
-						</li>
-					))}
-				</ul>
 			)}
 		</div>
 	);

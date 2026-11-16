@@ -6,6 +6,6 @@ import type { ReviewBoardSheetProps } from "./ReviewBoardSheet";
  * needed once a change set is opened for review, so they stay out of the entry bundle.
  */
 export const LazyReviewBoardSheet = createLazySheet<ReviewBoardSheetProps>(
-	{ label: "review board", title: "Review board", noun: "the review board" },
+	{ label: "review board", pane: "review-board", title: "Review board", noun: "the review board" },
 	() => import("./ReviewBoardSheet").then(module => module.ReviewBoardSheet),
 );

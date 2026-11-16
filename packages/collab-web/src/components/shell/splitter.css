@@ -78,6 +78,7 @@
 .sh-main[data-resizing] iframe,
 .sh-main[data-resizing] .cm-editor,
 .sh-main[data-resizing] .sh-panel,
+.sh-main[data-resizing] .sh-sheet-docked,
 .sh-main[data-resizing] .sh-rail {
 	pointer-events: none;
 }

@@ -12,7 +12,7 @@ import { usePersonal, usePersonalQuery } from "../../lib/use-personal";
 import type { PersonalInboxRowsProps } from "../personal/InboxRows";
 import { AgentChip } from "./AgentChip";
 import { LoadFailure } from "./LoadFailure";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import "./inbox.css";
 
 type PersonalRowsComponent = ComponentType<PersonalInboxRowsProps>;
@@ -160,7 +160,7 @@ export function InboxSheet({ computers, onOpenHost, onClose }: InboxSheetProps):
 	);
 
 	return (
-		<Sheet label="Inbox" size="wide" onClose={onClose}>
+		<Sheet label="Inbox" size="wide" pane="inbox" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Inbox</div>
 				<span className="sh-stats-head-actions">
@@ -176,6 +176,7 @@ export function InboxSheet({ computers, onOpenHost, onClose }: InboxSheetProps):
 					>
 						{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 					</button>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

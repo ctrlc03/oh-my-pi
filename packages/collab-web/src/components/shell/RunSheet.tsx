@@ -17,7 +17,7 @@ import { relTime } from "../../lib/format";
 import { collapseOverwrites, lastLines, outputPrompt, runDuration, runStatus, VIEW_LINES } from "../../lib/run-output";
 import { useRequest } from "../../lib/use-request";
 import { followTranscriptTail, updateTranscriptTailLock } from "../transcript/Transcript";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import "./pane.css";
 import "./run.css";
 
@@ -86,7 +86,7 @@ export function RunSheet({ client, instanceId, machine, onSendToAgent, onClose }
 
 	if (active !== null) {
 		return (
-			<Sheet label="run output" size="full" onClose={onClose}>
+			<Sheet label="run output" size="full" pane="run" onClose={onClose}>
 				<RunDetail
 					key={active.runId}
 					client={client}
@@ -109,7 +109,7 @@ export function RunSheet({ client, instanceId, machine, onSendToAgent, onClose }
 	const recent = runs.state.status === "ready" ? runs.state.value : [];
 
 	return (
-		<Sheet label="run" size="wide" onClose={onClose}>
+		<Sheet label="run" size="wide" pane="run" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">
 					Run
@@ -126,6 +126,7 @@ export function RunSheet({ client, instanceId, machine, onSendToAgent, onClose }
 					>
 						{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 					</button>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
@@ -361,6 +362,7 @@ function RunDetail({ client, initial, onBack, onSettled, onSendToAgent, onClose 
 							<SendHorizontal size={15} /> Send output to agent
 						</button>
 					)}
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

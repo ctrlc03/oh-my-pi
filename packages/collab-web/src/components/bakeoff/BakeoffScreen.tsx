@@ -30,7 +30,7 @@ import { useRequest } from "../../lib/use-request";
 import type { ExportedExcerpt } from "../architecture/blueprint-model";
 import type { ExcerptCache } from "../quiz/QuizCode";
 import { useNarrow } from "../quiz/use-narrow";
-import { Sheet } from "../shell/Sheet";
+import { Sheet, SheetPlacementButton } from "../shell/Sheet";
 import type { BakeoffCodeAccess } from "./BakeoffCode";
 import { EntryGrid, type EntryHandlers } from "./BakeoffEntries";
 import { EntryDetail, ResultOverview } from "./BakeoffResultView";
@@ -107,9 +107,12 @@ function Header({ title, onBack, onClose }: HeaderProps): ReactNode {
 				<ChevronLeft size={16} /> Bake-offs
 			</button>
 			{title !== undefined && <span className="bo-head-title">{title}</span>}
-			<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
-				<X size={16} />
-			</button>
+			<span className="sh-sheet-head-actions">
+				<SheetPlacementButton />
+				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
+					<X size={16} />
+				</button>
+			</span>
 		</div>
 	);
 }

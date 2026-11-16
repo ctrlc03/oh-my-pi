@@ -8,12 +8,12 @@
  */
 import { readJson, writeJson } from "./storage";
 
-export type PaneId = "sidebar" | "rail" | "beside" | "editor";
+export type PaneId = "sidebar" | "rail" | "beside" | "dock";
 
 /** Left to right in the layout row. */
-export const PANE_IDS: readonly PaneId[] = ["sidebar", "rail", "beside", "editor"];
-/** Who gets room first when the row is too narrow for every preference: the sessions and the editor, then the sidebar and the rail. */
-export const PANE_PRIORITY: readonly PaneId[] = ["beside", "editor", "sidebar", "rail"];
+export const PANE_IDS: readonly PaneId[] = ["sidebar", "rail", "beside", "dock"];
+/** Who gets room first when the row is too narrow for every preference: the sessions and the side pane, then the sidebar and the rail. */
+export const PANE_PRIORITY: readonly PaneId[] = ["beside", "dock", "sidebar", "rail"];
 
 export interface PaneSpec {
 	/** Per-device preference key. */
@@ -60,15 +60,15 @@ export const PANES: Record<PaneId, PaneSpec> = {
 		edge: "start",
 		label: "Resize split view",
 	},
-	editor: {
-		storageKey: "omp.collab.pane.editor",
+	dock: {
+		storageKey: "omp.collab.pane.dock",
 		unit: "fraction",
 		default: 0.36,
 		min: 0.25,
 		max: 0.75,
 		floorPx: 320,
 		edge: "start",
-		label: "Resize editor",
+		label: "Resize side pane",
 	},
 };
 

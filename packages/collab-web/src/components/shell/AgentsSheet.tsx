@@ -29,7 +29,7 @@ import type { CompanionAgent, CompanionClient } from "../../lib/companion";
 import { computerById, type ComputerHandle, unavailableReason } from "../../lib/computers";
 import { useRequest } from "../../lib/use-request";
 import { ComputerPicker } from "./ComputerPicker";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import "./agents.css";
 import "./review.css";
 
@@ -69,7 +69,7 @@ export function AgentsSheet({ computers, onClose }: AgentsSheetProps): ReactNode
 	);
 	const reason = selected === null ? "No computer is paired." : unavailableReason(selected, "foreign");
 	return (
-		<Sheet label="Agents" onClose={onClose}>
+		<Sheet label="Agents" pane="agents" onClose={onClose}>
 			{selected !== null && selected.client !== null && reason === null ? (
 				<AgentsPanel key={selected.id} client={selected.client} where={where} picker={picker} onClose={onClose} />
 			) : (
@@ -77,6 +77,7 @@ export function AgentsSheet({ computers, onClose }: AgentsSheetProps): ReactNode
 					<div className="sh-sheet-head">
 						<div className="sh-sheet-title">Agents</div>
 						<span className="sh-agents-head-actions">
+							<SheetPlacementButton />
 							<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 								<X size={16} />
 							</button>
@@ -175,6 +176,7 @@ function AgentsPanel({ client, where, picker, onClose }: AgentsPanelProps): Reac
 							{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 						</button>
 					)}
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

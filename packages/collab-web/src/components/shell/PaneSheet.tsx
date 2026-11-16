@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ansiClass, parseAnsi } from "../../lib/ansi";
 import type { CompanionClient, PaneCapture } from "../../lib/companion";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import "./pane.css";
 
 /** How often the screen is captured while the sheet is open and the page is visible. */
@@ -80,7 +80,7 @@ export function PaneSheet({ client, instanceId, onClose }: PaneSheetProps): Reac
 	};
 
 	return (
-		<Sheet label="terminal" size="full" onClose={onClose}>
+		<Sheet label="terminal" size="full" pane="terminal" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">
 					Terminal
@@ -101,6 +101,7 @@ export function PaneSheet({ client, instanceId, onClose }: PaneSheetProps): Reac
 					>
 						<RefreshCw size={15} className={loading ? "sh-spin" : undefined} />
 					</button>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

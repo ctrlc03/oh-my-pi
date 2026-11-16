@@ -1,17 +1,16 @@
-import { Files, GitBranch, ListTree, Search } from "lucide-react";
+import { Files, GitBranch, Search } from "lucide-react";
 import type { KeyboardEvent, PointerEvent, ReactNode, Ref } from "react";
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { CompanionClient, FileTree } from "../../lib/companion";
-import type { LspLocation } from "../../lib/repo-intel";
 import { toLayout } from "../../lib/zoom";
 import { ChangesView } from "./explorer/ChangesView";
 import {
 	clampWidth,
 	DEFAULT_WIDTH,
+	EDITOR_MIN,
 	type ExplorerView,
 	KEY_STEP,
 	KEY_STEP_SHIFT,
-	loadWidth,
 	MAX_WIDTH,
 	memoryFor,
 	MIN_WIDTH,
@@ -20,7 +19,6 @@ import {
 } from "./explorer/explorer-state";
 import { FilesView } from "./explorer/FilesView";
 import { treeStatus } from "./explorer/git-status";
-import { ReferencesView } from "./explorer/ReferencesView";
 import { SearchView } from "./explorer/SearchView";
 import { useGitStatus } from "./explorer/use-git-status";
 import "./explorer.css";
@@ -36,17 +34,22 @@ export interface ExplorerSidebarProps {
 	/** Folders that are open (the editor keeps them per computer). */
 	expanded: Set<string>;
 	onToggleDir(path: string): void;
-	/** The companion answers `file-search`. */
-	canSearch: boolean;
+	/** The Search view's query and options: the sheet runs the search and lists the matches in its bottom panel. */
+	form: SearchForm;
+	onForm(form: SearchForm): void;
+	/** Why the query cannot be searched (an invalid regular expression), else null. */
+	invalid: string | null;
 	/** The app's agent-edit counter: the git status is read again when it changes. */
 	edits: number;
 	/** Root-relative path. */
 	onOpen(path: string, line?: number, character?: number): void;
-	/** The editor's last find-references answer; the References view is offered while it is set. */
-	references: { title: string; locations: LspLocation[] } | null;
-	onClearReferences(): void;
-	/** Over the editor (phones, a narrow dock) instead of beside it: no divider, and its width follows the editor's. */
+	/** Over the editor (a phone, or a body too narrow to leave the code its room) instead of beside it: no divider, and its width follows the editor's. */
 	overlay?: boolean;
+	/** Beside the code, in pixels: kept by the sheet, which decides from it whether the code has room. */
+	width: number;
+	onWidth(px: number): void;
+	/** The view switcher (Files, Changes, Search) is shown. */
+	showRail: boolean;
 	/** The view to start on; "search" also focuses the query box. */
 	initialView?: "files" | "search";
 	ref?: Ref<ExplorerSidebarHandle>;
@@ -61,15 +64,11 @@ const VIEWS: { id: ExplorerView; label: string; icon: typeof Files }[] = [
 	{ id: "files", label: "Files", icon: Files },
 	{ id: "changes", label: "Changes", icon: GitBranch },
 	{ id: "search", label: "Search", icon: Search },
-	{ id: "references", label: "Refs", icon: ListTree },
 ];
 
-/** Most the divider may take: the editor keeps at least this much of the row. */
-const EDITOR_MIN = 280;
-
 /**
- * The explorer beside the editor: a view switcher (Files, Changes, Search, and References while the editor has a
- * result) and the view itself. Resizable between 200 and 600px by its right edge, remembered on this device.
+ * The explorer beside the editor: a view switcher (Files, Changes, Search) and the view itself. Resizable between 200
+ * and 600px by its right edge, remembered on this device.
  */
 export function ExplorerSidebar({
 	client,
@@ -80,34 +79,27 @@ export function ExplorerSidebar({
 	activePath,
 	expanded,
 	onToggleDir,
-	canSearch,
+	form,
+	onForm,
+	invalid,
 	edits,
 	onOpen,
-	references,
-	onClearReferences,
 	overlay = false,
+	width,
+	onWidth,
+	showRail,
 	initialView,
 	ref,
 }: ExplorerSidebarProps): ReactNode {
 	const memory = memoryFor(instanceId);
-	const [view, setViewState] = useState<ExplorerView>(
-		initialView ?? (references !== null ? "references" : memory.view === "references" ? "files" : memory.view),
-	);
-	const [form, setFormState] = useState<SearchForm>(memory.search);
+	const [view, setViewState] = useState<ExplorerView>(initialView ?? memory.view);
 	const [focusTick, setFocusTick] = useState(initialView === "search" ? 1 : 0);
 	const searchInput = useRef<HTMLInputElement>(null);
 
 	const setView = useCallback(
 		(next: ExplorerView) => {
 			setViewState(next);
-			if (next !== "references") memory.view = next;
-		},
-		[memory],
-	);
-	const setForm = useCallback(
-		(next: SearchForm) => {
-			memory.search = next;
-			setFormState(next);
+			memory.view = next;
 		},
 		[memory],
 	);
@@ -122,18 +114,6 @@ export function ExplorerSidebar({
 		}),
 		[setView],
 	);
-
-	// A new find-references result comes forward; clearing it returns to the view the user was on.
-	const shownReferences = useRef(false);
-	useEffect(() => {
-		if (references !== null) {
-			shownReferences.current = true;
-			setViewState("references");
-		} else if (shownReferences.current) {
-			shownReferences.current = false;
-			setViewState(current => (current === "references" ? memory.view : current));
-		}
-	}, [references, memory]);
 
 	useEffect(() => {
 		if (view !== "search" || focusTick === 0) return;
@@ -154,7 +134,6 @@ export function ExplorerSidebar({
 		[onOpen],
 	);
 
-	const [width, setWidth] = useState(loadWidth);
 	const root = useRef<HTMLElement>(null);
 	const drag = useRef<{ pointerId: number; startX: number; startWidth: number; width: number } | null>(null);
 	/** Widest the divider may go: the editor keeps its room. */
@@ -166,7 +145,7 @@ export function ExplorerSidebar({
 	const commit = (px: number): void => {
 		const next = clampWidth(px, maxWidth());
 		paint(next);
-		setWidth(next);
+		onWidth(next);
 		saveWidth(next);
 	};
 	const onResizeDown = (event: PointerEvent<HTMLElement>): void => {
@@ -201,7 +180,6 @@ export function ExplorerSidebar({
 		event.preventDefault();
 	};
 
-	const views = VIEWS.filter(entry => entry.id !== "references" || references !== null);
 	return (
 		<aside
 			ref={root}
@@ -210,29 +188,31 @@ export function ExplorerSidebar({
 			style={overlay ? undefined : { width }}
 			aria-label="Explorer"
 		>
-			<nav className="sh-ex-rail" aria-label="Explorer views">
-				{views.map(({ id, label, icon: Icon }) => (
-					<button
-						key={id}
-						type="button"
-						className="sh-ex-view"
-						aria-pressed={view === id}
-						aria-label={id === "changes" && changeCount > 0 ? `${label}, ${changeCount} changed` : label}
-						title={id === "search" ? "Search in files (Cmd/Ctrl+Shift+F)" : label}
-						onClick={() => setView(id)}
-					>
-						<span className="sh-ex-view-icon">
-							<Icon size={17} />
-							{id === "changes" && changeCount > 0 && (
-								<span className="sh-ex-view-count" aria-hidden="true">
-									{changeCount > 99 ? "99+" : changeCount}
-								</span>
-							)}
-						</span>
-						<span className="sh-ex-view-label">{label}</span>
-					</button>
-				))}
-			</nav>
+			{showRail && (
+				<nav className="sh-ex-rail" aria-label="Explorer views">
+					{VIEWS.map(({ id, label, icon: Icon }) => (
+						<button
+							key={id}
+							type="button"
+							className="sh-ex-view"
+							aria-pressed={view === id}
+							aria-label={id === "changes" && changeCount > 0 ? `${label}, ${changeCount} changed` : label}
+							title={id === "search" ? "Search in files (Cmd/Ctrl+Shift+F)" : label}
+							onClick={() => setView(id)}
+						>
+							<span className="sh-ex-view-icon">
+								<Icon size={17} />
+								{id === "changes" && changeCount > 0 && (
+									<span className="sh-ex-view-count" aria-hidden="true">
+										{changeCount > 99 ? "99+" : changeCount}
+									</span>
+								)}
+							</span>
+							<span className="sh-ex-view-label">{label}</span>
+						</button>
+					))}
+				</nav>
+			)}
 			<div className="sh-ex-body">
 				{view === "files" && (
 					<FilesView
@@ -255,20 +235,7 @@ export function ExplorerSidebar({
 						onOpen={path => open(path)}
 					/>
 				)}
-				{view === "search" && (
-					<SearchView
-						client={client}
-						instanceId={instanceId}
-						canSearch={canSearch}
-						form={form}
-						onForm={setForm}
-						inputRef={searchInput}
-						onOpen={open}
-					/>
-				)}
-				{view === "references" && references !== null && (
-					<ReferencesView references={references} onOpen={open} onClear={onClearReferences} />
-				)}
+				{view === "search" && <SearchView form={form} onForm={onForm} invalid={invalid} inputRef={searchInput} />}
 			</div>
 			{!overlay && (
 				<div

@@ -1,0 +1,202 @@
+/* The main area's panes (see lib/workspace.ts): the column that holds the conversation and the panes opened as
+ * tabs, the tab strip over it, the docked frame a sheet takes in a tab or beside the conversation, and the
+ * menu that says where a pane opens. */
+
+/* The conversation's flex slot in the layout row. */
+.sh-column {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+
+/* A pane tab is in front: the conversation stays mounted but takes no room and skips rendering
+ * (`content-visibility: hidden` keeps its scroll position and state for when its tab is back). */
+.sh-column[data-tab] > .sh-panel {
+	flex: 0 0 0;
+	height: 0;
+	min-height: 0;
+	margin: 0;
+	padding: 0;
+	overflow: hidden;
+	border-width: 0;
+	content-visibility: hidden;
+}
+
+/* ---- tab strip ---- */
+.sh-ws-tabs {
+	display: flex;
+	flex: none;
+	gap: 2px;
+	margin-bottom: 6px;
+	padding: 2px;
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.sh-ws-tab {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	max-width: 220px;
+	border: 1px solid transparent;
+	border-radius: var(--radius);
+}
+
+.sh-ws-tab[data-active] {
+	background: var(--selected);
+	border-color: var(--border);
+}
+
+.sh-ws-tab-label {
+	display: inline-flex;
+	align-items: center;
+	min-width: 0;
+	height: 28px;
+	padding: 0 6px 0 12px;
+	font-size: 13px;
+	color: var(--fg-muted);
+	background: none;
+	border: 0;
+	border-radius: var(--radius);
+}
+
+.sh-ws-tab-label:only-child {
+	padding-right: 12px;
+}
+
+.sh-ws-tab-label > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-ws-tab:hover .sh-ws-tab-label,
+.sh-ws-tab[data-active] .sh-ws-tab-label {
+	color: var(--fg);
+}
+
+.sh-ws-tab-label:focus-visible,
+.sh-ws-tab-close:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: -2px;
+}
+
+.sh-ws-tab-close {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	margin-right: 4px;
+	padding: 0;
+	color: var(--fg-faint);
+	background: none;
+	border: 0;
+	border-radius: 4px;
+}
+
+.sh-ws-tab-close:hover {
+	color: var(--fg);
+	background: var(--hover);
+}
+
+/* ---- slots and the docked frame ---- */
+.sh-tab-slot {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+
+.sh-tab-slot[hidden] {
+	display: none;
+}
+
+/* A sheet in a slot: the sheet's content in the surface of a session panel, filling the slot. It keeps the
+ * sheet's padding and gap; the shapes that run edge to edge (the viewers, Settings) say so themselves. */
+.sh-sheet.sh-sheet-docked {
+	position: relative;
+	z-index: auto;
+	inset: auto;
+	flex: 1 1 0;
+	align-self: stretch;
+	width: auto;
+	min-width: 0;
+	min-height: 0;
+	max-height: none;
+	background: var(--panel);
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+	border-color: var(--border);
+	box-shadow: var(--shadow-float);
+	animation: none;
+}
+
+/* The shapes that were a definite-height canvas as a floating sheet (`full`, Settings) lay their content out
+ * with flex and scroll inside; the rest scroll as a whole. */
+.sh-sheet.sh-sheet-docked[data-sheet-size="full"],
+.sh-sheet.sh-sheet-docked[data-sheet-size="settings"] {
+	overflow: hidden;
+}
+
+.sh-sheet.sh-sheet-docked[data-sheet-size="settings"] {
+	gap: 0;
+	padding: 0;
+}
+
+/* ---- where this opens ---- */
+.sh-place-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 80;
+}
+
+.sh-place-menu {
+	position: fixed;
+	z-index: 81;
+	display: flex;
+	flex-direction: column;
+	min-width: 168px;
+	padding: 4px;
+	background: var(--glass);
+	backdrop-filter: blur(20px) saturate(170%);
+	-webkit-backdrop-filter: blur(20px) saturate(170%);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow-overlay);
+}
+
+.sh-place-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 32px;
+	padding: 0 10px 0 8px;
+	font-size: 13.5px;
+	text-align: left;
+	color: var(--fg);
+	background: none;
+	border: 0;
+	border-radius: calc(var(--radius) - 2px);
+}
+
+.sh-place-item:hover,
+.sh-place-item:focus-visible {
+	background: var(--hover);
+	outline: none;
+}
+
+.sh-place-mark {
+	flex: none;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+}
+
+.sh-place-item[aria-checked="true"] .sh-place-mark {
+	background: var(--accent);
+}

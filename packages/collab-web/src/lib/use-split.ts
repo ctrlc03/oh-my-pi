@@ -1,5 +1,5 @@
 /**
- * Split view: a second live session beside the main one, and the editor docked beside it.
+ * Split view: a second live session beside the main one (the side pane for placed panes is `workspace.ts`).
  * The second pane owns its own {@link GuestClient} (socket, room, replica) here, above
  * the main `Session`, so switching the main session does not drop it.
  */
@@ -9,34 +9,12 @@ import { GuestClient } from "./client";
 import { computerById, type ComputerHandle } from "./computers";
 import { extractLink, forgetRoom, moveRoom, type RecentRoom, roomIdOf } from "./rooms";
 import { suspendsHiddenPages } from "./socket";
-import { readJson, writeJson } from "./storage";
 
 /** Desktop windows from 1200px, and tablets held landscape (an iPad is 1024px+ wide there). */
 export const SPLIT_QUERY =
 	"(min-width: 1200px), (min-width: 1024px) and (orientation: landscape) and (hover: none) and (pointer: coarse)";
-/** Room for the docked editor and a second session at once; below it the session pane takes the dock. */
+/** Room for the side pane and a second session at once; below it the session pane takes the side. */
 export const TWO_PANES_QUERY = "(min-width: 1500px)";
-/** Docked editor preference (boolean, per device); absent: the editor opens as a sheet. */
-export const IDE_DOCK_KEY = "omp.collab.ide-dock";
-
-export function loadIdeDock(): boolean {
-	return readJson(IDE_DOCK_KEY) === true;
-}
-
-export function saveIdeDock(docked: boolean): void {
-	writeJson(IDE_DOCK_KEY, docked ? true : null);
-}
-
-/** Docked editor maximized: it fills the main area and the transcript is hidden (boolean, per device). */
-export const IDE_MAX_KEY = "omp.collab.ide-maximized";
-
-export function loadIdeMaximized(): boolean {
-	return readJson(IDE_MAX_KEY) === true;
-}
-
-export function saveIdeMaximized(maximized: boolean): void {
-	writeJson(IDE_MAX_KEY, maximized ? true : null);
-}
 
 /** Why `next` cannot open beside the main session, or null. One room cannot have two clients: both would send its queued prompts. */
 export function besideConflict(mainLink: string | null, next: string): string | null {
@@ -47,7 +25,7 @@ export function besideConflict(mainLink: string | null, next: string): string | 
 }
 
 /** Which split pane the user last touched; shortcuts act on that one only. */
-export type PaneName = "main" | "beside" | "editor";
+export type PaneName = "main" | "beside" | "dock";
 
 let activePane: PaneName = "main";
 
@@ -55,13 +33,13 @@ export function focusedPane(): PaneName {
 	return activePane;
 }
 
-/** Elements marked `data-pane="beside"|"editor"` claim focus; everything else belongs to the main session. */
+/** Elements marked `data-pane="beside"|"dock"` (the side pane and the main area's tab slots) claim focus; everything else belongs to the main session. */
 function paneOf(target: EventTarget | null): PaneName | null {
 	if (!(target instanceof Element)) return null;
 	// Sheets are portaled outside every pane: opening one leaves the focus where it was.
 	if (target.closest('[role="dialog"]') !== null) return null;
 	const marked = target.closest("[data-pane]")?.getAttribute("data-pane");
-	return marked === "beside" || marked === "editor" ? marked : "main";
+	return marked === "beside" || marked === "dock" ? marked : "main";
 }
 
 function trackFocus(): () => void {

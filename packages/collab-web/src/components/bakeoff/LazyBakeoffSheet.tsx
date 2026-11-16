@@ -6,6 +6,6 @@ import type { BakeoffSheetProps } from "./BakeoffSheet";
  * bake-off: keep them out of the entry bundle.
  */
 export const LazyBakeoffSheet = createLazySheet<BakeoffSheetProps>(
-	{ label: "bake-off", title: "Bake-off", noun: "bake-off" },
+	{ label: "bake-off", pane: "bakeoff", title: "Bake-off", noun: "bake-off" },
 	() => import("./BakeoffSheet").then(module => module.BakeoffSheet),
 );

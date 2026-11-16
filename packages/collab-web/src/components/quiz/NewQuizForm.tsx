@@ -6,6 +6,7 @@ import { type ComputerHandle, computerById, saveLastComputer } from "../../lib/c
 import type { FanoutModel } from "../../lib/fanout";
 import { shortenPath } from "../../lib/format";
 import { useRequest } from "../../lib/use-request";
+import { SheetPlacementButton } from "../shell/Sheet";
 import { SubjectPicker, useSubjectPick } from "../shell/SubjectPicker";
 import { createQuiz } from "./quiz-api";
 import {
@@ -130,9 +131,12 @@ export function NewQuizForm({ computers, target, onBack, onStarted, onClose }: N
 				<button type="button" className="sh-btn sh-gh-back" onClick={onBack}>
 					<ChevronLeft size={16} /> Quizzes
 				</button>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
-					<X size={16} />
-				</button>
+				<span className="sh-sheet-head-actions">
+					<SheetPlacementButton />
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
+						<X size={16} />
+					</button>
+				</span>
 			</div>
 			<h2 className="qz-form-title">New quiz</h2>
 			<div className="qz-form-body">

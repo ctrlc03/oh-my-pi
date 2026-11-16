@@ -25,7 +25,7 @@ import {
 } from "../../lib/settings-ui";
 import { usePersonal } from "../../lib/use-personal";
 import { PHONE_QUERY, useMedia } from "../codemap/shared";
-import { Sheet } from "../shell/Sheet";
+import { Sheet, SheetPlacementButton } from "../shell/Sheet";
 import { ShortcutsPanel } from "../shell/ShortcutsPanel";
 import { AboutSection } from "./AboutSection";
 import { AppearanceSection } from "./AppearanceSection";
@@ -188,7 +188,7 @@ export function SettingsSheet({ initial, env, onClose }: SettingsSheetProps): Re
 		);
 
 	return (
-		<Sheet label="Settings" size="settings" onClose={onClose}>
+		<Sheet label="Settings" size="settings" pane="settings" onClose={onClose}>
 			<div ref={root} className="sh-set" data-view={inList ? "list" : "section"}>
 				<nav className="sh-set-nav" aria-label="Settings sections">
 					<div className="sh-set-nav-head">
@@ -235,6 +235,7 @@ export function SettingsSheet({ initial, env, onClose }: SettingsSheetProps): Re
 							<ArrowLeft size={16} />
 						</button>
 						<h2 className="sh-sheet-title">{settingsLabel(section)}</h2>
+						<SheetPlacementButton />
 						<button
 							type="button"
 							className="sh-btn sh-btn-icon sh-set-close-main"

@@ -1,5 +1,6 @@
 import { ChevronLeft, X } from "lucide-react";
 import type { ReactNode } from "react";
+import { SheetPlacementButton } from "../shell/Sheet";
 
 /** The head of a quiz screen: back to the list of quizzes, and close. */
 export function QuizHeader({ onHistory, onClose }: { onHistory(): void; onClose(): void }): ReactNode {
@@ -8,9 +9,12 @@ export function QuizHeader({ onHistory, onClose }: { onHistory(): void; onClose(
 			<button type="button" className="sh-btn sh-gh-back" onClick={onHistory}>
 				<ChevronLeft size={16} /> Quizzes
 			</button>
-			<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
-				<X size={16} />
-			</button>
+			<span className="sh-sheet-head-actions">
+				<SheetPlacementButton />
+				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
+					<X size={16} />
+				</button>
+			</span>
 		</div>
 	);
 }

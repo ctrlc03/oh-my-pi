@@ -175,7 +175,7 @@ export function readTheme(host: HTMLElement): ThemeSnapshot {
 }
 
 /** The attributes of the root element the theme and font follow. */
-const WATCHED = ["data-theme", "data-accent", "data-code-font", "data-text-size"];
+export const THEME_ATTRIBUTES = ["data-theme", "data-accent", "data-code-font", "data-text-size"];
 
 /**
  * Call `onChange` when the page's theme, accent, code font, text size, colour scheme or the editor theme of the sheet
@@ -189,7 +189,7 @@ export function watchTheme(host: HTMLElement, onChange: () => void): () => void 
 		pending = requestAnimationFrame(onChange);
 	};
 	const observer = new MutationObserver(schedule);
-	observer.observe(document.documentElement, { attributes: true, attributeFilter: WATCHED });
+	observer.observe(document.documentElement, { attributes: true, attributeFilter: THEME_ATTRIBUTES });
 	const sheet = host.closest("[data-editor-theme]");
 	if (sheet !== null) observer.observe(sheet, { attributes: true, attributeFilter: ["data-editor-theme"] });
 	const scheme = matchMedia("(prefers-color-scheme: dark)");

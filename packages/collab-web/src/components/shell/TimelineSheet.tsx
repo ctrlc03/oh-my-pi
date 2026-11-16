@@ -28,7 +28,7 @@ import type { InspectInfo, RequestPreviewInfo } from "../../lib/client";
 import { fmtBytes, fmtCost, fmtDuration, fmtPercent, fmtTokens } from "../../lib/format";
 import { copyText } from "../../lib/share";
 import { cacheFraction, decodeMs, shortModel, slowestMs, summarize, timingBar } from "../../lib/timeline";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import "./timeline.css";
 
 /** A reply that never comes (a host that dropped the command) stops the spinner after this long. */
@@ -279,6 +279,7 @@ export function TimelineSheet({ info, preview, noticeId, onSessionCommand, onClo
 		<Sheet
 			label="timeline"
 			size="wide"
+			pane="timeline"
 			onClose={() => {
 				if (view === "preview") setView("requests");
 				else onClose();
@@ -310,6 +311,7 @@ export function TimelineSheet({ info, preview, noticeId, onSessionCommand, onClo
 							className={(view === "preview" ? previewing.pending : listing.pending) ? "tl-spin" : undefined}
 						/>
 					</button>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

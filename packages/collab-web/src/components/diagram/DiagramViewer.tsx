@@ -65,7 +65,7 @@ export function DiagramViewer({ kind, source, onClose }: DiagramViewerProps): Re
 	};
 
 	return (
-		<Sheet label={`${KIND_LABEL[kind]} diagram`} size="full" onClose={onClose}>
+		<Sheet label={`${KIND_LABEL[kind]} diagram`} size="full" pane="diagram" onClose={onClose}>
 			<DiagramHead title={`${KIND_LABEL[kind]} diagram`} onClose={onClose}>
 				<button
 					type="button"

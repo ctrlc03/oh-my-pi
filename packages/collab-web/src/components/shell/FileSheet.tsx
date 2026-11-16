@@ -6,7 +6,7 @@ import { fmtBytes } from "../../lib/format";
 import { HIGHLIGHT_MAX_CHARS, languageOf, loadHighlighter } from "../../lib/highlight";
 import { useRequest } from "../../lib/use-request";
 import { DownloadButton } from "./DownloadButton";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 
 export interface FileSheetProps {
 	client: CompanionClient;
@@ -25,7 +25,7 @@ export function FileSheet({ client, instanceId, path, line, onClose }: FileSheet
 	const { state, reload } = useRequest(load);
 	const shown = state.status === "ready" ? state.value.path : path;
 	return (
-		<Sheet label="file" size="wide" onClose={onClose}>
+		<Sheet label="file" size="wide" pane="file" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title sh-file-path" title={shown}>
 					{shown}
@@ -42,6 +42,7 @@ export function FileSheet({ client, instanceId, path, line, onClose }: FileSheet
 					>
 						<RefreshCw size={15} className={state.status === "loading" ? "sh-spin" : undefined} />
 					</button>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

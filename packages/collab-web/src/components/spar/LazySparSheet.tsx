@@ -6,6 +6,6 @@ import type { SparSheetProps } from "./SparSheet";
  * once someone opens sparring: keep them out of the entry bundle.
  */
 export const LazySparSheet = createLazySheet<SparSheetProps>(
-	{ label: "sparring", title: "Sparring", noun: "sparring" },
+	{ label: "sparring", pane: "spar", title: "Sparring", noun: "sparring" },
 	() => import("./SparSheet").then(module => module.SparSheet),
 );

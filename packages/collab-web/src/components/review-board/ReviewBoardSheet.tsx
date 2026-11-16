@@ -5,7 +5,7 @@ import type { GuestClient, GuestSnapshot } from "../../lib/client";
 import type { ReviewSubject } from "../../lib/review-board";
 import { buildBoardPrompt, type StackPosition } from "../../lib/review-board-view";
 import { promptTurns } from "../../lib/turn-changes";
-import { Sheet } from "../shell/Sheet";
+import { Sheet, SheetPlacementButton } from "../shell/Sheet";
 import {
 	type BoardCompanion,
 	type BoardSource,
@@ -189,7 +189,7 @@ export function ReviewBoardSheet({
 	}
 
 	return (
-		<Sheet label="review board" size="full" onClose={onClose}>
+		<Sheet label="review board" size="full" pane="review-board" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title rb-title" title={title}>
 					Review board <span className="rb-title-subject">{title}</span>
@@ -204,6 +204,7 @@ export function ReviewBoardSheet({
 					>
 						<RefreshCw size={16} />
 					</button>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close" title="Close">
 						<X size={16} />
 					</button>

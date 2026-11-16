@@ -59,7 +59,7 @@ export function DiagramFileSheet({
 		return diagramFileKind(path) === "excalidraw" ? <SceneFile {...common} /> : <MermaidFile {...common} />;
 	}
 	return (
-		<Sheet label="diagram file" size="full" onClose={onClose}>
+		<Sheet label="diagram file" size="full" pane="diagram" onClose={onClose}>
 			<DiagramHead title={baseName(path)} titleHint={path} onClose={onClose} />
 			{state.status === "loading" && (
 				<div className="sh-companion-empty sh-file-status">
@@ -120,7 +120,7 @@ function SceneFile(props: LoadedFileProps): ReactNode {
 	);
 	if (file.text === null || (parsed !== null && !parsed.ok)) {
 		return (
-			<Sheet label="diagram file" size="full" onClose={onClose}>
+			<Sheet label="diagram file" size="full" pane="diagram" onClose={onClose}>
 				<DiagramHead title={baseName(path)} titleHint={path} onClose={onClose} />
 				<div className="sh-connect-error">
 					{file.text === null
@@ -184,7 +184,7 @@ function MermaidFile(props: LoadedFileProps): ReactNode {
 	};
 
 	return (
-		<Sheet label="diagram file" size="full" onClose={requestClose}>
+		<Sheet label="diagram file" size="full" pane="diagram" onClose={requestClose}>
 			<DiagramHead title={baseName(path)} titleHint={path} onClose={requestClose}>
 				{writable && (
 					<button

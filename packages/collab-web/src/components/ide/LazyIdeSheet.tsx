@@ -3,8 +3,7 @@ import type { ComponentType, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { importChunk } from "../../lib/stale-build";
 import { LoadFailure } from "../shell/LoadFailure";
-import { Sheet } from "../shell/Sheet";
-import { DockPane } from "../shell/SplitPane";
+import { Sheet, SheetPlacementButton } from "../shell/Sheet";
 import type { IdeSheetProps } from "./IdeSheet";
 
 type IdeSheetComponent = ComponentType<IdeSheetProps>;
@@ -54,13 +53,16 @@ export function LazyIdeSheet(props: IdeSheetProps): ReactNode {
 	}, [attempt]);
 
 	if (loadedSheet !== null) return <loadedSheet.Sheet {...props} />;
-	const placeholder = (
-		<>
+	return (
+		<Sheet label="editor" size="full" pane="editor" onClose={props.onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Editor</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={props.onClose} aria-label="Close">
-					<X size={16} />
-				</button>
+				<span className="sh-sheet-head-actions">
+					<SheetPlacementButton />
+					<button type="button" className="sh-btn sh-btn-icon" onClick={props.onClose} aria-label="Close">
+						<X size={16} />
+					</button>
+				</span>
 			</div>
 			{error === null ? (
 				<div className="sh-companion-empty sh-file-status">
@@ -69,12 +71,6 @@ export function LazyIdeSheet(props: IdeSheetProps): ReactNode {
 			) : (
 				<LoadFailure what="the editor" error={error} onRetry={() => setAttempt(n => n + 1)} />
 			)}
-		</>
-	);
-	if (props.dock?.docked === true) return <DockPane label="editor">{placeholder}</DockPane>;
-	return (
-		<Sheet label="editor" size="full" onClose={props.onClose}>
-			{placeholder}
 		</Sheet>
 	);
 }

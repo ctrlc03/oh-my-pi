@@ -5,7 +5,7 @@ import { imageBlob, imageFileName, saveBlob } from "../../lib/download";
 import { relTime } from "../../lib/format";
 import type { Screen } from "../../lib/screens";
 import { openImage } from "../../tool-render";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import "./screens.css";
 
 /** Thumbnails mounted at first, and added per "Show more": keeps a long session's grid light. */
@@ -105,7 +105,7 @@ export function ScreensSheet({ screens, onJump, onClose }: ScreensSheetProps): R
 	}, [viewing, onClose]);
 
 	return (
-		<Sheet label="screens" size={viewing ? "full" : "wide"} onClose={close}>
+		<Sheet label="screens" size={viewing ? "full" : "wide"} pane="screens" onClose={close}>
 			<div className="sh-sheet-head">
 				{viewing !== null && (
 					<button type="button" className="sh-btn sh-btn-icon" onClick={close} aria-label="Back to all screens">
@@ -117,9 +117,12 @@ export function ScreensSheet({ screens, onJump, onClose }: ScreensSheetProps): R
 						? `${index + 1} / ${newest.length}`
 						: `Screens${newest.length > 0 ? ` · ${newest.length}` : ""}`}
 				</div>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
-					<X size={16} />
-				</button>
+				<span className="sh-sheet-head-actions">
+					<SheetPlacementButton />
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
+						<X size={16} />
+					</button>
+				</span>
 			</div>
 			{viewing !== null ? (
 				<>

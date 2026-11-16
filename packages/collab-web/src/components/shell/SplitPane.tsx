@@ -255,14 +255,11 @@ export function SplitPane({
 export interface DockPaneProps {
 	/** Accessible name. */
 	label: string;
-	children: ReactNode;
+	/** Ref of the element the docked pane draws into (see `slotRef` in `workspace.ts`). */
+	slot: (element: HTMLElement | null) => void;
 }
 
-/** A panel docked beside the transcript (the editor), framed like the session panels. Marks its focus as `editor`. */
-export function DockPane({ label, children }: DockPaneProps): ReactNode {
-	return (
-		<aside className="sh-panel sh-split-pane sh-split-dock" data-pane="editor" aria-label={label}>
-			{children}
-		</aside>
-	);
+/** The side pane for a pane placed beside the conversation (`workspace.ts`), framed like the session panels. Marks its focus as `dock`; the pane's sheet draws into it. */
+export function DockPane({ label, slot }: DockPaneProps): ReactNode {
+	return <aside ref={slot} className="sh-panel sh-split-pane sh-split-dock" data-pane="dock" aria-label={label} />;
 }

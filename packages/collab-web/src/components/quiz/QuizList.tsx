@@ -20,6 +20,7 @@ import { type ComputerHandle, unavailableReason } from "../../lib/computers";
 import { fmtCost, relTime } from "../../lib/format";
 import { type ClientTarget, featureTargets, useStableTargets } from "../../lib/stable-targets";
 import { useRequest } from "../../lib/use-request";
+import { SheetPlacementButton } from "../shell/Sheet";
 import { deleteQuiz, listQuizzes } from "./quiz-api";
 import { aboutTags, folderName, groupByRepo, rowStatus } from "./quiz-flow";
 
@@ -128,6 +129,7 @@ export function QuizList({
 					>
 						<RefreshCw size={15} className={loading ? "sh-spin" : undefined} />
 					</button>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

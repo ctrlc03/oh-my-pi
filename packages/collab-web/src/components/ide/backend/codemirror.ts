@@ -205,7 +205,10 @@ class CmView implements EngineView {
 		this.#view.focus();
 	}
 
-	setMaximized(): void {}
+	/** The font size and the line numbers are the sheet's CSS (`ide.css`); the glyphs just changed size. */
+	setLayout(): void {
+		this.#view.requestMeasure();
+	}
 
 	/** The language server's hover for the character at `offset`, as CodeMirror's tooltip. */
 	hoverAt(offset: number): Promise<Tooltip | null> | null {

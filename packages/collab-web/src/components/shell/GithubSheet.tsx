@@ -36,7 +36,7 @@ import { useRequest } from "../../lib/use-request";
 import { Markdown } from "../transcript/Markdown";
 import { PrFiles } from "./PrFiles";
 import { PrMergeSheet } from "./PrMergeSheet";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import "./stats.css";
 import "./github.css";
 import "./pr-review.css";
@@ -120,7 +120,7 @@ export function GithubSheet({
 	};
 
 	return (
-		<Sheet label="github" size="wide" onClose={onClose}>
+		<Sheet label="github" size="wide" pane="github" onClose={onClose}>
 			{/* The list stays mounted under an opened item, so going back keeps it without a reload. */}
 			<div className="sh-gh-pane" hidden={opened !== null}>
 				<ItemList
@@ -186,6 +186,7 @@ function ItemList({ client, instanceId, kind, filter, onKind, onFilter, onOpen, 
 				</div>
 				<span className="sh-stats-head-actions">
 					<RefreshButton loading={loading} onClick={reload} />
+					<SheetPlacementButton />
 					<CloseButton onClick={onClose} />
 				</span>
 			</div>
@@ -325,6 +326,7 @@ function ItemDetail({
 				</button>
 				<span className="sh-stats-head-actions">
 					<RefreshButton loading={loading} onClick={reload} />
+					<SheetPlacementButton />
 					<CloseButton onClick={onClose} />
 				</span>
 			</div>

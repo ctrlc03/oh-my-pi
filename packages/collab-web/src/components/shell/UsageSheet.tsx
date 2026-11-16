@@ -8,7 +8,7 @@ import { readJson, writeJson } from "../../lib/storage";
 import { combineUsage, seriesAligned } from "../../lib/usage-combine";
 import { useComputerRequests } from "../../lib/use-computer-requests";
 import { LimitWindows, type LimitWindowsProps } from "./LimitWindows";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import "./stats.css";
 
 const RANGE_KEY = "omp.collab.usageRange";
@@ -82,7 +82,7 @@ export function UsageSheet({ computers, limits, limitsComputerId, onClose }: Usa
 	};
 
 	return (
-		<Sheet label="Usage" size="wide" onClose={onClose}>
+		<Sheet label="Usage" size="wide" pane="usage" onClose={onClose}>
 			<div className="sh-sheet-head">
 				<div className="sh-sheet-title">Usage</div>
 				<span className="sh-stats-head-actions">
@@ -95,6 +95,7 @@ export function UsageSheet({ computers, limits, limitsComputerId, onClose }: Usa
 					>
 						{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 					</button>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

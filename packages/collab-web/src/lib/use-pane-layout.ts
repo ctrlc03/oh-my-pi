@@ -75,7 +75,7 @@ export function usePaneLayout(row: RefObject<HTMLElement | null>, docked: readon
 	dockedRef.current = docked;
 
 	const wants = useCallback((width: number, override?: PaneWant): PaneWant[] => {
-		prefs.current ??= { sidebar: null, rail: null, beside: null, editor: null };
+		prefs.current ??= { sidebar: null, rail: null, beside: null, dock: null };
 		const saved = prefs.current;
 		return PANE_PRIORITY.filter(id => dockedRef.current.includes(id)).map(id =>
 			override?.id === id ? override : { id, px: storedToPx(id, saved[id], width) },
@@ -124,7 +124,7 @@ export function usePaneLayout(row: RefObject<HTMLElement | null>, docked: readon
 	const dockedKey = docked.join();
 	// Before paint, so a pane that has just appeared (or a window that opens on a saved size) never shows the default.
 	useLayoutEffect(() => {
-		prefs.current ??= { sidebar: null, rail: null, beside: null, editor: null };
+		prefs.current ??= { sidebar: null, rail: null, beside: null, dock: null };
 		for (const id of PANE_IDS) prefs.current[id] = readStored(id);
 		apply();
 	}, [apply, dockedKey]);
@@ -137,7 +137,7 @@ export function usePaneLayout(row: RefObject<HTMLElement | null>, docked: readon
 		// Reset pane sizes (Settings) and other tabs of this app: read the preferences again.
 		const unsubscribe = subscribePaneSizes(() => {
 			if (drag.current !== null) return;
-			prefs.current ??= { sidebar: null, rail: null, beside: null, editor: null };
+			prefs.current ??= { sidebar: null, rail: null, beside: null, dock: null };
 			for (const id of PANE_IDS) prefs.current[id] = readStored(id);
 			apply();
 		});
@@ -149,7 +149,7 @@ export function usePaneLayout(row: RefObject<HTMLElement | null>, docked: readon
 	}, [apply, row]);
 
 	const save = useCallback((id: PaneId, stored: number | null): void => {
-		prefs.current ??= { sidebar: null, rail: null, beside: null, editor: null };
+		prefs.current ??= { sidebar: null, rail: null, beside: null, dock: null };
 		prefs.current[id] = stored;
 		writeStored(id, stored);
 	}, []);

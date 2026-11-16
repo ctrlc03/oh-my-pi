@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CompanionClient } from "../../lib/companion";
 import { useRequest } from "../../lib/use-request";
+import { SheetPlacementButton } from "../shell/Sheet";
 import type { EditorAccess, MapSource } from "./DetailPanel";
 import { ExportMenu } from "./ExportMenu";
 import { highlightExcerpt } from "./highlight-excerpt";
@@ -86,6 +87,7 @@ export function MapScreen({ client, id, instanceId, onOpenFile, onBack, onClose 
 			<div className="ar-viewer-host">
 				<div className="ar-bar">
 					<div className="ar-bar-main">{back}</div>
+					<SheetPlacementButton />
 					<button type="button" className="ar-btn ar-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>
@@ -169,6 +171,7 @@ function LoadedMap({
 				actions={
 					<>
 						<ExportMenu map={map} source={source} />
+						<SheetPlacementButton />
 						<button type="button" className="ar-btn ar-btn-icon" onClick={onClose} aria-label="Close">
 							<X size={16} />
 						</button>

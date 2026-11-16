@@ -9,7 +9,7 @@ import type {
 	CompanionClient,
 } from "../../lib/companion";
 import { useRequest } from "../../lib/use-request";
-import { Sheet } from "../shell/Sheet";
+import { Sheet, SheetPlacementButton } from "../shell/Sheet";
 import { FileSessions } from "./FileSessions";
 import { FlowGraph } from "./FlowGraph";
 import { FocusGraph } from "./FocusGraph";
@@ -123,7 +123,7 @@ export function CodemapSheet({
 	const showMap = view?.focus.kind === "dir" && wide && folderTab === "map" && view.map !== undefined;
 
 	return (
-		<Sheet label="code map" size="full" onClose={onClose}>
+		<Sheet label="code map" size="full" pane="codemap" onClose={onClose}>
 			<div className="sh-sheet-head sh-cm-head">
 				<button
 					type="button"
@@ -160,6 +160,7 @@ export function CodemapSheet({
 					>
 						{loading ? <LoaderCircle size={15} className="sh-spin" /> : <RefreshCw size={15} />}
 					</button>
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

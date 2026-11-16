@@ -6,6 +6,6 @@ import type { ArchitectureSheetProps } from "./ArchitectureSheet";
  * is opened: keep them out of the entry bundle.
  */
 export const LazyArchitectureSheet = createLazySheet<ArchitectureSheetProps>(
-	{ label: "architecture maps", title: "Architecture maps", noun: "the architecture maps" },
+	{ label: "architecture maps", pane: "architecture", title: "Architecture maps", noun: "the architecture maps" },
 	() => import("./ArchitectureSheet").then(module => module.ArchitectureSheet),
 );

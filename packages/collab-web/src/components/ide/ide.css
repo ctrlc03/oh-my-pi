@@ -40,7 +40,8 @@
 .sh-ide-quick {
 	position: relative;
 	flex: 1;
-	min-width: 0;
+	/* The header gives up its buttons (see `headTierFor`) before the file finder gets narrower than this. */
+	min-width: 120px;
 }
 
 .sh-ide-quick .sh-input {
@@ -258,7 +259,22 @@
 	min-width: 0;
 	min-height: 0;
 	overflow: hidden;
-	font-size: calc(12.5px * var(--reading-scale));
+	font-size: var(--sh-ide-font-size, calc(12.5px * var(--reading-scale)));
+}
+
+/* The line numbers toggle of the layout menu: Monaco is told, CodeMirror's gutter is hidden. */
+.sh-ide-editor[data-line-numbers="off"] .cm-lineNumbers {
+	display: none;
+}
+
+/* The code and what floats over it (the definitions, a notice), above the bottom panel. */
+.sh-ide-code {
+	position: relative;
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
 }
 
 .sh-ide-editor[hidden] {
@@ -330,7 +346,7 @@
 	position: absolute;
 	z-index: 3;
 	right: 12px;
-	bottom: 36px;
+	bottom: 12px;
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
@@ -343,6 +359,48 @@
 	box-shadow: var(--shadow-overlay);
 }
 
+/* Resized by the user: its inline size rules, held to the editor area. */
+.sh-ide-defs[data-sized] {
+	max-width: calc(100% - 24px);
+	max-height: calc(100% - 24px);
+}
+
+/* The resize handle: the top left corner, since the popup is anchored at the bottom right. */
+.sh-ide-defs-grip {
+	position: absolute;
+	z-index: 1;
+	top: 0;
+	left: 0;
+	width: 16px;
+	height: 16px;
+	padding: 0;
+	cursor: nwse-resize;
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+	background: linear-gradient(
+		135deg,
+		var(--fg-faint) 0 2px,
+		transparent 2px 5px,
+		var(--fg-faint) 5px 7px,
+		transparent 7px
+	);
+	border: 0;
+	border-top-left-radius: var(--radius);
+	opacity: 0.55;
+	outline: none;
+}
+
+.sh-ide-defs-grip:hover,
+.sh-ide-defs-grip[data-dragging],
+.sh-ide-defs-grip:focus-visible {
+	opacity: 1;
+}
+
+.sh-ide-defs-grip:focus-visible {
+	box-shadow: 0 0 0 2px var(--accent);
+}
+
 .sh-ide-defs-head {
 	display: flex;
 	align-items: center;
@@ -352,6 +410,8 @@
 }
 
 .sh-ide-defs-list {
+	flex: 1 1 auto;
+	min-height: 0;
 	margin: 0;
 	padding: 0;
 	overflow-y: auto;
@@ -521,6 +581,37 @@
 	gap: 8px;
 }
 
+/* The error and warning counts are a button: they open the Problems tab. */
+.sh-ide-status-btn {
+	padding: 0;
+	font: inherit;
+	color: inherit;
+	cursor: pointer;
+	background: none;
+	border: 0;
+}
+
+.sh-ide-status-btn:hover,
+.sh-ide-status-btn:focus-visible {
+	text-decoration: underline;
+}
+
+/* The notice where the status bar is hidden. */
+.sh-ide-toast {
+	position: absolute;
+	z-index: 3;
+	right: 12px;
+	bottom: 12px;
+	max-width: calc(100% - 24px);
+	padding: 6px 10px;
+	font-size: 12.5px;
+	color: var(--fg);
+	background: var(--bg-overlay);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+	box-shadow: var(--shadow-overlay);
+}
+
 .sh-ide-status-lsp [data-severity="error"] {
 	color: var(--err);
 }
@@ -530,7 +621,11 @@
 }
 
 @media (max-width: 640px) {
-	.sh-ide-status > span:not(.sh-ide-status-path, .sh-ide-notice, .sh-ide-status-changed) {
+	.sh-ide-status > :not(.sh-ide-status-path, .sh-ide-notice, .sh-ide-status-changed) {
+		display: none;
+	}
+
+	.sh-ide-layout-label {
 		display: none;
 	}
 }
@@ -541,10 +636,307 @@
 		font-size: 16px;
 	}
 	.sh-ide-editor {
-		font-size: max(16px, calc(12.5px * var(--reading-scale)));
+		font-size: var(--sh-ide-font-size, max(16px, calc(12.5px * var(--reading-scale))));
 	}
 	.sh-ide-tab-close {
 		width: 32px;
 		height: 32px;
 	}
+}
+
+/* ---- header: font size and layout menu ---- */
+.sh-ide-font {
+	display: inline-flex;
+	align-items: center;
+}
+
+.sh-ide-font .sh-btn {
+	width: 30px;
+	font-size: 12.5px;
+	font-weight: 600;
+}
+
+.sh-ide-layout {
+	position: relative;
+	flex: none;
+}
+
+.sh-ide-layout-btn {
+	height: 32px;
+	padding: 0 8px;
+	color: var(--fg-muted);
+	background: transparent;
+	border-color: transparent;
+}
+
+.sh-ide-layout-btn:hover,
+.sh-ide-layout-btn[aria-expanded="true"] {
+	color: var(--fg);
+	background: var(--hover);
+}
+
+.sh-ide-layout-menu {
+	position: absolute;
+	z-index: 4;
+	top: calc(100% + 4px);
+	right: 0;
+	display: flex;
+	flex-direction: column;
+	min-width: 190px;
+	padding: 4px;
+	background: var(--bg-overlay);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow-overlay);
+}
+
+.sh-ide-layout-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	font-size: 13px;
+	color: var(--fg);
+	text-align: left;
+	background: none;
+	border: 0;
+	border-radius: var(--radius-sm);
+}
+
+.sh-ide-layout-item:hover,
+.sh-ide-layout-item:focus-visible {
+	background: var(--selected);
+	outline: none;
+}
+
+.sh-ide-layout-check {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 16px;
+	color: var(--accent);
+}
+
+.sh-ide-layout-sep {
+	height: 1px;
+	margin: 4px 2px;
+	background: var(--border);
+}
+
+/* ---- bottom panel: Problems, References, Search results ---- */
+.sh-ide-panel {
+	position: relative;
+	display: flex;
+	flex: none;
+	flex-direction: column;
+	min-height: 0;
+	background: var(--bg-raised);
+	border-top: 1px solid var(--border);
+}
+
+.sh-ide-panel-head {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: space-between;
+	min-height: 32px;
+	padding-right: 4px;
+}
+
+.sh-ide-panel-tabs {
+	display: flex;
+	min-width: 0;
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.sh-ide-panel-tab {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 32px;
+	padding: 0 12px;
+	font-size: 12.5px;
+	color: var(--fg-muted);
+	white-space: nowrap;
+	background: none;
+	border: 0;
+}
+
+.sh-ide-panel-tab:hover {
+	color: var(--fg);
+}
+
+.sh-ide-panel-tab[aria-selected="true"] {
+	color: var(--fg);
+	box-shadow: inset 0 -2px var(--accent);
+}
+
+.sh-ide-panel-count {
+	min-width: 18px;
+	padding: 0 5px;
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--fg-muted);
+	text-align: center;
+	background: var(--bg-inset);
+	border-radius: 8px;
+}
+
+.sh-ide-panel-toggle {
+	flex: none;
+	height: 26px;
+}
+
+.sh-ide-panel-body {
+	display: flex;
+	flex: 1 1 0;
+	flex-direction: column;
+	min-height: 0;
+	overflow: auto;
+	background: var(--bg-inset);
+	border-top: 1px solid var(--border);
+}
+
+/* The panel's top edge, which the pointer or the arrow keys move. */
+.sh-ide-panel-resize {
+	position: absolute;
+	z-index: 3;
+	top: -4px;
+	right: 0;
+	left: 0;
+	height: 8px;
+	cursor: row-resize;
+	outline: none;
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.sh-ide-panel-resize::after {
+	content: "";
+	position: absolute;
+	inset-inline: 0;
+	top: 3px;
+	height: 2px;
+	background: transparent;
+	transition: background-color 120ms ease-out;
+}
+
+.sh-ide-panel-resize:hover::after,
+.sh-ide-panel-resize[data-dragging]::after,
+.sh-ide-panel-resize:focus-visible::after {
+	background: var(--accent);
+}
+
+/* ---- Problems ---- */
+.sh-pb-list {
+	margin: 0;
+	padding: 4px 0;
+	list-style: none;
+}
+
+.sh-pb-row {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	width: 100%;
+	padding: 3px 12px;
+	font-size: 12.5px;
+	color: var(--fg);
+	text-align: left;
+	background: none;
+	border: 0;
+}
+
+.sh-pb-row:hover {
+	background: var(--hover);
+}
+
+.sh-pb-icon {
+	flex: none;
+	align-self: center;
+}
+
+.sh-pb-row[data-severity="error"] .sh-pb-icon {
+	color: var(--err);
+}
+
+.sh-pb-row[data-severity="warning"] .sh-pb-icon {
+	color: var(--warn);
+}
+
+.sh-pb-row[data-severity="info"] .sh-pb-icon,
+.sh-pb-row[data-severity="hint"] .sh-pb-icon {
+	color: var(--accent);
+}
+
+.sh-pb-message {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sh-pb-source,
+.sh-pb-where {
+	flex: none;
+	font-size: 11.5px;
+	color: var(--fg-faint);
+}
+
+.sh-pb-where {
+	margin-left: auto;
+}
+
+/* ---- header in a narrow editor: the labels go, the buttons that do not fit are in the Layout menu ---- */
+.sh-ide-head[data-tier="compact"] .sh-ide-layout-label,
+.sh-ide-head[data-tier="tight"] .sh-ide-layout-label {
+	display: none;
+}
+
+.sh-ide-head[data-tier="tight"] .sh-ide-save {
+	width: 30px;
+	padding: 0;
+}
+
+.sh-ide-head[data-tier="tight"] .sh-ide-save span {
+	display: none;
+}
+
+.sh-ide-layout-name {
+	flex: 1;
+	white-space: nowrap;
+}
+
+.sh-ide-layout-hint {
+	margin-left: 16px;
+	font-size: 11.5px;
+	color: var(--fg-faint);
+	white-space: nowrap;
+}
+
+.sh-ide-layout-item:disabled {
+	color: var(--fg-faint);
+	cursor: not-allowed;
+}
+
+.sh-ide-layout-item:disabled:hover {
+	background: none;
+}
+
+.sh-ide-layout-extra {
+	padding: 2px 4px;
+}
+
+.sh-ide-layout-extra .sh-btn {
+	justify-content: flex-start;
+	width: 100%;
+	color: var(--fg);
+	background: none;
+	border-color: transparent;
+}
+
+.sh-ide-layout-extra .sh-btn:hover:not(:disabled) {
+	background: var(--selected);
 }

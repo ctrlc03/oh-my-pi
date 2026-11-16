@@ -7,6 +7,7 @@ import { type ComputerHandle, unavailableReason } from "../../lib/computers";
 import { fmtCost, relTime } from "../../lib/format";
 import { type ClientTarget, featureTargets, useStableTargets } from "../../lib/stable-targets";
 import { useRequest } from "../../lib/use-request";
+import { SheetPlacementButton } from "../shell/Sheet";
 import { createBlueprint, deleteBlueprint, listBlueprints } from "./blueprint-api";
 import { refLabel, shortCommit } from "./blueprint-model";
 
@@ -120,6 +121,7 @@ export function MapList({
 					>
 						<RefreshCw size={15} className={loading ? "sh-spin" : undefined} />
 					</button>
+					<SheetPlacementButton />
 				</span>
 			</div>
 			{away.map(({ computer, reason }) => (

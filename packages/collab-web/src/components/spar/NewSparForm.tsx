@@ -4,6 +4,7 @@ import type { FormEvent, ReactNode } from "react";
 import { useCallback, useId, useState } from "react";
 import { type ComputerHandle, computerById, saveLastComputer } from "../../lib/computers";
 import { useRequest } from "../../lib/use-request";
+import { SheetPlacementButton } from "../shell/Sheet";
 import { SubjectPicker, useSubjectPick } from "../shell/SubjectPicker";
 import { createSpar } from "./spar-api";
 import { buildSparCreate, type SparDocInput, type SparTarget } from "./spar-flow";
@@ -97,9 +98,12 @@ export function NewSparForm({ computers, target, onBack, onStarted, onClose }: N
 				<button type="button" className="sh-btn sh-gh-back" onClick={onBack}>
 					<ChevronLeft size={16} /> Sparring
 				</button>
-				<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
-					<X size={16} />
-				</button>
+				<span className="sh-sheet-head-actions">
+					<SheetPlacementButton />
+					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
+						<X size={16} />
+					</button>
+				</span>
 			</div>
 			<h2 className="sp-form-title">New spar</h2>
 			<div className="sp-form-body">

@@ -13,7 +13,7 @@ import {
 	saveReviewComments,
 } from "../../lib/review-comments";
 import { type ToolRenderHost, ToolView } from "../../tool-render";
-import { Sheet } from "./Sheet";
+import { Sheet, SheetPlacementButton } from "./Sheet";
 import { ReviewPanel } from "./ReviewPanel";
 import { WorkingTree } from "./WorkingTree";
 
@@ -100,7 +100,7 @@ export function ChangesSheet({
 		change({});
 	};
 	return (
-		<Sheet label="changes" size="wide" onClose={onClose}>
+		<Sheet label="changes" size="wide" pane="changes" onClose={onClose}>
 			<div className="sh-sheet-head sh-changes-head">
 				<div className="sh-sheet-title">
 					{tree === null
@@ -132,6 +132,7 @@ export function ChangesSheet({
 							<Columns4 size={14} /> Review board
 						</button>
 					)}
+					<SheetPlacementButton />
 					<button type="button" className="sh-btn sh-btn-icon" onClick={onClose} aria-label="Close">
 						<X size={16} />
 					</button>

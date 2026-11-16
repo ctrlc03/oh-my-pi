@@ -42,8 +42,10 @@ export interface SheetFrame {
 	style: CSSProperties | undefined;
 	/** The handle layer that sits over the panel; kept in step with it. */
 	layer: RefObject<HTMLDivElement | null>;
-	/** A press on the panel: starts a move from its header. */
-	onPanelPointerDown(event: ReactPointerEvent<HTMLElement>): void;
+	/** Puts the handle layer over the panel again; for when the panel was moved or restyled from outside. */
+	syncLayer(): void;
+	/** A press on the panel (a native listener on the panel element): starts a move from its header. */
+	onPanelPointerDown(event: PointerEvent): void;
 	/** A press on a handle: starts a move or a resize from that edge. */
 	grab(event: ReactPointerEvent<HTMLElement>, how: Grab): void;
 	/** The move handle's keys. */
@@ -206,18 +208,18 @@ export function useSheetFrame(enabled: boolean, panel: RefObject<HTMLDivElement 
 		[commit, panel, limits],
 	);
 
-	const onHeader = (event: { target: EventTarget; currentTarget: Element }): boolean => {
-		// A sheet opened from this one is a React child through its portal: its presses reach here too.
-		if (!(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return false;
-		return event.target.closest(HEAD_SELECTOR) !== null && event.target.closest(INTERACTIVE_SELECTOR) === null;
+	const onHeader = (target: EventTarget | null): boolean => {
+		if (!(target instanceof Element) || panel.current === null || !panel.current.contains(target)) return false;
+		return target.closest(HEAD_SELECTOR) !== null && target.closest(INTERACTIVE_SELECTOR) === null;
 	};
 
 	return {
 		style: frame === null ? undefined : frameStyle(frame),
 		layer,
+		syncLayer,
 		onPanelPointerDown: event => {
 			if (!enabled || event.button !== 0 || !event.isPrimary || event.pointerType === "touch") return;
-			if (onHeader(event)) begin(event.nativeEvent, "move", event.currentTarget);
+			if (panel.current !== null && onHeader(event.target)) begin(event, "move", panel.current);
 		},
 		grab: (event, how) => {
 			if (event.button !== 0 || !event.isPrimary) return;

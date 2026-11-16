@@ -1,7 +1,7 @@
 /** What the explorer remembers: its width on this device, and per computer which view and search it was left on. */
 import { readJson, writeJson } from "../../../lib/storage";
 
-export type ExplorerView = "files" | "changes" | "search" | "references";
+export type ExplorerView = "files" | "changes" | "search";
 
 export const WIDTH_KEY = "omp.collab.explorer-width";
 export const MIN_WIDTH = 200;
@@ -10,6 +10,13 @@ export const DEFAULT_WIDTH = 280;
 /** What an arrow key moves the divider by (with Shift, the larger step). */
 export const KEY_STEP = 16;
 export const KEY_STEP_SHIFT = 64;
+/** The code keeps at least this much of the body beside the explorer: the divider stops there, and with less room the explorer overlays the code. */
+export const EDITOR_MIN = 360;
+
+/** Whether a body `bodyWidth` wide leaves the code its {@link EDITOR_MIN} beside an explorer `explorerWidth` wide. */
+export function explorerFits(bodyWidth: number, explorerWidth: number): boolean {
+	return bodyWidth >= explorerWidth + EDITOR_MIN;
+}
 
 export function clampWidth(px: number, max: number = MAX_WIDTH): number {
 	return Math.round(Math.min(Math.max(MIN_WIDTH, max), Math.max(MIN_WIDTH, px)));

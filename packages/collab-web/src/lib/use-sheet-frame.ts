@@ -17,6 +17,7 @@ import {
 	readFrame,
 	resizeFrame,
 	saveFrame,
+	styleDeclarations,
 	type View,
 } from "./sheet-frame";
 import { layoutViewport, toLayout, useUiZoom } from "./zoom";
@@ -72,12 +73,7 @@ function paintLayer(layer: HTMLElement, frame: Frame): void {
 }
 
 function paintPanel(panel: HTMLElement, frame: Frame): void {
-	for (const [name, value] of Object.entries(frameStyle(frame))) {
-		panel.style.setProperty(
-			name === "maxHeight" ? "max-height" : name,
-			typeof value === "number" ? `${value}px` : String(value),
-		);
-	}
+	for (const [name, value] of styleDeclarations(frameStyle(frame))) panel.style.setProperty(name, value);
 }
 
 /** Where the panel is now, in layout px (unmoved by its entry animation). */

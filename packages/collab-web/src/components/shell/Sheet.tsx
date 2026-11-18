@@ -2,7 +2,7 @@ import { PictureInPicture2 } from "lucide-react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BIG_SLOT, EDGES, paneSlot } from "../../lib/sheet-frame";
+import { BIG_SLOT, EDGES, paneSlot, styleDeclarations } from "../../lib/sheet-frame";
 import { useSheetFrame } from "../../lib/use-sheet-frame";
 import {
 	type PaneKind,
@@ -101,10 +101,7 @@ export function Sheet({ label, size, anchor, fixed = false, pane, onClose, child
 			else element.setAttribute(name, value);
 		}
 		element.removeAttribute("style");
-		for (const [name, value] of Object.entries(style ?? {})) {
-			if (name.startsWith("--")) element.style.setProperty(name, String(value));
-			else Object.assign(element.style, { [name]: value });
-		}
+		for (const [name, value] of styleDeclarations(style ?? {})) element.style.setProperty(name, value);
 		const parent = slot !== null && docked ? slot : document.body;
 		if (element.parentNode !== parent) {
 			const focused = element.contains(document.activeElement) ? document.activeElement : null;

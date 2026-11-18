@@ -8,6 +8,7 @@
  * A saved frame is the user's preference and is never rewritten because the window shrank: the frame on screen is the
  * saved one clamped into the window, and it comes back when the room does.
  */
+import type { CSSProperties } from "react";
 import { readJson, writeJson } from "./storage";
 
 export interface Frame {
@@ -187,4 +188,24 @@ export function readFrame(key: string): Frame | null {
 /** Saves the frame under `key`, or forgets it for null (the sheet goes back to its default place and size). */
 export function saveFrame(key: string, frame: Frame | null): void {
 	writeJson(key, frame);
+}
+
+/** Properties whose bare number is the value itself, not px (React's unitless list, as far as sheets set them). */
+const UNITLESS = new Set(["opacity", "zIndex", "flexGrow", "flexShrink", "order", "lineHeight", "fontWeight"]);
+
+/**
+ * `style` in React's object form as `[name, value]` pairs for `element.style.setProperty`: names in CSS case and
+ * numbers in px wherever React would add the unit. A bare number written to `element.style` is not valid CSS and the
+ * browser drops it, which put a moved sheet back at the left edge.
+ */
+export function styleDeclarations(style: CSSProperties): [string, string][] {
+	const declarations: [string, string][] = [];
+	for (const [name, value] of Object.entries(style)) {
+		if (typeof value !== "string" && typeof value !== "number") continue;
+		const property = name.startsWith("--") ? name : name.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`);
+		const text =
+			typeof value === "number" && !UNITLESS.has(name) && !name.startsWith("--") ? `${value}px` : String(value);
+		declarations.push([property, text]);
+	}
+	return declarations;
 }

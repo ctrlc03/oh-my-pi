@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { describe, expect, it } from "bun:test";
 import {
 	BIG_SLOT,
@@ -15,6 +16,7 @@ import {
 	paneSlot,
 	parseFrame,
 	resizeFrame,
+	styleDeclarations,
 } from "../src/lib/sheet-frame";
 
 const VIEW = { width: 1440, height: 900 };
@@ -194,5 +196,28 @@ describe("parseFrame", () => {
 		]) {
 			expect(parseFrame(junk)).toBeNull();
 		}
+	});
+});
+
+describe("styleDeclarations", () => {
+	it("writes a moved frame's numbers as px, so the browser keeps the position and size", () => {
+		expect(
+			styleDeclarations({ left: 198, top: 52, width: 1200, height: 924, right: "auto", maxHeight: "none" }),
+		).toEqual([
+			["left", "198px"],
+			["top", "52px"],
+			["width", "1200px"],
+			["height", "924px"],
+			["right", "auto"],
+			["max-height", "none"],
+		]);
+	});
+
+	it("keeps unitless numbers and custom properties as they are", () => {
+		expect(styleDeclarations({ opacity: 0, position: "fixed" })).toEqual([
+			["opacity", "0"],
+			["position", "fixed"],
+		]);
+		expect(styleDeclarations({ "--anchor-left": "40px" } as CSSProperties)).toEqual([["--anchor-left", "40px"]]);
 	});
 });

@@ -1,4 +1,5 @@
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITheme, Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import type { TerminalExit, TerminalOutputFrame, TerminalPush } from "@oh-my-pi/pi-wire/terminal";
@@ -60,6 +61,15 @@ export interface ShellPaneProps {
 }
 
 const FALLBACK_FONT = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+/**
+ * The bundled Nerd Fonts symbols (`public/terminal-assets/`). Prompts such as Powerlevel10k, Starship and oh-my-posh
+ * draw their icons from the Private Use Area, which no system font covers, so without it they show as boxes. It comes
+ * last in the terminal's font list: the device's own fonts keep every character they have.
+ */
+const SYMBOLS_FAMILY = "omp-terminal-symbols";
+const SYMBOLS_FILE = "terminal-assets/SymbolsNerdFontMono-Regular.woff2";
+/** The code points the font carries: the Private Use Areas plus the few symbols Nerd Fonts adds outside them. */
+const SYMBOLS_RANGE = "U+E000-F8FF, U+F0000-FFFFD, U+23FB-23FE, U+2630, U+2665, U+26A1, U+276C-2771, U+2B58";
 const SCROLLBACK_LINES = 5000;
 /** Output frames kept while an attach is on its way; beyond it the oldest go (the screen then shows a skip notice). */
 const WAITING_MAX_FRAMES = 64;
@@ -69,6 +79,27 @@ function computedColor(probe: HTMLElement, css: string): string {
 	probe.style.color = "";
 	probe.style.color = css;
 	return getComputedStyle(probe).color;
+}
+
+let symbolsFont: Promise<void> | undefined;
+
+/**
+ * Load the symbols font once per page. It is fetched when a terminal first opens rather than when a glyph first
+ * needs it: the WebGL renderer draws through a canvas, which never starts a font download by itself. A failed fetch
+ * (the dev server has no `terminal-assets/`) leaves the boxes and is not retried.
+ */
+function loadSymbolsFont(): Promise<void> {
+	symbolsFont ??= (async () => {
+		const url = new URL(SYMBOLS_FILE, document.baseURI).href;
+		const face = new FontFace(SYMBOLS_FAMILY, `url("${url}") format("woff2")`, { unicodeRange: SYMBOLS_RANGE });
+		document.fonts.add(face);
+		await face.load();
+	})().catch(() => {});
+	return symbolsFont;
+}
+
+function terminalFont(appFont: string): string {
+	return `${appFont}, "${SYMBOLS_FAMILY}"`;
 }
 
 /** The terminal's colours from the app's tokens (`--term-0…15` are the same sixteen the read-only terminal view draws). */
@@ -129,10 +160,12 @@ export function ShellPane(props: ShellPaneProps): ReactNode {
 		if (element === null) return;
 		const look = readTheme(element);
 		const term = new Terminal({
-			fontFamily: look.fontFamily,
+			fontFamily: terminalFont(look.fontFamily),
 			fontSize: 13,
 			theme: look.theme,
 			cursorBlink: true,
+			// Glyphs from a fallback font that are wider than a cell are narrowed to it instead of covering the next one.
+			rescaleOverlappingGlyphs: true,
 			scrollback: SCROLLBACK_LINES,
 			// ⌥ is Meta for the shell (Alt+B, Alt+F) rather than a key for typing accents.
 			macOptionIsMeta: true,
@@ -141,6 +174,27 @@ export function ShellPane(props: ShellPaneProps): ReactNode {
 		term.loadAddon(fit);
 		term.open(element);
 		xterm.current = term;
+		// WebGL draws powerline separators and box characters to fill each cell exactly, which a font only manages at
+		// the size it was made for. Without WebGL2, or once the context is lost (a browser caps how many a page holds),
+		// the terminal keeps the DOM renderer.
+		let webgl: WebglAddon | undefined = new WebglAddon();
+		webgl.onContextLoss(() => {
+			webgl?.dispose();
+			webgl = undefined;
+		});
+		try {
+			term.loadAddon(webgl);
+		} catch {
+			webgl.dispose();
+			webgl = undefined;
+		}
+		let disposed = false;
+		void loadSymbolsFont().then(() => {
+			if (disposed) return;
+			// Glyphs drawn before the font arrived are cached as boxes.
+			term.clearTextureAtlas();
+			term.refresh(0, term.rows - 1);
+		});
 
 		/** The offset after the last output byte drawn; chunks that end before it are ones the replay held. */
 		let received = 0;
@@ -244,7 +298,7 @@ export function ShellPane(props: ShellPaneProps): ReactNode {
 		const stopTheme = watchTheme(element, () => {
 			const next = readTheme(element);
 			term.options.theme = next.theme;
-			term.options.fontFamily = next.fontFamily;
+			term.options.fontFamily = terminalFont(next.fontFamily);
 			fit.fit();
 		});
 
@@ -256,6 +310,7 @@ export function ShellPane(props: ShellPaneProps): ReactNode {
 		});
 
 		return () => {
+			disposed = true;
 			latest.current.register(id, null);
 			stopTheme();
 			observer.disconnect();

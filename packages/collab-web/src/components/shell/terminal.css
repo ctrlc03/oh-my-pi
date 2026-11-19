@@ -35,6 +35,11 @@
 	padding: 6px 8px;
 }
 
+/* xterm.css paints the viewport black, and it shows through the padding around the screen. */
+.sh-shell-term .xterm .xterm-viewport {
+	background-color: var(--bg-inset);
+}
+
 .sh-shell-close {
 	position: absolute;
 	top: 9px;

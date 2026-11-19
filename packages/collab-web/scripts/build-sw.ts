@@ -16,9 +16,10 @@
  * `max-age=600`, and a stale copy would pin the previous bundle into the new shell.
  * Requests made with `cache: "no-store"` (the app's own update check) pass through.
  *
- * The diagram engines (Mermaid, Excalidraw), Excalidraw's fonts (`excalidraw-assets/`) and the Monaco editor
- * (`monaco-assets/`: engine, stylesheet, worker) are not precached: the worker caches them on first use, so
- * diagrams and the desktop editor work offline after being shown once.
+ * The diagram engines (Mermaid, Excalidraw), Excalidraw's fonts (`excalidraw-assets/`), the Monaco editor
+ * (`monaco-assets/`: engine, stylesheet, worker) and the terminal's icon font (`terminal-assets/`) are not
+ * precached: the worker caches them on first use, so diagrams, the desktop editor and the terminal work offline
+ * after being shown once.
  *
  * It also shows the companion's Web Push notifications (see scripts/companion.ts):
  * a payload's `badge` sets the app icon badge, `reply` adds an inline text-reply action,
@@ -162,7 +163,13 @@ const BASE_PATH = new URL("./", self.location).pathname;
 function isRuntimeAsset(url) {
 	if (url.search !== "" || !url.pathname.startsWith(BASE_PATH)) return false;
 	const rel = url.pathname.slice(BASE_PATH.length);
-	if (rel.startsWith("excalidraw-assets/") || rel.startsWith("architecture-assets/") || rel.startsWith("monaco-assets/")) return true;
+	if (
+		rel.startsWith("excalidraw-assets/") ||
+		rel.startsWith("architecture-assets/") ||
+		rel.startsWith("monaco-assets/") ||
+		rel.startsWith("terminal-assets/")
+	)
+		return true;
 	return !rel.includes("/") && (rel.endsWith(".js") || rel.endsWith(".css") || rel.endsWith(".woff2"));
 }
 

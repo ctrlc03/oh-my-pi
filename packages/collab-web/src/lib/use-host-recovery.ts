@@ -36,7 +36,11 @@ export function useHostRecovery(
 ): HostRecovery {
 	const client = computer?.client ?? null;
 	const computerPhase = computer?.snap.phase ?? "offline";
-	const listed = instanceId !== null && computer?.snap.hosts.some(host => host.instanceId === instanceId) === true;
+	// A hibernated session counts as listed: its link resumes it, which is what a device left on its old room wants.
+	const listed =
+		instanceId !== null &&
+		(computer?.snap.hosts.some(host => host.instanceId === instanceId) === true ||
+			computer?.snap.hibernated.some(session => session.instanceId === instanceId) === true);
 	// The computer confirmed the ended room as the session's current one: it stays ended.
 	const [confirmed, setConfirmed] = useState<string | null>(null);
 	if (phase !== "ended" && confirmed !== null) setConfirmed(null);

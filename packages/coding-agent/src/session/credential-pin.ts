@@ -17,6 +17,7 @@
  * stick or re-rank.
  */
 
+import { resolveCredentialIdentityKey } from "@oh-my-pi/pi-ai";
 import type { AuthStorage } from "./auth-storage";
 import type { SessionManager } from "./session-manager";
 
@@ -94,5 +95,34 @@ export function seedCredentialPins(authStorage: AuthStorage, sessionManager: Ses
 		authStorage.sessions.pin(provider, sessionId, match.credentialId, {
 			restoredAtMs: pin.lastUsedAt,
 		});
+	}
+}
+
+/**
+ * Pin the account `providers.preferredAccounts` names for each provider a new session has not routed
+ * yet, so the account chosen from the collab app (or `omp usage use`) serves it instead of whichever
+ * account usage ranking would pick. The pin is the same explicit pin `/account` sets: ranking never
+ * evicts it, but a blocked or unavailable account still routes to another one. A provider the session
+ * already has an account for (a resumed transcript's pin, or an affinity inherited from its parent) is
+ * left alone, because a different account would cold-miss the account-scoped prompt cache, and so is
+ * an identity key no stored account carries (logged out, or an account another machine named) and a
+ * provider the session's account pool does not allow the account for.
+ */
+export function applyPreferredAccounts(
+	authStorage: AuthStorage,
+	sessionId: string,
+	preferred: Readonly<Record<string, string>>,
+	routedProviders: ReadonlySet<string>,
+): void {
+	for (const [provider, identityKey] of Object.entries(preferred)) {
+		if (routedProviders.has(provider)) continue;
+		if (authStorage.oauth.accounts(provider, sessionId).some(account => account.active)) continue;
+		const stored = authStorage.credentials
+			.list(provider)
+			.find(
+				row =>
+					row.credential.type === "oauth" && resolveCredentialIdentityKey(provider, row.credential) === identityKey,
+			);
+		if (stored) authStorage.sessions.pin(provider, sessionId, stored.id);
 	}
 }

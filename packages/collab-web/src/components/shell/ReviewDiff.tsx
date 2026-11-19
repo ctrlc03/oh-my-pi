@@ -1,5 +1,6 @@
 import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import type { AgentLines } from "../../lib/line-attribution";
 import {
 	commentId,
 	commentLayout,
@@ -21,6 +22,8 @@ export interface DiffRowState {
 	commentable: boolean;
 	selected: boolean;
 	marked: boolean;
+	/** Hover text when an agent wrote the line (a gutter bar marks it); null or absent for any other line. */
+	agent?: string | null;
 }
 
 /**
@@ -42,11 +45,13 @@ export function diffRowProps(
 		state.commentable && "sh-udiff-pick",
 		state.selected && "sh-udiff-sel",
 		line && state.marked && "sh-udiff-commented",
+		state.agent && "sh-udiff-agent",
 	]
 		.filter(Boolean)
 		.join(" ");
 	return {
 		className,
+		...(state.agent ? { title: state.agent } : {}),
 		...(state.commentable && {
 			role: "button",
 			tabIndex: 0,
@@ -73,6 +78,8 @@ export interface UnifiedDiffProps {
 	review: DiffReview | null;
 	/** Side-by-side layout (old file left, new file right) instead of one column. */
 	side?: boolean;
+	/** The hover text of the added lines an agent wrote, by new-file line; absent: no row is marked. */
+	agentLines?: AgentLines | null;
 }
 
 /**
@@ -81,7 +88,7 @@ export interface UnifiedDiffProps {
  * With a `review`, tapping a line selects it, a second tap (or shift-click) in the same hunk
  * extends the range, and the comment box opens under the selection.
  */
-export function UnifiedDiff({ diff, scope, path, review, side }: UnifiedDiffProps): ReactNode {
+export function UnifiedDiff({ diff, scope, path, review, side, agentLines }: UnifiedDiffProps): ReactNode {
 	const rows = useMemo(() => parseUnifiedDiff(diff), [diff]);
 	const split = useMemo(() => (side ? splitLines(rows) : undefined), [side, rows]);
 	const [sel, setSel] = useState<RowSelection | null>(null);
@@ -138,6 +145,7 @@ export function UnifiedDiff({ diff, scope, path, review, side }: UnifiedDiffProp
 				commentable: review !== null && line,
 				selected: line && sel !== null && i >= lo && i <= hi,
 				marked: Object.hasOwn(layout.marked, i),
+				agent: row.kind === "add" && row.newLine !== undefined ? (agentLines?.(row.newLine) ?? null) : null,
 			},
 			extend => pick(i, extend),
 		);

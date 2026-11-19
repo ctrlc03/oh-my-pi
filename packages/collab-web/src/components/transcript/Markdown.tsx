@@ -2,9 +2,10 @@ import type { Token } from "@oh-my-pi/pi-utils/marked";
 import { Marked } from "@oh-my-pi/pi-utils/marked";
 import { listMayContinueAt } from "@oh-my-pi/pi-utils/marked-list";
 import type { MouseEvent, ReactNode } from "react";
-import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { type DiagramKind, diagramKindOf, isClosedFence } from "../../lib/diagrams";
+import { isRelativeLink } from "../../lib/file-viewer";
 import { escapeHtml } from "../../lib/format";
 import { DiagramFigure } from "../diagram/DiagramFigure";
 import { mathExtension } from "./math";
@@ -86,6 +87,13 @@ const md = new Marked({
 			const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
 			return `<a href="${escapeHtml(url)}"${titleAttr} target="_blank" rel="noopener">${inner}</a>`;
 		},
+		// An image the document names relatively has no address the page can load; it is filled in by `MarkdownBody`
+		// when the document's owner can resolve it. Anything with a scheme (`https:`, `data:`) renders as marked does.
+		image({ href, title, text }) {
+			if (!isRelativeLink(href)) return false;
+			const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
+			return `<img data-md-src="${escapeHtml(href)}" alt="${escapeHtml(text)}"${titleAttr}>`;
+		},
 	},
 	breaks: true,
 });
@@ -121,11 +129,23 @@ interface DiagramMount {
 }
 
 /**
+ * Where an image the document names relatively can be read from: a URL the page may load (an object URL of the
+ * file's bytes), or null when the file cannot be shown. Only the Markdown viewer of a file gives one, since only it
+ * knows where the file is; everywhere else relative images stay as their alt text.
+ */
+export type ResolveImage = (href: string) => Promise<string | null>;
+
+export interface MarkdownProps {
+	text: string;
+	resolveImage?: ResolveImage;
+}
+
+/**
  * The rendered markup of a block. The `code` renderer leaves a placeholder (the plain code block) for each
  * closed diagram fence; once the markup is in the page, each placeholder gets a {@link DiagramFigure} portaled
  * into it, which draws the diagram and falls back to that same code block when it cannot.
  */
-function MarkdownBody({ html }: { html: string }): ReactNode {
+function MarkdownBody({ html, resolveImage }: { html: string; resolveImage?: ResolveImage }): ReactNode {
 	const root = useRef<HTMLDivElement>(null);
 	const [mounts, setMounts] = useState<readonly DiagramMount[]>([]);
 	// React re-applies `innerHTML` whenever this object changes identity, which would wipe the portal hosts
@@ -143,6 +163,26 @@ function MarkdownBody({ html }: { html: string }): ReactNode {
 		}
 		setMounts(prev => (prev.length === 0 && found.length === 0 ? prev : found));
 	}, [html]);
+	// Relative images carry no `src` until the owner of the document says where to read them from.
+	useEffect(() => {
+		if (resolveImage === undefined) return;
+		let live = true;
+		for (const img of root.current?.querySelectorAll<HTMLImageElement>("img[data-md-src]") ?? []) {
+			void resolveImage(img.dataset.mdSrc ?? "").then(
+				url => {
+					if (!live) return;
+					if (url === null) img.dataset.broken = "";
+					else img.src = url;
+				},
+				() => {
+					if (live) img.dataset.broken = "";
+				},
+			);
+		}
+		return () => {
+			live = false;
+		};
+	}, [html, resolveImage]);
 	return (
 		<>
 			<div ref={root} className="tr-md" onClick={onCopyClick} dangerouslySetInnerHTML={inner} />
@@ -153,9 +193,9 @@ function MarkdownBody({ html }: { html: string }): ReactNode {
 	);
 }
 
-export const Markdown = memo(function Markdown({ text }: { text: string }): ReactNode {
+export const Markdown = memo(function Markdown({ text, resolveImage }: MarkdownProps): ReactNode {
 	const html = useMemo(() => renderMarkdown(text), [text]);
-	return <MarkdownBody html={html} />;
+	return <MarkdownBody html={html} resolveImage={resolveImage} />;
 });
 
 /**

@@ -178,17 +178,26 @@ export async function prepareSandbox(launch: SandboxLaunch): Promise<{ prefix: s
 
 /**
  * Pids (of `pids`) whose command line loads the sandbox overlay — omp processes
- * a sandboxed `start` launched. One `ps` call; an empty set when it fails.
+ * a sandboxed `start` launched. One `ps` call. When it fails (no process left to match, out of descriptors or
+ * processes) nothing can be vouched for, so every pid counts as sandboxed: a shell, a run or a file save is
+ * refused for a moment rather than allowed for a session that may be confined.
  */
 export async function sandboxedPids(pids: readonly number[], overlayPath: string): Promise<Set<number>> {
 	const found = new Set<number>();
 	if (pids.length === 0) return found;
-	const proc = Bun.spawn(["ps", "-ww", "-o", "pid=,command=", "-p", pids.join(",")], {
-		stdout: "pipe",
-		stderr: "ignore",
-		stdin: "ignore",
-	});
-	const [out] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+	let out: string;
+	try {
+		const proc = Bun.spawn(["ps", "-ww", "-o", "pid=,command=", "-p", pids.join(",")], {
+			stdout: "pipe",
+			stderr: "ignore",
+			stdin: "ignore",
+		});
+		const [text, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+		if (code !== 0) return new Set(pids);
+		out = text;
+	} catch {
+		return new Set(pids);
+	}
 	const marker = ` --config ${overlayPath}`;
 	for (const line of out.split("\n")) {
 		const match = /^\s*(\d+)\s(.*)$/.exec(line);

@@ -140,6 +140,7 @@ import {
 import { collectDiag, recordRelayEvent, recordRequestError } from "./companion-diag";
 import { readFileChunk } from "./companion-download";
 import { browseFolders, checkStartFolder } from "./companion-browse";
+import { fileAttribution } from "./companion-attribution";
 import { findFileSessions, repoRelativeFocus } from "./companion-file-sessions";
 import { fileVersions, listTree, writeRepoFile } from "./companion-files";
 import { git, gitDiff, gitSnapshot, isInside, readRepoFile, repoRoot } from "./companion-git";
@@ -193,7 +194,17 @@ import {
 import { COMPANION_RUN_DIR } from "./companion-sandbox";
 import { companionWorktree, createSettleCleanup, loadSettleState, saveSettleState } from "./companion-settle";
 import { createSessionDelete, TRASH_PURGE_EVERY_MS } from "./companion-delete";
+import { createAccounts } from "./companion-accounts";
 import { createDiskGuard, loadDiskFile, saveDiskFile } from "./companion-disk";
+import {
+	createHibernation,
+	type HibernateHost,
+	loadHibernateFile,
+	requireHibernateSettings,
+	saveHibernateFile,
+	shutDownProcess,
+	watchesPullRequest,
+} from "./companion-hibernate";
 import { createVmFeature } from "./companion-vm";
 import { createSessionLister } from "./companion-list";
 import { previousRelayPort, preferredRelayPort, startCompanionRelay } from "./companion-local-relay";
@@ -215,8 +226,16 @@ import { startSourceApp } from "./local-app-source";
 import { restartCompanion, updateOmp } from "./companion-maintain";
 import { findSessionHolders } from "./companion-open";
 import { capturePane, paneSessionName } from "./companion-pane";
+import { createTerminals, terminalsSupported } from "./companion-terminal";
 import { awakeTool, holdAwake, powerNotice, readPower } from "./companion-power";
-import { capturePreview, closePreviewBrowser, findChrome, isViewport, previewTargets } from "./companion-preview";
+import {
+	capturePreview,
+	closePreviewBrowser,
+	findChrome,
+	isViewport,
+	pickPreviewElement,
+	previewTargets,
+} from "./companion-preview";
 import { createPrWatch, ghReadPrs, loadPrWatchFile, parsePrAlertSettings, savePrWatchFile } from "./companion-prwatch";
 import { createPrWake } from "./companion-prwake";
 import { createSessionSearch, withLiveness } from "./companion-search";
@@ -233,6 +252,7 @@ import { createStakes } from "./companion-stakes";
 import { createPersonal } from "./companion-personal";
 import { createHiddenMessages, loadHiddenFile, saveHiddenFile } from "./companion-hidden";
 import { createSessionOrg, ghSessionPrDone, loadOrgFile, saveOrgFile } from "./companion-sessionorg";
+import { createSessionCards, loadCardsFile, saveCardsFile } from "./companion-sessioncards";
 import {
 	createSpendMonitor,
 	dayStart,
@@ -255,6 +275,7 @@ import {
 	parseStartPrompt,
 	releaseLaunch,
 	type RestrictLaunch,
+	tmuxAttached,
 } from "./companion-start";
 import {
 	fanoutBranch,
@@ -748,6 +769,8 @@ let knownHosts: CompanionHost[] = [];
 let knownIdle: CompanionIdleSession[] = [];
 /** instanceId → pid of every listed session, from the same listing as `knownHosts`. */
 let knownPids = new Map<string, number>();
+/** instanceId → what omp reports of background work in the session, from the same listing as `knownHosts`. */
+let knownBackground = new Map<string, boolean | null>();
 /** Power at the previous poll; null until a poll after (re)starting to watch. */
 let lastPower: CompanionPower | null = null;
 /** The low-battery push went out during this discharge. */
@@ -886,7 +909,7 @@ const worktreeSweeper = createWorktreeSweeper({
 	dirs: () => worktreeLocations(gitFlow, worktreesDir),
 	runningCwds: async () => {
 		await loadSessions();
-		return [...knownHosts, ...knownIdle].map(session => session.cwd);
+		return occupiedFolders();
 	},
 	onRemoved: removed => {
 		for (const tree of removed) console.log(`companion: removed worktree ${tree.path} (${tree.reason})`);
@@ -993,6 +1016,25 @@ const sessionOrg = createSessionOrg({
 	endSession: (session, stillWanted) =>
 		// One at a time per session, with its settle cleanup and its deletion.
 		sessionLock(session.sessionId, async () => {
+			// A hibernated session has no process to end: ending it is dropping its record, which also frees its folder for the cleanup.
+			const hibernated = hibernation.record(session.sessionId);
+			if (hibernated !== undefined) {
+				await settleCleanup
+					.recordSession(session.sessionId, hibernated.cwd)
+					.catch(err =>
+						console.error(`companion: remembering session ${session.sessionId} failed: ${errorText(err)}`),
+					);
+				if (hibernated.sandboxed === true)
+					await settleCleanup
+						.recordSandboxed(hibernated.cwd)
+						.catch(err =>
+							console.error(`companion: remembering sandboxed ${hibernated.cwd} failed: ${errorText(err)}`),
+						);
+				// Everything above awaited: an un-settle meanwhile wins.
+				if (!stillWanted()) return false;
+				hibernation.forget(session.sessionId);
+				return true;
+			}
 			const target = await companionTmuxSession(session.instanceId);
 			// Hand-started sessions are never touched.
 			if (target === null) return true;
@@ -1052,6 +1094,71 @@ const diskGuard = createDiskGuard({
 	onError: err => console.error(`companion: disk check failed: ${errorText(err)}`),
 });
 
+const hibernatePath = path.join(path.dirname(statePath), "collab-companion-hibernate.json");
+
+/** How long omp gets to shut down (it saves the draft and closes the session file) before a hibernation is given up. */
+const HIBERNATE_STOP_MS = 60_000;
+/** The idle check runs on its own timer: the host poll stops while no device is connected, which is when sessions hibernate. */
+const HIBERNATE_TICK_MS = 60_000;
+
+/** The listed hosts with what omp reports of their background work; a host the registry did not report on (vendor agents) reads as unknown. */
+function withBackground(hosts: readonly CompanionHost[]): HibernateHost[] {
+	return hosts.map(host => ({ ...host, background: knownBackground.get(host.instanceId) ?? null }));
+}
+
+/**
+ * Stops the omp process of finished, idle, unwatched sessions the companion started, and resumes them (same folder, same
+ * conversation) when they are opened; see ./companion-hibernate.
+ */
+const hibernation = createHibernation({
+	now: Date.now,
+	initial: await loadHibernateFile(hibernatePath),
+	save: file => saveHibernateFile(hibernatePath, file),
+	list: async () => {
+		const { hosts, idle } = await loadSessions();
+		return { hosts: withBackground(hosts), idle };
+	},
+	facts: async host => {
+		const target = await companionTmuxSession(host.instanceId);
+		return {
+			startedHere: target !== null,
+			personal: personal.isPersonalHost(host) || personal.exempt(host.sessionId),
+			watchingPr: await watchesPullRequest(path.join(configDir, "run", "pr-watch"), host.sessionId, Date.now()),
+			// Unknown counts as attached: a terminal someone looks at is never pulled out from under them.
+			attached: target === null ? true : ((await tmuxAttached(target.tmux, target.name)) ?? true),
+		};
+	},
+	touchedAt: async sessionId => {
+		const file = await findSessionFile(personal.sessionDirs(), sessionId);
+		return file === null ? null : await fs.stat(file).then(stat => stat.mtimeMs, () => null);
+	},
+	exists: async sessionId => (await findSessionFile(personal.sessionDirs(), sessionId)) !== null,
+	folderExists: folder =>
+		fs.stat(folder).then(
+			stat => stat.isDirectory(),
+			() => false,
+		),
+	stop: async host => {
+		const pid = knownPids.get(host.instanceId);
+		if (pid === undefined) throw new Error("unknown session");
+		const target = await companionTmuxSession(host.instanceId);
+		// Rejects only when nothing could be sent to the process; false means it was told to stop and has not yet.
+		if (!(await shutDownProcess(pid, HIBERNATE_STOP_MS))) return false;
+		// tmux closes the session with its only process; this only clears one it kept (a pane left open by a setting). The process is gone either way.
+		if (target !== null)
+			await killTmuxSession(target.tmux, target.name).catch(err =>
+				console.error(`companion: closing the tmux session of a hibernated one failed: ${errorText(err)}`),
+			);
+		return true;
+	},
+	resume: async session =>
+		startSession(session.cwd, session.sessionId, session.sandboxed, undefined, undefined, undefined, session.maxCostUsd),
+	lock: sessionLock,
+	onChange: () => void refresh(),
+	onError: err => console.error(`companion: hibernating sessions failed: ${errorText(err)}`),
+});
+setInterval(() => void hibernation.tick(), HIBERNATE_TICK_MS).unref();
+
 /** Virtual machines: runs `omp vm …` and keeps the VM supervisor alive; see ./companion-vm. */
 const vm = createVmFeature({
 	ompBin,
@@ -1070,10 +1177,22 @@ const hiddenMessages = createHiddenMessages({
 	onChange: () => void refresh(),
 });
 
+const sessionCardsPath = path.join(path.dirname(statePath), "collab-companion-sessioncards.json");
+
+/** The status and note the user gave each session, so every device shows the same ones; see ./companion-sessioncards. */
+const sessionCards = createSessionCards({
+	now: Date.now,
+	initial: await loadCardsFile(sessionCardsPath),
+	save: file => saveCardsFile(sessionCardsPath, file),
+	onChange: () => void refresh(),
+});
+
 const fanoutPath = path.join(path.dirname(statePath), "collab-companion-fanout.json");
 /** Best-of-N groups (see ./companion-fanout), newest first. */
 let fanoutGroups = await loadGroups(fanoutPath);
 const fanoutModels = createModelCatalog(ompBin);
+/** The computer's provider accounts and the one new sessions start on, read and written through the omp CLI (see ./companion-accounts). */
+const accounts = createAccounts(ompBin);
 
 const schedulesPath = path.join(path.dirname(statePath), "collab-companion-schedules.json");
 
@@ -1165,10 +1284,16 @@ async function loadSessions(): Promise<{ hosts: CompanionHost[]; idle: Companion
 	knownHosts = hosts;
 	knownIdle = listed.idle;
 	knownPids = listed.pids;
+	knownBackground = listed.background;
 	// A listing that came back empty is more likely a glitch than every session gone: keep the history then.
 	if (hosts.length + listed.idle.length > 0)
 		runs.retain(new Set([...hosts, ...listed.idle].map(session => session.instanceId)));
 	return { hosts, idle: listed.idle };
+}
+
+/** Working directories of every running omp (hosting or not) from the latest listing, and of every hibernated session, which resumes there: none may lose its folder. */
+function occupiedFolders(): string[] {
+	return [...knownHosts, ...knownIdle, ...hibernation.list()].map(session => session.cwd);
 }
 
 /**
@@ -1207,12 +1332,27 @@ async function refresh(targetPeer?: number): Promise<void> {
 			: null,
 	]);
 	if (!listed) return;
+	hibernation.observe(withBackground(listed.hosts), listed.idle);
 	detectEdges(listed.hosts);
 	void personal.tick(listed.hosts);
 	void spendMonitor.tick();
 	void scheduler.tick();
+	// A hibernated session has no process but is still the user's: the settle rules (idle days, pull request done) cover
+	// it too, and ending a settled one drops its record, which frees its worktree.
+	const running = new Set([...listed.hosts, ...listed.idle].map(session => session.sessionId));
+	const hibernated = hibernation
+		.list()
+		.filter(session => !running.has(session.sessionId))
+		.map(session => ({
+			instanceId: session.instanceId,
+			sessionId: session.sessionId,
+			cwd: session.cwd,
+			startedAt: session.startedAt,
+			busy: false,
+			inputRequired: false,
+		}));
 	void sessionOrg
-		.tick([...listed.hosts, ...listed.idle.map(session => ({ ...session, inputRequired: false }))])
+		.tick([...listed.hosts, ...listed.idle.map(session => ({ ...session, inputRequired: false })), ...hibernated])
 		.catch(err => console.error(`companion: session organisation failed: ${errorText(err)}`));
 	void prWatch.tick();
 	void stakes
@@ -1226,15 +1366,17 @@ async function refresh(targetPeer?: number): Promise<void> {
 	const frame: CompanionReply = {
 		t: "hosts",
 		machine,
-		hosts: stakes.markRows(
-			personal
-				.markHosts(listed.hosts)
-				.map(host =>
-					Object.hasOwn(fanoutOf, host.instanceId) ? { ...host, fanout: fanoutOf[host.instanceId] } : host,
-				),
+		hosts: sessionCards.markRows(
+			stakes.markRows(
+				personal
+					.markHosts(listed.hosts)
+					.map(host =>
+						Object.hasOwn(fanoutOf, host.instanceId) ? { ...host, fanout: fanoutOf[host.instanceId] } : host,
+					),
+			),
 		),
 		vapidKey: state.vapid.publicKey,
-		idle: stakes.markRows(listed.idle),
+		idle: sessionCards.markRows(stakes.markRows(listed.idle)),
 		canStart: extras.canStart,
 		canSandbox: extras.canStart && sandboxAvailable,
 		canPr: extras.canPr,
@@ -1248,6 +1390,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canBakeoffPatch: extras.canStart,
 		canBakeoffFolder: extras.canStart,
 		canEdit: true,
+		canAttribution: true,
 		canRepoSearch: repoSearchReady,
 		canLsp: lspReady,
 		canPreview: previewChrome !== null,
@@ -1269,6 +1412,8 @@ async function refresh(targetPeer?: number): Promise<void> {
 		canBrowseFolders: extras.canStart,
 		canForeign: extras.canStart,
 		sessionOrgRev: sessionOrg.file().rev,
+		canSessionCards: true,
+		sessionCardsRev: sessionCards.file().rev,
 		canOrderSessions: true,
 		canEndOnSettle: true,
 		canHideMessages: true,
@@ -1277,6 +1422,13 @@ async function refresh(targetPeer?: number): Promise<void> {
 		transcribe: extras.transcribe ?? undefined,
 		power: power ?? undefined,
 		canDiskGuard: true,
+		canAccounts: true,
+		canTerminal: terminalsSupported(),
+		canHibernate: true,
+		// A session still shutting down is listed as a host too: it shows once, as the host.
+		hibernated: sessionCards.markRows(
+			hibernation.list().filter(session => !listed.hosts.some(host => host.sessionId === session.sessionId)),
+		),
 		disk: diskGuard.health() ?? undefined,
 		...vm.hostsFields(),
 		...personal.hostsFields(extras.canStart),
@@ -1366,6 +1518,8 @@ async function startSession(
 	/** New omp sessions: block pushes and pull requests until a quiz is passed (./companion-stakes); the device that asked. */
 	highStakes?: string,
 ): Promise<string> {
+	// A hibernated session resumes the way it ran: a sandboxed one stays sandboxed, whatever this request says.
+	if (typeof resume === "string" && hibernation.record(resume)?.sandboxed === true) sandboxed = true;
 	if (
 		typeof requestedCwd !== "string" ||
 		(resume !== undefined && typeof resume !== "string") ||
@@ -1512,6 +1666,13 @@ async function startSession(
 							.catch(err =>
 								console.error(`companion: remembering session ${host.sessionId} failed: ${errorText(err)}`),
 							);
+						// How it was launched is what a hibernation repeats on resume, and what rules it out (see ./companion-hibernate).
+						if (!plan)
+							hibernation.noteLaunch(host.sessionId, {
+								sandboxed: sandbox !== undefined,
+								restricted: restrict !== undefined,
+								...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+							});
 						await refresh();
 						await releaseLaunch(tmux, launched.name);
 						return host.instanceId;
@@ -1655,12 +1816,9 @@ const sessionDelete = createSessionDelete({
 	removeWorktree: async tree => {
 		// A fresh list: never remove a checkout a running omp works in.
 		await loadSessions();
-		await removeWorktree(
-			tree,
-			worktreeLocations(gitFlow, worktreesDir),
-			[...knownHosts, ...knownIdle].map(session => session.cwd),
-		);
+		await removeWorktree(tree, worktreeLocations(gitFlow, worktreesDir), occupiedFolders());
 	},
+	forgetHibernated: sessionId => hibernation.forget(sessionId),
 	forgetSearch: file => sessionSearch.forget(file),
 	onError: err => console.error(`companion: deleting a session left a record behind: ${errorText(err)}`),
 });
@@ -1673,8 +1831,8 @@ setInterval(purgeTrash, TRASH_PURGE_EVERY_MS).unref();
 
 /** Read-only sessions the companion starts for architecture maps and quizzes. */
 const agentRunner: AgentRunner = {
-	start: launch =>
-		startSession(
+	start: async launch => {
+		return await startSession(
 			launch.cwd,
 			undefined,
 			sandboxAvailable,
@@ -1685,7 +1843,8 @@ const agentRunner: AgentRunner = {
 			launch.model,
 			undefined,
 			{ overlayPath: launch.overlayPath, overlayYaml: launch.overlayYaml, tools: launch.tools },
-		),
+		);
+	},
 	hosts: async () =>
 		(await loadSessions()).hosts.map(host => ({
 			instanceId: host.instanceId,
@@ -1901,6 +2060,11 @@ async function fanoutKeep(input: unknown): Promise<FanoutKeepResult> {
 			return status.out.byteLength > 0;
 		},
 		stop: stopSession,
+		// A hibernated loser would resume into the folder just removed, and fail every time it is opened.
+		removed: run => {
+			for (const session of hibernation.list())
+				if (session.cwd === run.path || session.instanceId === run.instanceId) hibernation.forget(session.sessionId);
+		},
 	});
 	await saveGroups(fanoutPath, fanoutGroups);
 	await refresh();
@@ -1951,10 +2115,23 @@ const reconnector = new RoomReconnector({
 	},
 });
 
+/**
+ * Interactive terminals (./companion-terminal): real shells on this computer, served only to authenticated paired
+ * devices (every frame below passes the check at the top of `room.onFrame`). Output goes to the devices attached to a
+ * terminal, compressed where a device asked for it.
+ */
+const terminals = createTerminals({
+	send: (peer, frame) => room.send(frame, peer, zipPeers.has(peer)),
+	isLive: peer => peerDevice.has(peer),
+	buffered: peer => room.bufferedAmount(peer),
+	log: message => console.log(`companion: ${new Date().toISOString()} ${message}`),
+});
+
 room.onOpen = route => reconnector.opened(route);
 
 /** Stop serving a peer: it must authenticate again. */
 function dropPeer(peer: number): void {
+	terminals.peerGone(peer);
 	peers.delete(peer);
 	peerDevice.delete(peer);
 	zipPeers.delete(peer);
@@ -2068,7 +2245,10 @@ room.onFrame = (frame, fromPeer) => {
 			return;
 		case "link":
 			respond(frame.reqId, async () => {
-				return { t: "link", reqId: frame.reqId, url: await lister.link(checkInstanceId(frame.instanceId)) };
+				const instanceId = checkInstanceId(frame.instanceId);
+				// Opening a hibernated session, or sending it a message through its link, starts omp on it again first.
+				const resumed = await hibernation.wake(instanceId);
+				return { t: "link", reqId: frame.reqId, url: await lister.link(resumed ?? instanceId) };
 			});
 			return;
 		case "push":
@@ -2259,7 +2439,9 @@ room.onFrame = (frame, fromPeer) => {
 			respond(frame.reqId, async () => {
 				// A fresh list: a session may have asked or finished since the last poll.
 				const { hosts } = await loadSessions();
-				const items = await buildInbox(hosts, id => readSessionTail(personal.sessionDirs(), id), Date.now());
+				// A hibernated session's last turn stays news; one already running again is listed as a host.
+				const asleep = hibernation.list().filter(session => !hosts.some(host => host.sessionId === session.sessionId));
+				const items = await buildInbox(hosts, asleep, id => readSessionTail(personal.sessionDirs(), id), Date.now());
 				return { t: "inbox", reqId: frame.reqId, items };
 			});
 			return;
@@ -2347,6 +2529,14 @@ room.onFrame = (frame, fromPeer) => {
 				return { t: "disk-guard", reqId: frame.reqId, ...(await diskGuard.state()) };
 			});
 			return;
+		case "accounts":
+			// Like every settings request, this serves any paired device: view-only links never reach the companion.
+			respond(frame.reqId, async () => ({
+				t: "accounts",
+				reqId: frame.reqId,
+				accounts: frame.use === undefined ? await accounts.list() : await accounts.use(frame.use),
+			}));
+			return;
 		case "disk-scan":
 			respond(frame.reqId, async () => ({ t: "disk-scan", reqId: frame.reqId, ...(await diskGuard.scan()) }));
 			return;
@@ -2356,6 +2546,20 @@ room.onFrame = (frame, fromPeer) => {
 					throw new Error("invalid paths");
 				return { t: "disk-clean", reqId: frame.reqId, ...(await diskGuard.clean(frame.paths)) };
 			});
+			return;
+		case "hibernate-settings":
+			respond(frame.reqId, async () => {
+				if (frame.settings !== undefined) await hibernation.setSettings(requireHibernateSettings(frame.settings));
+				return { t: "hibernate-settings", reqId: frame.reqId, settings: hibernation.settings() };
+			});
+			return;
+		case "hibernate":
+			// The same verdict as the automatic one (see hibernateRefusal): a refusal reaches the device as an error sentence.
+			respond(frame.reqId, async () => ({
+				t: "hibernate",
+				reqId: frame.reqId,
+				session: await hibernation.hibernate(checkInstanceId(frame.instanceId)),
+			}));
 			return;
 		case "vm-list":
 		case "vm-create":
@@ -2384,6 +2588,14 @@ room.onFrame = (frame, fromPeer) => {
 			respond(frame.reqId, async () => {
 				const { doc, rev } = await hiddenMessages.sync(frame.sessionId, parseHidden(frame.doc));
 				return { t: "hidden-messages", reqId: frame.reqId, sessionId: frame.sessionId, doc, rev };
+			});
+			return;
+		case "session-card":
+			// Like every frame here, only a device paired with this computer reaches it; room-link guests (and so
+			// view-only links) are never served companion frames.
+			respond(frame.reqId, async () => {
+				await sessionCards.set(frame.sessionId, frame.status, frame.note);
+				return { t: "ok", reqId: frame.reqId };
 			});
 			return;
 		case "session-delete-plan":
@@ -2423,22 +2635,30 @@ room.onFrame = (frame, fromPeer) => {
 		case "sessions":
 			respond(frame.reqId, async () => {
 				const sessions = await allOverviews(frame);
+				const live = [...knownHosts, ...knownIdle];
 				// Only worktrees that still exist can be removed.
+				const worktrees = await Promise.all(
+					sessions.map(async session => {
+						const inside = worktreeLocations(gitFlow, worktreesDir).some(
+							dir => session.folder !== dir && isInside(dir, session.folder),
+						);
+						const exists =
+							inside &&
+							(await fs.stat(session.folder).then(
+								s => s.isDirectory(),
+								() => false,
+							));
+						return exists ? { ...session, worktree: true } : session;
+					}),
+				);
 				return {
 					t: "sessions",
 					reqId: frame.reqId,
-					sessions: await Promise.all(
-						sessions.map(async session => {
-							const inside = worktreeLocations(gitFlow, worktreesDir).some(
-								dir => session.folder !== dir && isInside(dir, session.folder),
-							);
-							const exists =
-								inside &&
-								(await fs.stat(session.folder).then(
-									s => s.isDirectory(),
-									() => false,
-								));
-							return exists ? { ...session, worktree: true } : session;
+					// The live ones carry the agent's todo progress; every one its card, if the user gave it one.
+					sessions: sessionCards.markRows(
+						worktrees.map(session => {
+							const todo = live.find(row => row.sessionId === session.sessionId)?.todo;
+							return todo === undefined ? session : { ...session, todo };
 						}),
 					),
 				};
@@ -2453,6 +2673,74 @@ room.onFrame = (frame, fromPeer) => {
 				if (pid === undefined) throw new Error("unknown session");
 				return { t: "pane", reqId: frame.reqId, pane: await capturePane(pid) };
 			});
+			return;
+		case "file-attribution":
+			respond(frame.reqId, async () => ({
+				t: "file-attribution",
+				reqId: frame.reqId,
+				attribution: await fileAttribution({
+					sessionsDir,
+					extraSessionsDirs: personal.sessionDirs().slice(1),
+					cwd: await sessionCwd(frame.instanceId),
+					path: frame.path,
+				}),
+			}));
+			return;
+		case "terminal-open":
+			respond(frame.reqId, async () => {
+				// A fresh listing: which sessions are sandboxed and where they work decides this, and it is read from the processes.
+				await loadSessions();
+				const session = await listedSession(frame.instanceId);
+				// The shell has this user's full rights, in a folder a sandboxed session's agent can write to (a
+				// startup file, a hook, a Makefile it planted): never offered for one, as running its scripts is not.
+				if (session.sandboxed === true) throw new Error("Terminals are not available for a sandboxed session.");
+				// Nor in a repository (or a folder above it) another listed sandboxed session works in: the same rule as for runs.
+				const rootOf = async (cwd: string): Promise<string> => (await repoRoot(cwd)) ?? fs.realpath(cwd);
+				await checkRunnableRoot(await rootOf(session.cwd), [...knownHosts, ...knownIdle], rootOf).catch(() => {
+					throw new Error("Terminals are not available: a sandboxed session works in this repository.");
+				});
+				const terminal = await terminals.open(
+					fromPeer,
+					{ instanceId: session.instanceId, cwd: session.cwd },
+					frame.cols,
+					frame.rows,
+				);
+				return { t: "terminal-open", reqId: frame.reqId, terminal };
+			});
+			return;
+		case "terminal-list":
+			respond(frame.reqId, async () => ({
+				t: "terminal-list",
+				reqId: frame.reqId,
+				terminals: terminals.list(checkInstanceId(frame.instanceId)),
+			}));
+			return;
+		case "terminal-attach":
+			respond(frame.reqId, async () => ({
+				t: "terminal-attach",
+				reqId: frame.reqId,
+				...terminals.attach(fromPeer, frame.id, frame.cols, frame.rows),
+			}));
+			return;
+		case "terminal-close":
+			respond(frame.reqId, async () => {
+				terminals.close(frame.id);
+				return { t: "terminal-close", reqId: frame.reqId };
+			});
+			return;
+		// Keystrokes and window sizes carry no `reqId` and are never answered; the terminal ignores a device that is not attached to it.
+		case "terminal-input":
+			terminals.input(fromPeer, frame.id, frame.data);
+			return;
+		case "terminal-resize":
+			try {
+				terminals.resize(fromPeer, frame.id, frame.cols, frame.rows);
+			} catch {
+				// An impossible size: the shell keeps the one it has.
+			}
+			return;
+		case "terminal-detach":
+			if (typeof frame.id === "string") terminals.detach(fromPeer, frame.id);
 			return;
 		case "file-sessions":
 			respond(frame.reqId, async () => {
@@ -2799,6 +3087,18 @@ room.onFrame = (frame, fromPeer) => {
 				};
 			});
 			return;
+		case "preview-pick":
+			respond(frame.reqId, async () => {
+				if (previewChrome === null) throw new Error("No Chrome or other Chromium browser found on this computer");
+				if (!isViewport(frame.viewport)) throw new Error("invalid viewport");
+				await sessionCwd(frame.instanceId);
+				return {
+					t: "preview-pick",
+					reqId: frame.reqId,
+					pick: await pickPreviewElement(previewChrome, frame.url, frame.viewport, frame.x, frame.y),
+				};
+			});
+			return;
 		case "run-targets":
 			respond(frame.reqId, async () => {
 				const { root } = await runRoot(frame.instanceId);
@@ -2965,11 +3265,7 @@ room.onFrame = (frame, fromPeer) => {
 				if (typeof frame.path !== "string") throw new Error("invalid worktree path");
 				// A fresh list: never remove a checkout a running omp (hosting or not) works in.
 				await loadSessions();
-				await removeWorktree(
-					frame.path,
-					worktreeLocations(gitFlow, worktreesDir),
-					[...knownHosts, ...knownIdle].map(session => session.cwd),
-				);
+				await removeWorktree(frame.path, worktreeLocations(gitFlow, worktreesDir), occupiedFolders());
 				return { t: "ok", reqId: frame.reqId };
 			});
 			return;
@@ -3118,6 +3414,8 @@ let stopLockWatch: () => void = () => {};
 function shutdown(): void {
 	// Runs are detached process groups: they would outlive the companion.
 	runs.stopAll();
+	// The shells are children with their own process groups: ended here, not left to the terminal closing under them.
+	terminals.stopAll();
 	personal.shutdown();
 	clearTimeout(pollTimer);
 	awake.release();

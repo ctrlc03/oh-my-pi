@@ -1,7 +1,9 @@
 import { Check, ChevronRight, LoaderCircle, MessageSquarePlus } from "lucide-react";
 import type { ReactNode } from "react";
 import { Fragment, useMemo, useState } from "react";
+import { useEditorLayout } from "../../lib/editor-layout";
 import { splitPath } from "../../lib/format";
+import { noteTip } from "../../lib/line-attribution";
 import type { BoardFile, HunkNote } from "../../lib/review-board";
 import {
 	type BoardLayout,
@@ -180,6 +182,20 @@ export function BoardFileView({
 		() => (hljs === null || !open ? null : highlightRows(hljs, languageOf(file.path), parsed.rows)),
 		[hljs, open, file.path, parsed],
 	);
+	const { attribution } = useEditorLayout();
+	// A hunk with a note quoted from a session was written by that session: its added rows carry the session's hover.
+	// This is the hunk's attribution, not each line's; the editor's gutter has the line-level answer.
+	const hunkTips = useMemo(
+		() =>
+			parsed.hunks.map(hunk =>
+				attribution
+					? (notesOf(noteIndex, file.path, hunk.header)
+							.map(noteTip)
+							.find(tip => tip !== null) ?? null)
+					: null,
+			),
+		[parsed, noteIndex, file.path, attribution],
+	);
 	const comments = review?.comments;
 	const placed = useMemo(
 		() => commentsByHunk(parsed, comments, scope, file.path),
@@ -223,6 +239,7 @@ export function BoardFileView({
 				commentable: review !== null && line,
 				selected: line && sel !== null && i >= lo && i <= hi,
 				marked: Object.hasOwn(placed.marked, i),
+				agent: row.kind === "add" ? (hunkTips[hunkOfRow(parsed.hunks, i)] ?? null) : null,
 			},
 			extend => pick(i, extend),
 		);

@@ -60,6 +60,7 @@ function makeHostContext(sessionId: string): InteractiveModeContext {
 		},
 		session: {
 			isStreaming: false,
+			getTodoPhases: () => [],
 			queuedMessageCount: 0,
 			getAvailableEffortSelectors: () => [],
 			getQueuedMessages: () => ({ steering: [], followUp: [] }),

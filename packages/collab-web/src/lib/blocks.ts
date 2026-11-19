@@ -313,7 +313,7 @@ export function toolOutput(block: ToolBlock, maxLines?: number): string {
 }
 
 /** A code fence that `text` cannot close early: longer than any backtick run inside it. */
-function fence(text: string, lang = ""): string {
+export function fence(text: string, lang = ""): string {
 	let longest = 0;
 	for (const run of text.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
 	const ticks = "`".repeat(Math.max(3, longest + 1));

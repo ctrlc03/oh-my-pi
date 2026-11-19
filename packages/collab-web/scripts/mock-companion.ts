@@ -6,7 +6,7 @@
  *
  *   bun scripts/mock-companion.ts [--port 7468] [--web http://localhost:3000/] [--dir /tmp/mock-companion] [--session-link <room link>]
  *                                 [--machine <name>] [--hosts 1,2,3] [--session-id <id>]
- *                                 [--personal fresh|enabled] [--personal-login ready|missing] [--personal-chat-tree on|off] [--stakes on|off] [--stakes-on 7,9] [--disk on|off] [--vm on|off] [--vm-github ready|missing] [--delete on|off]
+ *                                 [--personal fresh|enabled] [--personal-login ready|missing] [--personal-chat-tree on|off] [--stakes on|off] [--stakes-on 7,9] [--disk on|off] [--accounts on|off] [--hibernate on|off] [--vm on|off] [--vm-github ready|missing] [--delete on|off] [--terminal on|off]
  *
  * `--machine` names the computer and gives its sessions ids of their own (the way two real computers never share a session id,
  * though their processes may share an instance id: `inst-1` here and there); `--hosts` lists only those fixture sessions
@@ -41,7 +41,11 @@
  * TypeScript project every session shares, held in memory: `tree`, `file`, version-checked saves, `git` and `git-diff` (the project
  * starts with an edited `src/auth/session.ts` and an untracked `src/lib/retry.ts`), `file-search`, and a fake language server (hover
  * with a code fence, go to definition, references with one outside the repository, and an error and a warning in `session.ts`).
- * Every other request is refused. Ctrl+C stops it.
+ * The Preview sheet (./mock-preview) shows one canned dev server on `localhost:5173` (a landing page laid out for phone, tablet and
+ * desktop, text drawn as bars); *Pick element* answers `preview-pick` with the element under the click: its box, crop, HTML, selector and styles.
+ * The Inbox (`inbox`) lists `docs-pass` (`inst-3`, which needs input) and two idle sessions that finished a turn (`fix-flaky-tests`,
+ * `inst-2`, and `release-notes`, `inst-8`), so those rows carry an unread badge until they are opened (the badges and the Inbox button's
+ * count drop together; the question of `docs-pass` stays, as the mock never answers it). Every other request is refused. Ctrl+C stops it.
  *
  * `--personal fresh|enabled` (default `off`: nothing is advertised or answered, as before) adds the Personal agent (./mock-personal): `fresh`
  * is advertised and not set up (Settings → Personal agent → Set up), `enabled` is set up with sample memories, About you, proposals,
@@ -59,11 +63,20 @@
  * quiz covers only what is new. A mode change is written to `<--dir>/stakes-markers.txt`, which `mock-host.ts --stakes-markers <that file>`
  * shows in its transcript as the session's marker.
  *
+ * Provider accounts (./mock-accounts) are on unless `--accounts off` (a companion that predates them: no *Use this account* in the limits sheet).
+ * The mock computer holds two Claude accounts (`dev@example.test` and a Team workspace, `team@example.test`) and one Codex account; open the limits
+ * sheet of a `mock-host.ts` session (Usage, or *Switch model* on the limit bar of `mock-host.ts --limited`) to list them with their windows and make one
+ * the default for new sessions. The choice is kept in `<--dir>/collab-companion-accounts.json`, so it survives a reload and a restarted mock.
+ *
  * The disk guard (./mock-disk) is on unless `--disk off` (a companion that predates it: no capability, no warning, no Disk space group in
  * Settings → Sessions). The mock computer is short on space (6.3 GB free of 500 GB, limit 40 GB by default) with five canned worktrees of
  * build output: two the guard may delete, one a cargo build runs in (busy), one used an hour ago (recent) and one whose size could not be
  * measured. *Clean now* removes what is picked and gives its size back as free space, so the warning clears once enough went. Nothing
  * touches a real disk.
+ *
+ * Session hibernation (./mock-hibernate) is on unless `--hibernate off` (a companion that predates it: no capability, no Hibernation group in
+ * Settings → Sessions, no *Hibernate now*). A fresh state directory lists two hibernated sessions (`nightly-report`, `data-migration`) that
+ * resume when opened; *Hibernate now* in a live session's menu hibernates it or says why not. Nothing starts or stops a process.
  *
  * Virtual machines (./mock-vm) are on unless `--vm off` (a companion without `omp vm`: no capability, no Virtual machines group in Settings →
  * Computers, no *New virtual machine*). Two canned VMs; a create runs through a few progress lines, then pairs the new computer through a link
@@ -73,6 +86,17 @@
  * its own room and relay port), paired through the clone's link. Start a session in it, then delete that session (the VM computer's
  * Delete): once none is left the clone's companion exits, the clone leaves the VM list, and the app forgets the computer. Folders of
  * the template's repositories are made under `<--dir>/vm-home/src`.
+ *
+ * Session status lines: `refactor-auth`, `fix-flaky-tests` and `spike-wasm` carry the agent's todo progress (`3/7` with the task in progress,
+ * `2/4`, and `5/5` showing the last task done), and a fresh `<--dir>` seeds `docs-pass` as In review and `fix-flaky-tests` as Blocked with a
+ * note. A session's menu → *Status and note…* (and the session sheet's Status row) sets the card through the real store
+ * (./companion-sessioncards over `<--dir>/collab-companion-sessioncards.json`), so it persists across reloads and shows on every paired
+ * device; All sessions has a status filter next to the agent one.
+ * Interactive terminals are on unless `--terminal off` (a companion that predates them: no capability, no Shell button): the
+ * companion's own code (./companion-terminal) over a real shell on this machine, which is the one thing here that is not canned.
+ * Open one from the session's ⋯ sheet, the palette (Open an interactive terminal) or the top bar. A session whose folder exists
+ * runs its shell there; the fixtures' `/work/<name>` folders do not, so they are made under `<--dir>/terminal-cwd` and the shell
+ * starts in that copy of the path. A sandboxed session is refused, as on the real companion.
  */
 
 import * as fs from "node:fs/promises";
@@ -90,9 +114,11 @@ import type {
 import { formatPairingUrl } from "../src/lib/companion";
 import { encodeBase64Url, formatCollabLink, generateRoomId, parseCollabLink } from "../src/lib/link";
 import { parseHidden } from "../src/lib/hidden-messages";
+import type { SessionCard } from "../src/lib/session-card";
 import { parseOrg } from "../src/lib/session-org";
 import { CollabSocket } from "../src/lib/socket";
 import { createHiddenMessages, loadHiddenFile, saveHiddenFile } from "./companion-hidden";
+import { createSessionCards, loadCardsFile, saveCardsFile, type CardsFile } from "./companion-sessioncards";
 import { createSessionOrg, loadOrgFile, saveOrgFile } from "./companion-sessionorg";
 import { startLocalRelay } from "./local-relay";
 import type { MockBakeoffJudge } from "./mock-bakeoff";
@@ -104,14 +130,18 @@ import { createMockPersonal } from "./mock-personal";
 import { TOPIC_CWD, TOPIC_SESSION_ID } from "./fixture-topic";
 import { createMockQuiz, mockStackPrs } from "./mock-quiz";
 import { createMockRepoIntel } from "./mock-repo-intel";
+import { createMockPreview } from "./mock-preview";
 import { createMockSearch } from "./mock-search";
 import { createMockReviewBoard } from "./mock-review-board";
 import { createMockSpar } from "./mock-spar";
 import { createMockStakes } from "./mock-stakes";
 import { createMockStart } from "./mock-start";
 import { createMockSettle } from "./mock-settle";
+import { createMockAccounts } from "./mock-accounts";
 import { createMockDisk } from "./mock-disk";
+import { createMockHibernate } from "./mock-hibernate";
 import { createMockVm, type MockGuest } from "./mock-vm";
+import { createTerminals, terminalsSupported } from "./companion-terminal";
 import { createMockDelete } from "./mock-delete";
 import type { VmEntry } from "@oh-my-pi/pi-wire/vm";
 
@@ -141,7 +171,9 @@ const kept = (await Bun.file(roomFile)
 	.catch(() => null)) as { link?: string; key?: string } | null;
 const rawKey = kept?.key ? Uint8Array.from(atob(kept.key), c => c.charCodeAt(0)) : generateRoomKey();
 const roomLink = kept?.link ?? formatCollabLink(relay.url, generateRoomId(), rawKey);
-await Bun.write(roomFile, JSON.stringify({ link: roomLink, key: btoa(String.fromCharCode(...rawKey)) }));
+// The link and key let anyone who reads them into the room (and, with terminals on, into a shell on this machine): owner only, also for a file an earlier run made.
+await fs.writeFile(roomFile, JSON.stringify({ link: roomLink, key: btoa(String.fromCharCode(...rawKey)) }), { mode: 0o600 });
+await fs.chmod(roomFile, 0o600);
 
 const now = Date.now();
 const HOUR = 60 * 60 * 1000;
@@ -159,11 +191,19 @@ const host = (n: number, name: string, over: Partial<CompanionHost> = {}): Compa
 	...over,
 });
 const hosts: CompanionHost[] = [
-	host(1, "refactor-auth", { busy: true }),
-	host(2, "fix-flaky-tests"),
+	host(1, "refactor-auth", {
+		busy: true,
+		todo: { done: 3, total: 7, current: "Move the token refresh behind the session store", lastDone: "Split the login handler" },
+	}),
+	host(2, "fix-flaky-tests", {
+		todo: { done: 2, total: 4, current: "Wait on the cookie write in the login test", lastDone: "Reproduce the race on CI" },
+	}),
 	host(3, "docs-pass", { inputRequired: true, busy: false }),
 	host(4, "merged-feature"),
-	host(5, "spike-wasm", { busy: true }),
+	host(5, "spike-wasm", {
+		busy: true,
+		todo: { done: 5, total: 5, current: null, lastDone: "Benchmark the wasm build against the JS one" },
+	}),
 	host(7, "api-pagination", joinedSessionId === "" || topicMode ? {} : { sessionId: joinedSessionId }),
 	host(8, "release-notes"),
 	host(9, "perf-profiling"),
@@ -189,6 +229,14 @@ const idle: CompanionIdleSession[] = [
 if (freshGuest) idle.length = 0;
 /** cwd → when its pull request finished: the `merged-feature` session settles when the rule is on. */
 const prDone = new Map<string, number>([["/work/merged-feature", now - HOUR / 2]]);
+/** The fixture sessions whose last turn the Inbox lists as finished, and how long ago: the app badges them as having news. */
+const FINISHED_TURNS: Record<string, { text: string; ago: number }> = {
+	"inst-2": {
+		text: "The flaky retry test now passes: it waited on a timer, not on the request.",
+		ago: 12 * 60_000,
+	},
+	"inst-8": { text: "Release notes drafted for 0.42, with the three breaking changes first.", ago: 3 * HOUR },
+};
 
 const orgPath = path.join(dir, "collab-companion-sessionorg.json");
 let lastHostsJson = "";
@@ -229,6 +277,29 @@ const hiddenMessages = createHiddenMessages({
 	now: Date.now,
 	initial: await loadHiddenFile(hiddenPath),
 	save: file => saveHiddenFile(hiddenPath, file),
+	onChange: () => broadcast(),
+});
+
+const cardsPath = path.join(dir, "collab-companion-sessioncards.json");
+const cardsExisted = await Bun.file(cardsPath).exists();
+/** A fresh state directory starts with two cards, so the chip, the note and the status filter show at once. */
+const seedCards = (): CardsFile => {
+	const seeds: { name: string; card: SessionCard }[] = [
+		{ name: "docs-pass", card: { status: "in-review", note: "Waiting on the docs team's pass" } },
+		{ name: "fix-flaky-tests", card: { status: "blocked", note: "Needs the CI cache key rotated first" } },
+	];
+	const cards: CardsFile["cards"] = {};
+	for (const { name, card } of seeds) {
+		const seeded = hosts.find(h => h.sessionName === name);
+		if (seeded !== undefined) cards[seeded.sessionId] = { ...card, at: now };
+	}
+	return { rev: 1, cards };
+};
+/** The status and note given to sessions, with the real store over a temp file. */
+const sessionCards = createSessionCards({
+	now: Date.now,
+	initial: cardsExisted ? await loadCardsFile(cardsPath) : seedCards(),
+	save: file => saveCardsFile(cardsPath, file),
 	onChange: () => broadcast(),
 });
 
@@ -325,6 +396,8 @@ const reviewBoard = createMockReviewBoard(number => MOCK_PRS.find(pr => pr.numbe
 /** The all-sessions list and message search, over canned sessions. */
 /** The editor and Explorer over one canned TypeScript project (./mock-repo-intel): tree, files, saves, changes, search and a fake language server. */
 const repoIntel = createMockRepoIntel(instanceId => hosts.find(h => h.instanceId === instanceId)?.cwd);
+/** The Preview sheet and its design mode (./mock-preview): one canned dev server on localhost:5173, drawn and picked from a tree of boxes. */
+const preview = createMockPreview();
 const search = createMockSearch(hosts, () => [
 	...foreign.searchable(),
 	...(deletion?.listed() ?? []),
@@ -380,10 +453,34 @@ const stakes = createMockStakes({
 	onHostsChanged: () => broadcast(),
 });
 
+/** Provider accounts (./mock-accounts): two Claude accounts and one Codex account, the default for new sessions kept in a file. `--accounts off` is a companion that predates them: nothing advertised or answered. */
+const accountsFlag = flag("--accounts", "on");
+if (accountsFlag !== "on" && accountsFlag !== "off") throw new Error("--accounts takes on or off");
+const accounts = accountsFlag === "on" ? await createMockAccounts({ dir }) : undefined;
+
 /** The disk guard (./mock-disk): a computer short on space with canned worktrees to clean. `--disk off` is a companion that predates it: nothing advertised or answered. */
 const diskFlag = flag("--disk", "on");
 if (diskFlag !== "on" && diskFlag !== "off") throw new Error("--disk takes on or off");
 const disk = diskFlag === "on" ? await createMockDisk({ dir, onChange: () => broadcast() }) : undefined;
+
+/**
+ * Session hibernation (./mock-hibernate): the real organiser over the mock's sessions, with two hibernated samples. `--hibernate off` is a
+ * companion that predates it: nothing advertised or answered (no Hibernation group in Settings → Sessions, no *Hibernate now*).
+ */
+const hibernateFlag = flag("--hibernate", "on");
+if (hibernateFlag !== "on" && hibernateFlag !== "off") throw new Error("--hibernate takes on or off");
+const hibernate =
+	hibernateFlag === "on"
+		? await createMockHibernate({
+				dir,
+				hosts,
+				openSessionId: sessionLink === "" ? "" : (hosts.find(h => h.sessionName === "api-pagination")?.sessionId ?? ""),
+				sessionLink: sessionLink === "" ? undefined : sessionLink,
+				prefix: machine ? `${machine}-` : "",
+				samples: only.length === 0,
+				onChange: () => broadcast(),
+			})
+		: undefined;
 
 /** Virtual machines (./mock-vm): canned VMs and a create that takes a few seconds. `--vm off` is a companion without `omp vm`: nothing advertised or answered. */
 const vmFlag = flag("--vm", "on");
@@ -459,6 +556,89 @@ const vm =
 			})
 		: undefined;
 
+/**
+ * Interactive terminals: the companion's real PTY code (./companion-terminal) running a shell on this machine. `--terminal off`
+ * is a companion without them. The fixtures' session folders do not exist, so a shell for one starts in a copy of its path under
+ * `<--dir>/terminal-cwd` (a folder that does exist, such as a started session's, is used as it is).
+ */
+const terminalFlag = flag("--terminal", "on");
+if (terminalFlag !== "on" && terminalFlag !== "off") throw new Error("--terminal takes on or off");
+const terminals =
+	terminalFlag === "on" && terminalsSupported()
+		? createTerminals({
+				send: (peer, frame) => socket.send(frame, peer),
+				isLive: peer => peers.has(peer),
+				buffered: () => socket.bufferedAmount,
+				log: message => console.log(`mock companion: ${message}`),
+			})
+		: undefined;
+const terminalRoot = path.join(dir, "terminal-cwd");
+
+async function terminalFolder(cwd: string): Promise<string> {
+	if (await fs.stat(cwd).then(stat => stat.isDirectory(), () => false)) return cwd;
+	const copy = path.join(terminalRoot, cwd);
+	await fs.mkdir(copy, { recursive: true });
+	return copy;
+}
+
+/** Answers the `terminal-*` frames; false for any other frame. */
+function answerTerminal(frame: CompanionRequest, peer: number): boolean {
+	if (terminals === undefined) return false;
+	const fail =
+		(reqId: number) =>
+		(err: unknown): void =>
+			socket.send({ t: "error", reqId, message: err instanceof Error ? err.message : String(err) }, peer);
+	switch (frame.t) {
+		case "terminal-open": {
+			const { reqId, instanceId, cols, rows } = frame;
+			void (async () => {
+				const session = [...hosts, ...idle].find(candidate => candidate.instanceId === instanceId);
+				if (session === undefined) throw new Error("unknown session");
+				if (session.sandboxed === true) throw new Error("Terminals are not available for a sandboxed session.");
+				const terminal = await terminals.open(peer, { instanceId, cwd: await terminalFolder(session.cwd) }, cols, rows);
+				socket.send({ t: "terminal-open", reqId, terminal }, peer);
+			})().catch(fail(reqId));
+			return true;
+		}
+		case "terminal-list":
+			socket.send({ t: "terminal-list", reqId: frame.reqId, terminals: terminals.list(frame.instanceId) }, peer);
+			return true;
+		case "terminal-attach":
+			try {
+				socket.send(
+					{ t: "terminal-attach", reqId: frame.reqId, ...terminals.attach(peer, frame.id, frame.cols, frame.rows) },
+					peer,
+				);
+			} catch (err) {
+				fail(frame.reqId)(err);
+			}
+			return true;
+		case "terminal-close":
+			try {
+				terminals.close(frame.id);
+				socket.send({ t: "terminal-close", reqId: frame.reqId }, peer);
+			} catch (err) {
+				fail(frame.reqId)(err);
+			}
+			return true;
+		case "terminal-input":
+			terminals.input(peer, frame.id, frame.data);
+			return true;
+		case "terminal-resize":
+			try {
+				terminals.resize(peer, frame.id, frame.cols, frame.rows);
+			} catch {
+				// An impossible size: the shell keeps the one it has.
+			}
+			return true;
+		case "terminal-detach":
+			terminals.detach(peer, frame.id);
+			return true;
+		default:
+			return false;
+	}
+}
+
 /** Quizzes on code changes: a finished stack quiz, one half answered, a failed one; new ones tick to ready. `--quiz-stage-ms` slows the ticks. */
 const quiz = createMockQuiz({
 	instanceId: "inst-7",
@@ -529,10 +709,11 @@ function hostsFrame(): CompanionReply {
 	return {
 		t: "hosts",
 		machine: machine || "mock-computer",
-		hosts: stakes.decorate(fanout.annotate(hosts)),
+		hosts: sessionCards.markRows(stakes.decorate(fanout.annotate(hosts))),
 		...fanout.capabilities,
 		...starts.capabilities,
 		...search.capabilities,
+		...preview.capabilities,
 		...repoIntel.capabilities,
 		...reviewBoard.capabilities,
 		...blueprint.capabilities,
@@ -543,17 +724,22 @@ function hostsFrame(): CompanionReply {
 		...settle.capabilities,
 		...deletion?.capabilities,
 		...stakes.capabilities,
+		...accounts?.capabilities,
 		...disk?.hostsFields(),
+		...hibernate?.hostsFields(),
 		...vm?.hostsFields(),
+		canTerminal: terminals !== undefined,
 		...personal?.capabilities(),
 		canGithub: true,
-		idle: stakes.decorate(idle),
+		idle: sessionCards.markRows(stakes.decorate(idle)),
 		vapidKey: "",
 		sessionOrgRev: sessionOrg.file().rev,
 		canOrderSessions: true,
 		canEndOnSettle: true,
 		canHideMessages: true,
 		hiddenRev: hiddenMessages.file().rev,
+		canSessionCards: true,
+		sessionCardsRev: sessionCards.file().rev,
 	};
 }
 
@@ -576,17 +762,36 @@ socket.onFrame = (frame, fromPeer) => {
 		return;
 	}
 	if (!peers.has(fromPeer)) return;
+	if (answerTerminal(frame, fromPeer)) return;
 	if (frame.t === "list") {
 		broadcast(fromPeer);
 		return;
 	}
 	if (!("reqId" in frame)) return;
 	if (frame.t === "ping") socket.send({ t: "ok", reqId: frame.reqId }, fromPeer);
+	else if (hibernate?.handles(frame))
+		void hibernate.answer(frame).then(
+			reply => socket.send(reply, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
 	else if (frame.t === "session-org")
 		void sessionOrg.sync(parseOrg(frame.doc)).then(({ doc, rev }) => {
 			socket.send({ t: "session-org", reqId: frame.reqId, doc, rev }, fromPeer);
 			broadcast();
 		});
+	else if (frame.t === "session-card")
+		void sessionCards.set(frame.sessionId, frame.status, frame.note).then(
+			() => socket.send({ t: "ok", reqId: frame.reqId }, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
 	else if (frame.t === "hidden-messages")
 		void hiddenMessages.sync(frame.sessionId, parseHidden(frame.doc)).then(
 			({ doc, rev }) =>
@@ -628,7 +833,21 @@ socket.onFrame = (frame, fromPeer) => {
 					fromPeer,
 				),
 		);
-	else if (search.handles(frame)) socket.send(search.answer(frame), fromPeer);
+	else if (search.handles(frame)) {
+		const answer = search.answer(frame);
+		socket.send(
+			answer.t === "sessions" ? { ...answer, sessions: sessionCards.markRows(answer.sessions) } : answer,
+			fromPeer,
+		);
+	} else if (preview.handles(frame))
+		void preview.answer(frame).then(
+			reply => socket.send(reply, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
 	else if (repoIntel.handles(frame)) {
 		try {
 			socket.send(repoIntel.answer(frame), fromPeer);
@@ -701,6 +920,15 @@ socket.onFrame = (frame, fromPeer) => {
 					fromPeer,
 				),
 		);
+	else if (accounts?.handles(frame))
+		void accounts.answer(frame).then(
+			reply => socket.send(reply, fromPeer),
+			(err: unknown) =>
+				socket.send(
+					{ t: "error", reqId: frame.reqId, message: err instanceof Error ? err.message : String(err) },
+					fromPeer,
+				),
+		);
 	else if (disk?.handles(frame))
 		void disk.answer(frame).then(
 			reply => socket.send(reply, fromPeer),
@@ -746,10 +974,12 @@ socket.onFrame = (frame, fromPeer) => {
 				fromPeer,
 			);
 		}
-	} else if (personal && frame.t === "inbox") {
-		// With Personal on, the Inbox sheet shows it merged with the sessions that wait: these are the fixture ones that need input.
-		const items = hosts
-			.filter(candidate => candidate.inputRequired === true && candidate.personal !== true)
+	} else if (frame.t === "inbox") {
+		// The sessions that wait on an answer (the fixture ones that need input) and two idle ones that finished a turn: the
+		// app badges each row with its open items, and opening one clears its own. With Personal on, the sheet merges its items in.
+		const eligible = hosts.filter(candidate => candidate.personal !== true);
+		const waiting = eligible
+			.filter(candidate => candidate.inputRequired === true)
 			.map((candidate, at): InboxItem => ({
 				instanceId: candidate.instanceId,
 				title: candidate.sessionName ?? candidate.cwd,
@@ -759,6 +989,26 @@ socket.onFrame = (frame, fromPeer) => {
 				options: ["The schema change", "The backfill"],
 				at: candidate.startedAt - at * 60_000,
 			}));
+		// A hibernated session keeps its instance id, and its finished turn stays unread until it is opened, as on a real companion.
+		const asleep = (hibernate?.hostsFields().hibernated ?? [])
+			.filter(session => !hosts.some(candidate => candidate.sessionId === session.sessionId))
+			.map(session => ({ ...session, busy: false, inputRequired: false }));
+		const done = [...eligible, ...asleep].flatMap((candidate): InboxItem[] => {
+			const turn = FINISHED_TURNS[candidate.instanceId];
+			if (turn === undefined || candidate.inputRequired || candidate.busy !== false) return [];
+			return [
+				{
+					instanceId: candidate.instanceId,
+					title: candidate.sessionName ?? candidate.cwd,
+					cwd: candidate.cwd,
+					kind: "done",
+					text: turn.text,
+					// Fixed when the mock started, so the item keeps its identity (a dismissal is keyed by it) across requests.
+					at: now - turn.ago,
+				},
+			];
+		});
+		const items = [...waiting, ...done].sort((a, b) => b.at - a.at);
 		socket.send({ t: "inbox", reqId: frame.reqId, items }, fromPeer);
 	} else if (frame.t === "github")
 		socket.send({ t: "github", reqId: frame.reqId, repo: "example/app", items: MOCK_PRS }, fromPeer);
@@ -796,7 +1046,10 @@ socket.onFrame = (frame, fromPeer) => {
 		);
 };
 socket.onControl = msg => {
-	if (msg.t === "peer-left") peers.delete(msg.peer);
+	if (msg.t === "peer-left") {
+		peers.delete(msg.peer);
+		terminals?.peerGone(msg.peer);
+	}
 };
 socket.onOpen = () => {
 	console.log("mock companion ready");
@@ -810,6 +1063,7 @@ socket.connect();
 function stop(): never {
 	clearInterval(timer);
 	vm?.stop();
+	terminals?.stopAll();
 	quiz.stop();
 	spar.stop();
 	bakeoff.stop();
@@ -824,6 +1078,7 @@ let guestEmptySince = 0;
 const timer = setInterval(() => {
 	void sessionOrg.tick([...hosts, ...idle.map(session => ({ ...session, inputRequired: false }))]);
 	void stakes.tick();
+	void hibernate?.tick();
 	broadcast();
 	if (!freshGuest) return;
 	if (hosts.some(h => h.instanceId.startsWith("start-"))) {

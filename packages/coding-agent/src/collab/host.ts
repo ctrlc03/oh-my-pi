@@ -89,6 +89,7 @@ import {
 	type CollabHostRegistrySource,
 	type CollabHostSnapshot,
 	publishCollabHost,
+	summarizeTodoPhases,
 } from "./registry";
 import { FanoutSocket } from "./relay-fanout";
 import { cfgCollabLocalRelayEndpointFile } from "./settings";
@@ -900,6 +901,7 @@ export class CollabHost {
 		if (!this.#guestTrafficAllowed()) throw new Error("collab room unavailable");
 		if (this.#ctx.session.isSessionTransitioning) throw new Error("session transition in progress");
 		const model = this.#ctx.session.model;
+		const todo = summarizeTodoPhases(this.#ctx.session.getTodoPhases());
 		return {
 			instanceId: this.#instanceId,
 			generation: this.#generation,
@@ -917,6 +919,9 @@ export class CollabHost {
 			// the agent ends — so a poller sees the session stop while the room
 			// is still published.
 			busy: this.#ctx.session.isStreaming,
+			...(todo ? { todo } : {}),
+			// Read at query time like `busy`: the companion hibernates a session only while nothing besides it runs.
+			background: this.#ctx.session.hasBackgroundWork,
 			access: this.#access,
 		};
 	}

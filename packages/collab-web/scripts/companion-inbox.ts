@@ -4,6 +4,7 @@
  * inputs (entries come through `readEntries`) so it is testable from fixtures.
  */
 
+import type { HibernatedSession } from "@oh-my-pi/pi-wire/hibernate";
 import * as path from "node:path";
 import type { CompanionHost, InboxItem } from "../src/lib/companion";
 import { lastAssistantTurn, pendingAsk } from "./companion-sessions";
@@ -16,15 +17,22 @@ type Entries = Parameters<typeof pendingAsk>[0];
 /**
  * Input items for hosts waiting on the user (their question and, for a single-choice
  * select, its options) and done items for idle hosts whose last turn ended within
- * {@link DONE_MAX_AGE_MS}; newest first.
+ * {@link DONE_MAX_AGE_MS}; newest first. A hibernated session (`asleep`) counts as an idle
+ * host under the instance id it keeps: hibernating the session after its turn must not
+ * hide that turn from the person who has not read it yet.
  */
 export async function buildInbox(
 	hosts: readonly CompanionHost[],
+	asleep: readonly HibernatedSession[],
 	readEntries: (sessionId: string) => Promise<Entries>,
 	now: number,
 ): Promise<InboxItem[]> {
+	const sessions = [
+		...hosts,
+		...asleep.map(session => ({ ...session, busy: false, inputRequired: false, agent: undefined })),
+	];
 	const items = await Promise.all(
-		hosts.map(async (host): Promise<InboxItem | null> => {
+		sessions.map(async (host): Promise<InboxItem | null> => {
 			if (!host.inputRequired && host.busy !== false) return null;
 			const entries = await readEntries(host.sessionId);
 			const base = {

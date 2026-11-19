@@ -83,6 +83,8 @@
 		"@oh-my-pi/pi-natives": "catalog:",
 		"@oh-my-pi/pi-utils": "catalog:",
 		"@oh-my-pi/pi-wire": "catalog:",
+		"@xterm/addon-fit": "0.11.0",
+		"@xterm/xterm": "6.0.0",
 		"d3-force": "catalog:",
 		"diff": "catalog:",
 		"highlight.js": "catalog:",
@@ -92,6 +94,7 @@
 		"lucide-react": "catalog:",
 		"mermaid": "^11.12.1",
 		"monaco-editor": "0.57.0",
+		"pdfjs-dist": "5.4.624",
 		"react": "catalog:",
 		"react-dom": "catalog:"
 	},

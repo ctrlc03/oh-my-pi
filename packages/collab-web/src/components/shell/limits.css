@@ -153,6 +153,51 @@
 	color: var(--fg-muted);
 }
 
+/* ---- accounts: a provider with several stored accounts ---- */
+.sh-limit-account {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 8px 10px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-limit-account-on {
+	border-color: var(--accent);
+}
+
+.sh-limit-account-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 10px;
+	min-width: 0;
+}
+
+.sh-limit-account-name {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	font-weight: 600;
+	font-size: 12.5px;
+}
+
+/* The default account's tag and the buttons sit at the row's end, like the "this session" tag. */
+.sh-limit-account-head .sh-limit-tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.sh-limit-use {
+	margin-left: auto;
+}
+
+.sh-limit-auto {
+	align-self: flex-start;
+}
+
 /* Phones: the lead action takes a row, the others share the next, so no button sits alone and wraps. */
 @media (max-width: 640px) {
 	.sh-limit-bar-msg {

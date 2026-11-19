@@ -23,6 +23,7 @@ import {
 	type CollabIdleStartResult,
 	CollabLinkError,
 	publishCollabIdle,
+	summarizeTodoPhases,
 } from "./registry";
 
 import { normalizeLocalRelayUrl } from "./protocol";
@@ -117,6 +118,7 @@ export class CollabController {
 		if (this.host) throw new Error("already hosting");
 		if (this.#ctx.session.isSessionTransitioning) throw new Error("session transition in progress");
 		const model = this.#ctx.session.model;
+		const todo = summarizeTodoPhases(this.#ctx.session.getTodoPhases());
 		return {
 			instanceId: this.instanceId,
 			pid: process.pid,
@@ -126,6 +128,7 @@ export class CollabController {
 			model: model ? { provider: model.provider, id: model.id } : null,
 			startedAt: this.#startedAt,
 			busy: this.#ctx.session.isStreaming,
+			...(todo ? { todo } : {}),
 		};
 	}
 

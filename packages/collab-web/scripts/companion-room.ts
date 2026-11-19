@@ -116,6 +116,11 @@ export class RoomHost<Out extends object, In> {
 		}
 	}
 
+	/** Bytes the relay connection `peer` is on has been given and not sent yet (see `CollabSocket.bufferedAmount`). */
+	bufferedAmount(peer: number): number {
+		return (peer >= LOCAL_PEER_BASE ? this.#local : this.#public)?.bufferedAmount ?? 0;
+	}
+
 	close(): void {
 		this.#public.close();
 		this.#local?.close();

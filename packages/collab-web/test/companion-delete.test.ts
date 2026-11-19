@@ -219,6 +219,7 @@ function harness(over: Partial<SessionDeleteDeps> = {}): Harness {
 		},
 		removeWorktree: tree => removeWorktree(tree, [trees], []),
 		forgetSearch: () => {},
+		forgetHibernated: () => {},
 		onError: err => h.errors.push(err),
 		sleep: async ms => {
 			clock.now += ms;

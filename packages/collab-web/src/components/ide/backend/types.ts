@@ -6,6 +6,7 @@
  *
  * Positions are the repo-intel contract's: 1-based line, 0-based UTF-16 character.
  */
+import type { LineMark } from "../../../lib/line-attribution";
 import type { LspDiagnostic, LspRange } from "../../../lib/repo-intel";
 
 export type EngineName = "codemirror" | "monaco";
@@ -94,6 +95,12 @@ export interface EditorDoc {
 	/** Where the cursor (the main selection's head) is. */
 	head(): Pos;
 	setDiagnostics(diagnostics: readonly LspDiagnostic[]): void;
+	/**
+	 * Mark these lines as written by an agent (replacing the marks before; none clears them): a gutter bar whose hover is
+	 * the mark's `tip`. A mark follows its line as text is typed around it and goes when its line's text changes, so
+	 * a person's edit flips the line back; the marks are the text as it is now, not a promise about later text.
+	 */
+	setAttribution(marks: readonly LineMark[]): void;
 	/** Release the document (the tab closed or the engine changed). */
 	dispose(): void;
 }
@@ -114,6 +121,8 @@ export interface EditorViewHooks {
 	shortcut(kind: "save" | "quick-open" | "search-files"): void;
 	/** Hover text for a position; undefined while no language server is offered. Rejects/returns null for nothing to show. */
 	hover?(doc: EditorDoc, pos: Pos, signal: AbortSignal): Promise<HoverAnswer | null>;
+	/** An agent-line mark was tapped (CodeMirror; a phone has no hover): `tip` is its hover text. */
+	attribution?(doc: EditorDoc, tip: string): void;
 }
 
 /** What the user's layout asks of the editing surface itself (the rest of the layout is the sheet's own). */

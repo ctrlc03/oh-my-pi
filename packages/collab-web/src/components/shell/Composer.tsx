@@ -26,6 +26,14 @@ import {
 	planUpload,
 } from "../../lib/files";
 import { useEnterWhileRunning } from "../../lib/composer-prefs";
+import {
+	type DragKind,
+	dragKindOf,
+	droppedFiles,
+	insertMention,
+	PATH_DRAG_MIME,
+	parsePathDrag,
+} from "../../lib/drop";
 import { dropStashed, type StashedDraft, stashDraft, useStashedDrafts } from "../../lib/draft-stash";
 import { MAX_ATTACHMENTS, toImageContent } from "../../lib/images";
 import { isLargePaste, pastedTextFile } from "../../lib/large-paste";
@@ -470,13 +478,17 @@ export const Composer = memo(function Composer({
 		}
 	};
 
-	const attach = async (picked: readonly File[]): Promise<void> => {
+	/** Attaches what was picked, pasted or dropped; `notes` are things already known to be left out, shown with the rest. */
+	const attach = async (picked: readonly File[], notes: readonly string[] = []): Promise<void> => {
 		const pickedImages = picked.filter(isImageFile);
 		const pickedFiles = picked.filter(f => !isImageFile(f));
-		if (pickedImages.length === 0 && pickedFiles.length === 0) return;
+		if (pickedImages.length === 0 && pickedFiles.length === 0) {
+			if (notes.length > 0) setAttachError(notes.join(" "));
+			return;
+		}
 		const imageRoom = Math.max(0, MAX_ATTACHMENTS - images.length);
 		const fileRoom = Math.max(0, MAX_FILES - files.length);
-		const errors: string[] = [];
+		const errors: string[] = [...notes];
 		if (pickedImages.length > imageRoom) errors.push(`Up to ${MAX_ATTACHMENTS} images per prompt.`);
 		if (pickedFiles.length > fileRoom) errors.push(`Up to ${MAX_FILES} files per prompt.`);
 		setAttachError(errors.length > 0 ? errors.join(" ") : null);
@@ -515,6 +527,73 @@ export const Composer = memo(function Composer({
 		e.preventDefault();
 		void attach(pasted);
 	};
+
+	// What a drop on the conversation does: files attach like pasted ones, an Explorer row becomes a mention at the caret.
+	// Rebound each render so the listeners below (bound once) see the latest draft and attachments.
+	const dropRef = useRef<(transfer: DataTransfer, kind: DragKind) => void>(() => {});
+	dropRef.current = (transfer, kind) => {
+		if (kind === "files") {
+			const { files: dropped, folders } = droppedFiles(transfer);
+			void attach(
+				dropped,
+				folders > 0 ? ["Folders cannot be attached; drag one from the Explorer to mention it instead."] : [],
+			);
+			return;
+		}
+		const dragged = parsePathDrag(transfer.getData(PATH_DRAG_MIME));
+		if (dragged === null) return;
+		const at = caretRef.current ?? { start: text.length, end: text.length };
+		const next = insertMention(text, dragged.path, at.start, at.end);
+		pendingCaretRef.current = next.caret;
+		setText(next.text);
+		setCaretTick(tick => tick + 1);
+	};
+	// The drop zone is the whole conversation panel (transcript and message box), so a file need not be aimed at the
+	// small field. While a drag is over it the panel carries `data-drop`, which the stylesheet turns into the drop target.
+	const rootRef = useRef<HTMLDivElement | null>(null);
+	const asking = uiRequest !== null && canPrompt;
+	useEffect(() => {
+		const zone = rootRef.current?.closest<HTMLElement>(".sh-panel") ?? rootRef.current;
+		if (!canType || asking || !zone) return;
+		const mark = (kind: DragKind | null): void => {
+			if (kind === null) delete zone.dataset.drop;
+			else if (zone.dataset.drop !== kind) zone.dataset.drop = kind;
+		};
+		const onOver = (e: DragEvent): void => {
+			const kind = dragKindOf(e.dataTransfer?.types ?? []);
+			if (kind === null || e.dataTransfer === null) return;
+			e.preventDefault();
+			e.dataTransfer.dropEffect = "copy";
+			mark(kind);
+		};
+		// Leaving for a child keeps the target lit; leaving the panel (or the window, where there is no related target) clears it.
+		const onLeave = (e: DragEvent): void => {
+			if (e.relatedTarget instanceof Node && zone.contains(e.relatedTarget)) return;
+			mark(null);
+		};
+		const onDrop = (e: DragEvent): void => {
+			mark(null);
+			const kind = dragKindOf(e.dataTransfer?.types ?? []);
+			if (kind === null || e.dataTransfer === null) return;
+			e.preventDefault();
+			dropRef.current(e.dataTransfer, kind);
+		};
+		const clear = (): void => mark(null);
+		zone.addEventListener("dragover", onOver);
+		zone.addEventListener("dragleave", onLeave);
+		zone.addEventListener("drop", onDrop);
+		// A drag that ends elsewhere (Esc, dropped outside) never reaches the zone's own drop.
+		window.addEventListener("dragend", clear);
+		window.addEventListener("drop", clear);
+		return () => {
+			zone.removeEventListener("dragover", onOver);
+			zone.removeEventListener("dragleave", onLeave);
+			zone.removeEventListener("drop", onDrop);
+			window.removeEventListener("dragend", clear);
+			window.removeEventListener("drop", clear);
+			mark(null);
+		};
+	}, [canType, asking]);
 
 	const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
 		if (slash.onKeyDown(e) || mention.onKeyDown(e)) return;
@@ -635,7 +714,7 @@ export const Composer = memo(function Composer({
 	}
 
 	return (
-		<div className={readOnly ? "sh-composer sh-composer-readonly" : "sh-composer"}>
+		<div ref={rootRef} className={readOnly ? "sh-composer sh-composer-readonly" : "sh-composer"}>
 			{canPrompt && !text && <QuickReplies disabled={!live} onPick={reply => send(reply)} />}
 			<FollowUps
 				client={client}

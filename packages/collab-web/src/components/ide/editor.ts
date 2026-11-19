@@ -10,7 +10,7 @@ import { bracketMatching, foldGutter, foldKeymap, indentOnInput, syntaxHighlight
 import { lintGutter } from "@codemirror/lint";
 import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
 import type { Extension, Range } from "@codemirror/state";
-import { Annotation, EditorState, StateEffect, StateField } from "@codemirror/state";
+import { Annotation, EditorState, RangeSet, RangeSetBuilder, StateEffect, StateField } from "@codemirror/state";
 import type { DecorationSet, KeyBinding, Tooltip } from "@codemirror/view";
 import {
 	Decoration,
@@ -19,6 +19,8 @@ import {
 	highlightActiveLine,
 	highlightActiveLineGutter,
 	hoverTooltip,
+	GutterMarker,
+	gutter,
 	highlightSpecialChars,
 	keymap,
 	lineNumbers,
@@ -72,6 +74,76 @@ const changedLines = StateField.define<DecorationSet>({
 	},
 	provide: field => EditorView.decorations.from(field),
 });
+
+/** Paint these lines (1-based, with their hover text) as written by an agent; an empty list clears them. */
+export const markAgentLines = StateEffect.define<{ line: number; tip: string }[]>();
+
+/** A gutter bar on a line an agent wrote, with the text that line had when it was marked. */
+class AgentMarker extends GutterMarker {
+	constructor(
+		readonly tip: string,
+		readonly text: string,
+	) {
+		super();
+	}
+
+	override eq(other: GutterMarker): boolean {
+		return other instanceof AgentMarker && other.tip === this.tip && other.text === this.text;
+	}
+
+	override toDOM(): Node {
+		const bar = document.createElement("div");
+		bar.className = "sh-ide-attr-mark";
+		bar.title = this.tip;
+		return bar;
+	}
+}
+
+/** Lines an agent wrote; they follow edits around them and go when their own text changes. */
+const agentLines = StateField.define<RangeSet<AgentMarker>>({
+	create: () => RangeSet.empty,
+	update(marks, tr) {
+		let next = marks;
+		if (tr.docChanged) {
+			// A person's edit to a line flips it back to theirs.
+			next = next
+				.map(tr.changes)
+				.update({ filter: (from, _to, marker) => tr.state.doc.lineAt(from).text.trim() === marker.text });
+		}
+		for (const effect of tr.effects) {
+			if (!effect.is(markAgentLines)) continue;
+			const doc = tr.state.doc;
+			const builder = new RangeSetBuilder<AgentMarker>();
+			for (const { line, tip } of effect.value) {
+				if (line < 1 || line > doc.lines) continue;
+				const at = doc.line(line);
+				builder.add(at.from, at.from, new AgentMarker(tip, at.text.trim()));
+			}
+			next = builder.finish();
+		}
+		return next;
+	},
+});
+
+/** The thin bar beside the line numbers; a tap on it says who wrote the line (hover does not exist on a phone). */
+function agentGutter(hooks: () => EditorHooks): Extension {
+	return [
+		agentLines,
+		gutter({
+			class: "sh-ide-attr-gutter",
+			markers: view => view.state.field(agentLines),
+			initialSpacer: () => new AgentMarker("", ""),
+			domEventHandlers: {
+				click(view, block) {
+					const found = view.state.field(agentLines).iter(block.from);
+					if (found.value === null || found.from !== block.from) return false;
+					hooks().attribution(view, found.value.tip);
+					return true;
+				},
+			},
+		}),
+	];
+}
 
 /** Editor chrome from the app's tokens; follows the light and dark palettes with no editor-side switch. */
 const theme = EditorView.theme({
@@ -132,6 +204,14 @@ const theme = EditorView.theme({
 		backgroundColor: "color-mix(in srgb, var(--ok) 13%, transparent)",
 		boxShadow: "inset 3px 0 var(--ok)",
 	},
+	".sh-ide-attr-gutter": { width: "7px" },
+	".sh-ide-attr-mark": {
+		width: "2px",
+		height: "100%",
+		margin: "0 auto",
+		backgroundColor: "color-mix(in srgb, var(--accent) 65%, transparent)",
+		cursor: "help",
+	},
 });
 
 /**
@@ -147,6 +227,8 @@ export interface EditorHooks {
 	changed(view: EditorView, text: boolean): void;
 	/** Hover for the language server: the tooltip for a position, or null for none. */
 	hover(view: EditorView, pos: number): Promise<Tooltip | null> | null;
+	/** A line an agent wrote was tapped (a phone has no hover): `tip` says who wrote it. */
+	attribution(view: EditorView, tip: string): void;
 }
 
 /** Shared by every tab; `hooks` is read on each event, so the owner may re-point it. */
@@ -169,6 +251,7 @@ export function baseExtensions(hooks: () => EditorHooks): Extension[] {
 	];
 	return [
 		lineNumbers(),
+		agentGutter(hooks),
 		highlightActiveLineGutter(),
 		foldGutter(),
 		lintGutter(),

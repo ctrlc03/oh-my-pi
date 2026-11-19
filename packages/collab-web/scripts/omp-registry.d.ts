@@ -21,8 +21,12 @@ export interface CollabHostSnapshot {
 	inputRequired: boolean;
 	/** `null`: an omp that predates the field. */
 	busy: boolean | null;
+	/** A running background job, service, subagent or queued wake-up, besides the turn itself. `null` or absent: an omp (or a vendor host) that predates the field, so unknown. */
+	background?: boolean | null;
 	/** The vendor agent behind a foreign (non-omp) session host; absent for omp. */
 	agent?: AgentRef;
+	/** Todo progress of the session; absent from an omp that predates it. Read through `parseTodoProgress`, which checks its shape. */
+	todo?: unknown;
 	access: "view" | "control";
 }
 
@@ -36,6 +40,8 @@ export interface CollabIdleSnapshot {
 	model: { provider: string; id: string } | null;
 	startedAt: number;
 	busy: boolean;
+	/** See {@link CollabHostSnapshot.todo}. */
+	todo?: unknown;
 }
 
 export interface CollabSessionListing {

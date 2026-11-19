@@ -12,10 +12,11 @@ export default class Usage extends Command {
 		action: Args.string({
 			description: "Optional subcommand to execute",
 			required: false,
-			options: ["invalidate", "clients", "accounts", "reset"],
+			options: ["invalidate", "clients", "accounts", "reset", "use"],
 		}),
 		target: Args.string({
-			description: "Saved reset to spend with `reset`: <provider>/<credential id> as `omp usage reset` lists it",
+			description:
+				"With `reset`: the saved reset to spend, <provider>/<credential id> as `omp usage reset` lists it. With `use`: <provider>/<identity key or auto> as `omp usage accounts` lists the keys",
 			required: false,
 		}),
 	};
@@ -53,6 +54,7 @@ export default class Usage extends Command {
 		"# OAuth identity keys for task.agentAccountPools (no tokens)\n  omp usage accounts",
 		"# Saved Codex and Claude rate-limit resets per account, with each account's credential id\n  omp usage reset",
 		"# Spend one saved reset on a listed account\n  omp usage reset codex/3",
+		"# Start new Anthropic sessions on one account (`auto` ranks by usage headroom again)\n  omp usage use anthropic/email:you@example.com|org:<org-id>",
 		"# Invalidate cached usage reports for all providers\n  omp usage invalidate",
 		"# Invalidate cached usage reports for a specific provider\n  omp usage invalidate --provider anthropic",
 	];

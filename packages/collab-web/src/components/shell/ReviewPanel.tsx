@@ -481,6 +481,7 @@ function ReviewView({ review, refreshing, loadError, onRefresh, ...props }: Revi
 							expanded={openFile === file.path}
 							onToggle={() => setOpenFile(openFile === file.path ? null : file.path)}
 							scope="branch"
+							attribution={{ client, instanceId }}
 							review={diffReview}
 						/>
 					))}

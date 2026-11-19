@@ -221,6 +221,39 @@ effect(cfgProvidersMaxInFlightRequests, limits =>
 	configureProviderMaxInFlightRequests(normalizeProviderMaxInFlightRequests(limits)),
 );
 
+/**
+ * Validate `providers.preferredAccounts` (provider id → OAuth identity key). An absent or `null` value
+ * is no preference. A malformed value fails settings load rather than reading as no preference: the
+ * collab app writes this setting, and a silently ignored account choice would leave the user's
+ * requests on an account they did not pick.
+ */
+export function validatePreferredAccounts(value: unknown): Record<string, string> {
+	if (value === undefined || value === null) return {};
+	if (!isRecord(value)) {
+		throw new Error(
+			`Invalid providers.preferredAccounts: expected a map of provider id to OAuth identity key, got ${Array.isArray(value) ? "an array" : `a ${typeof value}`}.`,
+		);
+	}
+	const preferred: Record<string, string> = Object.create(null);
+	for (const [provider, identityKey] of Object.entries(value)) {
+		if (identityKey === null) continue;
+		if (typeof identityKey !== "string" || identityKey.length === 0 || identityKey.trim() !== identityKey) {
+			throw new Error(
+				`Invalid providers.preferredAccounts.${provider}: expected an OAuth identity key such as "email:you@example.com|org:<org-id>".`,
+			);
+		}
+		preferred[provider] = identityKey;
+	}
+	return preferred;
+}
+
+export const cfgProvidersPreferredAccounts = register({
+	id: "providers.preferredAccounts",
+	type: "record",
+	default: EMPTY_STRING_RECORD,
+	validate: validatePreferredAccounts,
+});
+
 export const cfgImagesDescribeForTextModels = register({
 	id: "images.describeForTextModels",
 	type: "boolean",

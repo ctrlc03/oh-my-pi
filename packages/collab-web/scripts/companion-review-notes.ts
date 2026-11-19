@@ -159,7 +159,7 @@ async function subagentSessions(file: string): Promise<string[]> {
  * The edits of a session and of the subagents it started (what a `task` call's agents wrote is the session's work too).
  * A subagent's edits carry the session's id, the turn that was running when it made them, and a title that names it.
  */
-async function scanWithSubagents(file: string, scope: ScanScope): Promise<SessionEdit[]> {
+export async function scanWithSubagents(file: string, scope: ScanScope): Promise<SessionEdit[]> {
 	const turns: PromptTurn[] = [];
 	const edits = await scanSessionEdits(fileLines(file, MAX_FILE_BYTES), scope, turns);
 	const nested = await subagentSessions(file);

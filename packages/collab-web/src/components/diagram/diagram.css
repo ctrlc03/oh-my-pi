@@ -226,6 +226,17 @@
 	backdrop-filter: blur(12px);
 }
 
+/* An image's zoom, beside the buttons. */
+.sh-pz-zoom {
+	align-self: center;
+	min-width: 4ch;
+	padding: 0 4px;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+	color: var(--fg-muted);
+}
+
 /* ---- viewer sheet ---- */
 
 /* Title and close on one row, the actions between them; on a phone they take a row of their own. */

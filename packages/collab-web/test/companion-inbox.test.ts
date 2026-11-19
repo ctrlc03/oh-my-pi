@@ -97,7 +97,7 @@ describe("buildInbox", () => {
 			host("waiting", { inputRequired: true }),
 			host("newer", {}),
 		];
-		const items = await buildInbox(hosts, id => readSessionTail(sessions, id), NOW);
+		const items = await buildInbox(hosts, [], id => readSessionTail(sessions, id), NOW);
 		expect(items).toEqual([
 			{
 				instanceId: "inst-newer",
@@ -130,6 +130,7 @@ describe("buildInbox", () => {
 	it("still lists a session that needs input when its file is unreadable", async () => {
 		const items = await buildInbox(
 			[host("ghost", { inputRequired: true, sessionName: null })],
+			[],
 			id => readSessionTail(sessions, id),
 			NOW,
 		);
@@ -142,6 +143,29 @@ describe("buildInbox", () => {
 				text: null,
 				options: undefined,
 				at: NOW,
+			},
+		]);
+	});
+
+	it("keeps the finished turn of a session hibernated since, under the instance id it keeps", async () => {
+		const asleep = {
+			sessionId: "sess-older",
+			instanceId: "inst-older",
+			sessionName: "Session older",
+			cwd: "/work/older",
+			model: null,
+			startedAt: 0,
+			hibernatedAt: NOW - 50_000,
+		};
+		const items = await buildInbox([], [asleep], id => readSessionTail(sessions, id), NOW);
+		expect(items).toEqual([
+			{
+				instanceId: "inst-older",
+				title: "Session older",
+				cwd: "/work/older",
+				kind: "done",
+				text: "Tests pass.",
+				at: NOW - 100_000,
 			},
 		]);
 	});
@@ -171,6 +195,7 @@ describe("a vendor agent's session", () => {
 		const sessionsDir = path.join(root, "agent", "sessions");
 		const items = await buildInbox(
 			[host("claude", { sessionId, inputRequired: true, agent: claude })],
+			[],
 			id => readSessionTail(sessionsDir, id),
 			NOW,
 		);

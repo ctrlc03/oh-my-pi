@@ -95,6 +95,8 @@ export interface SessionDeleteDeps {
 	removeWorktree(tree: string): Promise<void>;
 	/** Forget what message search cached of a transcript. */
 	forgetSearch(file: string): void;
+	/** Drop the record that the session was hibernated: a deleted session has no process to resume, and its row must leave the list now. */
+	forgetHibernated(sessionId: string): void;
 	/** A record could not be updated after the files were moved; the deletion still stands. */
 	onError(err: unknown): void;
 	/** Test seams. */
@@ -442,6 +444,7 @@ export function createSessionDelete(deps: SessionDeleteDeps): SessionDelete {
 		await guarded(() => deps.hidden.forget(sessionId));
 		await guarded(() => deps.settle.forget(sessionId));
 		deps.forgetSearch(located.file);
+		deps.forgetHibernated(sessionId);
 		return { result: { sessionId, status: "deleted", trashId }, tree };
 	};
 

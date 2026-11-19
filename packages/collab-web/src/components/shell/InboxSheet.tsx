@@ -4,15 +4,17 @@ import { useEffect, useRef, useState } from "react";
 import type { InboxItem } from "../../lib/companion";
 import type { ComputerHandle } from "../../lib/computers";
 import { relTime, shortenPath } from "../../lib/format";
-import { hostKey, inboxKey, loadDismissed, type OpenIntent, saveDismissed, setOpenIntent } from "../../lib/inbox";
+import { dismissInbox, hostKey, inboxKey, type OpenIntent, setOpenIntent, useDismissed } from "../../lib/inbox";
 import { mergeInbox, openCount, personalHostOf } from "../../lib/personal";
 import { importChunk } from "../../lib/stale-build";
+import { unreadTotal } from "../../lib/unread";
 import { useComputerRequests } from "../../lib/use-computer-requests";
 import { usePersonal, usePersonalQuery } from "../../lib/use-personal";
 import type { PersonalInboxRowsProps } from "../personal/InboxRows";
 import { AgentChip } from "./AgentChip";
 import { LoadFailure } from "./LoadFailure";
 import { Sheet, SheetPlacementButton } from "./Sheet";
+import { useUnread } from "./UnreadHost";
 import "./inbox.css";
 
 type PersonalRowsComponent = ComponentType<PersonalInboxRowsProps>;
@@ -86,7 +88,7 @@ export interface InboxSheetProps {
  */
 export function InboxSheet({ computers, onOpenHost, onClose }: InboxSheetProps): ReactNode {
 	const { entries, loading, reload } = useComputerRequests(computers, null, client => client.requestInbox());
-	const [dismissed, setDismissed] = useState(loadDismissed);
+	const dismissed = useDismissed();
 	const [busy, setBusy] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const closedRef = useRef(false);
@@ -122,11 +124,7 @@ export function InboxSheet({ computers, onOpenHost, onClose }: InboxSheetProps):
 		}
 	};
 
-	const dismiss = (computerId: string, item: InboxItem): void => {
-		const next = [...dismissed, inboxKey(computerId, item)];
-		setDismissed(next);
-		saveDismissed(next);
-	};
+	const dismiss = (computerId: string, item: InboxItem): void => dismissInbox([inboxKey(computerId, item)]);
 
 	// The Personal agent's own session is not an ordinary one: what it needs from the owner arrives as Personal items.
 	const personalHost = personal.home.computer === null ? null : personalHostOf(personal.home.computer.snap.hosts);
@@ -340,19 +338,20 @@ export interface InboxEntryProps {
 	variant: "card" | "icon";
 }
 
-/** The button that opens the inbox, badged with the number of sessions waiting on an answer on any live computer. */
+/**
+ * The button that opens the inbox, badged with the number of open items: sessions waiting on an answer and finished turns
+ * not yet seen on any live computer, the same ones the session rows badge, and the Personal agent's.
+ */
 export function InboxEntry({ computers, onOpenHost, variant }: InboxEntryProps): ReactNode {
 	const [open, setOpen] = useState(false);
-	// From the hosts frames and the Personal status: no request is made while the sheet is closed. The Personal session's own
-	// "waiting" is counted by its Personal items.
+	// From the hosts frames, the last Inbox answers and the Personal status: no request is made while the sheet is closed.
+	// The Personal session's own "waiting" is counted by its Personal items.
 	const personal = usePersonal();
+	const { sessions } = useUnread();
 	const count =
-		computers.reduce(
-			(sum, computer) =>
-				computer.snap.phase === "live"
-					? sum + computer.snap.hosts.filter(host => host.inputRequired && host.personal !== true).length
-					: sum,
-			0,
+		unreadTotal(
+			sessions,
+			computers.map(computer => computer.id),
 		) + (personal.home.status?.enabled === true ? openCount(personal.home.status) : 0);
 	return (
 		<>

@@ -1,5 +1,6 @@
 /**
- * The mock host's subscription limits (feature `usage-limits`): fake windows for two providers and,
+ * The mock host's subscription limits (feature `usage-limits`): fake windows for two providers (two Claude accounts and one
+ * Codex account, the ones the mock companion lists in ./mock-accounts) and,
  * with `--limited [seconds]`, a session that is at its limit until a reset that many seconds away
  * (default 90 minutes). Arming "resume at reset" sends `continue` shortly after the reset, like the
  * real host; switching to a model of another provider lifts the limit.
@@ -81,6 +82,24 @@ export function createMockLimits(options: MockLimitsOptions): MockLimits {
 					label: "Claude 7 Day",
 					usedFraction: 0.62,
 					resetsAt: nextReset(startedAt + 3 * 24 * HOUR, 7 * 24 * HOUR, now),
+					status: "ok",
+				},
+				{
+					provider: options.limitedProvider,
+					account: "team@example.test",
+					windowId: "5h",
+					label: "Claude 5 Hour",
+					usedFraction: 0.37,
+					resetsAt: nextReset(startedAt + 95 * MINUTE, 5 * HOUR, now),
+					status: "ok",
+				},
+				{
+					provider: options.limitedProvider,
+					account: "team@example.test",
+					windowId: "7d",
+					label: "Claude 7 Day",
+					usedFraction: 0.18,
+					resetsAt: nextReset(startedAt + 4 * 24 * HOUR, 7 * 24 * HOUR, now),
 					status: "ok",
 				},
 				{

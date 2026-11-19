@@ -3,11 +3,13 @@ import {
 	ArchiveRestore,
 	ArrowDown,
 	ArrowUp,
+	BedDouble,
 	GripVertical,
 	ListChecks,
 	Moon,
 	Pin,
 	PinOff,
+	Tag,
 	Timer,
 	TimerOff,
 	Trash2,
@@ -58,12 +60,16 @@ export interface OrgMenuProps {
 	ended: boolean;
 	now: number;
 	onAct(action: OrgAction, message: string): void;
+	/** Open the status and note editor; null where it is not offered (a room, or a computer that predates cards). */
+	onCard: (() => void) | null;
 	onMove(to: number): void;
 	onArrange(): void;
 	onSelect(): void;
 	onClose(): void;
 	/** Delete the session (after a confirmation); null where this session or its computer cannot. */
 	onDelete: (() => void) | null;
+	/** Hibernate the session now (stop its omp process; opening it resumes it); absent where the computer cannot or the row is not a running session. */
+	onHibernate?: () => void;
 }
 
 /** One session's menu, in its sheet. */
@@ -101,6 +107,7 @@ export function OrgMenuBody(props: OrgMenuProps): ReactNode {
 						</span>
 					</button>
 					<div className="sh-org-menu-sep" role="separator" />
+					{props.onCard !== null && <CardItem onCard={props.onCard} />}
 					<button type="button" className="sh-btn sh-org-menu-item" onClick={props.onSelect}>
 						<ListChecks size={15} /> Select…
 					</button>
@@ -108,6 +115,7 @@ export function OrgMenuBody(props: OrgMenuProps): ReactNode {
 				</>
 			) : (
 				<>
+					{props.onCard !== null && <CardItem onCard={props.onCard} />}
 					{status === "pinned" ? (
 						<button
 							type="button"
@@ -190,6 +198,15 @@ export function OrgMenuBody(props: OrgMenuProps): ReactNode {
 							</span>
 						</button>
 					)}
+					{props.onHibernate !== undefined && (
+						<button type="button" className="sh-btn sh-org-menu-item" onClick={props.onHibernate}>
+							<BedDouble size={15} />
+							<span className="sh-org-menu-text">
+								Hibernate now
+								<span className="sh-org-menu-hint">Frees its memory; opening it resumes where it left off</span>
+							</span>
+						</button>
+					)}
 					<div className="sh-org-menu-sep" role="separator" />
 					<button type="button" className="sh-btn sh-org-menu-item" onClick={props.onArrange}>
 						<GripVertical size={15} /> Arrange sessions
@@ -201,6 +218,18 @@ export function OrgMenuBody(props: OrgMenuProps): ReactNode {
 				</>
 			)}
 		</div>
+	);
+}
+
+function CardItem({ onCard }: { onCard(): void }): ReactNode {
+	return (
+		<button type="button" className="sh-btn sh-org-menu-item" onClick={onCard}>
+			<Tag size={15} />
+			<span className="sh-org-menu-text">
+				Status and note…
+				<span className="sh-org-menu-hint">To do, In review, Blocked… shown on the session's card</span>
+			</span>
+		</button>
 	);
 }
 

@@ -14,6 +14,7 @@ import { SessionSheet } from "./SessionSheet";
 import { TOP_BAR_ICONS } from "./top-bar-icons";
 import { PHONE_QUERY, useMedia } from "../codemap/shared";
 import type { HiddenMessagesControl } from "./HiddenMessages";
+import type { CardEdit } from "./SessionCardSheet";
 import { HighStakesMark, type StakesControl } from "./StakesControl";
 import type { TurnUndoControl } from "./TurnUndo";
 
@@ -34,6 +35,8 @@ export interface HeaderBarProps {
 	sandboxed: boolean;
 	/** This session's high-stakes mode; null unless the paired computer can gate pushes behind a quiz and this is an omp session. */
 	highStakes: StakesControl | null;
+	/** This session's status and note, editable where the paired computer keeps them; null otherwise. */
+	sessionCard: CardEdit | null;
 	subCount: number;
 	railOpen: boolean;
 	onToggleRail(): void;
@@ -80,6 +83,8 @@ export interface HeaderBarProps {
 	onOpenBakeoff: (() => void) | null;
 	/** The session's terminal (tmux pane); null unless the paired computer hosts this session. */
 	onOpenPane: (() => void) | null;
+	/** An interactive terminal in the session's folder on the paired computer; null unless allowed for this session (never for view-only or sandboxed sessions). */
+	onOpenShell: (() => void) | null;
 	/** Live screenshot of a dev server the session runs; null unless the paired computer can capture pages. */
 	onOpenPreview: (() => void) | null;
 	/** Issues and pull requests of the session's repository; null unless the paired computer's `gh` is signed in. */
@@ -120,6 +125,7 @@ export const HeaderBar = memo(function HeaderBar({
 	readOnly,
 	sandboxed,
 	highStakes,
+	sessionCard,
 	agent,
 	canPermission,
 	subCount,
@@ -150,6 +156,7 @@ export const HeaderBar = memo(function HeaderBar({
 	onOpenSparring,
 	onOpenBakeoff,
 	onOpenPane,
+	onOpenShell,
 	onOpenPreview,
 	onOpenGithub,
 	onOpenEditor,
@@ -187,6 +194,7 @@ export const HeaderBar = memo(function HeaderBar({
 		architecture: { aria: "Open architecture maps", run: onOpenArchitecture },
 		mapchanges: { aria: "Map what changed", run: onMapChanges },
 		terminal: { aria: "Open terminal", run: onOpenPane },
+		shell: { aria: "Open an interactive terminal", run: onOpenShell },
 		preview: { aria: "Open preview", run: onOpenPreview },
 		run: { aria: "Open scripts and build targets", run: onOpenRun },
 		timeline: { aria: "Open request timeline", run: onOpenTimeline },
@@ -359,6 +367,7 @@ export const HeaderBar = memo(function HeaderBar({
 					readOnly={readOnly}
 					sandboxed={sandboxed}
 					highStakes={highStakes}
+					sessionCard={sessionCard}
 					agent={agent}
 					canPermission={canPermission}
 					contextPct={pct}
@@ -450,6 +459,13 @@ export const HeaderBar = memo(function HeaderBar({
 						(() => {
 							setSheetOpen(false);
 							onOpenPane();
+						})
+					}
+					onOpenShell={
+						onOpenShell &&
+						(() => {
+							setSheetOpen(false);
+							onOpenShell();
 						})
 					}
 					onOpenPreview={

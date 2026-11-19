@@ -2,8 +2,10 @@ import { Archive, ArchiveRestore, ChevronDown, ChevronRight, Moon, Pin, PinOff, 
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CompanionHost, CompanionIdleSession, SessionOverview } from "../../lib/companion";
+import type { HibernatedSession } from "@oh-my-pi/pi-wire/hibernate";
+import type { CompanionHost, CompanionIdleSession, HibernatedRow, SessionOverview } from "../../lib/companion";
 import type { RecentRoom } from "../../lib/rooms";
+import type { SessionCard } from "../../lib/session-card";
 import {
 	applyMany,
 	applyOrg,
@@ -32,6 +34,7 @@ import { type DeleteTarget, deleteSettledLabel, isDeletableSession } from "../..
 import type { SessionOrgControl } from "../../lib/use-session-org";
 import { OrgMenu, OrgSnoozeSheet } from "./OrgMenu";
 import { isWorking, itemTitle, OrgRow, type OrgItem, type OrgMode } from "./OrgRow";
+import { type CardEdit, SessionCardSheet } from "./SessionCardSheet";
 import { type RangeAction, useOrgDrag } from "./use-org-drag";
 import "./session-org.css";
 
@@ -40,6 +43,8 @@ const UNDO_MS = 7000;
 type EndedItem = Extract<OrgItem, { kind: "ended" }>;
 
 export interface OrgSessionsProps {
+	/** The computer whose sessions these are, for the unread badge on their rows; null for rooms no computer lists. */
+	computerId: string | null;
 	hosts: readonly CompanionHost[];
 	idle: readonly CompanionIdleSession[];
 	/** Recent rooms no session above stands for, the one on screen too (see `matchRooms`). */
@@ -60,6 +65,12 @@ export interface OrgSessionsProps {
 	onShare(session: CompanionIdleSession): void;
 	onOpenRoom(room: RecentRoom): void;
 	onOpenRoomBeside?: (room: RecentRoom) => void;
+	/** Sessions whose omp process was stopped to free memory: listed with the others, resumed when opened. */
+	hibernated: readonly HibernatedRow[];
+	/** Open a hibernated session (the computer resumes it first); the row shows "resuming…" while `joining` is its instance id. */
+	onOpenHibernated(session: HibernatedSession): void;
+	/** Hibernate a running session now (shows its own refusal); null where the computer cannot. */
+	onHibernate: ((host: CompanionHost) => void) | null;
 	/** Sessions that ended while settled (the computer ended them when they settled), newest first; the ones still running are not among them. */
 	ended: readonly SessionOverview[];
 	/** The computer can start sessions, so an ended one can be resumed. */
@@ -74,6 +85,8 @@ export interface OrgSessionsProps {
 	 * sessions, rooms and the Personal agent's session never offer it.
 	 */
 	onDelete: ((sessions: DeleteTarget[]) => void) | null;
+	/** Set a session's status and note on the computer; null where it cannot (an older companion). Rooms never offer it. */
+	onSetCard: ((sessionId: string, card: SessionCard) => Promise<void>) | null;
 }
 
 /** One undo for the last change, however many sessions it touched: the entries as they were. */
@@ -141,6 +154,8 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 	const [mode, setMode] = useState<OrgMode>("idle");
 	const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
 	const [snoozingPicked, setSnoozingPicked] = useState(false);
+	/** Key of the row whose status and note are being edited. */
+	const [cardKey, setCardKey] = useState<string | null>(null);
 	const rootRef = useRef<HTMLDivElement>(null);
 	/** Where Shift-click picking extends from. */
 	const anchor = useRef<string | null>(null);
@@ -153,6 +168,11 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 		})),
 		...idle.map((session): OrgItem => ({
 			kind: "idle",
+			key: sessionOrgKey(doc, session.sessionId, twins.get(session.sessionId)),
+			session,
+		})),
+		...props.hibernated.map((session): OrgItem => ({
+			kind: "hibernated",
 			key: sessionOrgKey(doc, session.sessionId, twins.get(session.sessionId)),
 			session,
 		})),
@@ -172,11 +192,21 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 		...(settledOpen ? keysOf(sections.settled) : []),
 	];
 	const menuItem = menu === null ? undefined : items.find(item => item.key === menu);
+	/** How a row's status and note are changed; null for a room (no computer keeps its card) or without a companion that does. */
+	const cardTarget = (item: OrgItem | undefined): CardEdit | null => {
+		const setCard = props.onSetCard;
+		if (item === undefined || item.kind === "room" || setCard === null) return null;
+		const source = item.kind === "host" ? item.host : item.session;
+		return { card: source.card, save: card => setCard(source.sessionId, card) };
+	};
+	const cardItem = cardKey === null ? undefined : items.find(item => item.key === cardKey);
+	const cardEdit = cardTarget(cardItem);
 	/** What deleting the row names; null where the row cannot be deleted. */
 	const deletion = (item: OrgItem): DeleteTarget | null => {
 		if (props.onDelete === null || item.kind === "room") return null;
 		const source = item.kind === "host" ? item.host : item.session;
-		if (!isDeletableSession(source)) return null;
+		// A hibernated session is an omp session of the user's own (vendor agents and the Personal agent are never hibernated).
+		if (item.kind !== "hibernated" && !isDeletableSession(item.kind === "host" ? item.host : item.session)) return null;
 		const roomIds = (twins.get(source.sessionId) ?? []).map(twin => twin.roomId);
 		return { sessionId: source.sessionId, title: itemTitle(item), roomIds };
 	};
@@ -302,6 +332,7 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 	const row = (item: OrgItem, section: OrgSection): ReactNode => (
 		<OrgRow
 			key={item.key}
+			computerId={props.computerId}
 			item={item}
 			section={section}
 			mode={mode}
@@ -338,6 +369,7 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 			onOpenRoom={props.onOpenRoom}
 			onOpenRoomBeside={props.onOpenRoomBeside}
 			resumable={props.canResume}
+			onOpenHibernated={props.onOpenHibernated}
 			onResumeEnded={session => void props.onResumeEnded(session, true)}
 		/>
 	);
@@ -525,8 +557,24 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 						menuItem.kind === "host" && menuItem.host.sessionId === currentSessionId ? props.limitResetAt : null
 					}
 					ended={menuItem.kind === "ended"}
+					onHibernate={
+						menuItem.kind === "host" && props.onHibernate !== null
+							? () => {
+									setMenu(null);
+									props.onHibernate?.(menuItem.host);
+								}
+							: undefined
+					}
 					now={now}
 					onAct={(action, message) => act(menuItem, action, message)}
+					onCard={
+						cardTarget(menuItem) === null
+							? null
+							: () => {
+									setCardKey(menuItem.key);
+									setMenu(null);
+								}
+					}
 					onMove={to => move(menuItem, to)}
 					onArrange={() => {
 						leaveMode();
@@ -548,6 +596,9 @@ export function OrgSessions(props: OrgSessionsProps): ReactNode {
 								}
 					}
 				/>
+			)}
+			{cardItem !== undefined && cardEdit !== null && (
+				<SessionCardSheet title={itemTitle(cardItem)} edit={cardEdit} onClose={() => setCardKey(null)} />
 			)}
 			{snoozingPicked && (
 				<OrgSnoozeSheet

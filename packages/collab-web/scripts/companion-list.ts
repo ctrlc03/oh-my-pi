@@ -8,6 +8,7 @@
 
 import type * as Registry from "@oh-my-pi/pi-coding-agent/collab/registry";
 import type { CompanionHost, CompanionIdleSession } from "../src/lib/companion";
+import { parseTodoProgress } from "../src/lib/session-card";
 import { sandboxedPids } from "./companion-sandbox";
 
 /** How the last listing was produced. */
@@ -20,6 +21,12 @@ export interface SessionListing {
 	idle: CompanionIdleSession[];
 	/** instanceId → pid of every listed host and idle session. */
 	pids: Map<string, number>;
+	/**
+	 * instanceId → whether a background job, service, subagent or queued wake-up runs besides the turn, for every listed host;
+	 * `null` when the host does not say (an older omp, a vendor agent). Kept out of `CompanionHost`: only the companion's
+	 * hibernation reads it, and the devices never need it.
+	 */
+	background: Map<string, boolean | null>;
 }
 
 export interface SessionLister {
@@ -127,37 +134,46 @@ export function createSessionLister(options: SessionListerOptions): SessionListe
 			options.sandboxOverlayPath,
 		);
 		const hosts = listedHosts
-			.map(host => ({
-				instanceId: host.instanceId,
-				sessionId: host.sessionId,
-				sessionName: host.sessionName,
-				cwd: host.cwd,
-				model: host.model ? `${host.model.provider}/${host.model.id}` : null,
-				startedAt: host.startedAt,
-				participants: host.participants,
-				busy: host.busy ?? null,
-				inputRequired: host.inputRequired,
-				relayConnected: host.relayConnected,
-				sandboxed: sandboxed.has(host.pid),
-				...(host.agent ? { agent: host.agent } : {}),
-			}))
+			.map(host => {
+				const todo = parseTodoProgress(host.todo);
+				return {
+					instanceId: host.instanceId,
+					sessionId: host.sessionId,
+					sessionName: host.sessionName,
+					cwd: host.cwd,
+					model: host.model ? `${host.model.provider}/${host.model.id}` : null,
+					startedAt: host.startedAt,
+					participants: host.participants,
+					busy: host.busy ?? null,
+					inputRequired: host.inputRequired,
+					relayConnected: host.relayConnected,
+					sandboxed: sandboxed.has(host.pid),
+					...(host.agent ? { agent: host.agent } : {}),
+					...(todo ? { todo } : {}),
+				};
+			})
 			.sort((a, b) => b.startedAt - a.startedAt);
 		const idle = listedIdle
-			.map(row => ({
-				instanceId: row.instanceId,
-				sessionId: row.sessionId,
-				sessionName: row.sessionName ?? null,
-				cwd: row.cwd,
-				model: row.model ? `${row.model.provider}/${row.model.id}` : null,
-				startedAt: row.startedAt,
-				busy: row.busy ?? null,
-				sandboxed: sandboxed.has(row.pid),
-			}))
+			.map(row => {
+				const todo = parseTodoProgress(row.todo);
+				return {
+					instanceId: row.instanceId,
+					sessionId: row.sessionId,
+					sessionName: row.sessionName ?? null,
+					cwd: row.cwd,
+					model: row.model ? `${row.model.provider}/${row.model.id}` : null,
+					startedAt: row.startedAt,
+					busy: row.busy ?? null,
+					sandboxed: sandboxed.has(row.pid),
+					...(todo ? { todo } : {}),
+				};
+			})
 			.sort((a, b) => b.startedAt - a.startedAt);
 		const pids = new Map<string, number>();
 		for (const row of [...listedHosts, ...listedIdle]) pids.set(row.instanceId, row.pid);
+		const background = new Map(listedHosts.map(host => [host.instanceId, host.background ?? null]));
 		lastMs = performance.now() - started;
-		return { hosts, idle, pids };
+		return { hosts, idle, pids, background };
 	}
 
 	return {

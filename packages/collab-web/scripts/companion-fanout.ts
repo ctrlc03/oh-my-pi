@@ -292,6 +292,8 @@ export interface KeepDeps {
 	dirty(folder: string): Promise<boolean | null>;
 	/** End the session (best effort). */
 	stop(instanceId: string): Promise<void>;
+	/** A loser's worktree is gone (removed now, or already missing): drop what still points at it, such as a hibernated session that would resume there. */
+	removed?(run: FanoutRun): void;
 	/** How long a stopped session gets to leave the host list (default {@link STOP_WAIT_MS}). */
 	stopWaitMs?: number;
 	sleep?: (ms: number) => Promise<void>;
@@ -319,6 +321,7 @@ export async function keepRun(
 			const dirty = await deps.dirty(run.path);
 			if (dirty === null) {
 				run.removed = true;
+				deps.removed?.(run);
 				continue;
 			}
 			if (dirty && !request.discardDirty) {
@@ -333,6 +336,7 @@ export async function keepRun(
 			}
 			await removeWorktree(run.path, deps.worktreesDir, await deps.runningCwds(), request.discardDirty);
 			run.removed = true;
+			deps.removed?.(run);
 			result.removed.push(run.model);
 		} catch (err) {
 			result.skipped.push({ model: run.model, reason: err instanceof Error ? err.message : String(err) });

@@ -244,6 +244,7 @@ describe("Delete in a row's menu", () => {
 				ended={over.ended ?? false}
 				now={NOW}
 				onAct={noop}
+				onCard={null}
 				onMove={noop}
 				onArrange={noop}
 				onSelect={noop}
@@ -299,6 +300,7 @@ describe("Delete settled sessions…", () => {
 	}): string {
 		return renderToStaticMarkup(
 			<OrgSessions
+				computerId={null}
 				hosts={opts.hosts ?? []}
 				idle={opts.idle ?? []}
 				rooms={[]}
@@ -312,9 +314,13 @@ describe("Delete settled sessions…", () => {
 				onJoinHost={noop}
 				onShare={noop}
 				onOpenRoom={noop}
+				hibernated={[]}
+				onOpenHibernated={noop}
+				onHibernate={null}
 				ended={opts.ended ?? []}
 				canResume
 				onResumeEnded={() => Promise.resolve(true)}
+				onSetCard={null}
 				onDelete={opts.onDelete}
 			/>,
 		);

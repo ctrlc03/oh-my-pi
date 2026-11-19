@@ -7,9 +7,10 @@ import { EditorState, Transaction } from "@codemirror/state";
 import { setDiagnostics } from "@codemirror/lint";
 import type { Tooltip } from "@codemirror/view";
 import { EditorView } from "@codemirror/view";
+import type { LineMark } from "../../../lib/line-attribution";
 import type { LspDiagnostic } from "../../../lib/repo-intel";
 import { importChunk } from "../../../lib/stale-build";
-import { baseExtensions, fromDisk, markChanged, selectedLines, tabExtensions, wordAt } from "../editor";
+import { baseExtensions, fromDisk, markAgentLines, markChanged, selectedLines, tabExtensions, wordAt } from "../editor";
 import { languageFor } from "../languages";
 import { diffText } from "../text-diff";
 import { renderHover } from "./hover-markdown";
@@ -45,6 +46,10 @@ const base = baseExtensions(() => ({
 	},
 	hover(view, offset) {
 		return owners.get(view)?.hoverAt(offset) ?? null;
+	},
+	attribution(view, tip) {
+		const owner = owners.get(view);
+		if (owner?.doc != null) owner.hooks().attribution?.(owner.doc, tip);
 	},
 }));
 
@@ -154,6 +159,10 @@ class CmDoc implements EditorDoc {
 				diagnostics.map(d => toRangeDiagnostic(d, doc)),
 			),
 		);
+	}
+
+	setAttribution(marks: readonly LineMark[]): void {
+		this.update({ effects: markAgentLines.of(marks.map(({ line, tip }) => ({ line, tip }))) });
 	}
 
 	dispose(): void {}

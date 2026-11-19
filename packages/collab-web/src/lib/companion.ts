@@ -40,8 +40,16 @@ import type {
 	QuizSummary,
 	QuizVerdict,
 } from "@oh-my-pi/pi-wire/quiz";
+import type { AccountChoice, AccountRow, AccountsReply, AccountsRequest } from "@oh-my-pi/pi-wire/accounts";
 import type { DiskGuardSettings, DiskHealth, DiskReply, DiskRequest, DiskState } from "@oh-my-pi/pi-wire/disk";
+import type {
+	HibernatedSession,
+	HibernateReply,
+	HibernateRequest,
+	HibernateSettings,
+} from "@oh-my-pi/pi-wire/hibernate";
 import type { VmAction, VmCreateOptions, VmReply, VmRequest } from "@oh-my-pi/pi-wire/vm";
+import type { TerminalInfo, TerminalPush, TerminalReply, TerminalRequest } from "@oh-my-pi/pi-wire/terminal";
 import type {
 	StakesChangedFrame,
 	StakesReply,
@@ -66,7 +74,9 @@ import type {
 } from "./fanout";
 import type { HiddenDoc } from "./hidden-messages";
 import type { FileSearchQuery, FileSearchResult, LspDiagnosticsResult, LspQuery, LspResult } from "./repo-intel";
+import type { FileAttribution } from "./line-attribution";
 import type { PrOwnDiff, ReviewNotesQuery, ReviewNotesReply, StackPr } from "./review-board";
+import type { CardStatus, SessionCard, TodoProgress } from "./session-card";
 import type { OrgDoc } from "./session-org";
 import { CollabSocket } from "./socket";
 
@@ -78,10 +88,15 @@ const INVITE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 const LEGACY_PROBE_MS = 4_000;
 /** How long a request waits for the companion's answer. */
 const REQUEST_TIMEOUT_MS = 15_000;
+/** Terminal output held for a terminal that is not watched yet: frames per terminal, and terminals. */
+const TERMINAL_BACKLOG_FRAMES = 256;
+const TERMINAL_BACKLOG_IDS = 8;
 /** Starting a session waits for omp to boot and publish its room. */
 const START_TIMEOUT_MS = 60_000;
 /** A worktree start also waits for the checkout (up to 60s), its setup script (up to 5 minutes) and omp's boot. */
 const WORKTREE_START_TIMEOUT_MS = 420_000;
+/** Hibernating waits for omp to shut down (the companion allows it 60 seconds) after the session's lock and two listings. */
+const HIBERNATE_TIMEOUT_MS = 90_000;
 /** Writing commit text runs a headless omp; the companion allows it 90 seconds. */
 const GIT_MESSAGE_TIMEOUT_MS = 120_000;
 const GIT_SETTINGS_TIMEOUT_MS = 60_000;
@@ -209,6 +224,10 @@ export interface CompanionHost {
 	agent?: AgentRef;
 	/** The live session of the Personal agent (the one thread the app pins above the sessions); absent for every other session. */
 	personal?: PersonalHostMark["personal"];
+	/** The agent's todo progress; absent while it has no todo list or on an omp that predates it. */
+	todo?: TodoProgress;
+	/** The status and note the user gave the session; absent when none was set. */
+	card?: SessionCard;
 }
 
 /** An interactive omp process on the computer that is not hosting collab; `share` starts it hosting. */
@@ -227,7 +246,17 @@ export interface CompanionIdleSession {
 	highStakes?: boolean;
 	/** The vendor agent behind a foreign session; absent for an omp session. */
 	agent?: AgentRef;
+	/** See {@link CompanionHost.todo}. */
+	todo?: TodoProgress;
+	/** See {@link CompanionHost.card}. */
+	card?: SessionCard;
 }
+
+/** A hibernated session as listed: the companion adds the card the user gave it, as it does for running ones. */
+export type HibernatedRow = HibernatedSession & {
+	/** See {@link CompanionHost.card}. */
+	card?: SessionCard;
+};
 
 /** On battery at or below this charge the computer counts as low: the app warns, the companion pushes once per discharge. */
 export const LOW_BATTERY_PCT = 20;
@@ -657,6 +686,10 @@ export interface SessionOverview {
 	worktree?: boolean;
 	/** The vendor agent behind a foreign session; absent for an omp session. */
 	agent?: AgentRef;
+	/** The agent's todo progress, while the session runs. */
+	todo?: TodoProgress;
+	/** The status and note the user gave the session; absent when none was set. */
+	card?: SessionCard;
 }
 
 /** One prompt or reply of a session that matches a message search. */
@@ -705,8 +738,42 @@ export interface PreviewShot {
 	height: number;
 	/** The page that was captured. */
 	url: string;
+	/** The screen size it was captured at: what a pick on this image must be resolved against. */
+	viewport: PreviewViewport;
 	/** When it was captured (Unix ms). */
 	at: number;
+}
+
+/** A rectangle on a page, in CSS pixels from the page's top-left corner (the same space as a screenshot divided by {@link PREVIEW_SCALE}). */
+export interface PreviewBox {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+/** The element at a point of a previewed page (`preview-pick`), as the page's own browser on the computer sees it. */
+export interface PreviewPick {
+	/** The page and screen size the element was found on (the screenshot's). */
+	url: string;
+	viewport: PreviewViewport;
+	/** Lower-case tag name, e.g. `button`. */
+	tag: string;
+	/** A CSS selector that matches this element alone, as short as that allows. */
+	selector: string;
+	/** The element's nearest parents from the outermost in, each as `#id` or `tag.class.class`. */
+	ancestors: string[];
+	/** The element's outer HTML, cut at a size cap (see `htmlCut`). */
+	html: string;
+	/** The HTML was longer than the cap and ends early. */
+	htmlCut: boolean;
+	/** The element's visible text, collapsed and cut; empty when it has none. */
+	text: string;
+	/** Computed styles worth reading (layout, box model, typography, colours) as name/value pairs; defaults are left out. */
+	styles: [name: string, value: string][];
+	box: PreviewBox;
+	/** A picture of the element with a little room around it. */
+	crop: { data: string; mimeType: string; width: number; height: number; cut: boolean };
 }
 
 /** A dev server listening on the computer that runs from a session's repository. */
@@ -1118,6 +1185,8 @@ export type CompanionRequest =
 	| { t: "session-search"; reqId: number; query: string; limit?: number }
 	/** Merge `doc` (the device's pin/snooze/settle document, when given) into the computer's, last writer winning per session; answered with the merged document (needs `sessionOrgRev`). */
 	| { t: "session-org"; reqId: number; doc?: OrgDoc }
+	/** Set the status and note of a session's card (`status` null for none; no status and no note clears it); needs `canSessionCards`. Answered with `ok`. */
+	| { t: "session-card"; reqId: number; sessionId: string; status: CardStatus | null; note: string }
 	/** Merge `doc` (the device's hidden messages of the session, when given) into the computer's, last writer winning per message id; answered with the merged document (needs `canHideMessages`). */
 	| { t: "hidden-messages"; reqId: number; sessionId: string; doc?: HiddenDoc }
 	/** What deleting these omp sessions would do: per session, whether it can and whether its worktree can go too; answered with `session-delete-plan` (needs `canDeleteSessions`). */
@@ -1130,12 +1199,20 @@ export type CompanionRequest =
 	| { t: "pane"; reqId: number; instanceId: string }
 	/** Sessions that changed `path` (absolute, or relative to the repository root) in the session's repository; answered with `sessions`. */
 	| { t: "file-sessions"; reqId: number; instanceId: string; path: string }
+	/** Which lines of `path` (absolute, or relative to the repository root) agents wrote, read from the sessions that ran in the file's worktree (needs `canAttribution`); answered with `file-attribution`. */
+	| { t: "file-attribution"; reqId: number; instanceId: string; path: string }
 	/** Code map of the session's repository around `focus` (needs `canCodemap`); `flow` adds a walk for symbol foci. */
 	| { t: "codemap"; reqId: number; instanceId: string; focus: CodemapFocus; flow?: CodemapFlowDirection }
 	/** Files whose path matches `q`, then symbols matching its words. */
 	| { t: "codemap-search"; reqId: number; instanceId: string; q: string }
 	/** Screenshot `url` (a loopback http(s) page) in headless Chrome at `viewport`, the whole page when `fullPage` (needs `canPreview`). */
 	| { t: "preview"; reqId: number; instanceId: string; url: string; viewport: PreviewViewport; fullPage?: boolean }
+	/**
+	 * The element at (`x`, `y`) CSS pixels from the top-left of the page a `preview` screenshot showed (`url` and `viewport` as it was
+	 * taken): the companion reloads the page at that screen size, finds the element there and answers with its HTML, selector, styles,
+	 * box and a picture (needs `canPreview`).
+	 */
+	| { t: "preview-pick"; reqId: number; instanceId: string; url: string; viewport: PreviewViewport; x: number; y: number }
 	/** Dev servers listening on the computer that run from the session's repository (needs `canPreview`). */
 	| { t: "preview-targets"; reqId: number; instanceId: string }
 	/** Text of a voice recording, transcribed on the computer (needs `transcribe`); `audio` is the base64 of the recording. */
@@ -1220,10 +1297,16 @@ export type CompanionRequest =
 	| BakeoffRequest
 	/** High-stakes sessions (needs `canHighStakes`); see `@oh-my-pi/pi-wire/stakes`. */
 	| StakesRequest
+	/** The computer's provider accounts and which one new sessions start on (needs `canAccounts`); see `@oh-my-pi/pi-wire/accounts`. */
+	| AccountsRequest
 	/** The disk guard (needs `canDiskGuard`); see `@oh-my-pi/pi-wire/disk`. */
 	| DiskRequest
+	/** Hibernating idle sessions (needs `canHibernate`); see `@oh-my-pi/pi-wire/hibernate`. */
+	| HibernateRequest
 	/** Virtual machines on the computer (needs `canVms`); see `@oh-my-pi/pi-wire/vm`. */
 	| VmRequest
+	/** Interactive terminals on the computer (needs `canTerminal`); see `@oh-my-pi/pi-wire/terminal`. */
+	| TerminalRequest
 	/** The Personal agent (needs `canPersonal`); see `@oh-my-pi/pi-wire/personal`. */
 	| PersonalRequest;
 
@@ -1271,6 +1354,8 @@ export type CompanionReply =
 			canPreview?: boolean;
 			/** The companion can list the session repository's issues and pull requests (`gh` signed in). */
 			canGithub?: boolean;
+			/** The companion answers `file-attribution` (line attribution for the editor and the diffs). */
+			canAttribution?: boolean;
 			/** The companion answers `pr-files`, `pr-diff`, `pr-review` and `pr-merge`. */
 			canPrReview?: boolean;
 			/** The companion answers `ci-log` (the Fix-it flow). */
@@ -1309,6 +1394,10 @@ export type CompanionReply =
 			personalRev?: number;
 			/** Revision of the computer's session organisation (pin, snooze, settle); present when it keeps one. A new number means fetch it again. */
 			sessionOrgRev?: number;
+			/** The companion keeps the status and note of each session's card and answers `session-card`. */
+			canSessionCards?: boolean;
+			/** Revision of the computer's session cards; present with `canSessionCards`. A new number means list the sessions again (an ended session's card is not in this frame). */
+			sessionCardsRev?: number;
 			/** The companion's session organisation keeps the active order (`rank`) and the per-session auto-settle opt-out. */
 			canOrderSessions?: boolean;
 			/** The companion ends the sessions it started when they settle, if the organisation's `endOnSettle` setting is on. */
@@ -1323,12 +1412,20 @@ export type CompanionReply =
 			transcribe?: TranscribeInfo;
 			/** Power of the computer; absent off macOS and from companions that predate it. */
 			power?: CompanionPower;
+			/** The companion lists the computer's provider accounts and sets the default one (`accounts`); see `@oh-my-pi/pi-wire/accounts`. */
+			canAccounts?: boolean;
 			/** The companion watches free disk space and answers the `disk-*` requests; see `@oh-my-pi/pi-wire/disk`. */
 			canDiskGuard?: boolean;
+			/** The companion hibernates idle sessions and answers the `hibernate*` requests; see `@oh-my-pi/pi-wire/hibernate`. */
+			canHibernate?: boolean;
+			/** Sessions whose omp process was stopped to free memory; absent from companions that predate hibernation. */
+			hibernated?: HibernatedRow[];
 			/** A watched volume is below the limit now; absent while all have room and from companions that predate the guard. */
 			disk?: DiskHealth;
 			/** `omp vm` works on this computer: the `vm-*` requests are answered; see `@oh-my-pi/pi-wire/vm`. */
 			canVms?: boolean;
+			/** The computer can run interactive terminals (`terminal-*` requests); see `@oh-my-pi/pi-wire/terminal`. */
+			canTerminal?: boolean;
 	  }
 	| { t: "link"; reqId: number; url: string }
 	/** `token`: the credentials issued to a device that paired with an invite; absent when it authenticated with its own. */
@@ -1355,6 +1452,7 @@ export type CompanionReply =
 	| { t: "file-saved"; reqId: number; version: string }
 	/** In the order of the request's paths; null for a file that is missing or unreadable. */
 	| { t: "file-versions"; reqId: number; versions: (string | null)[] }
+	| { t: "file-attribution"; reqId: number; attribution: FileAttribution }
 	| { t: "file-search"; reqId: number; result: FileSearchResult }
 	| { t: "lsp"; reqId: number; result: LspResult }
 	| { t: "lsp-diagnostics"; reqId: number; result: LspDiagnosticsResult }
@@ -1389,6 +1487,7 @@ export type CompanionReply =
 	| { t: "codemap"; reqId: number; view: CodemapView }
 	| { t: "codemap-search"; reqId: number; hits: CodemapNode[] }
 	| { t: "preview"; reqId: number; shot: PreviewShot }
+	| { t: "preview-pick"; reqId: number; pick: PreviewPick }
 	| { t: "preview-targets"; reqId: number; targets: PreviewTarget[] }
 	| { t: "transcribe"; reqId: number; text: string }
 	| { t: "transcribe-setup"; reqId: number }
@@ -1431,8 +1530,12 @@ export type CompanionReply =
 	/** Pushed to every authenticated device when a quiz's summary changes (progress, done, failed, answered); carries no `reqId`. */
 	| { t: "quiz-changed"; id: string }
 	| StakesReply
+	| AccountsReply
 	| DiskReply
+	| HibernateReply
 	| VmReply
+	/** The answers of the terminal requests, and the output and exit of a terminal pushed to the devices attached to it (no `reqId`). */
+	| TerminalReply
 	/** Pushed to every authenticated device when a session's high-stakes state changed (mode, pass, quiz); carries no `reqId`. */
 	| StakesChangedFrame
 	| { t: "spar-list"; reqId: number; spars: SparSummary[] }
@@ -1591,6 +1694,8 @@ export interface CompanionSnapshot {
 	canPreview: boolean;
 	/** The companion can list the session repository's issues and pull requests. */
 	canGithub: boolean;
+	/** The companion answers `file-attribution`. */
+	canAttribution: boolean;
 	/** The companion can show a pull request's files and post reviews and merges. */
 	canPrReview: boolean;
 	/** The companion answers `ci-log` (the Fix-it flow). */
@@ -1629,6 +1734,10 @@ export interface CompanionSnapshot {
 	personalRev: number | null;
 	/** Revision of the computer's session organisation document; null when the companion keeps none. */
 	sessionOrgRev: number | null;
+	/** The computer keeps a status and note per session card; older ones show no card editor. */
+	canSessionCards: boolean;
+	/** Revision of the computer's session cards; null when it keeps none. A new number means list the sessions again. */
+	sessionCardsRev: number | null;
 	/** The computer's session organisation keeps the active order and the per-session auto-settle opt-out; older ones drop both. */
 	canOrderSessions: boolean;
 	/** The computer can end the sessions it started when they settle (`endOnSettle`); older ones leave them running. */
@@ -1643,10 +1752,18 @@ export interface CompanionSnapshot {
 	transcribe: TranscribeInfo | null;
 	/** Power of the computer, while the companion reports it. */
 	power: CompanionPower | null;
+	/** The companion lists the computer's provider accounts and sets the one new sessions start on (`accounts` request). */
+	canAccounts: boolean;
 	/** The companion watches free disk space and cleans build output (`disk-*` requests). */
 	canDiskGuard: boolean;
+	/** The companion hibernates idle sessions (`hibernate*` requests). */
+	canHibernate: boolean;
+	/** Sessions whose omp process was stopped to free memory; opening one (or sending it a message) resumes it. */
+	hibernated: readonly HibernatedRow[];
 	/** The computer can create and run virtual machines (`vm-*` requests). */
 	canVms: boolean;
+	/** The computer can run interactive terminals (`terminal-*` requests). */
+	canTerminal: boolean;
 	/** A watched volume is below the limit now; null while all have room, or on a companion without the guard. */
 	disk: DiskHealth | null;
 	/** Web Push application server key, once the companion has listed hosts. */
@@ -1670,7 +1787,9 @@ type CompanionAnswer = Exclude<
 			| "stakes-changed"
 			| "spar-changed"
 			| "bakeoff-changed"
-			| "personal-changed";
+			| "personal-changed"
+			| "terminal-output"
+			| "terminal-exit";
 	}
 >;
 type AnsweredRequest = Extract<CompanionRequest, { reqId: number }>;
@@ -1710,6 +1829,7 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	canLsp: false,
 	canPreview: false,
 	canGithub: false,
+	canAttribution: false,
 	canPrReview: false,
 	canFixIt: false,
 	canUpload: false,
@@ -1729,6 +1849,8 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	canPersonalChatTree: false,
 	personalRev: null,
 	sessionOrgRev: null,
+	canSessionCards: false,
+	sessionCardsRev: null,
 	canOrderSessions: false,
 	canEndOnSettle: false,
 	canHideMessages: false,
@@ -1736,8 +1858,12 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	hiddenRev: null,
 	transcribe: null,
 	power: null,
+	canAccounts: false,
 	canDiskGuard: false,
+	canHibernate: false,
+	hibernated: [],
 	canVms: false,
+	canTerminal: false,
 	disk: null,
 	vapidKey: null,
 	error: null,
@@ -1750,6 +1876,9 @@ export class CompanionClient {
 	readonly #blueprintListeners = new Set<(id: string) => void>();
 	readonly #quizListeners = new Set<(id: string) => void>();
 	readonly #stakesListeners = new Set<(sessionId: string) => void>();
+	readonly #terminalSinks = new Map<string, (frame: TerminalPush) => void>();
+	/** Output of terminals nobody watches yet, by terminal id. */
+	readonly #terminalBacklog = new Map<string, TerminalPush[]>();
 	readonly #sparListeners = new Set<(id: string) => void>();
 	readonly #bakeoffListeners = new Set<(id: string) => void>();
 	readonly #personalListeners = new Set<(frame: PersonalChanged) => void>();
@@ -1925,6 +2054,62 @@ export class CompanionClient {
 	}
 
 	/**
+	 * Receive the output and the exit of terminal `id`, including what arrived before this was called (a terminal's
+	 * first output can follow its `terminal-open` answer closely). One listener per terminal; the returned function stops it.
+	 */
+	watchTerminal(id: string, listener: (frame: TerminalPush) => void): () => void {
+		this.#terminalSinks.set(id, listener);
+		const waiting = this.#terminalBacklog.get(id);
+		this.#terminalBacklog.delete(id);
+		for (const frame of waiting ?? []) listener(frame);
+		return () => {
+			if (this.#terminalSinks.get(id) === listener) this.#terminalSinks.delete(id);
+		};
+	}
+
+	/** A new shell in the session's folder on the computer, attached to this device (needs `canTerminal`; refused for a sandboxed session). */
+	async terminalOpen(instanceId: string, cols: number, rows: number): Promise<TerminalInfo> {
+		return (await this.#call({ t: "terminal-open", instanceId, cols, rows }, "terminal-open")).terminal;
+	}
+
+	/** The terminals still open for the session, whichever device opened them. */
+	async terminalList(instanceId: string): Promise<TerminalInfo[]> {
+		return (await this.#call({ t: "terminal-list", instanceId }, "terminal-list")).terminals;
+	}
+
+	/** Attach this device to a terminal at this size; `replay` (base64) is its recent output, up to offset `end`. */
+	async terminalAttach(
+		id: string,
+		cols: number,
+		rows: number,
+	): Promise<{ terminal: TerminalInfo; replay: string; end: number }> {
+		const { terminal, replay, end } = await this.#call({ t: "terminal-attach", id, cols, rows }, "terminal-attach");
+		return { terminal, replay, end };
+	}
+
+	/** End the terminal's shell. */
+	async terminalClose(id: string): Promise<void> {
+		this.#terminalBacklog.delete(id);
+		await this.#call({ t: "terminal-close", id }, "terminal-close");
+	}
+
+	/** Keystrokes (base64 of the bytes) for the shell. Dropped while the computer is not connected: typing into a dead connection must not queue up and replay later. */
+	terminalInput(id: string, data: string): void {
+		if (this.#authed) this.#socket.send({ t: "terminal-input", id, data });
+	}
+
+	/** The terminal's window changed size. Dropped while not connected; the sheet resizes again when it attaches. */
+	terminalResize(id: string, cols: number, rows: number): void {
+		if (this.#authed) this.#socket.send({ t: "terminal-resize", id, cols, rows });
+	}
+
+	/** This device stops showing the terminal; the shell keeps running for a while (see `TERMINAL_ORPHAN_MS`). */
+	terminalDetach(id: string): void {
+		this.#terminalBacklog.delete(id);
+		if (this.#authed) this.#socket.send({ t: "terminal-detach", id });
+	}
+
+	/**
 	 * One Personal-agent request and its answer (needs `canPersonal`). The typed calls over it are in
 	 * lib/use-personal.ts and components/personal/, which load with the Personal screens rather than with the app.
 	 */
@@ -1934,7 +2119,11 @@ export class CompanionClient {
 
 	/** A fresh control link for one host, resolved by the companion via `omp collab link`. */
 	async requestLink(instanceId: string): Promise<string> {
-		return (await this.#call({ t: "link", instanceId }, "link")).url;
+		// A hibernated session is resumed before its link is made, and omp has to boot.
+		const timeout = this.#snapshot.hibernated.some(session => session.instanceId === instanceId)
+			? START_TIMEOUT_MS
+			: undefined;
+		return (await this.#call({ t: "link", instanceId }, "link", timeout)).url;
 	}
 
 	/** Register (`on`) or drop a Web Push subscription with the companion. */
@@ -2135,6 +2324,15 @@ export class CompanionClient {
 		return reply;
 	}
 
+	/**
+	 * The computer's provider accounts, `preferred` marking the one new sessions start on. `use` makes an account the
+	 * default first (`identityKey: null` returns that provider to automatic, where omp ranks its accounts by usage
+	 * headroom); sessions already running keep their account. Rejects with the reason when omp refuses (needs `canAccounts`).
+	 */
+	async accounts(use?: AccountChoice): Promise<AccountRow[]> {
+		return (await this.#call({ t: "accounts", use }, "accounts")).accounts;
+	}
+
 	/** The disk guard's settings, the watched volumes' free space and the recent cleans; `settings` replaces the settings first (needs `canDiskGuard`). */
 	async diskGuard(settings?: DiskGuardSettings): Promise<DiskState> {
 		const { t: _t, reqId: _reqId, ...state } = await this.#call({ t: "disk-guard", settings }, "disk-guard");
@@ -2149,6 +2347,16 @@ export class CompanionClient {
 	/** Clean the build output of the picked worktrees now, whether or not auto-clean is on; the companion refuses a worktree that is busy or no longer a candidate (needs `canDiskGuard`). */
 	async diskClean(paths: string[]): Promise<Extract<DiskReply, { t: "disk-clean" }>> {
 		return await this.#call({ t: "disk-clean", paths }, "disk-clean", DISK_CLEAN_TIMEOUT_MS);
+	}
+
+	/** The hibernation settings; `settings` replaces them first (needs `canHibernate`). */
+	async hibernateSettings(settings?: HibernateSettings): Promise<HibernateSettings> {
+		return (await this.#call({ t: "hibernate-settings", settings }, "hibernate-settings")).settings;
+	}
+
+	/** Stop an idle session's omp process now to free memory; it resumes when opened. Rejects with the reason (a sentence) when the session is working, has background work, or someone has it open (needs `canHibernate`). */
+	async hibernateNow(instanceId: string): Promise<HibernatedSession> {
+		return (await this.#call({ t: "hibernate", instanceId }, "hibernate", HIBERNATE_TIMEOUT_MS)).session;
 	}
 
 	/** The computer's virtual machines and whether one can be created (needs `canVms`). A VM with `busy` has a job running. */
@@ -2234,6 +2442,11 @@ export class CompanionClient {
 		return { doc: reply.doc, rev: reply.rev };
 	}
 
+	/** Set the status and note of a session's card on the computer (needs `canSessionCards`); every device sees it with the next session list. */
+	async setSessionCard(sessionId: string, card: Pick<SessionCard, "status" | "note">): Promise<void> {
+		await this.#call({ t: "session-card", sessionId, status: card.status, note: card.note }, "ok");
+	}
+
 	/** Merge this device's hidden messages of a session into the computer's and read the result (needs `canHideMessages`). */
 	async syncHiddenMessages(sessionId: string, doc?: HiddenDoc): Promise<{ doc: HiddenDoc; rev: number }> {
 		const reply = await this.#call({ t: "hidden-messages", sessionId, doc }, "hidden-messages");
@@ -2293,6 +2506,19 @@ export class CompanionClient {
 	): Promise<PreviewShot> {
 		return (await this.#call({ t: "preview", instanceId, url, viewport, fullPage }, "preview", PREVIEW_TIMEOUT_MS))
 			.shot;
+	}
+
+	/** The element at (`x`, `y`) CSS pixels on a page a screenshot showed, with its HTML, selector, computed styles, box and a picture of it. */
+	async requestPreviewPick(
+		instanceId: string,
+		url: string,
+		viewport: PreviewViewport,
+		x: number,
+		y: number,
+	): Promise<PreviewPick> {
+		return (
+			await this.#call({ t: "preview-pick", instanceId, url, viewport, x, y }, "preview-pick", PREVIEW_TIMEOUT_MS)
+		).pick;
 	}
 
 	/** Dev servers listening on the computer that run from the session's repository, by port. */
@@ -2404,6 +2630,12 @@ export class CompanionClient {
 	/** Sessions that changed `path` in the session's repository, newest first; the scan is bounded to recent sessions. */
 	async requestFileSessions(instanceId: string, path: string): Promise<SessionOverview[]> {
 		return (await this.#call({ t: "file-sessions", instanceId, path }, "sessions", USAGE_TIMEOUT_MS)).sessions;
+	}
+
+	/** Which lines of `path` agents wrote and the file still has as written, with the turn, model and time of each run. */
+	async requestAttribution(instanceId: string, path: string): Promise<FileAttribution> {
+		return (await this.#call({ t: "file-attribution", instanceId, path }, "file-attribution", USAGE_TIMEOUT_MS))
+			.attribution;
 	}
 
 	/** The vendor agents on the computer, with install and sign-in state (needs `canForeign`); `refresh` probes them again. */
@@ -2606,6 +2838,7 @@ export class CompanionClient {
 				canLsp: frame.canLsp ?? false,
 				canPreview: frame.canPreview ?? false,
 				canGithub: frame.canGithub ?? false,
+				canAttribution: frame.canAttribution ?? false,
 				canPrReview: frame.canPrReview ?? false,
 				canFixIt: frame.canFixIt ?? false,
 				canUpload: frame.canUpload ?? false,
@@ -2625,6 +2858,8 @@ export class CompanionClient {
 				canPersonalChatTree: frame.canPersonalChatTree ?? false,
 				personalRev: frame.personalRev ?? null,
 				sessionOrgRev: frame.sessionOrgRev ?? null,
+				canSessionCards: frame.canSessionCards ?? false,
+				sessionCardsRev: frame.sessionCardsRev ?? null,
 				canOrderSessions: frame.canOrderSessions ?? false,
 				canEndOnSettle: frame.canEndOnSettle ?? false,
 				canHideMessages: frame.canHideMessages ?? false,
@@ -2632,8 +2867,12 @@ export class CompanionClient {
 				hiddenRev: frame.hiddenRev ?? null,
 				transcribe: frame.transcribe ?? null,
 				power: frame.power ?? null,
+				canAccounts: frame.canAccounts ?? false,
 				canDiskGuard: frame.canDiskGuard ?? false,
+				canHibernate: frame.canHibernate ?? false,
+				hibernated: frame.hibernated ?? [],
 				canVms: frame.canVms ?? false,
+				canTerminal: frame.canTerminal ?? false,
 				disk: frame.disk ?? null,
 				vapidKey: frame.vapidKey,
 				error: null,
@@ -2662,6 +2901,20 @@ export class CompanionClient {
 		}
 		if (frame.t === "personal-changed") {
 			for (const listener of this.#personalListeners) listener(frame);
+			return;
+		}
+		if (frame.t === "terminal-output" || frame.t === "terminal-exit") {
+			const sink = this.#terminalSinks.get(frame.id);
+			if (sink !== undefined) sink(frame);
+			else {
+				// Nothing watches it yet (the answer that names the terminal is still being handled): keep it for the watcher.
+				const waiting = this.#terminalBacklog.get(frame.id) ?? [];
+				if (waiting.length < TERMINAL_BACKLOG_FRAMES) waiting.push(frame);
+				this.#terminalBacklog.set(frame.id, waiting);
+				if (this.#terminalBacklog.size > TERMINAL_BACKLOG_IDS) {
+					this.#terminalBacklog.delete(this.#terminalBacklog.keys().next().value!);
+				}
+			}
 			return;
 		}
 		const pending = this.#pending.get(frame.reqId);

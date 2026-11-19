@@ -62,6 +62,7 @@ export function makeHostContext(snapshot: Snapshot, seen: HostObservations): Int
 		},
 		session: {
 			isStreaming: false,
+			getTodoPhases: () => [],
 			queuedMessageCount: 0,
 			sessionName: "queue",
 			model: undefined,

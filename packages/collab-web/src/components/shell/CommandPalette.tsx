@@ -25,9 +25,12 @@ import {
 import { findMessages } from "../../lib/palette-messages";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
 import { queryTerms, searchable, splitMatches } from "../../lib/search-terms";
+import type { SessionCard, TodoProgress } from "../../lib/session-card";
 import { effectiveKeys, formatCombo, IS_MAC, shortcutFires, useOverrides } from "../../lib/shortcuts";
 import { AgentChip } from "./AgentChip";
+import { SessionCardLine } from "./SessionCardLine";
 import { Sheet } from "./Sheet";
+import { UnreadBadge } from "./UnreadBadge";
 import "./palette.css";
 
 /** Rows shown per kind when nothing narrows the palette; a scope (`>`, `/`, `@`, `#`) lifts the cap. */
@@ -86,8 +89,13 @@ interface Row extends PaletteItem {
 	trailing?: string;
 	/** The vendor agent behind a session row; absent for omp. */
 	agent?: AgentRef;
+	/** The agent's todo progress and the user's status and note of a session row. */
+	todo?: TodoProgress;
+	card?: SessionCard;
 	/** The computer a session or message is on; set only when there are several computers. */
 	computer?: string;
+	/** The live session a row opens: where its unread badge is looked up. */
+	unread?: { computerId: string; instanceId: string };
 	/** Keycaps of the shortcut that does the same. */
 	keys?: string;
 	/** Words of a message hit to mark in its title. */
@@ -323,6 +331,9 @@ export function CommandPalette({
 					keywords: [host.cwd],
 					subtitle: shortenPath(host.cwd),
 					agent: host.agent,
+					todo: host.todo,
+					card: host.card,
+					unread: { computerId: computer.id, instanceId: host.instanceId },
 					computer: named(computer.id),
 					trailing: state,
 					pending: true,
@@ -341,6 +352,8 @@ export function CommandPalette({
 					keywords: [idle.cwd],
 					subtitle: shortenPath(idle.cwd),
 					agent: idle.agent,
+					todo: idle.todo,
+					card: idle.card,
 					computer: named(computer.id),
 					trailing: "running",
 					pending: true,
@@ -349,6 +362,24 @@ export function CommandPalette({
 						if (!link) throw new Error("the computer returned an unreadable link");
 						onOpenLink(link);
 					},
+				});
+			}
+			// Opening a hibernated session resumes it: the same open as a live one, only slower.
+			for (const asleep of computer.snap.hibernated) {
+				hostInstances.add(hostKey(computer.id, asleep.instanceId));
+				if (isCurrent(computer.id, asleep.sessionId) || seen.has(`${computer.id}:${asleep.sessionId}`)) continue;
+				seen.add(`${computer.id}:${asleep.sessionId}`);
+				list.push({
+					key: `session:${computer.id}:${asleep.sessionId}`,
+					kind: "session",
+					icon: Laptop,
+					title: sessionTitle(asleep.sessionName, asleep.cwd),
+					keywords: [asleep.cwd],
+					subtitle: shortenPath(asleep.cwd),
+					computer: named(computer.id),
+					trailing: "hibernated",
+					pending: true,
+					run: () => onOpenHost(computer.id, asleep.instanceId),
 				});
 			}
 		}
@@ -384,6 +415,8 @@ export function CommandPalette({
 				keywords: [past.folder],
 				subtitle: shortenPath(past.folder),
 				agent: past.agent,
+				todo: past.todo,
+				card: past.card,
 				computer: named(computerId),
 				trailing: `ended ${relTime(past.endedAt ?? past.startedAt)}`,
 				run: () => onOpenAllSessions({ mode: "sessions", query: text }),
@@ -603,12 +636,19 @@ export function CommandPalette({
 												{item.subtitle !== undefined && item.subtitle !== "" && (
 													<span className="sh-palette-sub">{item.subtitle}</span>
 												)}
+												<SessionCardLine todo={item.todo} card={item.card} />
 											</span>
 											{busy === item.key ? (
 												<LoaderCircle size={14} className="sh-spin" />
 											) : (
 												<>
 													<AgentChip agent={item.agent} />
+													{item.unread !== undefined && (
+														<UnreadBadge
+															computerId={item.unread.computerId}
+															instanceId={item.unread.instanceId}
+														/>
+													)}
 													{item.computer !== undefined && (
 														<span className="sh-palette-computer">{item.computer}</span>
 													)}

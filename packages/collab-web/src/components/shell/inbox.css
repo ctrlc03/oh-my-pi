@@ -99,3 +99,20 @@
 	align-items: center;
 	gap: 3px;
 }
+
+/* ---- unread badge (on a session's row: the Inbox icon and how many updates wait) ---- */
+.sh-unread {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 2px;
+	font-size: 11px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	color: var(--fg-muted);
+}
+
+/* A question the session waits on, as `needs input` is coloured elsewhere. */
+.sh-unread[data-needs-input] {
+	color: var(--warn);
+}

@@ -45,6 +45,7 @@ function makeContext(): InteractiveModeContext {
 			sessionName: "Idle Session",
 			isStreaming: false,
 			isSessionTransitioning: false,
+			getTodoPhases: () => [],
 		},
 	} as unknown as InteractiveModeContext;
 }

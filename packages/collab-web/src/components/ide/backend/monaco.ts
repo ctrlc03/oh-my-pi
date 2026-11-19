@@ -7,6 +7,7 @@
  */
 import "./monaco-languages";
 import { minimapShown } from "../../../lib/editor-layout";
+import type { LineMark } from "../../../lib/line-attribution";
 import type { LspDiagnostic } from "../../../lib/repo-intel";
 import { diffText } from "../text-diff";
 import { textPositionAt, toMarker } from "./lsp-map";
@@ -67,6 +68,8 @@ class MonacoDoc implements EditorDoc {
 	#savedVersion: number;
 	#cleanText: string;
 	#marks: string[] = [];
+	/** The agent-line marks: each decoration with the text its line had (trimmed) when it was marked. */
+	#attribution: { id: string; text: string }[] = [];
 
 	constructor(
 		readonly path: string,
@@ -79,10 +82,24 @@ class MonacoDoc implements EditorDoc {
 		this.#cleanText = cleanText;
 		docs.set(model, this);
 		this.#subscription = model.onDidChangeContent(() => {
+			this.#pruneAttribution();
 			if (this.muted) return;
 			this.#clearMarks();
 			this.shownIn?.hooks().changed(this, true);
 		});
+	}
+
+	/** Drop the marks of lines whose text changed since they were marked: a person's edit flips a line back. */
+	#pruneAttribution(): void {
+		if (this.#attribution.length === 0) return;
+		const stale: string[] = [];
+		this.#attribution = this.#attribution.filter(mark => {
+			const range = this.model.getDecorationRange(mark.id);
+			const keep = range !== null && this.model.getLineContent(range.startLineNumber).trim() === mark.text;
+			if (!keep) stale.push(mark.id);
+			return keep;
+		});
+		if (stale.length > 0) this.model.deltaDecorations(stale, []);
 	}
 
 	#clearMarks(): void {
@@ -203,6 +220,24 @@ class MonacoDoc implements EditorDoc {
 			"lsp",
 			diagnostics.map(d => toMarker(d, this.model.getLineCount(), line => this.model.getLineMaxColumn(line) - 1)),
 		);
+	}
+
+	setAttribution(marks: readonly LineMark[]): void {
+		const lineCount = this.model.getLineCount();
+		const placed = marks.filter(mark => mark.line >= 1 && mark.line <= lineCount);
+		const ids = this.model.deltaDecorations(
+			this.#attribution.map(mark => mark.id),
+			placed.map(mark => ({
+				range: new Range(mark.line, 1, mark.line, 1),
+				options: {
+					// A line typed at the edge of a marked one is not the agent's.
+					stickiness: editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+					linesDecorationsClassName: "sh-ide-attr-bar",
+					linesDecorationsTooltip: mark.tip,
+				},
+			})),
+		);
+		this.#attribution = ids.map((id, i) => ({ id, text: this.model.getLineContent(placed[i]!.line).trim() }));
 	}
 
 	dispose(): void {

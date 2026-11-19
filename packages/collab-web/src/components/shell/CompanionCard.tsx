@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
+import type { HibernatedSession } from "@oh-my-pi/pi-wire/hibernate";
 import {
 	type CompanionHost,
 	type CompanionIdleSession,
@@ -40,10 +41,12 @@ import { InboxEntry } from "./InboxSheet";
 import { PersonalSlot } from "./PersonalEntry";
 import { QrScanner } from "./QrScanner";
 import { SchedulesEntry } from "./SchedulesSheet";
+import { SessionCardLine } from "./SessionCardLine";
 import { SessionsSheet } from "./SessionsSheet";
 import { HighStakesChip } from "./StakesControl";
 import { FreshVmBadge } from "./FreshVmBadge";
 import { StartSessionSheet } from "./StartSessionSheet";
+import { UnreadBadge } from "./UnreadBadge";
 import { UsageSheet } from "./UsageSheet";
 
 export interface CompanionCardProps {
@@ -116,7 +119,7 @@ export function CompanionCard({
 		onJoin(link);
 	};
 
-	const join = async (host: CompanionHost): Promise<void> => {
+	const join = async (host: Pick<CompanionHost, "instanceId">): Promise<void> => {
 		if (joining) return;
 		setJoining(host.instanceId);
 		setError(null);
@@ -203,13 +206,22 @@ export function CompanionCard({
 					<>
 						<PersonalSlot computer={computer} grouped={showName} currentSessionId={null} onOpenHost={open} />
 						{live && <FanoutGroups hosts={listed} client={client} onOpen={id => open(computer.id, id)} />}
-						{listed.length === 0 ? (
+						{listed.length === 0 && snap.hibernated.length === 0 ? (
 							<div className="sh-companion-empty">
 								No session is sharing. Run <code>/collab</code> in omp.
 							</div>
 						) : (
-							<HostList hosts={rows.hosts} joining={joining} disabled={!live} onJoin={join} />
+							listed.length > 0 && (
+								<HostList
+									computerId={computer.id}
+									hosts={rows.hosts}
+									joining={joining}
+									disabled={!live}
+									onJoin={join}
+								/>
+							)
 						)}
+						<HibernatedList sessions={snap.hibernated} joining={joining} disabled={!live} onOpen={join} />
 						<IdleList idle={rows.idle} joining={joining} disabled={!live} onShare={share} />
 						{rows.hidden > 0 && (
 							<button type="button" className="sh-btn sh-card-more" onClick={() => setExpanded(true)}>
@@ -277,6 +289,8 @@ export function CompanionCard({
 }
 
 export interface HostListProps {
+	/** The computer the sessions are on, for their unread badges. */
+	computerId: string;
 	hosts: readonly CompanionHost[];
 	/** instanceId whose link is being fetched. */
 	joining: string | null;
@@ -289,6 +303,7 @@ export interface HostListProps {
 }
 
 export function HostList({
+	computerId,
 	hosts,
 	joining,
 	disabled,
@@ -313,6 +328,7 @@ export function HostList({
 							<span className="sh-recent-title">
 								<span className="sh-recent-name">{hostTitle(host)}</span>
 								{current && <span className="sh-chip">here</span>}
+								<UnreadBadge computerId={computerId} instanceId={host.instanceId} />
 								<AgentChip agent={host.agent} />
 								{host.sandboxed && <SandboxedChip />}
 								{host.highStakes === true && <HighStakesChip />}
@@ -329,6 +345,7 @@ export function HostList({
 								)}
 								<span>{relTime(host.startedAt)}</span>
 							</span>
+							<SessionCardLine todo={host.todo} card={host.card} />
 						</button>
 						{onOpenBeside !== undefined && (
 							<button
@@ -377,6 +394,7 @@ export function IdleList({ idle, joining, disabled, onShare }: IdleListProps): R
 								<span className="sh-recent-cwd">{shortenPath(session.cwd)}</span>
 								<span>{relTime(session.startedAt)}</span>
 							</span>
+							<SessionCardLine todo={session.todo} card={session.card} />
 						</div>
 						<button
 							type="button"
@@ -394,6 +412,51 @@ export function IdleList({ idle, joining, disabled, onShare }: IdleListProps): R
 						</button>
 					</li>
 				))}
+			</ul>
+		</section>
+	);
+}
+
+export interface HibernatedListProps {
+	sessions: readonly HibernatedSession[];
+	/** instanceId whose link is being fetched: the session it names is resuming. */
+	joining: string | null;
+	disabled: boolean;
+	onOpen(session: HibernatedSession): void;
+}
+
+/** Sessions whose omp process was stopped to free memory: opening one resumes it where it left off. */
+export function HibernatedList({ sessions, joining, disabled, onOpen }: HibernatedListProps): ReactNode {
+	if (sessions.length === 0) return null;
+	return (
+		<section className="sh-idle" aria-label="Hibernated sessions">
+			<h3 className="sh-recents-title">Hibernated</h3>
+			<ul className="sh-recents-list">
+				{sessions.map(session => {
+					const resuming = joining === session.instanceId;
+					return (
+						<li key={session.sessionId} className="sh-recent">
+							<button
+								type="button"
+								className="sh-recent-join"
+								onClick={() => onOpen(session)}
+								disabled={joining !== null || disabled}
+								title={`${session.cwd}: opening it resumes the session`}
+							>
+								<span className="sh-recent-title">
+									<span className="sh-recent-name">{hostTitle(session)}</span>
+									{session.sandboxed && <SandboxedChip />}
+									{resuming && <LoaderCircle size={13} className="sh-spin" />}
+								</span>
+								<span className="sh-recent-meta">
+									<span className="sh-host-state">{resuming ? "resuming…" : "hibernated"}</span>
+									<span className="sh-recent-cwd">{shortenPath(session.cwd)}</span>
+									<span>{relTime(session.hibernatedAt)}</span>
+								</span>
+							</button>
+						</li>
+					);
+				})}
 			</ul>
 		</section>
 	);

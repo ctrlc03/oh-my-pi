@@ -14,7 +14,8 @@ import {
 } from "lucide-react";
 import type { MouseEvent, PointerEvent, ReactNode } from "react";
 import { useEffect, useRef } from "react";
-import type { CompanionHost, CompanionIdleSession, SessionOverview } from "../../lib/companion";
+import type { HibernatedSession } from "@oh-my-pi/pi-wire/hibernate";
+import type { CompanionHost, CompanionIdleSession, HibernatedRow, SessionOverview } from "../../lib/companion";
 import { relTime, shortenPath } from "../../lib/format";
 import type { RecentRoom } from "../../lib/rooms";
 import type { OrgSection } from "../../lib/session-org";
@@ -22,6 +23,8 @@ import { HostState, hostTitle, SandboxedChip } from "./CompanionCard";
 import { AgentChip } from "./AgentChip";
 import { FanoutChip } from "./FanoutSheet";
 import { HighStakesMark } from "./StakesControl";
+import { SessionCardLine } from "./SessionCardLine";
+import { UnreadBadge } from "./UnreadBadge";
 import type { DragSpec, RangeAction } from "./use-org-drag";
 
 /** Holding a row this long on a touch screen opens its menu. */
@@ -34,12 +37,15 @@ export type OrgItem =
 	| { kind: "idle"; key: string; session: CompanionIdleSession }
 	| { kind: "room"; key: string; room: RecentRoom }
 	/** A session that ended while settled (the computer may end it when it settles): listed from its history, resumed when opened. */
-	| { kind: "ended"; key: string; session: SessionOverview };
+	| { kind: "ended"; key: string; session: SessionOverview }
+	/** A session whose omp process was stopped to free memory: opening it resumes it, in the same folder. */
+	| { kind: "hibernated"; key: string; session: HibernatedRow };
 
 export function itemTitle(item: OrgItem): string {
 	if (item.kind === "host") return hostTitle(item.host);
 	if (item.kind === "idle") return hostTitle(item.session);
 	if (item.kind === "ended") return hostTitle({ sessionName: item.session.title, cwd: item.session.folder });
+	if (item.kind === "hibernated") return hostTitle(item.session);
 	return item.room.title;
 }
 
@@ -50,6 +56,8 @@ export const isWorking = (item: OrgItem): boolean =>
 export type OrgMode = "idle" | "arrange" | "select";
 
 export interface OrgRowProps {
+	/** The computer the row's session is on, for its unread badge; null for rooms no computer lists. */
+	computerId: string | null;
 	item: OrgItem;
 	section: OrgSection;
 	mode: OrgMode;
@@ -82,6 +90,8 @@ export interface OrgRowProps {
 	onOpenRoomBeside?: (room: RecentRoom) => void;
 	/** The computer can start sessions, so an ended one can be resumed. */
 	resumable: boolean;
+	/** Open a hibernated session: it is resumed first, and the row shows "resuming…" while `joining` names its instance. */
+	onOpenHibernated(session: HibernatedSession): void;
 	/** Open an ended session: it is resumed first. */
 	onResumeEnded(session: SessionOverview): void;
 }
@@ -222,6 +232,9 @@ export function OrgRow(props: OrgRowProps): ReactNode {
 					<span className="sh-recent-title">
 						<span className="sh-recent-name">{title}</span>
 						{current && <span className="sh-chip">here</span>}
+						{props.computerId !== null && (
+							<UnreadBadge computerId={props.computerId} instanceId={item.host.instanceId} />
+						)}
 						{item.host.sandboxed && <SandboxedChip />}
 						{item.host.highStakes === true && <HighStakesMark />}
 						{item.host.fanout && <FanoutChip fanout={item.host.fanout} />}
@@ -244,6 +257,7 @@ export function OrgRow(props: OrgRowProps): ReactNode {
 						)}
 						<span>{relTime(item.host.startedAt)}</span>
 					</span>
+					<SessionCardLine todo={item.host.todo} card={item.host.card} />
 				</button>
 			)}
 			{item.kind === "idle" && (
@@ -264,6 +278,7 @@ export function OrgRow(props: OrgRowProps): ReactNode {
 						<span className="sh-recent-cwd">{shortenPath(item.session.cwd)}</span>
 						<span>{relTime(item.session.startedAt)}</span>
 					</span>
+					<SessionCardLine todo={item.session.todo} card={item.session.card} />
 				</div>
 			)}
 			{item.kind === "ended" && (
@@ -287,6 +302,40 @@ export function OrgRow(props: OrgRowProps): ReactNode {
 						<span className="sh-recent-cwd">{shortenPath(item.session.folder)}</span>
 						<span>{relTime(item.session.endedAt ?? item.session.startedAt)}</span>
 					</span>
+					<SessionCardLine todo={item.session.todo} card={item.session.card} />
+				</button>
+			)}
+			{item.kind === "hibernated" && (
+				<button
+					type="button"
+					className="sh-recent-join"
+					onClick={() => props.onOpenHibernated(item.session)}
+					disabled={joining !== null || disabled}
+					aria-pressed={mode === "select" ? props.selected : undefined}
+					title={`${item.session.cwd}: opening it resumes the session`}
+				>
+					<span className="sh-recent-title">
+						<span className="sh-recent-name">{title}</span>
+						{props.computerId !== null && (
+							<UnreadBadge computerId={props.computerId} instanceId={item.session.instanceId} />
+						)}
+						{item.session.sandboxed && <SandboxedChip />}
+						{joining === item.session.instanceId && <LoaderCircle size={13} className="sh-spin" />}
+					</span>
+					<span className="sh-recent-meta">
+						{props.wake ? (
+							<span className="sh-host-state">snoozed {props.wake}</span>
+						) : (
+							<span className="sh-host-state">
+								{joining === item.session.instanceId ? "resuming…" : "hibernated"}
+							</span>
+						)}
+						{props.settledBy && <span className="sh-host-state">{SETTLED_BY[props.settledBy]}</span>}
+						{props.autoSettleOff && <AutoSettleOff />}
+						<span className="sh-recent-cwd">{shortenPath(item.session.cwd)}</span>
+						<span>{relTime(item.session.hibernatedAt)}</span>
+					</span>
+					<SessionCardLine card={item.session.card} />
 				</button>
 			)}
 			{item.kind === "room" && (

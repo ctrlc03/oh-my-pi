@@ -374,7 +374,7 @@ export async function discardWorktree(created: { root: string; path: string; bra
  * Remove the linked worktree at `target`, which must be under one of
  * `worktreesRoots` (where the companion creates them), and keep its branch.
  * Refused while any of `runningCwds` (working directories of running omp
- * processes) is inside it, or while it has uncommitted changes (unless `discardChanges`, which the
+ * processes, and of hibernated sessions, which resume there) is inside it, or while it has uncommitted changes (unless `discardChanges`, which the
  * app sends only after the user confirmed losing them; the branch and its commits stay either way).
  */
 export async function removeWorktree(
@@ -395,7 +395,8 @@ export async function removeWorktree(
 	if (root !== resolved) throw new Error("not a worktree root");
 	for (const cwd of runningCwds) {
 		const running = await fs.realpath(cwd).catch(() => cwd);
-		if (isInside(root, running)) throw new Error("a session is still running in this worktree; end it first");
+		if (isInside(root, running))
+			throw new Error("a session is still running or hibernated in this worktree; end or delete it first");
 	}
 	const { gitDir, commonDir } = await gitDirs(root);
 	if (gitDir === commonDir) throw new Error("not a linked worktree");

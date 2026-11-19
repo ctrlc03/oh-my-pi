@@ -42,6 +42,7 @@ describe("parseEditorLayout", () => {
 			tabs: true,
 			lineNumbers: true,
 			status: true,
+			attribution: true,
 			minimap: null,
 			fontSize: null,
 			panelOpen: false,
@@ -50,8 +51,22 @@ describe("parseEditorLayout", () => {
 	});
 
 	it("reads each toggle and keeps an explicit minimap choice either way", () => {
-		const layout = parseEditorLayout({ rail: false, tabs: false, minimap: true, lineNumbers: false, status: false });
-		expect(layout).toMatchObject({ rail: false, tabs: false, minimap: true, lineNumbers: false, status: false });
+		const layout = parseEditorLayout({
+			rail: false,
+			tabs: false,
+			minimap: true,
+			lineNumbers: false,
+			status: false,
+			attribution: false,
+		});
+		expect(layout).toMatchObject({
+			rail: false,
+			tabs: false,
+			minimap: true,
+			lineNumbers: false,
+			status: false,
+			attribution: false,
+		});
 		expect(parseEditorLayout({ minimap: false }).minimap).toBe(false);
 		expect(parseEditorLayout({ minimap: "yes" }).minimap).toBeNull();
 	});

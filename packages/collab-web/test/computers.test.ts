@@ -317,6 +317,24 @@ describe("opening a session from a notification", () => {
 		expect(planOpen([laptop, moon], "only-moon", null)).toEqual({ kind: "open", computer: moon });
 	});
 
+	it("opens a hibernated session by the instance id it ran as: opening resumes it", () => {
+		const sleeping = handle(MOON_ID, "moonstone", [], {
+			hibernated: [
+				{
+					sessionId: "s9",
+					instanceId: "asleep01",
+					sessionName: null,
+					cwd: "/work",
+					model: null,
+					startedAt: 0,
+					hibernatedAt: 1,
+				},
+			],
+		});
+		expect(planOpen([laptop, sleeping], "asleep01", MOON_ID)).toEqual({ kind: "open", computer: sleeping });
+		expect(planOpen([laptop, sleeping], "asleep01", null)).toEqual({ kind: "open", computer: sleeping });
+	});
+
 	it("waits for the named computer to answer, and only for it", () => {
 		const connecting = handle(MOON_ID, "moonstone", [], { phase: "connecting" });
 		expect(planOpen([laptop, connecting], "abc12345", MOON_ID)).toEqual({ kind: "wait" });

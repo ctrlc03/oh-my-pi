@@ -636,6 +636,22 @@
 	box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/* An added line an agent wrote (the editor's Agent-written lines setting): a thin bar a little in from the left edge,
+   clear of the commented and selected rows' own edge; the row's title says which session, turn and model wrote it. */
+.sh-udiff-agent {
+	position: relative;
+}
+
+.sh-udiff-agent::before {
+	content: "";
+	position: absolute;
+	inset: 2px auto 2px 3px;
+	width: 2px;
+	border-radius: 1px;
+	background: color-mix(in srgb, var(--accent) 65%, transparent);
+	pointer-events: none;
+}
+
 .sh-udiff-sel,
 .sh-udiff-sel:hover {
 	background-image: linear-gradient(

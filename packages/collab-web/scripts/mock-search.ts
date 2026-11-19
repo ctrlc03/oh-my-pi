@@ -84,6 +84,7 @@ export function createMockSearch(
 				instanceId: host.instanceId,
 				live: "host" as const,
 				agent: host.agent,
+				todo: host.todo,
 			},
 			messages: LIVE_MESSAGES,
 		})),

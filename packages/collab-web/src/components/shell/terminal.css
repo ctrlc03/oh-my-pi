@@ -1,0 +1,154 @@
+/* ---- interactive terminal sheet ---- */
+
+/* The terminals are one flat list placed by percentages, so splitting moves a terminal without remounting it. */
+.sh-shell-body {
+	position: relative;
+	flex: 1 1 0;
+	min-height: 0;
+}
+
+.sh-shell-pane {
+	position: absolute;
+	box-sizing: border-box;
+	/* Half the gap between neighbours; the divider sits in it. */
+	padding: 3px;
+	min-width: 0;
+	min-height: 0;
+}
+
+.sh-shell-term {
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sh-shell-pane[data-focused] .sh-shell-term {
+	border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+/* The fit addon measures the screen inside this padding. */
+.sh-shell-term .xterm {
+	height: 100%;
+	padding: 6px 8px;
+}
+
+.sh-shell-close {
+	position: absolute;
+	top: 9px;
+	right: 14px;
+	z-index: 2;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	opacity: 0;
+	transition: opacity 120ms ease-out;
+}
+
+.sh-shell-pane:hover .sh-shell-close,
+.sh-shell-pane:focus-within .sh-shell-close,
+.sh-shell-close:focus-visible {
+	opacity: 0.85;
+}
+
+.sh-shell-note {
+	position: absolute;
+	right: 12px;
+	bottom: 12px;
+	left: 12px;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 7px 10px;
+	font-size: 12.5px;
+	color: var(--fg-muted);
+	background: var(--bg-overlay);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+}
+
+.sh-shell-note-error {
+	color: var(--err);
+}
+
+/* The divider takes no room: a thin hit area centred on the line between two terminals. */
+.sh-shell-divider {
+	--sh-shell-hit: 10px;
+	position: absolute;
+	z-index: 3;
+	outline: none;
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.sh-shell-divider[data-axis="row"] {
+	width: var(--sh-shell-hit);
+	margin-left: calc(var(--sh-shell-hit) / -2);
+	cursor: col-resize;
+}
+
+.sh-shell-divider[data-axis="column"] {
+	height: var(--sh-shell-hit);
+	margin-top: calc(var(--sh-shell-hit) / -2);
+	cursor: row-resize;
+}
+
+.sh-shell-divider::after {
+	content: "";
+	position: absolute;
+	border-radius: 2px;
+	background: transparent;
+	transition: background-color 120ms ease-out;
+}
+
+.sh-shell-divider[data-axis="row"]::after {
+	inset-block: 8px;
+	left: calc(50% - 1px);
+	width: 2px;
+}
+
+.sh-shell-divider[data-axis="column"]::after {
+	inset-inline: 8px;
+	top: calc(50% - 1px);
+	height: 2px;
+}
+
+.sh-shell-divider:hover::after,
+.sh-shell-divider[data-dragging]::after,
+.sh-shell-divider:focus-visible::after {
+	background: var(--accent);
+}
+
+/* Phones: the keys the on-screen keyboard lacks, in a row under the terminals. */
+.sh-shell-keys {
+	display: flex;
+	flex: none;
+	gap: 4px;
+	overflow-x: auto;
+	padding-bottom: 2px;
+}
+
+.sh-shell-keys .sh-btn {
+	flex: 1 0 auto;
+	min-width: 40px;
+	height: 38px;
+	padding: 0 10px;
+	font-family: var(--font-mono);
+}
+
+.sh-shell-keys .sh-btn[aria-pressed="true"] {
+	color: var(--accent-soft-fg);
+	background: var(--accent-soft);
+	border-color: var(--accent);
+}
+
+@media (any-pointer: coarse) {
+	.sh-shell-close {
+		opacity: 0.7;
+	}
+}

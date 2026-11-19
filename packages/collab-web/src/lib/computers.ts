@@ -214,8 +214,16 @@ export function computerById<T extends { id: string }>(
  */
 export type HostLookup = { found: "host"; computer: ComputerHandle } | { found: "none" } | { found: "ambiguous" };
 
+/** Whether the computer lists `instanceId`: a running process, or a hibernated session that opening resumes under that id. */
+function listsInstance(computer: ComputerHandle, instanceId: string): boolean {
+	return (
+		computer.snap.hosts.some(host => host.instanceId === instanceId) ||
+		computer.snap.hibernated.some(session => session.instanceId === instanceId)
+	);
+}
+
 export function findHost(computers: readonly ComputerHandle[], instanceId: string): HostLookup {
-	const listing = computers.filter(computer => computer.snap.hosts.some(host => host.instanceId === instanceId));
+	const listing = computers.filter(computer => listsInstance(computer, instanceId));
 	if (listing.length === 0) return { found: "none" };
 	if (listing.length > 1) return { found: "ambiguous" };
 	return { found: "host", computer: listing[0]! };
@@ -243,7 +251,7 @@ export function planOpen(
 		if (computer === null) return { kind: "error", message: "That computer is no longer paired with this device." };
 		if (computer.snap.phase === "connecting") return { kind: "wait" };
 		if (computer.snap.phase !== "live") return { kind: "error", message: `${computer.name} is not reachable.` };
-		return computer.snap.hosts.some(host => host.instanceId === instanceId) ? { kind: "open", computer } : gone;
+		return listsInstance(computer, instanceId) ? { kind: "open", computer } : gone;
 	}
 	const lookup = findHost(computers, instanceId);
 	if (lookup.found === "host") return { kind: "open", computer: lookup.computer };

@@ -22,6 +22,7 @@ export const PANE_KINDS = [
 	"review-board",
 	"diagram",
 	"terminal",
+	"shell",
 	"preview",
 	"run",
 	"usage",

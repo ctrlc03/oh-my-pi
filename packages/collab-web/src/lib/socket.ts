@@ -138,6 +138,11 @@ export class CollabSocket<Out extends object = GuestFrame, In = HostFrame> {
 		return this.#ws?.readyState === WebSocket.OPEN;
 	}
 
+	/** Bytes handed to the open WebSocket that it has not sent yet; 0 without one. */
+	get bufferedAmount(): number {
+		return this.#ws?.bufferedAmount ?? 0;
+	}
+
 	connect(): void {
 		if (this.#ws || this.#retryTimer) return;
 		this.#closed = false;

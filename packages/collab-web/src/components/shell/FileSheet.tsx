@@ -2,9 +2,16 @@ import { LoaderCircle, RefreshCw, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CompanionClient, FileContent } from "../../lib/companion";
+import type { PreviewMode } from "../../lib/file-viewer";
+import { defaultPreviewMode, previewKind, viewerKind } from "../../lib/file-viewer";
 import { fmtBytes } from "../../lib/format";
 import { HIGHLIGHT_MAX_CHARS, languageOf, loadHighlighter } from "../../lib/highlight";
 import { useRequest } from "../../lib/use-request";
+import { baseName } from "../ide/file-tree";
+import { FileViewer } from "../viewer/FileViewer";
+import { MarkdownPreview } from "../viewer/MarkdownPreview";
+import { PreviewModeToggle } from "../viewer/PreviewModeToggle";
+import { SvgPreview } from "../viewer/SvgPreview";
 import { DownloadButton } from "./DownloadButton";
 import { Sheet, SheetPlacementButton } from "./Sheet";
 
@@ -54,8 +61,74 @@ export function FileSheet({ client, instanceId, path, line, onClose }: FileSheet
 				</div>
 			)}
 			{state.status === "error" && <div className="sh-connect-error">{state.message}</div>}
-			{state.status === "ready" && <FileBody file={state.value} line={line} />}
+			{state.status === "ready" && (
+				<FileContentView client={client} instanceId={instanceId} path={path} file={state.value} line={line} />
+			)}
 		</Sheet>
+	);
+}
+
+/** The file sheet's switch has no Split: its body is one column. */
+const SHEET_MODES: readonly PreviewMode[] = ["source", "preview"];
+
+/**
+ * What the sheet shows of a loaded file: an image or PDF in its viewer, Markdown and SVG as source or rendered, any
+ * other file as its text. The editor (`IdeSheet`) does the same for the files it opens; this is the read-only route
+ * a link takes when the app has no editor for the session.
+ */
+function FileContentView({
+	client,
+	instanceId,
+	path,
+	file,
+	line,
+}: {
+	client: CompanionClient;
+	instanceId: string;
+	path: string;
+	file: FileContent;
+	line?: number;
+}): ReactNode {
+	const kind = viewerKind(path);
+	const preview = previewKind(file.path);
+	const [mode, setMode] = useState<PreviewMode>(() => (preview === null ? "source" : defaultPreviewMode(preview)));
+	// A link names a file relative to the Markdown file's own path, and `path` is already in the form the companion reads.
+	const toRequest = useCallback((resolved: string) => resolved, []);
+	const wholeText = file.text !== null && !file.truncated;
+	if (kind !== "text" && !(preview === "svg" && wholeText)) {
+		return (
+			<FileViewer
+				client={client}
+				instanceId={instanceId}
+				path={path}
+				version={file.version}
+				size={file.size}
+				kind={kind}
+			/>
+		);
+	}
+	if (preview === null || file.text === null || !wholeText) return <FileBody file={file} line={line} />;
+	return (
+		<>
+			<div className="sh-view-bar">
+				<PreviewModeToggle mode={mode} modes={SHEET_MODES} onChange={setMode} />
+			</div>
+			{mode === "preview" ? (
+				preview === "svg" ? (
+					<SvgPreview text={file.text} name={baseName(file.path)} />
+				) : (
+					<MarkdownPreview
+						text={file.text}
+						file={path}
+						client={client}
+						instanceId={instanceId}
+						toRequest={toRequest}
+					/>
+				)
+			) : (
+				<FileBody file={file} line={line} />
+			)}
+		</>
 	);
 }
 

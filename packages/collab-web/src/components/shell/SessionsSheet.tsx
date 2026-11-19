@@ -8,6 +8,7 @@ import { fmtCost, fmtTokens, relTime, shortenPath } from "../../lib/format";
 import { setJumpIntent } from "../../lib/jump-intent";
 import { extractLink } from "../../lib/rooms";
 import { MIN_QUERY_CHARS, searchable } from "../../lib/search-terms";
+import { CARD_LABEL, type CardStatus, cardFilterOptions, filterByCard } from "../../lib/session-card";
 import { deletableOverview } from "../../lib/session-delete";
 import { useRequest } from "../../lib/use-request";
 import { AgentChip } from "./AgentChip";
@@ -16,7 +17,9 @@ import { ComputerChip } from "./ComputerChip";
 import { useDeleteSessions } from "./DeleteSessions";
 import { MessageSearch } from "./MessageSearch";
 import { useOpenElsewhere } from "./OpenElsewhere";
+import { SessionCardLine } from "./SessionCardLine";
 import { Sheet, SheetPlacementButton } from "./Sheet";
+import { UnreadBadge } from "./UnreadBadge";
 import "./review.css";
 import "./stats.css";
 
@@ -28,6 +31,10 @@ type Reachable = ComputerHandle & { client: CompanionClient };
 
 const isReachable = (computer: ComputerHandle): computer is Reachable =>
 	computer.client !== null && computer.snap.phase === "live";
+
+/** The session's omp process was stopped to free memory (its row stays under Resume: that starts it again). */
+const isHibernated = (computer: Pick<ComputerHandle, "snap">, session: SessionOverview): boolean =>
+	computer.snap.hibernated.some(hibernated => hibernated.sessionId === session.sessionId);
 
 /** One listed session and the computer it is on. */
 interface Listed {
@@ -92,6 +99,8 @@ export function SessionsSheet({
 	const targetsRef = useRef(targets);
 	targetsRef.current = targets;
 	const targetIds = targets.map(computer => computer.id).join(",");
+	// A new revision of a computer's cards (any device edited one) lists its sessions again.
+	const cardsRevs = targets.map(computer => computer.snap.sessionCardsRev).join(",");
 	const searchTargets = targets.filter(computer => computer.snap.canSearch);
 	const foreignTargets = targets.filter(computer => computer.snap.canForeign);
 
@@ -128,7 +137,7 @@ export function SessionsSheet({
 		}
 		if (asked.length > 1) rows.sort((a, b) => recency(b.session) - recency(a.session));
 		return { rows, failures };
-	}, [targetIds, q]);
+	}, [targetIds, cardsRevs, q]);
 	const { state, reload } = useRequest(load);
 	// Sessions deleted or put back (from here or the Undo of the toast) change the list.
 	const deleter = useDeleteSessions();
@@ -152,6 +161,8 @@ export function SessionsSheet({
 	const [removing, setRemoving] = useState<string | null>(null);
 	/** Id of the agent the list is narrowed to; null: every agent. */
 	const [agentFilter, setAgentFilter] = useState<string | null>(null);
+	/** Status the list is narrowed to; null: every card. */
+	const [cardFilter, setCardFilter] = useState<CardStatus | null>(null);
 	const closedRef = useRef(false);
 	useEffect(() => {
 		closedRef.current = false;
@@ -247,9 +258,15 @@ export function SessionsSheet({
 	const agentOptions = agentFilterOptions(rows.map(row => row.session));
 	// A filter whose agent left the list (a narrower search) shows everything again rather than nothing.
 	const activeAgent = agentOptions.some(option => option.id === agentFilter) ? agentFilter : null;
-	const visible = filterByAgent(
-		rows.map(row => ({ ...row, agent: row.session.agent })),
-		activeAgent,
+	const cardOptions = cardFilterOptions(rows.map(row => row.session));
+	// Likewise for a status nothing carries any more.
+	const activeCard = cardFilter !== null && cardOptions.includes(cardFilter) ? cardFilter : null;
+	const visible = filterByCard(
+		filterByAgent(
+			rows.map(row => ({ ...row, agent: row.session.agent })),
+			activeAgent,
+		).map(row => ({ ...row, card: row.session.card })),
+		activeCard,
 	);
 
 	const groups = new Map<string, FolderGroup>();
@@ -392,6 +409,31 @@ export function SessionsSheet({
 					))}
 				</div>
 			)}
+			{cardOptions.length > 0 && (
+				<div className="sh-segmented sh-segmented-wrap" role="radiogroup" aria-label="Filter by status">
+					<button
+						type="button"
+						role="radio"
+						aria-checked={activeCard === null}
+						className={activeCard === null ? "sh-segment sh-segment-on" : "sh-segment"}
+						onClick={() => setCardFilter(null)}
+					>
+						Any status
+					</button>
+					{cardOptions.map(option => (
+						<button
+							key={option}
+							type="button"
+							role="radio"
+							aria-checked={activeCard === option}
+							className={activeCard === option ? "sh-segment sh-segment-on" : "sh-segment"}
+							onClick={() => setCardFilter(option)}
+						>
+							{CARD_LABEL[option]}
+						</button>
+					))}
+				</div>
+			)}
 			{!messages && state.status === "error" && (
 				<div className="sh-tree-error">
 					<div className="sh-connect-error">{state.message}</div>
@@ -441,7 +483,7 @@ export function SessionsSheet({
 				)
 			) : visible.length === 0 ? (
 				<div className="sh-companion-empty">
-					{q || activeAgent !== null ? "No session matches." : "No sessions yet."}
+					{q || activeAgent !== null || activeCard !== null ? "No session matches." : "No sessions yet."}
 				</div>
 			) : (
 				<div className={loading ? "sh-stats-body sh-stats-cols sh-stats-stale" : "sh-stats-body sh-stats-cols"}>
@@ -455,7 +497,10 @@ export function SessionsSheet({
 										<span className="sh-stats-group-cost">{fmtCost(group.cost)}</span>
 									)}
 								</h2>
-								{group.sessions.every(session => session.worktree === true && session.live === undefined) && (
+								{group.sessions.every(
+									session =>
+										session.worktree === true && session.live === undefined && !isHibernated(computer, session),
+								) && (
 									<div className="sh-review-worktree">
 										{removing === groupKey ? (
 											<div className="sh-review-confirm" role="group" aria-label="Confirm">
@@ -506,11 +551,13 @@ export function SessionsSheet({
 									{group.sessions.map(session => (
 										<SessionRow
 											key={session.sessionId}
+											computerId={computer.id}
 											session={session}
 											current={session.sessionId === currentSessionId}
 											busy={busy}
 											canStart={computer.snap.canStart}
 											computerName={several && activeComputer === null ? computer.name : undefined}
+											hibernated={isHibernated(computer, session)}
 											onOpen={instanceId =>
 												run(session.sessionId, () => onOpenHost(computer.id, instanceId))
 											}
@@ -546,6 +593,8 @@ export interface SessionRowProps {
 	/** sessionId whose action is running; any value disables every action. */
 	busy: string | null;
 	canStart: boolean;
+	/** The computer the session is on: with it, a session that is live gets its unread badge. */
+	computerId?: string;
 	/** The computer the session is on, named when there are several. */
 	computerName?: string;
 	onOpen(instanceId: string): void;
@@ -553,10 +602,13 @@ export interface SessionRowProps {
 	onResume(): void;
 	/** Delete the session (after a confirmation); absent where it cannot be deleted. */
 	onDelete?: () => void;
+	/** The session's omp process was stopped to free memory: resuming starts it again where it left off. */
+	hibernated?: boolean;
 }
 
 export function SessionRow({
 	session,
+	computerId,
 	current,
 	busy,
 	canStart,
@@ -565,6 +617,7 @@ export function SessionRow({
 	onShare,
 	onResume,
 	onDelete,
+	hibernated = false,
 }: SessionRowProps): ReactNode {
 	const { instanceId } = session;
 	const working = busy === session.sessionId;
@@ -578,13 +631,18 @@ export function SessionRow({
 					{computerName !== undefined && <ComputerChip name={computerName} />}
 					{current && <span className="sh-chip">here</span>}
 					{session.live === "host" && <span className="sh-chip sh-chip-live">live</span>}
+					{session.live === "host" && instanceId !== undefined && computerId !== undefined && (
+						<UnreadBadge computerId={computerId} instanceId={instanceId} />
+					)}
 					{session.live === "idle" && <span className="sh-chip">running</span>}
+					{hibernated && <span className="sh-chip">hibernated</span>}
 				</span>
 				<span className="sh-recent-meta">
 					<span>{relTime(session.endedAt ?? session.startedAt)}</span>
 					<span>{fmtCost(session.cost)}</span>
 					<span>{fmtTokens(session.tokens)} tok</span>
 				</span>
+				<SessionCardLine todo={session.todo} card={session.card} />
 				{session.models.length > 0 && (
 					<span className="sh-stats-models">
 						{session.models.slice(0, 3).map(model => (

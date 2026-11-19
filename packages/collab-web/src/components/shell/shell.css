@@ -79,6 +79,30 @@
 	min-height: 0;
 }
 
+/* A drag is over the conversation (`Composer` sets `data-drop`): the panel shows what dropping would do. Drawn as a
+ * pseudo-element so it needs no markup, and click-through so it never takes the drag's own events from what is below. */
+.sh-panel[data-drop]::after {
+	content: "Drop to attach";
+	position: absolute;
+	inset: 6px;
+	z-index: 40;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 12px;
+	border: 2px dashed var(--accent);
+	border-radius: var(--radius-lg);
+	background: var(--accent-soft);
+	color: var(--accent-soft-fg);
+	font: 600 14px / 1.3 var(--font-ui);
+	text-align: center;
+	pointer-events: none;
+}
+
+.sh-panel[data-drop="path"]::after {
+	content: "Drop to mention in your message";
+}
+
 /* Naked rail framed on the page background, like a sidebar. */
 .sh-rail {
 	width: var(--sh-rail-w, 296px);

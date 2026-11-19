@@ -33,6 +33,7 @@ import type { HiddenMessagesControl } from "./HiddenMessages";
 import { AgentChip } from "./AgentChip";
 import { PermissionControl } from "./PermissionControl";
 import { PrWatch } from "./PrWatch";
+import { SessionCardRow, type CardEdit } from "./SessionCardSheet";
 import { SandboxedChip } from "./CompanionCard";
 import { HighStakesChip, HighStakesRow, type StakesControl } from "./StakesControl";
 import { ModelList } from "./ModelControls";
@@ -62,6 +63,8 @@ export interface SessionSheetProps {
 	sandboxed: boolean;
 	/** This session's high-stakes mode; null unless the paired computer can gate pushes behind a quiz and this is an omp session. */
 	highStakes: StakesControl | null;
+	/** This session's status and note, editable where the paired computer keeps them; null otherwise. */
+	sessionCard: CardEdit | null;
 	/** The vendor agent behind this session; null for an omp session. */
 	agent: AgentRef | null;
 	/** The host advertises `permission-mode`. */
@@ -102,6 +105,8 @@ export interface SessionSheetProps {
 	onOpenBakeoff: (() => void) | null;
 	/** The session's terminal (tmux pane); null unless the paired computer hosts this session. */
 	onOpenPane: (() => void) | null;
+	/** An interactive terminal in the session's folder on the paired computer; null unless allowed for this session (never for view-only or sandboxed sessions). */
+	onOpenShell: (() => void) | null;
 	/** Live screenshot of a dev server the session runs; null unless the paired computer can capture pages. */
 	onOpenPreview: (() => void) | null;
 	/** Issues and pull requests of the session's repository; null unless the paired computer's `gh` is signed in. */
@@ -151,6 +156,7 @@ export function SessionSheet({
 	readOnly,
 	sandboxed,
 	highStakes,
+	sessionCard,
 	agent,
 	canPermission,
 	contextPct,
@@ -175,6 +181,7 @@ export function SessionSheet({
 	onOpenSparring,
 	onOpenBakeoff,
 	onOpenPane,
+	onOpenShell,
 	onOpenPreview,
 	onOpenGithub,
 	onOpenEditor,
@@ -351,6 +358,7 @@ export function SessionSheet({
 					</div>
 				)}
 				{highStakes !== null && <HighStakesRow control={highStakes} />}
+				{sessionCard !== null && !readOnly && <SessionCardRow title={title} edit={sessionCard} />}
 				{state?.model && (
 					<div className="sh-sheet-row">
 						<dt>Model</dt>
@@ -733,6 +741,17 @@ export function SessionSheet({
 						<dd>
 							<button type="button" className="sh-sheet-link" onClick={onOpenPane}>
 								Watch the screen
+								<ChevronRight size={14} />
+							</button>
+						</dd>
+					</div>
+				)}
+				{onOpenShell && (
+					<div className="sh-sheet-row">
+						<dt>Shell</dt>
+						<dd>
+							<button type="button" className="sh-sheet-link" onClick={onOpenShell}>
+								Open an interactive terminal
 								<ChevronRight size={14} />
 							</button>
 						</dd>

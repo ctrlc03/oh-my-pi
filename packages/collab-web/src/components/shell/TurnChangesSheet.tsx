@@ -16,7 +16,9 @@ import {
 import type { ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GuestClient, GuestSnapshot, TurnDiffInfo } from "../../lib/client";
+import { useEditorLayout } from "../../lib/editor-layout";
 import { fmtDuration, splitPath } from "../../lib/format";
+import { type AgentLines, attributionTip, turnRef } from "../../lib/line-attribution";
 import { useMedia } from "../codemap/shared";
 import { type PaletteEntry, usePaletteEntries } from "../../lib/palette";
 import {
@@ -69,17 +71,28 @@ function plural(n: number, word: string): string {
 	return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
+/** The hover text of the lines of a turn (`entryId`) or, with none, of the whole session; null without a session. */
+function agentTipOf(snap: GuestSnapshot, sessionId: string | null, entryId: string | null): string | null {
+	if (sessionId === null) return null;
+	const title = snap.header?.title ?? null;
+	if (entryId === null) return `Written by an agent\n${title ?? "Untitled session"} · this session`;
+	const ref = turnRef(snap.entries, entryId, sessionId, title);
+	return ref === null ? null : attributionTip(ref);
+}
+
 interface ChangeFileProps {
 	file: TurnDiffFile;
 	open: boolean;
 	viewed: boolean;
 	side: boolean;
 	review: DiffReview | null;
+	/** The hover text of every added row (the turn's agent wrote them all); null leaves rows unmarked. */
+	agentLines: AgentLines | null;
 	onToggle(): void;
 	onViewed(): void;
 }
 
-function ChangeFile({ file, open, viewed, side, review, onToggle, onViewed }: ChangeFileProps): ReactNode {
+function ChangeFile({ file, open, viewed, side, review, agentLines, onToggle, onViewed }: ChangeFileProps): ReactNode {
 	const { dir, base } = splitPath(file.path);
 	const badge = BADGES[file.status];
 	return (
@@ -122,7 +135,14 @@ function ChangeFile({ file, open, viewed, side, review, onToggle, onViewed }: Ch
 			</div>
 			{open && (
 				<div className="sh-change-body">
-					<UnifiedDiff diff={file.diff} scope="turn" path={file.path} review={review} side={side} />
+					<UnifiedDiff
+						diff={file.diff}
+						scope="turn"
+						path={file.path}
+						review={review}
+						side={side}
+						agentLines={agentLines}
+					/>
 					{file.truncated === true && <div className="sh-file-note">The diff is longer than the host sends.</div>}
 				</div>
 			)}
@@ -137,11 +157,19 @@ interface ChangesPanelProps {
 	files: readonly TurnDiffFile[];
 	onSendToAgent: ((text: string) => void) | null;
 	heading: string;
+	/** The hover text of the lines this view's agent wrote; null: the lines are not marked. */
+	agentTip: string | null;
 }
 
 /** One view's files: viewed marks and review comments are kept per session and view. */
-function ChangesPanel({ view, sessionId, info, files, onSendToAgent, heading }: ChangesPanelProps): ReactNode {
+function ChangesPanel({ view, sessionId, info, files, onSendToAgent, heading, agentTip }: ChangesPanelProps): ReactNode {
 	const key = sessionId === null ? null : viewKey(sessionId, view);
+	const { attribution } = useEditorLayout();
+	// Every added row of a turn's or a session's diff is what its agent changed, so one text marks them all.
+	const agentLines = useMemo<AgentLines | null>(
+		() => (attribution && agentTip !== null ? () => agentTip : null),
+		[attribution, agentTip],
+	);
 	const wide = useMedia(WIDE_QUERY);
 	const [layout, setLayout] = useState<"unified" | "split">(() =>
 		readJson(LAYOUT_KEY) === "split" ? "split" : "unified",
@@ -245,6 +273,7 @@ function ChangesPanel({ view, sessionId, info, files, onSendToAgent, heading }: 
 								viewed={viewed.has(file.path)}
 								side={side}
 								review={review}
+								agentLines={agentLines}
 								onToggle={() => setExplicit({ ...explicit, [file.path]: !isOpen(file) })}
 								onViewed={() => markViewed(file)}
 							/>
@@ -547,6 +576,7 @@ export function TurnChangesSheet({
 				sessionId={sessionId}
 				info={info}
 				files={info.files}
+				agentTip={agentTipOf(snap, sessionId, tab === "turn" ? entryId : null)}
 				onSendToAgent={onSendToAgent}
 				heading={
 					tab === "turn"

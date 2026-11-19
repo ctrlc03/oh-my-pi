@@ -1,5 +1,15 @@
 import { describe, expect, it } from "bun:test";
-import { fitView, MAX_SCALE, MIN_SCALE, openingView, panBy, pinchView, wheelFactor, zoomAt } from "../src/lib/pan-zoom";
+import {
+	actualView,
+	fitView,
+	MAX_SCALE,
+	MIN_SCALE,
+	openingView,
+	panBy,
+	pinchView,
+	wheelFactor,
+	zoomAt,
+} from "../src/lib/pan-zoom";
 import { isSafeSvg, standaloneSvg, svgSize } from "../src/lib/svg";
 import { mermaidThemeVariables } from "../src/lib/theme-tokens";
 
@@ -45,6 +55,28 @@ describe("pan-zoom", () => {
 
 	it("pans", () => {
 		expect(panBy({ x: 1, y: 2, scale: 3 }, 10, -5)).toEqual({ x: 11, y: -3, scale: 3 });
+	});
+
+	it("never zooms a small image past the limit it is given, but still shrinks a large one to fit", () => {
+		const viewport = { width: 800, height: 600 };
+		expect(fitView({ width: 100, height: 50 }, viewport, 16, 1).scale).toBe(1);
+		expect(fitView({ width: 1600, height: 100 }, viewport, 16, 1).scale).toBeCloseTo(768 / 1600);
+		const opened = openingView({ width: 100, height: 50 }, viewport, 0, 16, 1);
+		expect(opened).toEqual(fitView({ width: 100, height: 50 }, viewport, 16, 1));
+	});
+
+	it("shows content at its natural size with its middle in the viewport's middle", () => {
+		expect(actualView({ width: 400, height: 200 }, { width: 800, height: 600 })).toEqual({
+			x: 200,
+			y: 200,
+			scale: 1,
+		});
+		// Larger than the viewport: the offset goes negative, so the middle is what shows.
+		expect(actualView({ width: 1000, height: 600 }, { width: 800, height: 400 })).toEqual({
+			x: -100,
+			y: -100,
+			scale: 1,
+		});
 	});
 
 	it("pinches: spread zooms, midpoint drag pans", () => {

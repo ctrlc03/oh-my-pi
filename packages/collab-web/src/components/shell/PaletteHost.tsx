@@ -41,6 +41,7 @@ import {
 	ChevronsRight,
 	ChevronsLeft,
 	Swords,
+	Terminal,
 	Trophy,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -89,6 +90,8 @@ export interface PaletteActions {
 	bakeoffChanges: (() => void) | null;
 	openBakeoffs: (() => void) | null;
 	openPane: (() => void) | null;
+	/** An interactive terminal in the session's folder; null unless this device may open one for this session. */
+	openShell: (() => void) | null;
 	openPreview: (() => void) | null;
 	openGithub: (() => void) | null;
 	openRun: (() => void) | null;
@@ -387,6 +390,14 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 				actions.openBakeoffs,
 			],
 			["app:pane", "Watch the terminal", "Computer", ["tmux", "screen", "pane"], SquareTerminal, actions.openPane],
+			[
+				"app:shell",
+				"Open an interactive terminal",
+				"Computer",
+				["shell", "terminal", "console", "command line", "bash", "zsh", "xterm", "split"],
+				Terminal,
+				actions.openShell,
+			],
 			["app:preview", "Preview the running app", "Computer", ["screenshot", "dev server"], Eye, actions.openPreview],
 			[
 				"app:run",

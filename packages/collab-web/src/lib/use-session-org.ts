@@ -167,7 +167,8 @@ export function useSessionOrgs(computers: readonly ComputerHandle[], rooms: read
 			// A room of a session the computer lists is that session's row (see `matchRooms`): the computer's own rules cover it.
 			const snap = computersRef.current.find(computer => computer.id === owner)?.snap;
 			const own = rooms.filter(room => roomOwner(room, computersRef.current) === owner);
-			const idle = (snap === undefined ? own : matchRooms(own, [...snap.hosts, ...snap.idle]).alone).map(room => ({
+			const listed = snap === undefined ? null : [...snap.hosts, ...snap.idle, ...snap.hibernated];
+			const idle = (listed === null ? own : matchRooms(own, listed).alone).map(room => ({
 				key: roomOrgKey(room.roomId),
 				lastActive: room.lastSeen,
 				working: false,

@@ -1,8 +1,8 @@
 /**
- * Live preview of a session's dev server, for the `preview` and `preview-targets` requests. The companion
+ * Live preview of a session's dev server, for the `preview`, `preview-pick` and `preview-targets` requests. The companion
  * screenshots a loopback page with a Chromium browser already on the computer (driven through puppeteer-core,
- * with real device emulation: the Chrome command line cannot size a window below ~500 CSS px on macOS) and lists
- * the dev servers the session's repository runs.
+ * with real device emulation: the Chrome command line cannot size a window below ~500 CSS px on macOS), finds the
+ * element under a point of such a screenshot (design mode) and lists the dev servers the session's repository runs.
  *
  * Only loopback http(s) pages are captured: a paired device already controls everything, but this feature is
  * for local dev servers, so it never fetches arbitrary addresses on the computer's network.
@@ -11,9 +11,25 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Browser } from "puppeteer-core";
-import { PREVIEW_SCALE, type PreviewShot, type PreviewTarget, type PreviewViewport } from "../src/lib/companion";
+import type { Browser, Page } from "puppeteer-core";
+import {
+	PREVIEW_SCALE,
+	type PreviewBox,
+	type PreviewPick,
+	type PreviewShot,
+	type PreviewTarget,
+	type PreviewViewport,
+} from "../src/lib/companion";
 import { isInside, repoRoot } from "./companion-git";
+import {
+	ancestorLabels,
+	collapseText,
+	curateStyles,
+	excerptHtml,
+	type SelectorStep,
+	selectorCandidates,
+	STYLE_PROPS,
+} from "./companion-preview-pick";
 
 /** Browser size in CSS pixels per viewport; phones and tablets are emulated as touch devices. */
 export const VIEWPORTS: Record<PreviewViewport, { width: number; height: number; mobile: boolean }> = {
@@ -35,6 +51,11 @@ const BROWSER_IDLE_MS = 120_000;
 const MAX_IMAGE_BYTES = 1024 * 1024;
 /** Full-page captures stop at this many CSS pixels tall. */
 const MAX_FULL_PAGE_CSS_PX = 6_000;
+/** A picked element's picture is taken with this much page around it, and shows at most this much of its height. */
+const CROP_PAD_CSS_PX = 8;
+const MAX_CROP_CSS_PX = 2_000;
+/** The page sends at most this many characters of an element's HTML and of its text: a `<body>` is megabytes. */
+const PAGE_HTML_CHARS = 20_000;
 const MAX_URL_CHARS = 2048;
 const PROBE_TIMEOUT_MS = 5_000;
 const LSOF_TIMEOUT_MS = 5_000;
@@ -192,12 +213,16 @@ async function probe(url: string): Promise<void> {
 	if (location !== null) checkPreviewUrl(new URL(location, url).href);
 }
 
-async function capture(
+/**
+ * Load `url` at `viewport` in a fresh page of the warm browser, wait for it to settle, run `use` on it and close the page.
+ * The page never navigates off this computer.
+ */
+async function withPage<T>(
 	chrome: string,
 	url: string,
 	viewport: PreviewViewport,
-	fullPage: boolean,
-): Promise<PreviewShot> {
+	use: (page: Page) => Promise<T>,
+): Promise<T> {
 	await probe(url);
 	const { width, height, mobile } = VIEWPORTS[viewport];
 	const page = await (await warmBrowser(chrome)).newPage();
@@ -224,6 +249,18 @@ async function capture(
 		await page.waitForNetworkIdle({ idleTime: SETTLE_IDLE_MS, timeout: SETTLE_TIMEOUT_MS }).catch(() => {
 			// A page that keeps polling never goes idle: capture it as it is.
 		});
+		return await use(page);
+	} finally {
+		await page.close().catch(() => {
+			// The browser went away with it.
+		});
+		idleTimer = setTimeout(() => void closePreviewBrowser(), BROWSER_IDLE_MS);
+	}
+}
+
+function capture(chrome: string, url: string, viewport: PreviewViewport, fullPage: boolean): Promise<PreviewShot> {
+	return withPage(chrome, url, viewport, async page => {
+		const { width, height } = VIEWPORTS[viewport];
 		const pageHeight = fullPage
 			? Math.min(
 					MAX_FULL_PAGE_CSS_PX,
@@ -242,18 +279,166 @@ async function capture(
 				width: width * PREVIEW_SCALE,
 				height: pageHeight * PREVIEW_SCALE,
 				url,
+				viewport,
 				at: Date.now(),
 			};
 		}
 		throw new Error(
 			`The screenshot is ${(size / (1024 * 1024)).toFixed(1)} MB, over the ${MAX_IMAGE_BYTES / (1024 * 1024)} MB limit.`,
 		);
-	} finally {
-		await page.close().catch(() => {
-			// The browser went away with it.
-		});
-		idleTimer = setTimeout(() => void closePreviewBrowser(), BROWSER_IDLE_MS);
-	}
+	});
+}
+
+/** What the page reports of the element under the picked point. */
+interface Described {
+	steps: SelectorStep[];
+	/** In CSS pixels from the page's top-left corner. */
+	rect: PreviewBox;
+	html: string;
+	/** The page sent only the first part of the element's HTML. */
+	htmlClipped: boolean;
+	text: string;
+	styles: Record<string, string>;
+}
+
+/**
+ * Find the element at (`x`, `y`) of the page `rawUrl` as it renders at `viewport` (the same load and settling as a
+ * screenshot, so the point is where the device saw it).
+ * @throws Error when the URL is refused, the page fails to load, the point is outside the page, or nothing is there.
+ */
+export function pickPreviewElement(
+	chrome: string,
+	rawUrl: unknown,
+	viewport: PreviewViewport,
+	x: unknown,
+	y: unknown,
+): Promise<PreviewPick> {
+	const { width } = VIEWPORTS[viewport];
+	if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y))
+		return Promise.reject(new Error("invalid point"));
+	if (x < 0 || x > width || y < 0 || y > MAX_FULL_PAGE_CSS_PX)
+		return Promise.reject(new Error("The point is outside the page."));
+	const run = captureQueue.then(() => pick(chrome, checkPreviewUrl(rawUrl), viewport, x, y));
+	captureQueue = run.catch(() => {});
+	return run;
+}
+
+function pick(chrome: string, url: string, viewport: PreviewViewport, x: number, y: number): Promise<PreviewPick> {
+	return withPage(chrome, url, viewport, async page => {
+		const { width, height } = VIEWPORTS[viewport];
+		// A point below the first screen is scrolled to the middle of it, the way the screenshot's page would be read there.
+		const scrolled = await page.evaluate(
+			async (wanted: number, screen: number) => {
+				const room = Math.max(0, document.documentElement.scrollHeight - screen);
+				window.scrollTo(0, wanted < screen ? 0 : Math.min(room, wanted - screen / 2));
+				await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+				return window.scrollY;
+			},
+			y,
+			height,
+		);
+		const hit = await page.evaluateHandle(
+			(atX: number, atY: number) => document.elementFromPoint(atX, atY),
+			x,
+			Math.min(y - scrolled, height - 1),
+		);
+		const element = hit.asElement();
+		if (element === null) throw new Error("Nothing is at that point of the page.");
+		const described = await element.evaluate(
+			(node: Node, props: readonly string[], htmlLimit: number, textLimit: number): Described | null => {
+				if (!(node instanceof Element)) return null;
+				const steps: SelectorStep[] = [];
+				for (let at: Element | null = node; at !== null && steps.length < 40; at = at.parentElement) {
+					let nth = 1;
+					let same = 1;
+					if (at.parentElement !== null) {
+						nth = 0;
+						same = 0;
+						for (const sibling of at.parentElement.children) {
+							if (sibling.localName !== at.localName) continue;
+							same++;
+							if (sibling === at) nth = same;
+						}
+					}
+					steps.push({ tag: at.localName, id: at.id, classes: Array.from(at.classList).slice(0, 12), nth, same });
+				}
+				const rect = node.getBoundingClientRect();
+				const computed = getComputedStyle(node);
+				const styles: Record<string, string> = {};
+				for (const prop of props) styles[prop] = computed.getPropertyValue(prop);
+				const html = node.outerHTML;
+				const text = node instanceof HTMLElement ? node.innerText : (node.textContent ?? "");
+				return {
+					steps,
+					rect: { x: rect.left + window.scrollX, y: rect.top + window.scrollY, width: rect.width, height: rect.height },
+					html: html.slice(0, htmlLimit),
+					htmlClipped: html.length > htmlLimit,
+					text: text.slice(0, textLimit),
+					styles,
+				};
+			},
+			STYLE_PROPS,
+			PAGE_HTML_CHARS,
+			PAGE_HTML_CHARS,
+		);
+		if (described === null) throw new Error("Nothing is at that point of the page.");
+		const candidates = selectorCandidates(described.steps);
+		const unique = await element.evaluate((node: Node, selectors: readonly string[]) => {
+			return selectors.findIndex(selector => {
+				try {
+					const matches = document.querySelectorAll(selector);
+					return matches.length === 1 && matches[0] === node;
+				} catch {
+					// A class or id the selector grammar refuses.
+					return false;
+				}
+			});
+		}, candidates);
+		// Nothing is unique (duplicate ids): the full path is the closest there is.
+		const selector = candidates[unique >= 0 ? unique : candidates.length - 1] ?? "";
+
+		const { rect } = described;
+		const left = Math.min(Math.max(0, Math.floor(rect.x - CROP_PAD_CSS_PX)), width - 1);
+		const top = Math.max(0, Math.floor(rect.y - CROP_PAD_CSS_PX));
+		const right = Math.min(width, Math.ceil(rect.x + rect.width + CROP_PAD_CSS_PX));
+		const bottom = Math.ceil(rect.y + rect.height + CROP_PAD_CSS_PX);
+		const cut = bottom - top > MAX_CROP_CSS_PX;
+		const clip = {
+			x: left,
+			y: top,
+			width: Math.max(1, right - left),
+			height: Math.max(1, Math.min(bottom - top, MAX_CROP_CSS_PX)),
+		};
+		// The crop is read from the top of the page like the screenshot, whatever was scrolled to find the element.
+		await page.evaluate(() => window.scrollTo(0, 0));
+		let image: { data: string; mimeType: string } | null = null;
+		for (const options of [{ type: "png" as const }, ...JPEG_QUALITIES.map(quality => ({ type: "jpeg" as const, quality }))]) {
+			const bytes = await page.screenshot({ ...options, clip, captureBeyondViewport: true });
+			if (bytes.length > MAX_IMAGE_BYTES) continue;
+			image = { data: Buffer.from(bytes).toString("base64"), mimeType: `image/${options.type}` };
+			break;
+		}
+		if (image === null) throw new Error(`The element's picture is over the ${MAX_IMAGE_BYTES / (1024 * 1024)} MB limit.`);
+		const excerpt = excerptHtml(described.html, described.htmlClipped);
+		return {
+			url,
+			viewport,
+			tag: described.steps[0]?.tag ?? "",
+			selector,
+			ancestors: ancestorLabels(described.steps),
+			html: excerpt.html,
+			htmlCut: excerpt.cut,
+			text: collapseText(described.text),
+			styles: curateStyles(described.styles),
+			box: {
+				x: Math.round(rect.x * 10) / 10,
+				y: Math.round(rect.y * 10) / 10,
+				width: Math.round(rect.width * 10) / 10,
+				height: Math.round(rect.height * 10) / 10,
+			},
+			crop: { ...image, width: clip.width * PREVIEW_SCALE, height: clip.height * PREVIEW_SCALE, cut },
+		};
+	});
 }
 
 export interface Listener {

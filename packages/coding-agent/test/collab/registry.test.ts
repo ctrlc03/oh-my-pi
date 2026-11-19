@@ -75,6 +75,7 @@ function makeFixture(over: Partial<CollabHostSnapshot> = {}): Fixture {
 			relayConnected: true,
 			inputRequired: false,
 			busy: false,
+			background: false,
 			access: "control",
 			...over,
 		},
@@ -443,6 +444,27 @@ describe("collab registry", () => {
 		// Unknown, never idle: the older host stays listed with a null flag, and a
 		// snapshot that answers with a non-boolean is malformed, not busy.
 		expect(hosts.map(host => [host.sessionId, host.busy])).toEqual([["older-host", null]]);
+	});
+
+	it("lists a host that omits background as unknown work in progress, not as none", async () => {
+		const dir = await tempDir();
+		// An omp older than the `background` field: it reports `busy` but not what else is running.
+		const older = makeFixture({ sessionId: "no-background-host" });
+		const { background: _background, ...withoutBackground } = older.snapshot;
+		openPublications.push(
+			await publishCollabHost(
+				{ snapshot: () => withoutBackground as CollabHostSnapshot, link: () => null },
+				{ dir, instanceId: older.snapshot.instanceId },
+			),
+		);
+		const reporting = makeFixture({ sessionId: "reporting-host", background: true });
+		await publish(dir, reporting);
+
+		const hosts = await listCollabHosts({ dir });
+		expect(hosts.map(host => [host.sessionId, host.background]).sort()).toEqual([
+			["no-background-host", null],
+			["reporting-host", true],
+		]);
 	});
 
 	it("keeps both URLs and room secrets off disk even after resolving links", async () => {

@@ -33,6 +33,14 @@ describe("Transcript Markdown", () => {
 		expect(html).not.toContain("<img src=x");
 	});
 
+	it("leaves a relative image without an address for the viewer to fill in, and keeps an absolute one as it is", () => {
+		const html = renderMarkdown('![Logo "v2"](docs/logo.png)\n\n![Remote](https://example.com/a.png)');
+
+		expect(html).toContain('<img data-md-src="docs/logo.png" alt="Logo &quot;v2&quot;">');
+		expect(html).not.toContain(' src="docs/logo.png"');
+		expect(html).toContain('src="https://example.com/a.png"');
+	});
+
 	it("strips span and text HTML tags but preserves their contents and inline text rendering", () => {
 		const html = renderMarkdown("<span></span><text>▃</text>");
 

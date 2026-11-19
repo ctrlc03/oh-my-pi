@@ -3,6 +3,7 @@ import { DEVICE_ORG } from "../../lib/org-storage";
 import { AutoSettlePanel } from "../shell/OrgMenu";
 import { WorktreeSettings } from "../shell/WorktreeSettings";
 import { DiskSettings } from "../shell/DiskSettings";
+import { HibernateSettings } from "../shell/HibernateSettings";
 import { StakesSettings } from "../shell/StakesSettings";
 import type { SettingsEnv } from "./env";
 import { ComputerGate, SettingsGroup } from "./SettingsRows";
@@ -37,6 +38,11 @@ export function SessionsSection({ env }: { env: SettingsEnv }): ReactNode {
 						<ComputerGate computer={computer}>{client => <DiskSettings client={client} />}</ComputerGate>
 					</SettingsGroup>
 				)}
+				{computer.snap.canHibernate && (
+					<SettingsGroup title="Hibernation">
+						<ComputerGate computer={computer}>{client => <HibernateSettings client={client} />}</ComputerGate>
+					</SettingsGroup>
+				)}
 				{computer.snap.canHighStakes && (
 					<SettingsGroup title="High-stakes quizzes">
 						<ComputerGate computer={computer}>{client => <StakesSettings client={client} />}</ComputerGate>
@@ -63,6 +69,13 @@ export function SessionsSection({ env }: { env: SettingsEnv }): ReactNode {
 						<SettingsGroup nested title="Disk space">
 							<ComputerGate computer={computer} named>
 								{client => <DiskSettings client={client} computerName={computer.name} />}
+							</ComputerGate>
+						</SettingsGroup>
+					)}
+					{computer.snap.canHibernate && (
+						<SettingsGroup nested title="Hibernation">
+							<ComputerGate computer={computer} named>
+								{client => <HibernateSettings client={client} computerName={computer.name} />}
 							</ComputerGate>
 						</SettingsGroup>
 					)}

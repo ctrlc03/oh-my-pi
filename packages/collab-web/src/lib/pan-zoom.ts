@@ -29,14 +29,14 @@ export function clampScale(scale: number): number {
 	return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
 }
 
-/** The view that shows all of `content` inside `viewport`, centred, with `padding` pixels around it. */
-export function fitView(content: Size, viewport: Size, padding = 16): View {
+/** The view that shows all of `content` inside `viewport`, centred, with `padding` pixels around it; never zoomed past `maxScale`. */
+export function fitView(content: Size, viewport: Size, padding = 16, maxScale = MAX_FIT_SCALE): View {
 	if (content.width <= 0 || content.height <= 0 || viewport.width <= 0 || viewport.height <= 0) {
 		return { x: 0, y: 0, scale: 1 };
 	}
 	const scale = clampScale(
 		Math.min(
-			MAX_FIT_SCALE,
+			maxScale,
 			(viewport.width - 2 * padding) / content.width,
 			(viewport.height - 2 * padding) / content.height,
 		),
@@ -53,12 +53,23 @@ export function fitView(content: Size, viewport: Size, padding = 16): View {
  * text is still readable), otherwise at `minScale` with the start of the diagram in view, to be panned.
  * An axis that fits is centred; one that does not starts `padding` pixels in from the top or left.
  */
-export function openingView(content: Size, viewport: Size, minScale: number, padding = 16): View {
-	const fit = fitView(content, viewport, padding);
+export function openingView(
+	content: Size,
+	viewport: Size,
+	minScale: number,
+	padding = 16,
+	maxFit = MAX_FIT_SCALE,
+): View {
+	const fit = fitView(content, viewport, padding, maxFit);
 	if (fit.scale >= minScale) return fit;
 	const place = (extent: number, room: number): number =>
 		extent * minScale + 2 * padding <= room ? (room - extent * minScale) / 2 : padding;
 	return { x: place(content.width, viewport.width), y: place(content.height, viewport.height), scale: minScale };
+}
+
+/** The view that shows `content` at its natural size (100%), its middle at the viewport's middle. */
+export function actualView(content: Size, viewport: Size): View {
+	return { x: (viewport.width - content.width) / 2, y: (viewport.height - content.height) / 2, scale: 1 };
 }
 
 /** Zoom by `factor` keeping the content point under `anchor` (viewport coordinates) where it is. */

@@ -1,0 +1,101 @@
+/* ---- session cards: the user's status and note, and the agent's todo progress, under a session's title ---- */
+.sh-card-lines {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;
+	font: 400 11.5px / 1.4 var(--font-ui);
+}
+
+.sh-card-line {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	color: var(--fg-muted);
+	white-space: nowrap;
+}
+
+/* The status chip: a pill like the other chips, tinted by where the session stands. */
+.sh-card-chip {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	height: 18px;
+	padding: 0 7px;
+	font: 600 10.5px / 1 var(--font-ui);
+	color: var(--card-tint, var(--fg-muted));
+	background: color-mix(in srgb, var(--card-tint, var(--fg-muted)) 14%, transparent);
+	border-radius: 999px;
+}
+
+.sh-card-chip[data-status="in-progress"] {
+	--card-tint: var(--accent);
+}
+
+.sh-card-chip[data-status="in-review"] {
+	--card-tint: var(--warn);
+}
+
+.sh-card-chip[data-status="blocked"] {
+	--card-tint: var(--err);
+}
+
+.sh-card-chip[data-status="done"] {
+	--card-tint: var(--ok);
+}
+
+.sh-card-note,
+.sh-card-task {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sh-card-note {
+	color: var(--fg);
+}
+
+/* `3/7`: monospace so the numbers keep their width as they count up. */
+.sh-card-progress {
+	flex: none;
+	font: 500 11px / 1 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+.sh-card-todo[data-active="true"] .sh-card-progress {
+	color: var(--accent);
+}
+
+/* ---- the card editor: status choices and a note ---- */
+.sh-card-editor {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 4px 2px 2px;
+}
+
+.sh-card-choices {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.sh-card-note-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.sh-card-count {
+	align-self: flex-end;
+	font: 400 11px / 1 var(--font-mono);
+	color: var(--fg-faint);
+}
+
+.sh-card-actions {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+}

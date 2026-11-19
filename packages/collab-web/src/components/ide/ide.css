@@ -281,6 +281,47 @@
 	display: none;
 }
 
+/* What fills the code area: the editing surface, an image or PDF viewer, and the rendered preview of Markdown or SVG. */
+.sh-ide-panes {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+}
+
+.sh-ide-panes[hidden] {
+	display: none;
+}
+
+/* A narrow editor puts the preview under the source instead of beside it. */
+.sh-ide-panes[data-stack="true"] {
+	flex-direction: column;
+}
+
+.sh-ide-preview {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+
+/* Only a split has both halves showing: a line between them. */
+.sh-ide-editor:not([hidden]) + .sh-ide-preview {
+	border-left: 1px solid var(--border);
+}
+
+.sh-ide-panes[data-stack="true"] > .sh-ide-editor:not([hidden]) + .sh-ide-preview {
+	border-left: 0;
+	border-top: 1px solid var(--border);
+}
+
+.sh-ide-modebar {
+	min-height: 34px;
+	padding-top: 2px;
+	padding-bottom: 2px;
+}
+
 .sh-ide-empty {
 	display: flex;
 	flex: 1;
@@ -475,6 +516,14 @@
 	margin-left: 3px;
 	width: 3px !important;
 	background: var(--ok);
+}
+
+/* Lines an agent wrote (the layout menu's Agent-written lines): a thin bar beside the line numbers; its hover says who. */
+.sh-ide-attr-bar {
+	margin-left: 7px;
+	width: 2px !important;
+	background: color-mix(in srgb, var(--accent) 65%, transparent);
+	cursor: help;
 }
 
 /* ---- language server hover in CodeMirror (Monaco draws its own) ---- */

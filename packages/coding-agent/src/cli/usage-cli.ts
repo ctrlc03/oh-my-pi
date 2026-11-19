@@ -27,7 +27,7 @@ import { AuthBrokerClient, AuthBrokerError } from "@oh-my-pi/pi-ai/auth-broker";
 import type { ClientUsageClientSummary } from "@oh-my-pi/pi-ai/usage";
 import { formatProviderName } from "@oh-my-pi/pi-tui/chrome/format";
 import { peakBuckets, renderSparkline } from "@oh-my-pi/pi-tui/components/sparkline";
-import { formatDuration, formatNumber, getProjectDir, sanitizeText } from "@oh-my-pi/pi-utils";
+import { formatDuration, formatNumber, getProjectDir, isRecord, sanitizeText } from "@oh-my-pi/pi-utils";
 import chalk from "@oh-my-pi/pi-utils/chalk";
 import { ModelRegistry } from "../config/model-registry";
 import { Settings } from "../config/settings";
@@ -63,7 +63,11 @@ import {
 	type UsageAccountIdentity,
 } from "../slash-commands/helpers/usage-accounts";
 
-import { cfgRetryUsageReservePct } from "../session/settings";
+import {
+	cfgProvidersPreferredAccounts,
+	cfgRetryUsageReservePct,
+	validatePreferredAccounts,
+} from "../session/settings";
 
 const BAR_WIDTH = 28;
 
@@ -71,7 +75,7 @@ export interface UsageCommandArgs {
 	action?: string;
 	json?: boolean;
 	provider?: string;
-	/** `<provider>/<credential id>` saved reset to spend (with the `reset` action). */
+	/** `<provider>/<credential id>` saved reset to spend (with `reset`), or `<provider>/<identity key | auto>` (with `use`). */
 	target?: string;
 	redact?: boolean;
 	/** Show recorded usage-limit history instead of a live snapshot. */
@@ -1262,24 +1266,35 @@ interface OAuthIdentityKeyRow {
 	identityKey: string | null;
 	/** Organization or workspace display name, when the provider reports one. */
 	orgName?: string;
+	/** The login email and the provider's account id, which usage reports label the account by: lets a reader match a row to its usage windows. */
+	email?: string;
+	accountId?: string;
+	/** The account new sessions start on (`providers.preferredAccounts`); absent when the provider is automatic. */
+	preferred?: true;
 }
 
 /**
  * Every OAuth account this process sees (after any broker account pool), with
  * the identity key that `task.agentAccountPools`, `sessions.restrict`, and
- * broker account pools match. Only the provider, the key, and the
- * organization's display name leave each credential; tokens never do.
+ * broker account pools match. Only the provider, the key, the display
+ * identity (organization name, email, account id) and whether new sessions
+ * start on it leave each credential; tokens never do.
  */
-function collectOAuthIdentityKeys(authStorage: AuthStorage, provider: string | undefined): OAuthIdentityKeyRow[] {
+function collectOAuthIdentityKeys(
+	authStorage: AuthStorage,
+	provider: string | undefined,
+	preferred: Readonly<Record<string, string>>,
+): OAuthIdentityKeyRow[] {
 	const rows: OAuthIdentityKeyRow[] = [];
 	for (const { provider: rowProvider, credential } of authStorage.credentials.list(provider)) {
 		if (credential.type !== "oauth") continue;
 		const identityKey = resolveCredentialIdentityKey(rowProvider, credential);
-		rows.push(
-			credential.orgName
-				? { provider: rowProvider, identityKey, orgName: credential.orgName }
-				: { provider: rowProvider, identityKey },
-		);
+		const row: OAuthIdentityKeyRow = { provider: rowProvider, identityKey };
+		if (credential.orgName) row.orgName = credential.orgName;
+		if (credential.email) row.email = credential.email;
+		if (credential.accountId) row.accountId = credential.accountId;
+		if (identityKey !== null && preferred[rowProvider] === identityKey) row.preferred = true;
+		rows.push(row);
 	}
 	return rows;
 }
@@ -1299,9 +1314,56 @@ function formatOAuthIdentityKeys(rows: readonly OAuthIdentityKeyRow[]): string {
 			continue;
 		}
 		const orgName = row.orgName ? sanitizeText(row.orgName.replace(/[\r\n\t]+/g, " ")) : undefined;
-		lines.push(orgName ? `  ${row.identityKey.padEnd(width)}  ${chalk.dim(orgName)}` : `  ${row.identityKey}`);
+		const notes = [orgName, row.preferred ? "default for new sessions" : undefined].filter(Boolean).join(" · ");
+		lines.push(notes ? `  ${row.identityKey.padEnd(width)}  ${chalk.dim(notes)}` : `  ${row.identityKey}`);
 	}
 	return lines.join("\n");
+}
+
+/**
+ * `omp usage use <provider>/<identity key | auto>`: make one stored OAuth account the one new sessions
+ * start on, or `auto` to let omp rank the provider's accounts by usage headroom again. Writes
+ * `providers.preferredAccounts` in the global config; sessions already running keep their account
+ * (switching one mid-conversation would cold-miss its account-scoped prompt cache).
+ */
+async function runUsageUseCommand(cmd: UsageCommandArgs, authStorage: AuthStorage): Promise<void> {
+	const target = cmd.target ?? "";
+	const slash = target.indexOf("/");
+	if (slash <= 0 || slash === target.length - 1) {
+		failUsageReset("Usage: omp usage use <provider>/<identity key | auto>; `omp usage accounts` lists the keys.");
+		return;
+	}
+	const provider = target.slice(0, slash).toLowerCase();
+	const choice = target.slice(slash + 1);
+	if (choice !== "auto") {
+		// Accept only a key a stored account carries: a typo would otherwise be saved and silently never match.
+		try {
+			await authStorage.credentials.revalidate();
+		} catch {
+			// The last-known accounts still tell a typo from a real key.
+		}
+		if (!collectOAuthIdentityKeys(authStorage, provider, {}).some(row => row.identityKey === choice)) {
+			failUsageReset(
+				`No OAuth account "${choice}" for provider "${provider}". \`omp usage accounts\` lists the keys.`,
+			);
+			return;
+		}
+	}
+	const writable = await Settings.init();
+	// Start from the global layer alone, so a project overlay's entry is not copied into the global config.
+	const written = writable.getGlobalSettings().providers;
+	const current = isRecord(written) ? validatePreferredAccounts(written.preferredAccounts) : {};
+	const next: Record<string, string> = { ...current };
+	if (choice === "auto") delete next[provider];
+	else next[provider] = choice;
+	if (Object.keys(next).length === 0) cfgProvidersPreferredAccounts.unset(writable);
+	else cfgProvidersPreferredAccounts.set(writable, next);
+	await writable.flush();
+	process.stdout.write(
+		choice === "auto"
+			? `New ${provider} sessions pick the account with the most headroom again.\n`
+			: `New ${provider} sessions start on ${choice}. Sessions already running keep their account.\n`,
+	);
 }
 
 const RESET_COMMAND = "omp usage reset";
@@ -1555,7 +1617,11 @@ export async function runUsageCommand(cmd: UsageCommandArgs): Promise<void> {
 			} catch {
 				// Stale identities beat no output.
 			}
-			const rows = collectOAuthIdentityKeys(authStorage, cmd.provider?.toLowerCase());
+			const rows = collectOAuthIdentityKeys(
+				authStorage,
+				cmd.provider?.toLowerCase(),
+				validatePreferredAccounts(cfgProvidersPreferredAccounts.get(settings)),
+			);
 			if (cmd.json) {
 				process.stdout.write(`${JSON.stringify({ accounts: rows }, null, 2)}\n`);
 				return;
@@ -1573,6 +1639,10 @@ export async function runUsageCommand(cmd: UsageCommandArgs): Promise<void> {
 		}
 		if (cmd.action === "reset") {
 			await runUsageResetCommand(cmd, settings, authStorage);
+			return;
+		}
+		if (cmd.action === "use") {
+			await runUsageUseCommand(cmd, authStorage);
 			return;
 		}
 		if (cmd.action === "clients") {

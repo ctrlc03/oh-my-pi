@@ -3,6 +3,7 @@ import { ArrowLeftRight, BellOff, Hourglass, Play, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import type { UsageLimitsInfo } from "../../lib/client";
+import type { CompanionClient } from "../../lib/companion";
 import { canResumeAtReset, clockLabel, limitedText } from "../../lib/usage-limits";
 import { useNow } from "../../lib/use-now";
 import { LimitWindows } from "./LimitWindows";
@@ -19,6 +20,8 @@ export interface LimitsSheetProps {
 	/** Models this writer may switch to; null for view-only guests and hosts without `session-cmd`. */
 	models: readonly WireModel[] | null;
 	model: WireModel | undefined;
+	/** The companion that may switch the computer's default account; null where this device may not (see `LimitWindowsProps`). */
+	accountsClient: CompanionClient | null;
 	onSessionCommand(cmd: SessionCommand, arg?: string): void;
 	onClose(): void;
 }
@@ -29,6 +32,7 @@ export function LimitsSheet({
 	activeProvider,
 	models,
 	model,
+	accountsClient,
 	onSessionCommand,
 	onClose,
 }: LimitsSheetProps): ReactNode {
@@ -45,6 +49,7 @@ export function LimitsSheet({
 					info={info}
 					activeProvider={activeProvider}
 					onRefresh={() => onSessionCommand("usage-limits", "refresh")}
+					accountsClient={accountsClient}
 				/>
 				{models !== null && models.length > 0 && (
 					<section className="sh-stats-section" aria-label="Switch model">
@@ -69,6 +74,8 @@ export interface LimitBarProps {
 	models: readonly WireModel[] | null;
 	model: WireModel | undefined;
 	readOnly: boolean;
+	/** The companion that may switch the computer's default account; null where this device may not. */
+	accountsClient: CompanionClient | null;
 	onSessionCommand(cmd: SessionCommand, arg?: string): void;
 	/** Snooze the session in the sessions list until the limit resets; absent hides the action. */
 	onSnooze?(until: number): void;
@@ -85,6 +92,7 @@ export function LimitBar({
 	models,
 	model,
 	readOnly,
+	accountsClient,
 	onSessionCommand,
 	onSnooze,
 }: LimitBarProps): ReactNode {
@@ -146,6 +154,7 @@ export function LimitBar({
 					activeProvider={limited.provider}
 					models={readOnly ? null : models}
 					model={model}
+					accountsClient={readOnly ? null : accountsClient}
 					onSessionCommand={onSessionCommand}
 					onClose={() => setSheet(false)}
 				/>

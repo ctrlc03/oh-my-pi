@@ -1,8 +1,15 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { resolveCredentialIdentityKey } from "@oh-my-pi/pi-ai";
 import { TempDir } from "@oh-my-pi/pi-utils";
 import { AuthStorage, SqliteAuthCredentialStore } from "../src/session/auth-storage";
-import { credentialPinHash, recordCredentialPin, seedCredentialPins } from "../src/session/credential-pin";
+import {
+	applyPreferredAccounts,
+	credentialPinHash,
+	recordCredentialPin,
+	seedCredentialPins,
+} from "../src/session/credential-pin";
+import { validatePreferredAccounts } from "../src/session/settings";
 import { SessionManager } from "../src/session/session-manager";
 
 const ANTHROPIC_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN"] as const;
@@ -218,5 +225,77 @@ describe("credential pins", () => {
 		expect(entries).toHaveLength(1);
 		const identity = storage.oauth.identity("anthropic", sessionId);
 		expect(manager.getCredentialPins().get("anthropic")?.hash).toBe(credentialPinHash("anthropic", identity!));
+	});
+
+	/** The identity key `omp usage accounts` lists for the stored account named by `suffix`. */
+	function identityKeyOf(suffix: string): string {
+		const stored = storage.credentials
+			.list("anthropic")
+			.find(row => row.credential.type === "oauth" && row.credential.accountId === `account-${suffix}`);
+		const key = stored && resolveCredentialIdentityKey("anthropic", stored.credential);
+		if (!key) throw new Error(`expected a stored account ${suffix}`);
+		return key;
+	}
+
+	function activeAccountId(sessionId: string): string | undefined {
+		return storage.oauth.accounts("anthropic", sessionId).find(account => account.active)?.accountId;
+	}
+
+	test("a new session starts on the preferred account", () => {
+		const sessionId = SessionManager.create(tempDir.path(), tempDir.path()).getSessionId();
+
+		applyPreferredAccounts(storage, sessionId, { anthropic: identityKeyOf("b") }, new Set());
+
+		expect(activeAccountId(sessionId)).toBe("account-b");
+	});
+
+	test("a provider the session already routed keeps its account", () => {
+		const sessionId = SessionManager.create(tempDir.path(), tempDir.path()).getSessionId();
+		const preferred = { anthropic: identityKeyOf("b") };
+
+		// A resumed transcript's pin: its prompt cache lives on that account.
+		applyPreferredAccounts(storage, sessionId, preferred, new Set(["anthropic"]));
+		expect(activeAccountId(sessionId)).toBeUndefined();
+
+		// An affinity inherited from a parent session.
+		const parent = SessionManager.create(tempDir.path(), tempDir.path()).getSessionId();
+		const accountA = storage.oauth.accounts("anthropic").find(account => account.accountId === "account-a");
+		storage.sessions.pin("anthropic", parent, accountA!.credentialId);
+		storage.sessions.inherit(parent, sessionId);
+		applyPreferredAccounts(storage, sessionId, preferred, new Set());
+		expect(activeAccountId(sessionId)).toBe("account-a");
+	});
+
+	test("an identity key no stored account carries pins nothing", () => {
+		const sessionId = SessionManager.create(tempDir.path(), tempDir.path()).getSessionId();
+
+		applyPreferredAccounts(storage, sessionId, { anthropic: "email:gone@example.com" }, new Set());
+
+		expect(activeAccountId(sessionId)).toBeUndefined();
+	});
+
+	test("a pool restriction wins over the preferred account", () => {
+		const sessionId = SessionManager.create(tempDir.path(), tempDir.path()).getSessionId();
+		storage.sessions.restrict("anthropic", sessionId, [identityKeyOf("a")]);
+
+		applyPreferredAccounts(storage, sessionId, { anthropic: identityKeyOf("b") }, new Set());
+
+		expect(activeAccountId(sessionId)).toBeUndefined();
+	});
+});
+
+describe("providers.preferredAccounts", () => {
+	test("reads an absent or null value as no preference and drops a null provider", () => {
+		expect(validatePreferredAccounts(undefined)).toEqual({});
+		expect(validatePreferredAccounts(null)).toEqual({});
+		expect(validatePreferredAccounts({ anthropic: "email:a@example.com", "openai-codex": null })).toEqual({
+			anthropic: "email:a@example.com",
+		});
+	});
+
+	test("rejects a value that would silently never match", () => {
+		for (const bad of [[], "anthropic", { anthropic: "" }, { anthropic: " email:a@example.com" }, { anthropic: 7 }]) {
+			expect(() => validatePreferredAccounts(bad)).toThrow("Invalid providers.preferredAccounts");
+		}
 	});
 });

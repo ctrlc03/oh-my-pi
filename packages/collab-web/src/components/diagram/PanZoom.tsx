@@ -2,7 +2,7 @@ import { Maximize, Minus, Plus } from "lucide-react";
 import type { KeyboardEvent, PointerEvent, ReactNode } from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Point, Size, View } from "../../lib/pan-zoom";
-import { fitView, openingView, panBy, pinchView, wheelFactor, zoomAt } from "../../lib/pan-zoom";
+import { actualView, fitView, openingView, panBy, pinchView, wheelFactor, zoomAt } from "../../lib/pan-zoom";
 import { toLayout } from "../../lib/zoom";
 
 const BUTTON_STEP = 1.4;
@@ -12,6 +12,12 @@ export interface PanZoomProps {
 	size: Size;
 	/** Smallest zoom the opening view may use: a diagram too wide for it opens at this zoom, to be panned, instead of shrinking its text. */
 	readableScale: number;
+	/** Largest zoom the fit and opening views use; an image passes 1 so a small one is not blown up (default 3). */
+	maxFit?: number;
+	/** Accessible name of the surface (default: a diagram's). */
+	label?: string;
+	/** Adds a 100% button and a readout of the zoom to the controls (an image's). */
+	showZoom?: boolean;
 	children: ReactNode;
 }
 
@@ -21,7 +27,7 @@ export interface PanZoomProps {
  * of it, or its start at the readable zoom) until the first gesture, so it stays put while the sheet resizes
  * (rotation, on-screen keyboard).
  */
-export function PanZoom({ size, readableScale, children }: PanZoomProps): ReactNode {
+export function PanZoom({ size, readableScale, maxFit, label, showZoom, children }: PanZoomProps): ReactNode {
 	const surface = useRef<HTMLDivElement>(null);
 	const [view, setView] = useState<View>({ x: 0, y: 0, scale: 1 });
 	// Which view a resize restores: null once the user has moved the view.
@@ -35,22 +41,22 @@ export function PanZoom({ size, readableScale, children }: PanZoomProps): ReactN
 	};
 	const fit = useCallback((): void => {
 		following.current = "fit";
-		setView(fitView(size, viewport()));
-	}, [size]);
+		setView(fitView(size, viewport(), undefined, maxFit));
+	}, [size, maxFit]);
 
 	useLayoutEffect(() => {
 		const node = surface.current;
 		if (!node) return;
 		const restore = (): void => {
-			if (following.current === "opening") setView(openingView(size, viewport(), readableScale));
-			else if (following.current === "fit") setView(fitView(size, viewport()));
+			if (following.current === "opening") setView(openingView(size, viewport(), readableScale, undefined, maxFit));
+			else if (following.current === "fit") setView(fitView(size, viewport(), undefined, maxFit));
 		};
 		following.current = "opening";
 		restore();
 		const observer = new ResizeObserver(restore);
 		observer.observe(node);
 		return () => observer.disconnect();
-	}, [readableScale, size]);
+	}, [readableScale, size, maxFit]);
 
 	const change = (next: (view: View) => View): void => {
 		following.current = null;
@@ -130,7 +136,7 @@ export function PanZoom({ size, readableScale, children }: PanZoomProps): ReactN
 				className="sh-pz-surface"
 				tabIndex={0}
 				role="application"
-				aria-label="Diagram: drag to pan, scroll or pinch to zoom"
+				aria-label={label ?? "Diagram: drag to pan, scroll or pinch to zoom"}
 				onPointerDown={onPointerDown}
 				onPointerMove={onPointerMove}
 				onPointerUp={onPointerEnd}
@@ -150,6 +156,11 @@ export function PanZoom({ size, readableScale, children }: PanZoomProps): ReactN
 				</div>
 			</div>
 			<div className="sh-pz-controls">
+				{showZoom === true && (
+					<span className="sh-pz-zoom" aria-live="off">
+						{Math.round(view.scale * 100)}%
+					</span>
+				)}
 				<button
 					type="button"
 					className="sh-btn sh-btn-icon"
@@ -161,6 +172,17 @@ export function PanZoom({ size, readableScale, children }: PanZoomProps): ReactN
 				<button type="button" className="sh-btn sh-btn-icon" onClick={fit} aria-label="Fit to screen">
 					<Maximize size={15} />
 				</button>
+				{showZoom === true && (
+					<button
+						type="button"
+						className="sh-btn"
+						onClick={() => change(() => actualView(size, viewport()))}
+						aria-label="Actual size"
+						title="Actual size (100%)"
+					>
+						1:1
+					</button>
+				)}
 				<button
 					type="button"
 					className="sh-btn sh-btn-icon"

@@ -1784,12 +1784,23 @@ describe("omp usage accounts", () => {
 		try {
 			await runUsageCommand({ action: "accounts", json: true });
 			const listed = JSON.parse(output.join("")) as {
-				accounts: Array<{ provider: string; identityKey: string; orgName?: string }>;
+				accounts: Array<{
+					provider: string;
+					identityKey: string;
+					orgName?: string;
+					email?: string;
+					accountId?: string;
+				}>;
 			};
 			expect(listed.accounts).toEqual([
-				{ provider: "anthropic", identityKey: "email:dev@example.com|org:org-team", orgName: "Team" },
-				{ provider: "anthropic", identityKey: "email:dev@example.com|org:org-personal" },
-				{ provider: "openai-codex", identityKey: "account:acct-codex" },
+				{
+					provider: "anthropic",
+					identityKey: "email:dev@example.com|org:org-team",
+					orgName: "Team",
+					email: "dev@example.com",
+				},
+				{ provider: "anthropic", identityKey: "email:dev@example.com|org:org-personal", email: "dev@example.com" },
+				{ provider: "openai-codex", identityKey: "account:acct-codex", accountId: "acct-codex" },
 			]);
 
 			// Each listed key, used as a pool, routes a session to exactly that account.
@@ -1805,6 +1816,66 @@ describe("omp usage accounts", () => {
 			for (const account of listed.accounts) expect(text).toContain(account.identityKey);
 			expect(text).not.toMatch(/access-|refresh-|sk-stored/);
 		} finally {
+			vi.restoreAllMocks();
+			authStorage.close();
+		}
+	});
+});
+
+describe("omp usage use", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("marks the account new sessions start on, only for an account a store carries, and clears it with auto", async () => {
+		const authStorage = createInMemoryAuthStorage();
+		const oauth = (suffix: string, email: string) => ({
+			type: "oauth" as const,
+			access: `access-${suffix}`,
+			refresh: `refresh-${suffix}`,
+			expires: Date.now() + 60 * 60_000,
+			email,
+		});
+		await authStorage.credentials.set("anthropic", [oauth("a", "a@example.com"), oauth("b", "b@example.com")]);
+		const settings = Settings.isolated();
+		vi.spyOn(Settings, "loadReadOnly").mockResolvedValue(settings);
+		vi.spyOn(Settings, "init").mockResolvedValue(settings);
+		vi.spyOn(sdkModule, "discoverAuthStorage").mockResolvedValue(authStorage);
+		vi.spyOn(authStorage, "close").mockImplementation(() => {});
+		const output: string[] = [];
+		vi.spyOn(process.stdout, "write").mockImplementation(chunk => {
+			output.push(String(chunk));
+			return true;
+		});
+		const stderr: string[] = [];
+		vi.spyOn(process.stderr, "write").mockImplementation(chunk => {
+			stderr.push(String(chunk));
+			return true;
+		});
+		const preferred = async (): Promise<string[]> => {
+			output.length = 0;
+			await runUsageCommand({ action: "accounts", json: true });
+			const listed = JSON.parse(output.join("")) as { accounts: Array<{ identityKey: string; preferred?: true }> };
+			return listed.accounts.filter(account => account.preferred).map(account => account.identityKey);
+		};
+
+		try {
+			expect(await preferred()).toEqual([]);
+
+			await runUsageCommand({ action: "use", target: "anthropic/email:b@example.com" });
+			expect(await preferred()).toEqual(["email:b@example.com"]);
+
+			// A key no stored account carries is refused, and the choice stays.
+			process.exitCode = 0;
+			await runUsageCommand({ action: "use", target: "anthropic/email:typo@example.com" });
+			expect(process.exitCode).toBe(1);
+			expect(stderr.join("")).toContain("No OAuth account");
+			expect(await preferred()).toEqual(["email:b@example.com"]);
+
+			await runUsageCommand({ action: "use", target: "anthropic/auto" });
+			expect(await preferred()).toEqual([]);
+		} finally {
+			process.exitCode = 0;
 			vi.restoreAllMocks();
 			authStorage.close();
 		}

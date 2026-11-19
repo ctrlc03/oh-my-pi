@@ -17,6 +17,7 @@ import {
 	SquareCode,
 	SquareTerminal,
 	Swords,
+	Terminal,
 	Trophy,
 	Waypoints,
 } from "lucide-react";
@@ -36,6 +37,7 @@ export const TOP_BAR_ICONS: Record<TopBarId, LucideIcon> = {
 	architecture: Boxes,
 	mapchanges: GitCompare,
 	terminal: SquareTerminal,
+	shell: Terminal,
 	preview: Eye,
 	run: Play,
 	timeline: Activity,

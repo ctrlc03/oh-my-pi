@@ -113,6 +113,14 @@ export function asyncJobTree(
 	};
 }
 
+/** Whether any async job of `rootId` or a subagent below it is still running (every running job when `rootId` is undefined). */
+export function hasRunningJobsInTree(manager: AsyncJobManagerApi, rootId: string | undefined): boolean {
+	const running = manager.getRunningJobs();
+	if (running.length === 0) return false;
+	const parents = jobTreeParents(manager);
+	return running.some(job => inJobTree(job, rootId, parents));
+}
+
 /** Ask for the captions of the running commands in `rootId`'s job tree (see {@link asyncJobTree}). */
 export function requestJobTreeCaptions(manager: AsyncJobManagerApi, rootId: string | undefined): void {
 	const widgets = manager.widgets;

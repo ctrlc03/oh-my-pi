@@ -1,8 +1,10 @@
 /**
  * The editor and explorer requests for scripts/mock-companion.ts, so the Explorer, the editor and its language-server
- * features can be tried in a browser: `tree`, `file`, `file-write`, `file-versions`, `git`, `git-diff`, `file-search`,
- * `lsp` and `lsp-diagnostics`. Every session shares one canned TypeScript project held in memory (edits made in the
- * app are kept until the mock stops, saves are version-checked like the real companion's).
+ * features can be tried in a browser: `tree`, `file`, `file-write`, `file-versions`, `file-download`, `file-attribution`, `git`,
+ * `git-diff`, `file-search`, `lsp` and `lsp-diagnostics`. Every session shares one canned TypeScript project held in memory
+ * (edits made in the app are kept until the mock stops, saves are version-checked like the real companion's). The project
+ * has an SVG logo, a PNG with transparent corners and a three-page PDF under `docs/` (made in code, see
+ * ./mock-viewer-fixtures), and its README shows them, so the image, PDF and Markdown viewers can be tried.
  *
  * The language server is faked over that project: hover shows a declaration's signature in a code fence, definition
  * jumps to the declaration, references list every use (plus one in a dependency outside the repository, which the
@@ -13,6 +15,9 @@
 import { createPatch, diffLines } from "diff";
 import type { CompanionReply, CompanionRequest, FileContent, GitFileChange, GitSnapshot } from "../src/lib/companion";
 import type { FileSearchMatch, LspDiagnostic, LspLocation, LspResult } from "../src/lib/repo-intel";
+import { handbookPdf, LOGO_SVG, pngFixture } from "./mock-viewer-fixtures";
+import { attribute } from "./companion-attribution";
+import type { SessionEdit } from "./companion-review-edits";
 
 const DEFAULT_ROOT = "/work/mock";
 /** A dependency's declaration file, to give references a location outside the repository. */
@@ -37,7 +42,25 @@ bun run dev
 \`\`\`
 
 Sessions last thirty minutes; see \`src/auth/session.ts\`.
+
+## Pictures and documents
+
+A relative image shows beside the Markdown, from the same files the editor opens:
+
+![The service logo](docs/logo.svg)
+
+![Architecture sketch with a transparent background](docs/architecture.png)
+
+A picture that is not there stays as its alt text: ![Missing diagram](docs/missing.png)
+
+The handbook is \`docs/handbook.pdf\`.
+
+\`\`\`mermaid
+flowchart LR
+  Browser --> Server --> Sessions
+\`\`\`
 `,
+	"docs/logo.svg": LOGO_SVG,
 	"src/server.ts": `import { createSession, readSession } from "./auth/session";
 import { formatDuration } from "./lib/format";
 
@@ -182,6 +205,7 @@ export async function retry<T>(work: () => Promise<T>, attempts: number): Promis
 			return await work();
 		} catch (err) {
 			last = err;
+			console.warn(\`attempt \${attempt + 1} failed\`);
 		}
 	}
 	throw last;
@@ -189,16 +213,137 @@ export async function retry<T>(work: () => Promise<T>, attempts: number): Promis
 `,
 };
 
+/** The agent turns the mock says wrote lines; `ago` is how long before the request they ran. */
+interface MockTurn {
+	sessionId: string;
+	sessionTitle: string;
+	turn: number;
+	prompt: string;
+	model: string;
+	ago: number;
+}
+
+const MOCK_TURNS: readonly MockTurn[] = [
+	{
+		sessionId: "mock-cookies",
+		sessionTitle: "Sign session cookies",
+		turn: 1,
+		prompt: "add HMAC-signed session cookies",
+		model: "claude-sonnet-4-5",
+		ago: 3 * 3_600_000,
+	},
+	{
+		sessionId: "mock-cookies",
+		sessionTitle: "Sign session cookies",
+		turn: 3,
+		prompt: "make sessions expire after thirty minutes",
+		model: "claude-sonnet-4-5",
+		ago: 2 * 3_600_000,
+	},
+	{
+		sessionId: "mock-retry",
+		sessionTitle: "Retry flaky calls",
+		turn: 1,
+		prompt: "add a retry helper",
+		model: "gpt-5.1",
+		ago: 50 * 60_000,
+	},
+	{
+		sessionId: "mock-retry",
+		sessionTitle: "Retry flaky calls",
+		turn: 2,
+		prompt: "log each failed attempt",
+		model: "gpt-5.1",
+		ago: 40 * 60_000,
+	},
+];
+
+/** A run of `count` lines, from the `nth` line whose trimmed text is `from`, that `MOCK_TURNS[turn]` wrote. */
+interface MockRun {
+	turn: number;
+	from: string;
+	count: number;
+	nth?: number;
+}
+
+/**
+ * The lines the canned turns wrote, by file, as they are in the project at the start. They are replayed through the
+ * real `attribute`, so a line the editor changes and saves stops being marked, as with a real companion.
+ */
+const AGENT_RUNS: Record<string, readonly MockRun[]> = {
+	"src/auth/session.ts": [
+		{ turn: 0, from: "export interface Session {", count: 5 },
+		{ turn: 0, from: "/** Start a session for `user` that lasts `ttl` milliseconds. */", count: 6 },
+		{ turn: 1, from: 'export const DEFAULT_TTL: number = "30m";', count: 2 },
+		{ turn: 1, from: "if (claims === null || claims.expiresAt < Date.now()) return null;", count: 1 },
+	],
+	"src/auth/token.ts": [
+		{ turn: 0, from: "/** Encode `claims` and sign them. */", count: 6 },
+		{ turn: 0, from: "/** The claims of a token we signed, or null when it was tampered with. */", count: 8 },
+	],
+	"src/server.ts": [
+		{ turn: 0, from: 'if (url.pathname === "/login") {', count: 4 },
+		{ turn: 1, from: 'const session = readSession(request.headers.get("cookie"));', count: 2 },
+	],
+	"src/lib/retry.ts": [
+		{ turn: 2, from: "/** Run `work`, retrying up to `attempts` times. */", count: 8 },
+		{ turn: 3, from: "console.warn(`attempt ${attempt + 1} failed`);", count: 1 },
+		{ turn: 2, from: "}", count: 4 },
+	],
+	"contracts/Vault.sol": [{ turn: 0, from: "function deposit() external payable {", count: 4 }],
+};
+
+/**
+ * The edits those runs stand for, as the sessions would have made them: each run is an insertion of its lines into a
+ * file that holds only the lines no turn wrote, oldest turn first and top to bottom within a turn.
+ */
+function mockEdits(path: string, initial: string, runs: readonly MockRun[], now: number): SessionEdit[] {
+	const lines = initial.split("\n");
+	const located = runs.map(run => {
+		let seen = 0;
+		const start = lines.findIndex(line => line.trim() === run.from && seen++ === (run.nth ?? 0));
+		if (start === -1) throw new Error(`mock attribution: ${path} has no line ${run.from}`);
+		return { run, start };
+	});
+	const claimed = new Set<number>();
+	for (const { run, start } of located) for (let i = 0; i < run.count; i++) claimed.add(start + i);
+	const inserted = new Set<number>();
+	located.sort((a, b) => a.run.turn - b.run.turn || a.start - b.start);
+	return located.map(({ run, start }) => {
+		let before = 0;
+		for (let i = 0; i < start; i++) if (!claimed.has(i) || inserted.has(i)) before++;
+		for (let i = 0; i < run.count; i++) inserted.add(start + i);
+		const turn = MOCK_TURNS[run.turn]!;
+		return {
+			sessionId: turn.sessionId,
+			sessionTitle: turn.sessionTitle,
+			turn: turn.turn,
+			turnId: `${turn.sessionId}-turn-${turn.turn}`,
+			at: now - turn.ago,
+			path,
+			text: "",
+			model: turn.model,
+			prompt: turn.prompt,
+			added: [],
+			removed: [],
+			changes: [{ oldStart: before + 1, removed: 0, newStart: before + 1, added: lines.slice(start, start + run.count) }],
+		};
+	});
+}
+
 interface MockFile {
 	text: string;
 	version: number;
 }
 
-/** Fields the mock companion's `hosts` frame needs for the app to offer the editor, explorer search and language servers. */
+/** Fields the mock companion's `hosts` frame needs for the app to offer the editor, explorer search, language servers and file bytes. */
 export interface MockRepoIntelCapabilities {
 	canEdit: true;
+	canAttribution: true;
 	canRepoSearch: true;
 	canLsp: true;
+	/** `file-download`: the image and PDF viewers read a file's bytes through it. */
+	canDownload: true;
 }
 
 export interface MockRepoIntel {
@@ -213,12 +358,22 @@ const HANDLED = new Set([
 	"file",
 	"file-write",
 	"file-versions",
+	"file-download",
 	"git",
 	"git-diff",
 	"file-search",
 	"lsp",
+	"file-attribution",
 	"lsp-diagnostics",
 ]);
+
+/** Content types the mock serves files under, as the real companion reports them from the extension. */
+const CONTENT_TYPES: Readonly<Record<string, string>> = {
+	png: "image/png",
+	pdf: "application/pdf",
+	svg: "image/svg+xml",
+	md: "text/markdown",
+};
 
 /** A declaration the fake language server knows. */
 interface Declaration {
@@ -273,17 +428,46 @@ export function createMockRepoIntel(roots: (instanceId: string) => string | unde
 	for (const [name, text] of Object.entries(WORKING_START))
 		if (!files.has(name)) files.set(name, { text, version: 1 });
 
+	/** Binary files of the project (an image, a PDF): the viewers read them over `file-download`; nothing edits them. */
+	const binaries = new Map<string, Uint8Array>([
+		["docs/architecture.png", pngFixture()],
+		["docs/handbook.pdf", handbookPdf()],
+	]);
+
 	const rootOf = (instanceId: string): string => roots(instanceId) ?? DEFAULT_ROOT;
 	const versionOf = (file: MockFile): string => `${stamp(file.text)}-v${file.version}`;
+	const binaryVersion = (bytes: Uint8Array): string => `${Bun.hash(bytes).toString(36)}-${bytes.length}`;
+	/** What each file held at the start: the canned turns' runs are located in it. */
+	const initialText = new Map([...files].map(([name, file]) => [name, file.text]));
 	const names = (): string[] => [...files.keys()].sort();
+	/** What the explorer lists: the text files and the binary ones. */
+	const treeNames = (): string[] => [...files.keys(), ...binaries.keys()].sort();
 
-	/** The file for a path as the editor sends it: repository-relative, or absolute under the session's root. */
-	const lookup = (instanceId: string, input: string): { name: string; file: MockFile } => {
+	/** A path as the editor sends it (repository-relative, or absolute under the session's root) made repository-relative. */
+	const relative = (instanceId: string, input: string): string => {
 		const root = `${rootOf(instanceId)}/`;
-		const name = input.startsWith(root) ? input.slice(root.length) : input.replace(/^\.\//, "");
+		return input.startsWith(root) ? input.slice(root.length) : input.replace(/^\.\//, "");
+	};
+
+	const lookup = (instanceId: string, input: string): { name: string; file: MockFile } => {
+		const name = relative(instanceId, input);
 		const file = files.get(name);
 		if (!file) throw new Error("file not found");
 		return { name, file };
+	};
+
+	const lookupBinary = (instanceId: string, input: string): { name: string; bytes: Uint8Array } | undefined => {
+		const name = relative(instanceId, input);
+		const bytes = binaries.get(name);
+		return bytes === undefined ? undefined : { name, bytes };
+	};
+
+	/** A file as `file-download` sends it: the binary fixtures, and the text files as UTF-8. */
+	const servedBytes = (instanceId: string, input: string): { name: string; bytes: Uint8Array } => {
+		const binary = lookupBinary(instanceId, input);
+		if (binary !== undefined) return binary;
+		const { name, file } = lookup(instanceId, input);
+		return { name, bytes: new TextEncoder().encode(file.text) };
 	};
 
 	const declarations = (): Declaration[] => {
@@ -484,7 +668,7 @@ export function createMockRepoIntel(roots: (instanceId: string) => string | unde
 	};
 
 	return {
-		capabilities: { canEdit: true, canRepoSearch: true, canLsp: true },
+		capabilities: { canEdit: true, canAttribution: true, canRepoSearch: true, canLsp: true, canDownload: true },
 		handles: request => HANDLED.has(request.t),
 		answer(request) {
 			switch (request.t) {
@@ -492,9 +676,22 @@ export function createMockRepoIntel(roots: (instanceId: string) => string | unde
 					return {
 						t: "tree",
 						reqId: request.reqId,
-						tree: { root: rootOf(request.instanceId), files: names(), truncated: false },
+						tree: { root: rootOf(request.instanceId), files: treeNames(), truncated: false },
 					};
 				case "file": {
+					const binary = lookupBinary(request.instanceId, request.path);
+					if (binary !== undefined) {
+						// The real companion answers a binary file with its size and no text.
+						const content: FileContent = {
+							path: binary.name,
+							size: binary.bytes.length,
+							text: null,
+							truncated: false,
+							version: binaryVersion(binary.bytes),
+							writable: false,
+						};
+						return { t: "file", reqId: request.reqId, file: content };
+					}
 					const { name, file } = lookup(request.instanceId, request.path);
 					const content: FileContent = {
 						path: name,
@@ -515,11 +712,24 @@ export function createMockRepoIntel(roots: (instanceId: string) => string | unde
 					file.version++;
 					return { t: "file-saved", reqId: request.reqId, version: versionOf(file) };
 				}
+				case "file-attribution": {
+					const { name, file } = lookup(request.instanceId, request.path);
+					const runs = AGENT_RUNS[name] ?? [];
+					const edits = runs.length === 0 ? [] : mockEdits(name, initialText.get(name) ?? file.text, runs, Date.now());
+					const found = edits.length === 0 ? { refs: [], ranges: [] } : attribute(file.text.split("\n"), edits);
+					return {
+						t: "file-attribution",
+						reqId: request.reqId,
+						attribution: { path: name, version: versionOf(file), ...found },
+					};
+				}
 				case "file-versions":
 					return {
 						t: "file-versions",
 						reqId: request.reqId,
 						versions: request.paths.map(input => {
+							const binary = lookupBinary(request.instanceId, input);
+							if (binary !== undefined) return binaryVersion(binary.bytes);
 							try {
 								return versionOf(lookup(request.instanceId, input).file);
 							} catch {
@@ -527,6 +737,23 @@ export function createMockRepoIntel(roots: (instanceId: string) => string | unde
 							}
 						}),
 					};
+				case "file-download": {
+					// Text files are served too, as the real companion does (a Markdown file's SVG logo is one).
+					const served = servedBytes(request.instanceId, request.path);
+					// Every fixture is far under the real chunk size: one chunk carries the whole file.
+					if (request.offset !== 0) throw new Error("invalid offset");
+					const base = served.name.slice(served.name.lastIndexOf("/") + 1);
+					return {
+						t: "file-chunk",
+						reqId: request.reqId,
+						name: base,
+						size: served.bytes.length,
+						mime: CONTENT_TYPES[base.slice(base.lastIndexOf(".") + 1)] ?? "application/octet-stream",
+						offset: 0,
+						data: Buffer.from(served.bytes).toString("base64"),
+						done: true,
+					};
+				}
 				case "git": {
 					const git: GitSnapshot = {
 						root: rootOf(request.instanceId),

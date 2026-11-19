@@ -328,6 +328,17 @@ export async function launchEnded(tmux: string, name: string): Promise<{ tail: s
 	return { tail: await launchScreen(tmux, name) };
 }
 
+/**
+ * Whether a terminal is attached to a session {@link launchInTmux} started (`tmux attach`): someone is looking at it on the
+ * computer itself. Null when tmux cannot say (the session is gone, or the answer is unreadable).
+ */
+export async function tmuxAttached(tmux: string, name: string): Promise<boolean | null> {
+	const answer = await tmuxOutput(tmux, ["display-message", "-p", "-t", `=${name}:`, "#{session_attached}"]);
+	if (answer.code !== 0) return null;
+	const clients = Number.parseInt(answer.out.trim(), 10);
+	return Number.isNaN(clients) ? null : clients > 0;
+}
+
 /** What a launch that never hosted shows the user: `what` (no final period) happened, followed by the last output when there is any. */
 export function launchFailure(what: string, tail: string): string {
 	return tail === "" ? what : `${what}. Last output: ${tail}`;

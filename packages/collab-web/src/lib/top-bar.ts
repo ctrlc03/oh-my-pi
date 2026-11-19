@@ -43,6 +43,7 @@ export const TOP_BAR_BUTTONS = [
 	{ id: "architecture", label: "Architecture", on: false, phone: true },
 	{ id: "mapchanges", label: "Map of what changed", on: false, phone: true },
 	{ id: "terminal", label: "Terminal", on: false, phone: true },
+	{ id: "shell", label: "Interactive terminal", on: false, phone: true },
 	{ id: "preview", label: "Preview", on: false, phone: true },
 	{ id: "run", label: "Run", on: false, phone: true },
 	{ id: "timeline", label: "Timeline", on: false, phone: true },

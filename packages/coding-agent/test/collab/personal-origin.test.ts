@@ -35,6 +35,7 @@ function makeCtx(settings: Settings): InteractiveModeContext {
 			isStreaming: false,
 			isBusyForSnapshot: false,
 			isSessionTransitioning: false,
+			getTodoPhases: () => [],
 			isCompacting: false,
 			isAborting: false,
 			queuedMessageCount: 0,

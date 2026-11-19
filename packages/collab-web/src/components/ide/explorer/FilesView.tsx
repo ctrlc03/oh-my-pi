@@ -9,11 +9,20 @@ import {
 	Search,
 	X,
 } from "lucide-react";
-import type { KeyboardEvent, ReactNode } from "react";
+import type { HTMLAttributes, KeyboardEvent, ReactNode } from "react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { FileTree } from "../../../lib/companion";
+import { setPathDrag } from "../../../lib/drop";
 import { ancestors, baseName, buildTree, quickOpen, type TreeDir } from "../file-tree";
 import type { TreeStatus } from "./git-status";
+
+/**
+ * Props that make a row draggable into the message box, where it becomes an `@path` mention. A row stays a button, so a
+ * plain click still opens or toggles it; only a real drag starts one.
+ */
+function dragProps(path: string, dir: boolean): Pick<HTMLAttributes<HTMLElement>, "draggable" | "onDragStart"> {
+	return { draggable: true, onDragStart: event => setPathDrag(event.dataTransfer, { path, dir }) };
+}
 
 /** Rows the filter lists. */
 const FILTER_ROWS = 200;
@@ -178,6 +187,7 @@ export function FilesView({
 											data-cursor={i === cursor ? "true" : undefined}
 											style={{ paddingInlineStart: 8 }}
 											onClick={() => onOpen(path)}
+											{...dragProps(path, false)}
 											title={path}
 										>
 											<span className="sh-ex-name" data-tone={badge?.tone}>
@@ -250,6 +260,7 @@ const Branch = memo(function Branch({
 							className="sh-ex-row"
 							style={{ paddingInlineStart: 6 + depth * 12 }}
 							onClick={() => onToggle(child.path)}
+							{...dragProps(child.path, true)}
 							title={child.path}
 						>
 							{open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
@@ -287,6 +298,7 @@ const Branch = memo(function Branch({
 							data-active={path === activePath ? "true" : undefined}
 							style={{ paddingInlineStart: 6 + depth * 12 + 17 }}
 							onClick={() => onOpen(path)}
+							{...dragProps(path, false)}
 							title={path}
 						>
 							<span className="sh-ex-name" data-tone={badge?.tone}>

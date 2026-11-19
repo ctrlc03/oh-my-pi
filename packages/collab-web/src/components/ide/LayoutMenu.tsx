@@ -9,6 +9,7 @@ const ITEMS: { id: LayoutToggle; label: string }[] = [
 	{ id: "minimap", label: "Minimap" },
 	{ id: "lineNumbers", label: "Line numbers" },
 	{ id: "status", label: "Status bar" },
+	{ id: "attribution", label: "Agent-written lines" },
 ];
 
 /** What the header has no room for in a narrow editor: its buttons become plain items at the top of the menu. */
@@ -31,6 +32,8 @@ export interface LayoutMenuProps {
 	minimapOn: boolean;
 	/** The engine has a minimap (Monaco); the item is left out otherwise. */
 	hasMinimap: boolean;
+	/** The paired computer can say which lines agents wrote; the item is left out otherwise. */
+	hasAttribution: boolean;
 	/** The header's buttons that do not fit, as items above the toggles. */
 	actions: readonly MenuAction[];
 	/** Something with its own behaviour (the download button) that does not fit; shown with the actions. */
@@ -49,6 +52,7 @@ export function LayoutMenu({
 	layout,
 	minimapOn,
 	hasMinimap,
+	hasAttribution,
 	actions,
 	extra,
 	onToggle,
@@ -134,7 +138,9 @@ export function LayoutMenu({
 					))}
 					{extra !== null && <div className="sh-ide-layout-extra">{extra}</div>}
 					{hasActions && <div className="sh-ide-layout-sep" role="separator" />}
-					{ITEMS.filter(item => item.id !== "minimap" || hasMinimap).map(item => (
+					{ITEMS.filter(
+						item => (item.id !== "minimap" || hasMinimap) && (item.id !== "attribution" || hasAttribution),
+					).map(item => (
 						<button
 							key={item.id}
 							type="button"

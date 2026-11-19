@@ -6,6 +6,7 @@
  */
 
 import type { CollabUiRequest } from "@oh-my-pi/pi-wire";
+import { useSyncExternalStore } from "react";
 import type { InboxItem } from "./companion";
 import { deliverDraft } from "./draft-bus";
 import { enqueuePrompt, roomIdOf } from "./rooms";
@@ -93,14 +94,48 @@ export function inboxKey(computerId: string, item: InboxItem): string {
 	return `${hostKey(computerId, item.instanceId)}:${item.kind}:${item.at}`;
 }
 
-/** Keys of items the user dismissed, oldest first. */
-export function loadDismissed(): string[] {
-	const raw = readJson(DISMISSED_KEY);
-	return Array.isArray(raw) ? raw.filter((key): key is string => typeof key === "string") : [];
+let dismissed: string[] | undefined;
+const dismissedListeners = new Set<() => void>();
+
+/** Keys of items the user dismissed, oldest first. The same array until they change, so a component can subscribe to it. */
+export function loadDismissed(): readonly string[] {
+	if (dismissed === undefined) {
+		const raw = readJson(DISMISSED_KEY);
+		dismissed = Array.isArray(raw) ? raw.filter((key): key is string => typeof key === "string") : [];
+	}
+	return dismissed;
 }
 
 export function saveDismissed(keys: readonly string[]): void {
-	writeJson(DISMISSED_KEY, keys.slice(-MAX_DISMISSED));
+	dismissed = keys.slice(-MAX_DISMISSED);
+	writeJson(DISMISSED_KEY, dismissed);
+	for (const listener of dismissedListeners) listener();
+}
+
+/** Dismiss items: the Inbox no longer lists them, and the sessions' badges no longer count them. */
+export function dismissInbox(keys: readonly string[]): void {
+	saveDismissed([...loadDismissed(), ...keys]);
+}
+
+/** The dismissed keys; re-renders when this tab dismisses more, or another tab of the app does. */
+export function useDismissed(): readonly string[] {
+	return useSyncExternalStore(
+		listener => {
+			dismissedListeners.add(listener);
+			const onStorage = (e: StorageEvent): void => {
+				if (e.key !== DISMISSED_KEY && e.key !== null) return;
+				dismissed = undefined;
+				listener();
+			};
+			window.addEventListener("storage", onStorage);
+			return () => {
+				dismissedListeners.delete(listener);
+				window.removeEventListener("storage", onStorage);
+			};
+		},
+		loadDismissed,
+		loadDismissed,
+	);
 }
 
 /** Items dismissed while one computer was paired were its own: their keys gain its id. */

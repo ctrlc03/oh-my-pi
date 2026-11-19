@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useCallback, useMemo, useState } from "react";
 import type { CompanionClient, GitFileChange } from "../../../lib/companion";
 import { splitPath } from "../../../lib/format";
+import { useAgentLines } from "../../../lib/line-attribution";
 import { useRequest } from "../../../lib/use-request";
 import { UnifiedDiff } from "../../shell/ReviewDiff";
 import { badgeOf, filesIn, GROUP_LABEL, GROUP_ORDER, toTreePath } from "./git-status";
@@ -95,6 +96,7 @@ export function ChangesView({ client, instanceId, status, treeRoot, onOpen }: Ch
 												if (path !== null) onOpen(path);
 											}}
 											loadDiff={loadDiff}
+											attribution={{ client, instanceId, path: `${git.root}/${file.path}` }}
 										/>
 									);
 								})}
@@ -108,15 +110,23 @@ export function ChangesView({ client, instanceId, status, treeRoot, onOpen }: Ch
 	);
 }
 
+interface AttributionTarget {
+	client: CompanionClient;
+	instanceId: string;
+	path: string;
+}
+
 interface ChangeRowProps {
 	file: GitFileChange;
 	open: boolean;
 	onToggle(): void;
 	onOpen(): void;
 	loadDiff(path: string): Promise<{ diff: string; truncated: boolean }>;
+	/** Where to ask which lines agents wrote: the file's absolute path in the session's worktree. */
+	attribution: AttributionTarget;
 }
 
-function ChangeRow({ file, open, onToggle, onOpen, loadDiff }: ChangeRowProps): ReactNode {
+function ChangeRow({ file, open, onToggle, onOpen, loadDiff, attribution }: ChangeRowProps): ReactNode {
 	const { dir, base } = splitPath(file.path);
 	const badge = badgeOf(file.status);
 	// A deleted file has nothing to open; its diff is what there is to see.
@@ -155,7 +165,7 @@ function ChangeRow({ file, open, onToggle, onOpen, loadDiff }: ChangeRowProps): 
 					)}
 				</button>
 			</div>
-			{open && <InlineDiff path={file.path} loadDiff={loadDiff} />}
+			{open && <InlineDiff path={file.path} loadDiff={loadDiff} attribution={attribution} />}
 		</li>
 	);
 }
@@ -163,12 +173,15 @@ function ChangeRow({ file, open, onToggle, onOpen, loadDiff }: ChangeRowProps): 
 function InlineDiff({
 	path,
 	loadDiff,
+	attribution,
 }: {
 	path: string;
 	loadDiff(path: string): Promise<{ diff: string; truncated: boolean }>;
+	attribution: AttributionTarget;
 }): ReactNode {
 	const load = useCallback(() => loadDiff(path), [loadDiff, path]);
 	const { state } = useRequest(load);
+	const agentLines = useAgentLines(attribution.client, attribution.instanceId, attribution.path);
 	if (state.status === "loading") {
 		return (
 			<div className="sh-ex-note">
@@ -179,7 +192,7 @@ function InlineDiff({
 	if (state.status === "error") return <div className="sh-ex-note sh-ex-note-err">{state.message}</div>;
 	return (
 		<div className="sh-ex-diff">
-			<UnifiedDiff diff={state.value.diff} scope="tree" path={path} review={null} />
+			<UnifiedDiff diff={state.value.diff} scope="tree" path={path} review={null} agentLines={agentLines} />
 			{state.value.truncated && <div className="sh-ex-note">The diff is longer than the viewer reads.</div>}
 		</div>
 	);

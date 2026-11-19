@@ -73,6 +73,64 @@ const MAX_ERROR_MESSAGE_CHARS = 300;
 /** Access a link grants: `view` (bare room key) or `control` (room key + write token). */
 export type CollabAccess = "view" | "control";
 
+/** Longest todo task text a snapshot carries: a one-line status on a session card needs no more. */
+export const MAX_TODO_TEXT_CHARS = 200;
+
+/**
+ * Progress of a session's todo list, small enough to ride along on every
+ * snapshot so a session list can show it without opening the session. Counts
+ * match the app's task list: abandoned tasks are neither done nor remaining.
+ */
+export interface CollabTodoSummary {
+	/** Completed tasks. */
+	done: number;
+	/** Every task that is not abandoned. */
+	total: number;
+	/** The task being worked on (the in-progress one, else the first pending one); null when nothing is open. */
+	current: string | null;
+	/** The last task completed; what a card shows once nothing is current. */
+	lastDone: string | null;
+}
+
+/** A todo task's text as a single bounded line. */
+function todoText(content: string): string {
+	const line = content.replace(/\s+/g, " ").trim();
+	return line.length > MAX_TODO_TEXT_CHARS ? `${line.slice(0, MAX_TODO_TEXT_CHARS - 1)}…` : line;
+}
+
+/** The summary of a todo list; undefined for a list with no task to report on. */
+export function summarizeTodoPhases(
+	phases: readonly { tasks: readonly { content: string; status: string }[] }[],
+): CollabTodoSummary | undefined {
+	let done = 0;
+	let total = 0;
+	let current: string | undefined;
+	let firstPending: string | undefined;
+	let lastDone: string | undefined;
+	for (const phase of phases) {
+		for (const task of phase.tasks) {
+			if (task.status === "abandoned") continue;
+			total++;
+			if (task.status === "completed") {
+				done++;
+				lastDone = task.content;
+			} else if (task.status === "in_progress") {
+				current ??= task.content;
+			} else if (task.status === "pending") {
+				firstPending ??= task.content;
+			}
+		}
+	}
+	if (total === 0) return undefined;
+	const open = current ?? firstPending;
+	return {
+		done,
+		total,
+		current: open === undefined ? null : todoText(open),
+		lastDone: lastDone === undefined ? null : todoText(lastDone),
+	};
+}
+
 /**
  * Non-capability host state, computed by the host process at query time.
  * Free-form strings (session id and name, cwd, model) are bounded to
@@ -114,10 +172,20 @@ export interface CollabHostSnapshot {
 	 */
 	busy: boolean | null;
 	/**
+	 * Whether anything besides the model loop is still going: an open run, a running background job, service or
+	 * subagent, or a queued wake-up (see `AgentSession.hasBackgroundWork`). Ending the process would cancel it.
+	 *
+	 * Absent or `null` when the host does not report it (an omp older than this field, a vendor agent host):
+	 * unknown is not idle, so a consumer treats it as work in progress.
+	 */
+	background?: boolean | null;
+	/**
 	 * The vendor agent behind a foreign (non-omp) session host; absent for an omp session.
 	 * A lister that predates the field ignores it.
 	 */
 	agent?: AgentRef;
+	/** Todo progress of the session; absent while it has no todo list or on an omp that predates the field. */
+	todo?: CollabTodoSummary;
 	/** Highest access the registry will hand out for this host. */
 	access: CollabAccess;
 }
@@ -159,6 +227,8 @@ export interface CollabIdleSnapshot {
 	startedAt: number;
 	/** Whether the session is running a turn right now. */
 	busy: boolean;
+	/** See {@link CollabHostSnapshot.todo}. */
+	todo?: CollabTodoSummary;
 }
 
 /** Result of starting hosting through an idle entry; carries the capability for `access`. */
@@ -265,6 +335,19 @@ const InstanceId = type(INSTANCE_ID_PATTERN);
 const Access = type("'view' | 'control'");
 const Model = type({ "+": "delete", provider: "string", id: "string" }).or("null");
 const Agent = type({ "+": "delete", id: "string", name: "string" });
+const Todo = type({
+	"+": "delete",
+	done: "number.integer >= 0",
+	total: "number.integer >= 0",
+	current: "string | null",
+	lastDone: "string | null",
+});
+
+/** `{ todo }` for a well-formed summary of a newer host, nothing for an absent or malformed one: a list without it still lists. */
+function parseTodo(raw: unknown): { todo?: CollabTodoSummary } {
+	const todo = Todo(raw);
+	return todo instanceof type.errors ? {} : { todo };
+}
 
 const DiscoveryMetadataShape = type({
 	"+": "delete",
@@ -317,6 +400,10 @@ const SnapshotShape = type({
 	// snapshot simply omits the field, and a missing one reads as unknown
 	// (`null`) rather than rejecting an otherwise healthy host.
 	"busy?": "boolean | null",
+	// The todo progress of a host that reports it; a malformed value reads as absent.
+	"todo?": "unknown",
+	// Added after `busy` for the same reason; a host without it reports unknown work in progress.
+	"background?": "boolean | null",
 	// The vendor agent of a foreign host; a malformed value reads as absent (an omp host).
 	"agent?": "unknown",
 	access: Access,
@@ -325,9 +412,15 @@ const SnapshotShape = type({
 function parseSnapshot(raw: unknown): CollabHostSnapshot | null {
 	const parsed = SnapshotShape(raw);
 	if (parsed instanceof type.errors) return null;
-	const { agent: rawAgent, ...snapshot } = parsed;
+	const { agent: rawAgent, todo: rawTodo, ...snapshot } = parsed;
 	const agent = Agent(rawAgent);
-	return { ...snapshot, busy: snapshot.busy ?? null, ...(agent instanceof type.errors ? {} : { agent }) };
+	return {
+		...snapshot,
+		busy: snapshot.busy ?? null,
+		background: snapshot.background ?? null,
+		...(agent instanceof type.errors ? {} : { agent }),
+		...parseTodo(rawTodo),
+	};
 }
 
 const IdleSnapshotShape = type({
@@ -340,11 +433,14 @@ const IdleSnapshotShape = type({
 	model: Model,
 	startedAt: "number",
 	busy: "boolean",
+	"todo?": "unknown",
 });
 
 function parseIdleSnapshot(raw: unknown): CollabIdleSnapshot | null {
 	const idle = IdleSnapshotShape(raw);
-	return idle instanceof type.errors ? null : idle;
+	if (idle instanceof type.errors) return null;
+	const { todo: rawTodo, ...snapshot } = idle;
+	return { ...snapshot, ...parseTodo(rawTodo) };
 }
 
 function boundField(value: string): string {

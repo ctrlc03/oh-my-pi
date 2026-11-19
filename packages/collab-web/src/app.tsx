@@ -42,11 +42,13 @@ import { ZoomHost } from "./components/shell/ZoomHost";
 import { GithubSheet } from "./components/shell/GithubSheet";
 import { PreviewSheet } from "./components/shell/PreviewSheet";
 import { RunSheet } from "./components/shell/RunSheet";
+import { LazyShellSheet } from "./components/shell/LazyShellSheet";
 import { ScreensSheet } from "./components/shell/ScreensSheet";
 import { SearchBar } from "./components/shell/SearchBar";
 import { DesktopBridge } from "./components/shell/DesktopBridge";
 import { type DeletedSessions, DeleteHost, useDeleteSessions } from "./components/shell/DeleteSessions";
 import { SessionAlert } from "./components/shell/SessionAlert";
+import type { CardEdit } from "./components/shell/SessionCardSheet";
 import { SessionsSheet } from "./components/shell/SessionsSheet";
 import { SessionsSidebar } from "./components/shell/SessionsSidebar";
 import { DockPane, SplitPane } from "./components/shell/SplitPane";
@@ -57,6 +59,7 @@ import { CacheStrip } from "./components/shell/CacheStrip";
 import { TaskProgress } from "./components/shell/TaskProgress";
 import { Toasts } from "./components/shell/Toasts";
 import { UpdateBar } from "./components/shell/UpdateBar";
+import { UnreadHost, useViewing } from "./components/shell/UnreadHost";
 import { Tooltip } from "./components/shell/Tooltip";
 import { UsageSheet } from "./components/shell/UsageSheet";
 import { TimelineSheet } from "./components/shell/TimelineSheet";
@@ -429,48 +432,50 @@ export function App(): ReactNode {
 		<ComputerActionsContext.Provider value={computerActions}>
 			<PersonalContext.Provider value={personal}>
 				<DeleteHost computers={computers} orgs={orgs} onDeleted={sessionsDeleted}>
-					<UpdateBar />
-					<Tooltip />
-					<FixItHost computers={computers} onOpenHost={openHost} onOpenLink={openLink} />
-					{!client || !link ? (
-						<ConnectScreen
-							error={connectError}
-							rooms={rooms}
-							computers={computers}
-							onConnect={next => {
-								resumedRef.current = false;
-								connect(next);
-							}}
-							onForget={forget}
-							onPair={pair}
-							onOpenHost={openHost}
-							onRemoveComputer={removeComputer}
-						/>
-					) : (
-						<Session
-							key={link}
-							client={client}
-							link={link}
-							openedHint={opened?.link === link ? opened : null}
-							computers={computers}
-							orgs={orgs}
-							onPair={pair}
-							rooms={rooms}
-							onLeave={leave}
-							onRejoin={rejoin}
-							onRemember={remember}
-							onRoomGone={roomGone}
-							onRoomReplaced={replaceRoom}
-							onOpenHost={openHost}
-							beside={beside}
-							onOpenLink={openLink}
-						/>
-					)}
-					<PetHost client={client} hosts={allHosts} hostsLive={anyLive} />
-					<DesktopBridge computers={computers} onOpen={openDesktopSession} />
-					<SettingsHost env={settingsEnv} />
-					<ZoomHost />
-					<PersonalRoutes computers={computers} onOpenHost={openHost} />
+					<UnreadHost computers={computers}>
+						<UpdateBar />
+						<Tooltip />
+						<FixItHost computers={computers} onOpenHost={openHost} onOpenLink={openLink} />
+						{!client || !link ? (
+							<ConnectScreen
+								error={connectError}
+								rooms={rooms}
+								computers={computers}
+								onConnect={next => {
+									resumedRef.current = false;
+									connect(next);
+								}}
+								onForget={forget}
+								onPair={pair}
+								onOpenHost={openHost}
+								onRemoveComputer={removeComputer}
+							/>
+						) : (
+							<Session
+								key={link}
+								client={client}
+								link={link}
+								openedHint={opened?.link === link ? opened : null}
+								computers={computers}
+								orgs={orgs}
+								onPair={pair}
+								rooms={rooms}
+								onLeave={leave}
+								onRejoin={rejoin}
+								onRemember={remember}
+								onRoomGone={roomGone}
+								onRoomReplaced={replaceRoom}
+								onOpenHost={openHost}
+								beside={beside}
+								onOpenLink={openLink}
+							/>
+						)}
+						<PetHost client={client} hosts={allHosts} hostsLive={anyLive} />
+						<DesktopBridge computers={computers} onOpen={openDesktopSession} />
+						<SettingsHost env={settingsEnv} />
+						<ZoomHost />
+						<PersonalRoutes computers={computers} onOpenHost={openHost} />
+					</UnreadHost>
 				</DeleteHost>
 			</PersonalContext.Provider>
 		</ComputerActionsContext.Provider>
@@ -546,6 +551,8 @@ function Session({
 		[computers, sessionId, openedHint, stored],
 	);
 	const { computer, hostId, instanceId } = home;
+	// Its updates are seen: the sessions list carries no badge for it, and its finished turns leave the Inbox.
+	useViewing(computer?.id ?? null, instanceId);
 	const companionClient = computer?.client ?? null;
 	const hosts = computer?.snap.hosts;
 	const hostRow = hosts?.find(host => host.instanceId === hostId);
@@ -692,6 +699,20 @@ function Session({
 		setRunOpen(true);
 		revealPane("run");
 	}, []);
+	// A terminal runs whatever is typed with this user's full rights, so it asks for more than a run does: the computer
+	// must have paired this device (it serves nobody else), the session is one this device controls, and a sandboxed
+	// session, whose folder its agent can write to, never gets one.
+	const canShell =
+		companionClient !== null &&
+		hostId !== null &&
+		computer?.snap.canTerminal === true &&
+		!snap.readOnly &&
+		!runSandboxed;
+	const [shellOpen, setShellOpen] = useState(false);
+	const openShell = useCallback(() => {
+		setShellOpen(true);
+		revealPane("shell");
+	}, []);
 	const sendRunOutput = useCallback((prompt: string) => {
 		setRunOpen(false);
 		composerRef.current?.insert(prompt);
@@ -734,7 +755,7 @@ function Session({
 		setGithubOpen(false);
 		composerRef.current?.insert(prompt);
 	}, []);
-	// Diagrams: a drawing from the canvas lands in the message box as attachments; repository diagram files go through the paired computer.
+	// Files and a note for the message box: a drawing from the diagram canvas, or an element picked in the preview; repository diagram files go through the paired computer.
 	const attachDrawing = useCallback((attached: File[], note: string) => {
 		void composerRef.current?.attach(attached, note);
 	}, []);
@@ -1016,6 +1037,20 @@ function Session({
 				: null,
 		[stakesShown, listed, stakesIsOn, companionClient, hostId],
 	);
+	// The open session's card, editable where its computer keeps cards; read from the host row, so it follows every device.
+	const cardStatus = hostRow?.card?.status ?? null;
+	const cardNote = hostRow?.card?.note ?? "";
+	const canCard = computer?.snap.canSessionCards === true;
+	const sessionCard = useMemo<CardEdit | null>(
+		() =>
+			canCard && companionClient !== null && sessionId !== null && listed
+				? {
+						card: cardStatus === null && cardNote === "" ? undefined : { status: cardStatus, note: cardNote },
+						save: card => companionClient.setSessionCard(sessionId, card),
+					}
+				: null,
+		[canCard, companionClient, sessionId, listed, cardStatus, cardNote],
+	);
 	const sparChanges = useCallback(() => {
 		setChangesOpen(false);
 		setQuiz({ view: "spar-new", subject: { kind: "changes" } });
@@ -1157,6 +1192,9 @@ function Session({
 		),
 	);
 	const limitsOn = Object.hasOwn(snap.features, "usage-limits");
+	// Switching the default account changes the computer's omp settings, so it is offered to writers who are
+	// paired with that computer (a view-only or guest link never reaches the companion) and only when it can.
+	const accountsClient = !snap.readOnly && computer?.snap.canAccounts ? companionClient : null;
 	const cancelQueued = useCallback((id: string) => client.cancelQueued(id), [client]);
 	// Built on click from every entry, not the trimmed view; the ref keeps the callback stable for the memoized header.
 	const entriesRef = useRef(snap.entries);
@@ -1338,6 +1376,7 @@ function Session({
 			openPreview: canPreview ? openPreview : null,
 			openGithub: canGithub ? openGithub : null,
 			openRun: canRun ? openRun : null,
+			openShell: canShell ? openShell : null,
 			openEditor: canEdit ? openEditor : null,
 			searchFiles: canEdit && computer?.snap.canRepoSearch === true ? openFileSearch : null,
 			turnUndo: turnUndo.control,
@@ -1355,6 +1394,7 @@ function Session({
 			canPane,
 			canPreview,
 			canRun,
+			canShell,
 			canShowSidebar,
 			changeChat,
 			changes.length,
@@ -1381,6 +1421,7 @@ function Session({
 			openPane,
 			openPreview,
 			openRun,
+			openShell,
 			openScreens,
 			openSessions,
 			openUsage,
@@ -1416,6 +1457,7 @@ function Session({
 				readOnly={snap.readOnly}
 				sandboxed={computer?.snap.hosts.some(host => host.sessionId === sessionId && host.sandboxed) ?? false}
 				highStakes={highStakes}
+				sessionCard={sessionCard}
 				agent={snap.agent}
 				canPermission={Object.hasOwn(snap.features, "permission-mode")}
 				subCount={subCount}
@@ -1458,6 +1500,7 @@ function Session({
 				onOpenPreview={canPreview ? openPreview : null}
 				onOpenGithub={canGithub ? openGithub : null}
 				onOpenRun={canRun ? openRun : null}
+				onOpenShell={canShell ? openShell : null}
 				onOpenEditor={canEdit ? openEditor : null}
 				onOpenTimeline={canTimeline ? openTimeline : null}
 				screenCount={screens.length}
@@ -1533,6 +1576,7 @@ function Session({
 								models={snap.models}
 								model={snap.state?.model}
 								readOnly={snap.readOnly}
+								accountsClient={accountsClient}
 								onSessionCommand={sendSessionCommand}
 								onSnooze={
 									sessionId === null
@@ -1658,6 +1702,7 @@ function Session({
 									info: snap.usageLimits,
 									activeProvider: snap.state?.model?.provider,
 									onRefresh: () => sendSessionCommand("usage-limits", "refresh"),
+									accountsClient,
 								}
 							: undefined
 					}
@@ -1775,7 +1820,16 @@ function Session({
 					instanceId={hostId}
 					sessionId={sessionId}
 					edits={editCount}
+					onAddToPrompt={snap.readOnly ? null : attachDrawing}
 					onClose={() => setPreviewOpen(false)}
+				/>
+			)}
+			{shellOpen && canShell && companionClient !== null && hostId !== null && (
+				<LazyShellSheet
+					key={hostId}
+					client={companionClient}
+					instanceId={hostId}
+					onClose={() => setShellOpen(false)}
 				/>
 			)}
 			{runOpen && canRun && companionClient !== null && hostId !== null && (

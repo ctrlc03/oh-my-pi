@@ -1,7 +1,7 @@
 /**
  * How the code editor is laid out on this device, kept together in `omp.collab.editor-layout`:
- * - the toggles of the ⚙ Layout menu: the explorer's activity rail, the tab strip, Monaco's minimap, line numbers
- *   and the status bar;
+ * - the toggles of the ⚙ Layout menu: the explorer's activity rail, the tab strip, Monaco's minimap, line numbers,
+ *   the status bar and the gutter bars on lines an agent wrote (also shown in the diffs);
  * - the editor's font size in pixels (`null`: follow the app's code font size);
  * - the bottom panel's height and whether it is open;
  * - the size of the definitions popup (`null`: its automatic size).
@@ -54,6 +54,8 @@ export interface EditorLayout {
 	minimap: boolean | null;
 	lineNumbers: boolean;
 	status: boolean;
+	/** Gutter bars on the lines agents wrote, with a hover on who wrote them (needs a companion that answers `file-attribution`). */
+	attribution: boolean;
 	/** Pixels; `null` follows the app's code font size. */
 	fontSize: number | null;
 	/** Pixels, not yet limited by the editor column (see {@link clampPanelHeight}). */
@@ -68,6 +70,7 @@ export const DEFAULT_LAYOUT: EditorLayout = {
 	minimap: null,
 	lineNumbers: true,
 	status: true,
+	attribution: true,
 	fontSize: null,
 	panelHeight: PANEL_DEFAULT,
 	panelOpen: false,
@@ -75,7 +78,7 @@ export const DEFAULT_LAYOUT: EditorLayout = {
 };
 
 /** The toggles of the layout menu. */
-export type LayoutToggle = "rail" | "tabs" | "minimap" | "lineNumbers" | "status";
+export type LayoutToggle = "rail" | "tabs" | "minimap" | "lineNumbers" | "status" | "attribution";
 
 function field(raw: unknown, key: string): unknown {
 	return typeof raw === "object" && raw !== null ? Reflect.get(raw, key) : undefined;
@@ -170,6 +173,7 @@ export function parseEditorLayout(raw: unknown): EditorLayout {
 		minimap: typeof minimap === "boolean" ? minimap : null,
 		lineNumbers: bool(field(raw, "lineNumbers"), DEFAULT_LAYOUT.lineNumbers),
 		status: bool(field(raw, "status"), DEFAULT_LAYOUT.status),
+		attribution: bool(field(raw, "attribution"), DEFAULT_LAYOUT.attribution),
 		fontSize: fontSize === null ? null : clampFontSize(fontSize),
 		panelHeight: parsePanelHeight(field(panel, "height")),
 		panelOpen: bool(field(panel, "open"), DEFAULT_LAYOUT.panelOpen),
@@ -185,6 +189,7 @@ export function serializeEditorLayout(layout: EditorLayout): Record<string, unkn
 	if (layout.minimap !== null) stored.minimap = layout.minimap;
 	if (layout.lineNumbers !== DEFAULT_LAYOUT.lineNumbers) stored.lineNumbers = layout.lineNumbers;
 	if (layout.status !== DEFAULT_LAYOUT.status) stored.status = layout.status;
+	if (layout.attribution !== DEFAULT_LAYOUT.attribution) stored.attribution = layout.attribution;
 	if (layout.fontSize !== null) stored.fontSize = layout.fontSize;
 	const panel: Record<string, unknown> = {};
 	if (layout.panelHeight !== PANEL_DEFAULT) panel.height = layout.panelHeight;

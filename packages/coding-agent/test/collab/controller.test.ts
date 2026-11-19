@@ -141,6 +141,7 @@ function makeControllerContext(
 			},
 		},
 		session: {
+			getTodoPhases: () => [],
 			get isSessionTransitioning() {
 				return state.transition !== undefined;
 			},

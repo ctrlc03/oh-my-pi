@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useCallback, useState } from "react";
 import type { CompanionClient, GitFileChange, GitSnapshot } from "../../lib/companion";
 import { relTime, splitPath } from "../../lib/format";
+import { useAgentLines } from "../../lib/line-attribution";
 import type { DiffReview, ReviewScope } from "../../lib/review-comments";
 import { useRequest } from "../../lib/use-request";
 import type { ToolRenderHost } from "../../tool-render";
@@ -106,6 +107,7 @@ function GitView({ git, client, instanceId, host, review, onRefresh }: GitViewPr
 							loadDiff={loadDiff}
 							host={host}
 							download={{ client, instanceId }}
+							attribution={{ client, instanceId }}
 							expanded={open === file.path}
 							onToggle={() => setOpen(open === file.path ? null : file.path)}
 							scope="tree"
@@ -164,6 +166,8 @@ export interface TreeFileProps {
 	host: ToolRenderHost;
 	/** Adds a download button to the expanded file; absent where the companion is out of reach. */
 	download?: { client: CompanionClient; instanceId: string };
+	/** Marks the added lines an agent wrote (see `useAgentLines`); absent where the companion is out of reach. */
+	attribution?: { client: CompanionClient; instanceId: string };
 	expanded: boolean;
 	onToggle(): void;
 	scope: ReviewScope;
@@ -178,6 +182,7 @@ export function TreeFile({
 	loadDiff,
 	host,
 	download,
+	attribution,
 	expanded,
 	onToggle,
 	scope,
@@ -214,7 +219,15 @@ export function TreeFile({
 			</button>
 			{expanded && (
 				<div className="sh-change-body">
-					<FileDiff loadDiff={loadDiff} scope={scope} path={file.path} review={review} />
+					<FileDiff
+						loadDiff={loadDiff}
+						scope={scope}
+						path={file.path}
+						review={review}
+						attribution={
+							deleted || attribution === undefined ? undefined : { ...attribution, path: `${root}/${file.path}` }
+						}
+					/>
 					{!deleted && host.openFile !== undefined && (
 						<button
 							type="button"
@@ -243,14 +256,22 @@ function FileDiff({
 	scope,
 	path,
 	review,
+	attribution,
 }: {
 	loadDiff(path: string): Promise<{ diff: string; truncated: boolean }>;
 	scope: ReviewScope;
 	path: string;
 	review: DiffReview | null;
+	/** Where to ask which lines agents wrote: the file's absolute path in the session's worktree. */
+	attribution?: { client: CompanionClient; instanceId: string; path: string };
 }): ReactNode {
 	const load = useCallback(() => loadDiff(path), [loadDiff, path]);
 	const { state } = useRequest(load);
+	const agentLines = useAgentLines(
+		attribution?.client ?? null,
+		attribution?.instanceId ?? null,
+		attribution?.path ?? "",
+	);
 	if (state.status === "loading") {
 		return (
 			<div className="sh-companion-empty sh-file-status">
@@ -261,7 +282,7 @@ function FileDiff({
 	if (state.status === "error") return <div className="sh-connect-error">{state.message}</div>;
 	return (
 		<>
-			<UnifiedDiff diff={state.value.diff} scope={scope} path={path} review={review} />
+			<UnifiedDiff diff={state.value.diff} scope={scope} path={path} review={review} agentLines={agentLines} />
 			{state.value.truncated && <div className="sh-file-note">The diff is longer than the viewer reads.</div>}
 		</>
 	);

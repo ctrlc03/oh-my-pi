@@ -8,6 +8,7 @@ import {
 	fileHunks,
 	linesOverlap,
 	NOTE_CHARS,
+	PROMPT_CHARS,
 	type ScanScope,
 	type SessionEdit,
 	scanSessionEdits,
@@ -271,12 +272,40 @@ describe("scanSessionEdits", () => {
 				path: "src/a.ts",
 				text: "I will trim the input first.",
 				intent: "Trimming input",
+				prompt: "do it",
 				added: ["trim(y);"],
 				removed: ["raw(y);"],
+				changes: [{ oldStart: 2, removed: 1, newStart: 2, added: ["  trim(y);"] }],
 			},
 			expect.objectContaining({ turn: 2, turnId: "p2", text: "Second turn change.", added: ["second();"] }),
 		]);
 		expect(JSON.stringify(edits)).not.toContain("hidden reasoning");
+	});
+
+	it("records the turn's prompt words, the model, the line changes of an edit and a whole-file write", async () => {
+		const longPrompt = `Please ${"refactor the parser and then rename every helper ".repeat(6)}`;
+		const lines = [
+			message({ type: "message", id: "p1", message: { role: "user", content: longPrompt } }),
+			message({
+				type: "message",
+				id: "m1",
+				message: {
+					role: "assistant",
+					model: "claude-opus-4-5",
+					content: [toolCall("c1", "write", { path: "src/a.ts", content: "one\ntwo\n" })],
+				},
+			}),
+			result("c1", {}),
+		];
+		const [written] = await scanSessionEdits(lines, scope);
+		expect(written).toMatchObject({
+			model: "claude-opus-4-5",
+			rewrite: true,
+			changes: [{ oldStart: 1, removed: 0, newStart: 1, added: ["one", "two"] }],
+		});
+		expect(written?.prompt?.startsWith("Please refactor the parser")).toBe(true);
+		expect(written?.prompt?.endsWith("…")).toBe(true);
+		expect(written?.prompt?.length).toBeLessThanOrEqual(PROMPT_CHARS + 1);
 	});
 
 	it("uses the latest assistant text of the turn when the call's own message has none", async () => {

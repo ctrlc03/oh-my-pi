@@ -306,6 +306,7 @@ import {
 	asyncJobSnapshot,
 	asyncJobTree,
 	cancelOwnedAsyncJob,
+	hasRunningJobsInTree,
 	inspectAsyncJob,
 	requestJobTreeCaptions,
 	runningJobWidgets,
@@ -387,7 +388,7 @@ import {
 	SWEEP_MIN_INTERVAL_MS,
 } from "./codex-auto-reset";
 import { COST_GATE_NOTICE_SOURCE, type CostCapRefusal, CostGate, type CostGateApi } from "./cost-gate";
-import { recordCredentialPin, seedCredentialPins } from "./credential-pin";
+import { applyPreferredAccounts, recordCredentialPin, seedCredentialPins } from "./credential-pin";
 import { isDateCwdReminderControl } from "./date-cwd-reminder";
 import { EvalRunner, type EvalRunnerHost, type PythonExecuteOptions } from "./eval-runner";
 import {
@@ -579,6 +580,8 @@ import {
 	cfgPrewalkInto,
 	cfgProviderAppendOnlyContext,
 	cfgProvidersCacheWarming,
+	cfgProvidersPreferredAccounts,
+	validatePreferredAccounts,
 	cfgProvidersCacheRetention,
 	cfgProvidersAntigravityEndpoint,
 	cfgRetryModelFallback,
@@ -3940,6 +3943,24 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		return { jobs: [...jobs], agents, queued };
 	}
 
+	/**
+	 * Whether anything beyond the model loop is still going: an open run (paused stretches included), a running
+	 * async job (background command, service, task) owned by this agent or a subagent below it, a child agent whose
+	 * run is open, or a result or message queued to wake the session. The collab registry publishes it
+	 * (`CollabHostSnapshot.background`) so the companion hibernates only a session nothing can resume by itself.
+	 * Deliberately wider than {@link wakeSources}, which leaves out jobs whose result the session will never be woken
+	 * for: ending the process would still cancel them.
+	 */
+	get hasBackgroundWork(): boolean {
+		if (this.#runActive || this.#wakeSources() !== undefined) return true;
+		const manager = this.#asyncJobManager;
+		if (manager && hasRunningJobsInTree(manager, this.#agentId)) return true;
+		const registry = this.#agentRegistry;
+		const agentId = this.#agentId;
+		if (!registry || !agentId) return false;
+		return registry.list().some(ref => ref.parentId === agentId && ref.kind === "sub" && registry.isRunning(ref));
+	}
+
 	/** A run is open: from its first `agent_start` until its `agent_end`, paused stretches included. */
 	get isRunActive(): boolean {
 		return this.#runActive;
@@ -6965,9 +6986,20 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		// broker, and losing them re-ranks onto a different account, cold-missing
 		// the account-scoped prompt cache. Skipped for fresh provider sessions —
 		// those explicitly want new routing identity.
+		const routedProviders = new Set<string>();
 		if (!this.#freshProviderSessionId) {
 			seedCredentialPins(this.#modelRegistry.authStorage, this.sessionManager, sid);
+			for (const provider of this.sessionManager.getCredentialPins().keys()) routedProviders.add(provider);
 		}
+		// A provider this session has no account for yet starts on the account the user made the
+		// default (`providers.preferredAccounts`, set from the collab app or `omp usage use`). Only
+		// new routing: a session that already ran keeps its account, whose prompt cache is scoped to it.
+		applyPreferredAccounts(
+			this.#modelRegistry.authStorage,
+			sid,
+			validatePreferredAccounts(cfgProvidersPreferredAccounts.get(this.settings)),
+			routedProviders,
+		);
 		// Keep every live advisor's provider identity in lockstep with the primary's
 		// across every session-boundary transition — including branch paths that
 		// skip conversation restore — so advisors never emit the previous

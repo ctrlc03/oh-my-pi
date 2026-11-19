@@ -16,6 +16,7 @@ import * as path from "node:path";
 import type { HunkNote } from "../src/lib/review-board";
 import { inputPaths, isRecord, str } from "../src/tool-render/util";
 import { callPaths } from "./companion-file-sessions";
+import { type LineChange, parseLineChanges } from "./companion-attribution-lines";
 import { isInside } from "./companion-git";
 
 /** Longest note text: a few sentences. */
@@ -169,9 +170,17 @@ export interface SessionEdit {
 	/** What the assistant wrote before the call; empty when it wrote nothing. */
 	text: string;
 	intent?: string;
+	/** The model that made the call; absent when the entry does not say. */
+	model?: string;
+	/** The turn's prompt, whitespace collapsed and cut ({@link PROMPT_CHARS}); empty when it has no text. */
+	prompt?: string;
 	/** Normalized lines the edit added and removed. */
 	added: string[];
 	removed: string[];
+	/** What the call replaced, by line (line attribution); absent when its result did not say. */
+	changes?: LineChange[];
+	/** The call wrote the whole file, so `changes` is all of it. */
+	rewrite?: boolean;
 }
 
 /** A prompt of a session: what opens a turn. */
@@ -182,6 +191,8 @@ export interface PromptTurn {
 	turn: number;
 	/** Epoch ms; 0 when the entry has no timestamp. */
 	at: number;
+	/** The prompt's first words (see {@link SessionEdit.prompt}). */
+	prompt?: string;
 }
 
 /**
@@ -194,7 +205,7 @@ export function placeInTurns(edits: readonly SessionEdit[], turns: readonly Prom
 	return edits.map(edit => {
 		let turn = turns[0]!;
 		for (const candidate of turns) if (candidate.at <= edit.at) turn = candidate;
-		return { ...edit, turn: turn.turn, turnId: turn.id };
+		return { ...edit, turn: turn.turn, turnId: turn.id, ...(turn.prompt ? { prompt: turn.prompt } : {}) };
 	});
 }
 
@@ -216,6 +227,8 @@ interface PendingCall {
 	args: Record<string, unknown>;
 	text: string;
 	intent?: string;
+	model?: string;
+	prompt: string;
 	at: number;
 	turn: number;
 	turnId: string;
@@ -225,6 +238,8 @@ interface PendingCall {
 interface FileEdit {
 	path: string;
 	lines: { added: string[]; removed: string[] };
+	changes?: LineChange[];
+	rewrite?: boolean;
 }
 
 function isFilePath(value: string | null): value is string {
@@ -249,7 +264,9 @@ function editedFiles(args: Record<string, unknown>, details: Record<string, unkn
 		if (file.isError === true) return;
 		const filePath = str(file.path) ?? named[i] ?? null;
 		const diff = str(file.diff);
-		if (isFilePath(filePath) && diff) files.push({ path: filePath, lines: changedLines(diff) });
+		if (isFilePath(filePath) && diff) {
+			files.push({ path: filePath, lines: changedLines(diff), changes: parseLineChanges(diff) });
+		}
 	});
 	// A result without a diff: a call on one file says what it adds in its own input.
 	if (files.length === 0 && input && new Set(named).size === 1 && isFilePath(named[0] ?? null)) {
@@ -312,6 +329,20 @@ function timestampOf(entry: Record<string, unknown>): number {
 	return Number.isNaN(parsed) ? 0 : parsed;
 }
 
+/** Longest prompt kept on an edit: the first words are enough to tell turns apart. */
+export const PROMPT_CHARS = 120;
+
+/** A prompt entry's text with whitespace collapsed, cut at {@link PROMPT_CHARS} on a word with an ellipsis. */
+function promptWords(entry: Record<string, unknown>): string {
+	const message = isRecord(entry.message) ? entry.message : null;
+	const content = message === null ? entry.content : message.content;
+	const text = typeof content === "string" ? content : Array.isArray(content) ? textOf(content, 0, content.length) : "";
+	const clean = text.replace(/\s+/g, " ").trim();
+	if (clean.length <= PROMPT_CHARS) return clean;
+	const cut = clean.lastIndexOf(" ", PROMPT_CHARS);
+	return `${clean.slice(0, cut > PROMPT_CHARS * 0.5 ? cut : PROMPT_CHARS).trimEnd()}…`;
+}
+
 function parseLine(line: string): Record<string, unknown> | null {
 	try {
 		const value: unknown = JSON.parse(line);
@@ -345,6 +376,7 @@ export async function scanSessionEdits(
 	let staged: { call: PendingCall; files: FileEdit[] } | null = null;
 	let turn = 0;
 	let turnId = "";
+	let turnPrompt = "";
 	/** Raw assistant lines of the current turn, newest first. */
 	let recent: string[] = [];
 
@@ -371,8 +403,12 @@ export async function scanSessionEdits(
 				path: target,
 				text: call.text,
 				...(call.intent ? { intent: call.intent } : {}),
+				...(call.model ? { model: call.model } : {}),
+				...(call.prompt ? { prompt: call.prompt } : {}),
 				added: file.lines.added,
 				removed: file.lines.removed,
+				...(file.changes ? { changes: file.changes } : {}),
+				...(file.rewrite ? { rewrite: true } : {}),
 			});
 		}
 	};
@@ -397,7 +433,8 @@ export async function scanSessionEdits(
 			if (prompt) {
 				turn++;
 				turnId = typeof entry.id === "string" ? entry.id : "";
-				turns?.push({ id: turnId, turn, at: timestampOf(entry) });
+				turnPrompt = promptWords(entry);
+				turns?.push({ id: turnId, turn, at: timestampOf(entry), ...(turnPrompt ? { prompt: turnPrompt } : {}) });
 				recent = [];
 			}
 			continue;
@@ -425,11 +462,14 @@ export async function scanSessionEdits(
 						callPaths(name, args).some(p => boardPath(p) !== null));
 				if (!relevant) return;
 				const intent = (str(block.intent) ?? str(args.i))?.trim();
+				const model = str(message.model);
 				pending.set(block.id, {
 					name,
 					args,
 					text: textBefore(blocks, index) || recentText(),
 					...(intent ? { intent } : {}),
+					...(model ? { model } : {}),
+					prompt: turnPrompt,
 					at: timestampOf(entry),
 					turn,
 					turnId,
@@ -456,8 +496,19 @@ export async function scanSessionEdits(
 		} else if (name === "write") {
 			const filePath = str(args.file_path) ?? str(args.path);
 			const content = str(args.content);
-			if (isFilePath(filePath) && content)
-				record(call, [{ path: filePath, lines: { added: normalized(content.split("\n")), removed: [] } }]);
+			if (isFilePath(filePath) && content) {
+				const written = content.split("\n");
+				// A trailing newline ends the last line; it does not start another.
+				if (written.at(-1) === "") written.pop();
+				record(call, [
+					{
+						path: filePath,
+						lines: { added: normalized(written), removed: [] },
+						changes: [{ oldStart: 1, removed: 0, newStart: 1, added: written }],
+						rewrite: true,
+					},
+				]);
+			}
 		} else if (name === "ast_edit") {
 			staged = { call, files: astEditedFiles(details) };
 		} else if (name === "resolve" || name === "reject") {

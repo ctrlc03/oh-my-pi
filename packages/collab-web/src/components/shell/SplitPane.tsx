@@ -16,6 +16,7 @@ import { useComposerExtras } from "./composer-extras";
 import { useEditPrompt } from "./EditPromptSheet";
 import { useHiddenMessages } from "./HiddenMessages";
 import { useTurnChanges } from "./TurnChangesSheet";
+import { useViewing } from "./UnreadHost";
 import { useReviewBoard } from "../review-board/use-review-board";
 import "./split.css";
 
@@ -73,6 +74,8 @@ export function SplitPane({
 	const stored = rooms.find(room => room.roomId === roomId) ?? null;
 	const home = useMemo(() => resolveSessionHome(computers, sessionId, null, stored), [computers, sessionId, stored]);
 	const { computer, hostId, instanceId } = home;
+	// Seen like the main session: no badge for it, and its finished turns leave the Inbox.
+	useViewing(computer?.id ?? null, instanceId);
 	const companionClient = computer?.client ?? null;
 	const composerExtras = useComposerExtras(
 		snap,

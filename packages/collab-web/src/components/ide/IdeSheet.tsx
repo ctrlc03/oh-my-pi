@@ -32,6 +32,9 @@ import {
 import type { EditorEnginePref } from "../../lib/editor-prefs";
 import { useEditorEnginePref, useEditorThemePref } from "../../lib/editor-prefs";
 import { editorThemeVars } from "../../lib/editor-themes";
+import type { PreviewKind, PreviewMode, ViewerKind } from "../../lib/file-viewer";
+import { defaultPreviewMode, PREVIEW_MODES, previewKind, viewerKind } from "../../lib/file-viewer";
+import { attributionMarks, type FileAttribution } from "../../lib/line-attribution";
 import type { LspDiagnostic, LspLocation, LspQuery } from "../../lib/repo-intel";
 import { useRequest } from "../../lib/use-request";
 import { usePanePlacement } from "../../lib/workspace";
@@ -39,6 +42,10 @@ import { matchesMedia } from "../../lib/zoom";
 import { useMedia, WIDE_QUERY } from "../codemap/shared";
 import { DownloadButton } from "../shell/DownloadButton";
 import { Sheet, SheetPlacementButton } from "../shell/Sheet";
+import { FileViewer } from "../viewer/FileViewer";
+import { MarkdownPreview } from "../viewer/MarkdownPreview";
+import { PreviewModeToggle } from "../viewer/PreviewModeToggle";
+import { SvgPreview } from "../viewer/SvgPreview";
 import { LayoutMenu, type MenuAction } from "./LayoutMenu";
 import type { EditorDoc, EditorEngine, EditorView, EditorViewHooks, EngineName, HoverAnswer, Pos } from "./backend";
 import { chooseEngine, loadEngine, readyEngine } from "./backend";
@@ -93,6 +100,12 @@ const QUICK_OPEN_ROWS = 40;
 const DESIGN_FILE = /\.(md|mdx|markdown|txt|rst|adoc)$/i;
 /** Problems are asked for this long after the last edit. */
 const DIAGNOSTICS_DEBOUNCE_MS = 800;
+/** The Source and Preview halves of a split sit side by side from this width of the code area; narrower, one above the other. */
+const SPLIT_STACK_WIDTH = 720;
+/** The preview of a file being typed in is made again this long after the last keystroke. */
+const PREVIEW_DEBOUNCE_MS = 250;
+/** Which lines agents wrote is asked for this long after the file last changed on disk (reading the sessions is not free). */
+const ATTRIBUTION_DEBOUNCE_MS = 600;
 
 type Conflict = { kind: "changed"; version: string } | { kind: "gone" };
 
@@ -118,6 +131,13 @@ interface Tab {
 	diagnostics: readonly LspDiagnostic[] | null;
 	/** Said once in the status bar when no language server handles the file. */
 	lspNote: string | null;
+	/** How the file is shown: text in the editor, or an image or PDF in a viewer that takes the editor's place (no document). */
+	kind: ViewerKind;
+	/** Bytes on disk, when the file was opened or last reloaded: the viewers' size limits. */
+	size: number;
+	/** The text has a rendered form (Markdown, SVG) that Source / Preview / Split switches to. */
+	preview: PreviewKind | null;
+	mode: PreviewMode;
 }
 
 /**
@@ -133,6 +153,8 @@ interface Memory {
 	revisions: Record<string, number>;
 	/** Tabs whose file no language server handles: nothing more is asked for them. */
 	noServer: Record<string, true>;
+	/** What the companion last said about which lines agents wrote, by tab; read for the version in `Tab.version`. */
+	attribution: Record<string, FileAttribution>;
 	expanded: Record<string, true>;
 	/** Absolute tree root once the tree loaded. */
 	root: string | null;
@@ -142,7 +164,16 @@ const memories: Record<string, Memory> = {};
 
 function memoryFor(instanceId: string): Memory {
 	if (Object.hasOwn(memories, instanceId)) return memories[instanceId]!;
-	const memory: Memory = { tabs: [], active: null, docs: {}, revisions: {}, noServer: {}, expanded: {}, root: null };
+	const memory: Memory = {
+		tabs: [],
+		active: null,
+		docs: {},
+		revisions: {},
+		noServer: {},
+		attribution: {},
+		expanded: {},
+		root: null,
+	};
 	memories[instanceId] = memory;
 	return memory;
 }
@@ -278,6 +309,10 @@ export function IdeSheet({
 	const [definition, setDefinition] = useState<DefinitionState | null>(null);
 	const [references, setReferences] = useState<{ title: string; locations: LspLocation[] } | null>(null);
 	const [panelTab, setPanelTab] = useState<PanelTab>("problems");
+	// Bumped when a tab's text changes (after a pause in typing) so its rendered preview is made again.
+	const [previewTick, bumpPreview] = useReducer((n: number) => n + 1, 0);
+	const previewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	useEffect(() => () => clearTimeout(previewTimer.current), []);
 	/** Open the bottom panel on `tab`. */
 	const showPanel = useCallback((tab: PanelTab) => {
 		setPanelTab(tab);
@@ -304,7 +339,9 @@ export function IdeSheet({
 	const themeStyle = useMemo(() => editorThemeVars(editorTheme) as CSSProperties | null, [editorTheme]);
 	const [engine, setEngine] = useState<EditorEngine | null>(() => {
 		const ready = readyEngine(wantedEngine(pref));
-		return ready !== null && mem.tabs.every(tab => mem.docs[tab.path]?.engine === ready.name) ? ready : null;
+		return ready !== null && mem.tabs.every(tab => tab.kind !== "text" || mem.docs[tab.path]?.engine === ready.name)
+			? ready
+			: null;
 	});
 	const engineRef = useRef(engine);
 	engineRef.current = engine;
@@ -377,7 +414,7 @@ export function IdeSheet({
 		if (view === null || findTab(path) === undefined) return;
 		if (mem.active !== path) {
 			mem.active = path;
-			view.show(mem.docs[path]!);
+			view.show(mem.docs[path] ?? null);
 			setExpanded(prev => {
 				const next = { ...prev };
 				for (const dir of ancestors(path)) next[dir] = true;
@@ -385,7 +422,7 @@ export function IdeSheet({
 			});
 			rerender();
 		}
-		if (line !== undefined) view.reveal({ line, character });
+		if (line !== undefined && mem.docs[path] !== undefined) view.reveal({ line, character });
 		syncCursor();
 		if (overlayRef.current) setTreeOpen(false);
 	};
@@ -554,6 +591,37 @@ export function IdeSheet({
 				used.loadLanguage(request),
 			]);
 			let language = firstLanguage;
+			// An SVG that came whole is text with a rendered form; any other image, and a PDF, opens in a viewer.
+			const kind = viewerKind(request);
+			const wholeSvg = previewKind(file.path) === "svg" && file.text !== null && !file.truncated;
+			if (kind !== "text" && !wholeSvg) {
+				if (findTab(file.path) === undefined) {
+					mem.tabs = [
+						...mem.tabs,
+						{
+							path: file.path,
+							request: mem.root === null ? request : absolutePath(mem, file.path),
+							version: file.version,
+							writable: false,
+							truncated: false,
+							language: kind === "pdf" ? "PDF" : "Image",
+							dirty: false,
+							saving: false,
+							conflict: null,
+							changed: 0,
+							server: null,
+							diagnostics: null,
+							lspNote: null,
+							kind,
+							size: file.size,
+							preview: null,
+							mode: "source",
+						},
+					];
+				}
+				activate(file.path, line, character);
+				return;
+			}
 			if (file.text === null) {
 				notify(`${file.path} is a binary file`);
 				return;
@@ -590,6 +658,10 @@ export function IdeSheet({
 						server: null,
 						diagnostics: null,
 						lspNote: null,
+						kind: "text",
+						size: file.size,
+						preview: previewKind(file.path),
+						mode: previewKind(file.path) === null ? "source" : defaultPreviewMode(previewKind(file.path)!),
 					},
 				];
 				scheduleProblems(file.path, 0);
@@ -612,6 +684,7 @@ export function IdeSheet({
 		delete mem.docs[path];
 		delete mem.revisions[path];
 		delete mem.noServer[path];
+		delete mem.attribution[path];
 		clearTimeout(diagnosticTimers.current.get(path));
 		diagnosticTimers.current.delete(path);
 		if (mem.active === path) {
@@ -630,8 +703,14 @@ export function IdeSheet({
 		if (tab === undefined) return;
 		const file = await client.requestFile(instanceId, tab.request);
 		const now = findTab(path);
+		if (now === undefined) return;
+		// An image or PDF has no text to merge: the new version makes its viewer fetch the bytes again.
+		if (now.kind !== "text") {
+			patchTab(path, { version: file.version, size: file.size, conflict: null });
+			return;
+		}
 		const doc = mem.docs[path];
-		if (now === undefined || doc === undefined) return;
+		if (doc === undefined) return;
 		if (file.text === null) {
 			patchTab(path, { conflict: { kind: "gone" } });
 			return;
@@ -639,6 +718,7 @@ export function IdeSheet({
 		// An agent's edit to a clean file is not the user's to undo; discarded edits are.
 		const changedLines = doc.applyDisk(file.text, { mark: marked, undoable: now.dirty });
 		mem.revisions[path] = (mem.revisions[path] ?? 0) + 1;
+		bumpPreview();
 		patchTab(path, {
 			version: file.version,
 			dirty: false,
@@ -718,6 +798,10 @@ export function IdeSheet({
 					// Typing clears the lines marked as changed on disk.
 					if (tab !== undefined && (tab.dirty !== dirty || tab.changed > 0))
 						patchTab(doc.path, { dirty, changed: 0 });
+					if (tab !== undefined && tab.mode !== "source") {
+						clearTimeout(previewTimer.current);
+						previewTimer.current = setTimeout(bumpPreview, PREVIEW_DEBOUNCE_MS);
+					}
 				}
 				if (doc.path === mem.active) syncCursor();
 			},
@@ -725,6 +809,7 @@ export function IdeSheet({
 			references: (doc, position) => void referencesAt(doc, position),
 			shortcut,
 			hover: canLsp ? hover : undefined,
+			attribution: (_doc, tip) => notify(tip.replaceAll("\n", " · ")),
 		};
 	});
 
@@ -761,6 +846,62 @@ export function IdeSheet({
 	useEffect(() => {
 		if (engine !== null && canLsp && mem.active !== null) scheduleProblems(mem.active, 0);
 	}, [engine, canLsp]);
+
+	// ---- line attribution: a gutter bar on the lines agents wrote ----
+	const canAttribution = client.getSnapshot().canAttribution;
+	const showAttribution = layout.attribution && canAttribution;
+	const showAttributionRef = useRef(showAttribution);
+	showAttributionRef.current = showAttribution;
+
+	/** Put the marks the companion answered for `path` on its document, or take them off while the layout hides them. */
+	const applyAttribution = (path: string): void => {
+		const doc = mem.docs[path];
+		const tab = findTab(path);
+		if (doc === undefined || tab === undefined) return;
+		if (!showAttributionRef.current) {
+			doc.setAttribution([]);
+			return;
+		}
+		const found = mem.attribution[path];
+		// Lines are numbered in the version the answer is for: another version, or text typed since, has other numbers.
+		if (found?.version === tab.version && !doc.isDirty()) doc.setAttribution(attributionMarks(found));
+	};
+	const attributionPath = mem.active;
+	const attributionVersion = mem.tabs.find(tab => tab.path === attributionPath)?.version;
+	useEffect(() => {
+		if (engine === null) return;
+		if (!showAttribution) {
+			for (const path of Object.keys(mem.docs)) applyAttribution(path);
+			return;
+		}
+		if (attributionPath === null || attributionVersion === undefined) return;
+		const path = attributionPath;
+		if (mem.attribution[path]?.version === attributionVersion) {
+			applyAttribution(path);
+			return;
+		}
+		const doc = mem.docs[path];
+		let stale = false;
+		// An agent that edits steadily changes the file every few seconds: ask once it has paused.
+		const timer = setTimeout(() => {
+			const tab = findTab(path);
+			if (tab === undefined) return;
+			client.requestAttribution(instanceId, tab.request).then(
+				result => {
+					if (stale || mem.docs[path] !== doc) return;
+					mem.attribution[path] = result;
+					applyAttribution(path);
+				},
+				() => {
+					// The bars are decoration: a computer that cannot answer leaves the editor as it was.
+				},
+			);
+		}, ATTRIBUTION_DEBOUNCE_MS);
+		return () => {
+			stale = true;
+			clearTimeout(timer);
+		};
+	}, [engine, showAttribution, attributionPath, attributionVersion]);
 
 	const openRef = useRef(openFile);
 	openRef.current = openFile;
@@ -848,6 +989,18 @@ export function IdeSheet({
 	};
 
 	const active = mem.active === null ? undefined : findTab(mem.active);
+	// Markdown and SVG files are drawn beside their source, or instead of it; images and PDFs have no source to show.
+	const previewShown =
+		active !== undefined && active.kind === "text" && active.preview !== null && active.mode !== "source";
+	const editorHidden =
+		active === undefined || active.kind !== "text" || (active.preview !== null && active.mode === "preview");
+	const previewDoc = previewShown ? (mem.docs[active.path] ?? null) : null;
+	// `previewTick` is the change signal: the text is read once per pause in typing, not on every keystroke.
+	const previewText = useMemo(() => previewDoc?.text() ?? "", [previewDoc, previewTick]);
+	const toRequest = useCallback((rel: string) => absolutePath(mem, rel), [mem]);
+	// Side by side needs room: in a narrow editor the two halves stack.
+	const codeWidth = bodyWidth === null ? null : bodyWidth - (treeOpen && !overlay ? explorerWidth : 0);
+	const stackedSplit = codeWidth !== null && codeWidth < SPLIT_STACK_WIDTH;
 	const expandedSet = useMemo(() => new Set(Object.keys(expanded)), [expanded]);
 	const toggleDir = useCallback((path: string) => {
 		setExpanded(prev => {
@@ -976,7 +1129,7 @@ export function IdeSheet({
 							type="button"
 							className="sh-btn sh-btn-icon"
 							onClick={openActiveDefinition}
-							disabled={active === undefined}
+							disabled={active === undefined || active.kind !== "text"}
 							aria-label="Go to definition"
 							title="Go to definition (F12, or Cmd/Ctrl+click)"
 						>
@@ -988,7 +1141,7 @@ export function IdeSheet({
 							type="button"
 							className="sh-btn sh-btn-icon"
 							onClick={findActiveReferences}
-							disabled={active === undefined}
+							disabled={active === undefined || active.kind !== "text"}
 							aria-label="Find references"
 							title="Find references (Shift+F12)"
 						>
@@ -1000,7 +1153,7 @@ export function IdeSheet({
 							type="button"
 							className="sh-btn sh-btn-icon"
 							onClick={sendSelection}
-							disabled={active === undefined}
+							disabled={active === undefined || active.kind !== "text"}
 							aria-label="Ask the agent about the selection"
 							title="Ask the agent about the selection"
 						>
@@ -1075,6 +1228,7 @@ export function IdeSheet({
 						layout={layout}
 						minimapOn={minimapShown(layout.minimap, placement === "tab", metrics.width)}
 						hasMinimap={engine?.name === "monaco"}
+						hasAttribution={canAttribution}
 						actions={menuActions}
 						extra={
 							headTier === "tight" && active !== undefined ? (
@@ -1177,12 +1331,50 @@ export function IdeSheet({
 						</div>
 					)}
 					<div className="sh-ide-code">
-						<div
-							ref={host}
-							className="sh-ide-editor"
-							data-line-numbers={layout.lineNumbers ? undefined : "off"}
-							hidden={active === undefined}
-						/>
+						{active?.preview != null && (
+							<div className="sh-view-bar sh-ide-modebar">
+								<PreviewModeToggle
+									mode={active.mode}
+									modes={PREVIEW_MODES}
+									onChange={mode => patchTab(active.path, { mode })}
+								/>
+							</div>
+						)}
+						<div className="sh-ide-panes" data-stack={stackedSplit ? "true" : undefined} hidden={active === undefined}>
+							<div
+								ref={host}
+								className="sh-ide-editor"
+								data-line-numbers={layout.lineNumbers ? undefined : "off"}
+								hidden={editorHidden}
+							/>
+							{active !== undefined && active.kind !== "text" && (
+								<FileViewer
+									key={active.path}
+									client={client}
+									instanceId={instanceId}
+									path={active.request}
+									version={active.version}
+									size={active.size}
+									kind={active.kind}
+								/>
+							)}
+							{previewShown && active !== undefined && (
+								<div className="sh-ide-preview">
+									{active.preview === "svg" ? (
+										<SvgPreview key={active.path} text={previewText} name={baseName(active.path)} />
+									) : (
+										<MarkdownPreview
+											key={active.path}
+											text={previewText}
+											file={active.path}
+											client={client}
+											instanceId={instanceId}
+											toRequest={toRequest}
+										/>
+									)}
+								</div>
+							)}
+						</div>
 						{engine === null && (
 							<div className="sh-companion-empty sh-file-status">
 								<LoaderCircle size={14} className="sh-spin" /> Loading the editor…
@@ -1278,10 +1470,12 @@ export function IdeSheet({
 									)}
 									{active.lspNote !== null && <span className="sh-ide-status-lsp">{active.lspNote}</span>}
 									<span>{active.language ?? "Plain text"}</span>
-									<span>
-										Ln {cursor.line}, Col {cursor.col}
-										{cursor.selected > 0 ? ` (${cursor.selected} selected)` : ""}
-									</span>
+									{active.kind === "text" && (
+										<span>
+											Ln {cursor.line}, Col {cursor.col}
+											{cursor.selected > 0 ? ` (${cursor.selected} selected)` : ""}
+										</span>
+									)}
 								</>
 							)}
 							{metrics.fontSize !== null && (
@@ -1332,7 +1526,11 @@ function ConflictBar({
 		return (
 			<div className="sh-ide-conflict sh-ide-bar" role="alert">
 				<TriangleAlert size={14} />
-				<span>This file was deleted or is no longer text on the computer.</span>
+				<span>
+					{tab.kind === "text"
+						? "This file was deleted or is no longer text on the computer."
+						: "This file was deleted from the computer."}
+				</span>
 				<button type="button" className="sh-btn" onClick={onClose}>
 					Close tab
 				</button>

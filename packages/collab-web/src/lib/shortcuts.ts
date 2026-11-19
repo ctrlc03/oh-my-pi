@@ -12,7 +12,7 @@ import { readJson, writeJson } from "./storage";
  * `effectiveKeys`, which `shortcutFires` and the help sheet use; the table's own `keys` are only the defaults.
  */
 
-export type ShortcutGroup = "Blocks" | "Session" | "View" | "General";
+export type ShortcutGroup = "Blocks" | "Session" | "View" | "Terminal" | "General";
 
 export interface Combo {
 	/** `KeyboardEvent.key`; letters compare lower-case. */
@@ -120,6 +120,38 @@ export const SHORTCUTS = {
 	zoomIn: { keys: { key: "+", shift: "any" }, label: "Zoom the interface in", group: "View", typing: "suppress" },
 	zoomOut: { keys: { key: "-" }, label: "Zoom the interface out", group: "View", typing: "suppress" },
 	zoomReset: { keys: { key: "0" }, label: "Reset the zoom to 100%", group: "View", typing: "suppress" },
+	// The shell sheet's keys, read only while a terminal has the focus (they are handed over by `ShellPane`, never matched on the page).
+	// Shift is part of each: on Windows and Linux ⌘ is Ctrl, and a bare Ctrl+D is the shell's end-of-input.
+	shellSplitRight: {
+		keys: { key: "d", mod: true, shift: true },
+		label: "Split the terminal to the right",
+		group: "Terminal",
+		typing: "allow",
+	},
+	shellSplitDown: {
+		keys: { key: "e", mod: true, shift: true },
+		label: "Split the terminal downward",
+		group: "Terminal",
+		typing: "allow",
+	},
+	shellClosePane: {
+		keys: { key: "x", mod: true, shift: true },
+		label: "Close the focused terminal",
+		group: "Terminal",
+		typing: "allow",
+	},
+	shellPrevPane: {
+		keys: { key: "ArrowLeft", mod: true, shift: true },
+		label: "Focus the previous terminal",
+		group: "Terminal",
+		typing: "allow",
+	},
+	shellNextPane: {
+		keys: { key: "ArrowRight", mod: true, shift: true },
+		label: "Focus the next terminal",
+		group: "Terminal",
+		typing: "allow",
+	},
 } as const satisfies Record<string, Shortcut>;
 
 export type ShortcutId = keyof typeof SHORTCUTS;

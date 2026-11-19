@@ -1,0 +1,175 @@
+/* The image, PDF and Markdown viewers of the editor and the file sheet. */
+
+.sh-view,
+.sh-pdf {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	background: var(--bg-inset);
+}
+
+/* The strip above a viewer: image info, or the PDF's page and zoom controls. */
+.sh-view-bar {
+	display: flex;
+	flex: none;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 10px;
+	min-height: 36px;
+	font-size: 12.5px;
+	font-variant-numeric: tabular-nums;
+	background: var(--bg-raised);
+	border-bottom: 1px solid var(--border);
+}
+
+.sh-view-info {
+	gap: 14px;
+}
+
+.sh-view-dim {
+	color: var(--fg-muted);
+	white-space: nowrap;
+}
+
+.sh-view-zoom {
+	min-width: 4ch;
+	text-align: center;
+}
+
+.sh-view-sep {
+	width: 1px;
+	align-self: stretch;
+	margin: 4px 4px;
+	background: var(--border);
+}
+
+/* An image whose size, or a message, stands where the viewer would be. */
+.sh-view-note {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+	padding: 24px;
+	font-size: 13px;
+	color: var(--fg-muted);
+	text-align: center;
+	background: var(--bg-inset);
+}
+
+/* Inside the editor the pan/zoom surface fills the pane: no card around it. */
+.sh-view .sh-pz-surface {
+	min-height: 0;
+	border: 0;
+	border-radius: 0;
+}
+
+/* Transparency shows as a checkerboard on the image itself, in tones that read on both themes. */
+.sh-view-img {
+	display: block;
+	max-width: none;
+	background-color: color-mix(in srgb, var(--fg) 6%, var(--bg-inset));
+	background-image:
+		linear-gradient(45deg, color-mix(in srgb, var(--fg) 10%, transparent) 25%, transparent 25%),
+		linear-gradient(-45deg, color-mix(in srgb, var(--fg) 10%, transparent) 25%, transparent 25%),
+		linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--fg) 10%, transparent) 75%),
+		linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--fg) 10%, transparent) 75%);
+	background-position:
+		0 0,
+		0 8px,
+		8px -8px,
+		-8px 0;
+	background-size: 16px 16px;
+	/* Pixels stay pixels when zoomed in on: that is what looking at them closely is for. */
+	image-rendering: auto;
+}
+
+/* ---- PDF ---- */
+.sh-pdf-pages {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.sh-pdf-page-input {
+	width: 4.5ch;
+	min-width: 0;
+	padding: 2px 6px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+}
+
+.sh-pdf-stage {
+	position: relative;
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+	overflow: auto;
+	/* A pinch on a trackpad is the zoom's: the page area scrolls, it does not pan the app. */
+	overscroll-behavior: contain;
+}
+
+.sh-pdf-stage:focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: -2px;
+}
+
+/* `margin: auto` centres a page narrower than the viewer and still lets a wider one scroll from its left edge. */
+.sh-pdf-page {
+	flex: none;
+	margin: 0 auto;
+	padding: 24px;
+}
+
+.sh-pdf-canvas {
+	display: block;
+	background: #fff;
+	box-shadow: 0 2px 14px rgba(0, 0, 0, 0.35);
+}
+
+@media (pointer: coarse) {
+	.sh-pdf .sh-btn-icon {
+		width: 44px;
+		height: 44px;
+	}
+	.sh-pdf-page-input {
+		min-height: 36px;
+		font-size: 16px;
+	}
+}
+
+/* ---- Markdown preview ---- */
+.sh-md-preview {
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	overflow: auto;
+	padding: 16px 20px 32px;
+	background: var(--bg);
+}
+
+.sh-md-preview .tr-md {
+	max-width: 880px;
+	margin: 0 auto;
+}
+
+.sh-md-preview .tr-md img {
+	max-width: 100%;
+	height: auto;
+}
+
+/* A relative image that could not be read stays as its alt text. */
+.sh-md-preview .tr-md img[data-broken] {
+	display: inline;
+	color: var(--fg-muted);
+}
+
+/* The Source / Preview / Split switch. */
+.sh-view-modes {
+	flex: none;
+}

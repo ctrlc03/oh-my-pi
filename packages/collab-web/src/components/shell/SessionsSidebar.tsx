@@ -114,11 +114,11 @@ function ComputerGroup({
 	const bodyId = useId();
 	const { client, snap } = computer;
 	const live = snap.phase === "live";
-	const liveIds = new Set([...snap.hosts, ...snap.idle].map(session => session.sessionId));
+	const liveIds = new Set([...snap.hosts, ...snap.idle, ...snap.hibernated].map(session => session.sessionId));
 	// A room of a process the computer lists is that session's row, not a second one (the Personal session's included).
-	const { alone, twins } = matchRooms(rooms, [...snap.hosts, ...snap.idle]);
+	const { alone, twins } = matchRooms(rooms, [...snap.hosts, ...snap.idle, ...snap.hibernated]);
 	// Sessions that ended while settled (the computer ends them when they settle, if asked) stay under Settled.
-	const ended = useEndedSettled(client, live, endedSettledKeys(org.doc, liveIds));
+	const ended = useEndedSettled(client, live, endedSettledKeys(org.doc, liveIds), snap.sessionCardsRev);
 	const openElsewhere = useOpenElsewhere();
 	const deleter = useDeleteSessions();
 
@@ -144,7 +144,7 @@ function ComputerGroup({
 		}
 	};
 
-	const join = (host: CompanionHost): void => {
+	const join = (host: Pick<CompanionHost, "instanceId">): void => {
 		setJoining(host.instanceId);
 		setError(null);
 		onOpenHost(computer.id, host.instanceId).catch((err: unknown) => {
@@ -162,6 +162,13 @@ function ComputerGroup({
 			.openHost(computer.id, host.instanceId)
 			.catch((err: unknown) => setError(errorText(err)))
 			.finally(() => setJoining(null));
+	};
+
+	/** Hibernate a running session now; the computer's refusal (it is working, someone has it open…) shows as the error. */
+	const hibernate = (host: CompanionHost): void => {
+		if (!client) return;
+		setError(null);
+		client.hibernateNow(host.instanceId).catch((err: unknown) => setError(errorText(err)));
 	};
 
 	const openRoomBeside = (link: string): void => {
@@ -200,7 +207,7 @@ function ComputerGroup({
 	const status = (
 		<>
 			{live && <PowerNote power={snap.power} />}
-			{listed.length === 0 && snap.idle.length === 0 && (
+			{listed.length === 0 && snap.idle.length === 0 && snap.hibernated.length === 0 && (
 				<div className="sh-companion-empty">
 					{snap.phase === "unpaired"
 						? snap.error
@@ -224,6 +231,7 @@ function ComputerGroup({
 			/>
 			{client && live && <FanoutGroups hosts={listed} client={client} onOpen={id => onOpenHost(computer.id, id)} />}
 			<OrgSessions
+				computerId={computer.id}
 				hosts={listed}
 				idle={snap.idle}
 				rooms={alone}
@@ -242,11 +250,15 @@ function ComputerGroup({
 				ended={ended}
 				canResume={snap.canStart && live}
 				onResumeEnded={resumeEnded}
+				hibernated={snap.hibernated}
+				onOpenHibernated={join}
+				onHibernate={client !== null && live && snap.canHibernate ? hibernate : null}
 				onDelete={
 					deleter !== null && deleteOffered(snap)
 						? sessions => deleter.request({ computerId: computer.id, sessions, openSessionId: currentSessionId })
 						: null
 				}
+				onSetCard={client !== null && snap.canSessionCards ? (id, card) => client.setSessionCard(id, card) : null}
 			/>
 			{openElsewhere.notice}
 			{shown && <div className="sh-connect-error">{shown}</div>}
@@ -313,6 +325,7 @@ function DeviceGroup({
 	const list = (
 		<>
 			<OrgSessions
+				computerId={null}
 				hosts={[]}
 				idle={[]}
 				rooms={rooms}
@@ -329,8 +342,12 @@ function DeviceGroup({
 				onOpenRoomBeside={beside === null ? undefined : room => setError(beside.openLink(room.link))}
 				ended={[]}
 				canResume={false}
+				hibernated={[]}
+				onOpenHibernated={() => {}}
+				onHibernate={null}
 				onResumeEnded={() => Promise.resolve(false)}
 				onDelete={null}
+				onSetCard={null}
 			/>
 			{error && <div className="sh-connect-error">{error}</div>}
 		</>

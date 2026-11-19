@@ -19,7 +19,7 @@ import {
 } from "../../lib/shortcuts";
 import "./shortcuts.css";
 
-const GROUPS: readonly ShortcutGroup[] = ["Blocks", "Session", "View", "General"];
+const GROUPS: readonly ShortcutGroup[] = ["Blocks", "Session", "View", "Terminal", "General"];
 
 const IDS = Object.keys(SHORTCUTS) as ShortcutId[];
 

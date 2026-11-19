@@ -2,25 +2,12 @@
  * tinted to the palette, and one pink accent with an orchid partner for
  * gradients. Dark is the default; `[data-theme="light"]` and the
  * prefers-color-scheme fallback flip to a warm light.
+ * The surface, text, hairline and shadow tokens are a *palette*, chosen apart for dark and light
+ * (Settings → Appearance; `data-palette-dark` / `data-palette-light` on <html>): Plum and Marble here,
+ * the others further down. Accents are independent of the palette.
  * The ONLY file allowed to contain raw color values. */
 :root {
 	color-scheme: dark;
-
-	/* surface ramp: page → panel → raised card; inset for code, overlay for sheets */
-	--bg: #140e15;
-	--panel: #1b141d;
-	--bg-raised: #251c28;
-	--bg-inset: #150f17;
-	--bg-overlay: #221a25;
-	--glass: rgba(36, 27, 39, 0.72);
-	--hover: rgba(255, 226, 246, 0.05);
-	--selected: rgba(255, 226, 246, 0.09);
-
-	/* text */
-	--fg: #f7eff6;
-	--fg-muted: #c0aec0;
-	--fg-faint: #978798;
-	--fg-inverse: #170f16;
 
 	/* accent: one pink; orchid only as its gradient partner */
 	--accent-a: #ff8acb;
@@ -50,11 +37,7 @@
 	--warn: #f5a524;
 	--err: #ff6b78;
 
-	/* hairlines: alpha so one value reads on every surface step */
-	--border: rgba(255, 222, 244, 0.075);
-	--border-strong: rgba(255, 222, 244, 0.14);
-	--edge-top: rgba(255, 230, 247, 0.15);
-	--edge-bottom: rgba(255, 230, 247, 0.04);
+	/* focus ring */
 	--ring: #f472c0;
 	--ring-soft: rgba(244, 114, 192, 0.2);
 
@@ -172,13 +155,10 @@
 	--topbar-h: 52px;
 	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
-	--shadow-card: 0 1px 2px rgba(10, 3, 10, 0.5);
-	--shadow-float:
-		0 1px 0 rgba(255, 236, 249, 0.06) inset, 0 10px 30px rgba(10, 3, 10, 0.45), 0 2px 6px rgba(10, 3, 10, 0.3);
 	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(219, 39, 119, 0.3);
-	--shadow-overlay: 0 32px 80px rgba(10, 3, 10, 0.65), 0 1px 0 rgba(255, 236, 249, 0.07) inset;
-	--rail-mobile-shadow: -12px 0 32px rgba(10, 3, 10, 0.6);
-	--backdrop: rgba(12, 5, 12, 0.55);
+
+	/* the Custom accent swatch: a hue wheel until a colour is chosen */
+	--swatch-custom: conic-gradient(#ff5a5a, #ffc14d, #7ee06b, #4dd4d4, #5a8bff, #c15aff, #ff5a9d, #ff5a5a);
 
 	/* QR codes: dark modules on a light square in every theme, or scanners fail */
 	--qr-paper: #fff;
@@ -186,6 +166,41 @@
 
 	/* scroll-edge fade: masks read alpha only, so the stop color is irrelevant */
 	--fade-bottom: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
+}
+
+/* Plum: the default dark palette. Its surface, text, hairline and shadow tokens sit in a rule of their own so the palette
+ * tile in Settings (.sh-appr-pal) can wear them, whatever theme is active; the other dark palettes override exactly these. */
+:root,
+.sh-appr-pal[data-palette-dark="plum"] {
+	/* surface ramp: page → panel → raised card; inset for code, overlay for sheets */
+	--bg: #140e15;
+	--panel: #1b141d;
+	--bg-raised: #251c28;
+	--bg-inset: #150f17;
+	--bg-overlay: #221a25;
+	--glass: rgba(36, 27, 39, 0.72);
+	--hover: rgba(255, 226, 246, 0.05);
+	--selected: rgba(255, 226, 246, 0.09);
+
+	/* text */
+	--fg: #f7eff6;
+	--fg-muted: #c0aec0;
+	--fg-faint: #978798;
+	--fg-inverse: #170f16;
+
+	/* hairlines: alpha so one value reads on every surface step */
+	--border: rgba(255, 222, 244, 0.075);
+	--border-strong: rgba(255, 222, 244, 0.14);
+	--edge-top: rgba(255, 230, 247, 0.15);
+	--edge-bottom: rgba(255, 230, 247, 0.04);
+
+	/* shadows */
+	--shadow-card: 0 1px 2px rgba(10, 3, 10, 0.5);
+	--shadow-float:
+		0 1px 0 rgba(255, 236, 249, 0.06) inset, 0 10px 30px rgba(10, 3, 10, 0.45), 0 2px 6px rgba(10, 3, 10, 0.3);
+	--shadow-overlay: 0 32px 80px rgba(10, 3, 10, 0.65), 0 1px 0 rgba(255, 236, 249, 0.07) inset;
+	--rail-mobile-shadow: -12px 0 32px rgba(10, 3, 10, 0.6);
+	--backdrop: rgba(12, 5, 12, 0.55);
 }
 
 /* Phones: the conversation column keeps just a sliver of padding, so the text uses the width. */
@@ -202,10 +217,9 @@
 	}
 }
 
-/* Light theme — explicit override (toggle writes data-theme="light"). */
-[data-theme="light"] {
-	color-scheme: light;
-
+/* Marble: the default light palette, in a rule of its own like Plum's. */
+[data-theme="light"],
+.sh-appr-pal[data-palette-light="marble"] {
 	--bg: #f4eaf1;
 	--panel: #fdf9fc;
 	--bg-raised: #fff;
@@ -219,6 +233,22 @@
 	--fg-muted: #5f4a5c;
 	--fg-faint: #766178;
 	--fg-inverse: #fff;
+
+	--border: rgba(90, 20, 70, 0.09);
+	--border-strong: rgba(90, 20, 70, 0.16);
+	--edge-top: rgba(90, 20, 70, 0.11);
+	--edge-bottom: rgba(90, 20, 70, 0.06);
+
+	--shadow-card: 0 1px 2px rgba(90, 20, 70, 0.06);
+	--shadow-float: 0 10px 30px rgba(90, 20, 70, 0.1), 0 2px 6px rgba(90, 20, 70, 0.06);
+	--shadow-overlay: 0 24px 64px rgba(90, 20, 70, 0.16);
+	--rail-mobile-shadow: -12px 0 32px rgba(90, 20, 70, 0.12);
+	--backdrop: rgba(40, 10, 30, 0.25);
+}
+
+/* Light theme — explicit override (toggle writes data-theme="light"). */
+[data-theme="light"] {
+	color-scheme: light;
 
 	--accent-a: #e2479d;
 	--accent-b: #9a3fd0;
@@ -237,10 +267,6 @@
 	--warn: #9a5b00;
 	--err: #c4262d;
 
-	--border: rgba(90, 20, 70, 0.09);
-	--border-strong: rgba(90, 20, 70, 0.16);
-	--edge-top: rgba(90, 20, 70, 0.11);
-	--edge-bottom: rgba(90, 20, 70, 0.06);
 	--ring: #c42d85;
 	--ring-soft: rgba(196, 45, 133, 0.16);
 
@@ -322,12 +348,7 @@
 	--pet-cover: #6a40c8;
 	--pet-lens: rgba(255, 255, 255, 0.5);
 
-	--shadow-card: 0 1px 2px rgba(90, 20, 70, 0.06);
-	--shadow-float: 0 10px 30px rgba(90, 20, 70, 0.1), 0 2px 6px rgba(90, 20, 70, 0.06);
 	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(176, 38, 106, 0.25);
-	--shadow-overlay: 0 24px 64px rgba(90, 20, 70, 0.16);
-	--rail-mobile-shadow: -12px 0 32px rgba(90, 20, 70, 0.12);
-	--backdrop: rgba(40, 10, 30, 0.25);
 }
 
 /* Light theme — system fallback when no explicit preference is stored. */
@@ -460,6 +481,463 @@
 	}
 }
 
+/* Dark palettes (Settings → Appearance → Dark palette). Plum is the default above. A palette overrides only the surface,
+ * text, hairline and shadow tokens (plus the neutral greys of the terminal and syntax) and is chosen apart from the light
+ * one, so System follows both. Every palette keeps --fg >= 7:1 and --fg-muted / --fg-faint >= 4.5:1 on all five surfaces;
+ * the neutral greys are lifted to >= 4.5:1 as well. The .sh-appr-pal tiles of Settings wear the same values. */
+:root[data-theme="dark"][data-palette-dark="graphite"],
+.sh-appr-pal[data-palette-dark="graphite"] {
+	--bg: #161616;
+	--panel: #1c1c1c;
+	--bg-raised: #252525;
+	--bg-inset: #131313;
+	--bg-overlay: #222222;
+	--glass: rgba(34, 34, 34, 0.72);
+	--hover: rgba(255, 255, 255, 0.05);
+	--selected: rgba(255, 255, 255, 0.09);
+	--fg: #ededed;
+	--fg-muted: #b8b8b8;
+	--fg-faint: #909090;
+	--fg-inverse: #141414;
+	--border: rgba(255, 255, 255, 0.08);
+	--border-strong: rgba(255, 255, 255, 0.15);
+	--edge-top: rgba(255, 255, 255, 0.14);
+	--edge-bottom: rgba(255, 255, 255, 0.04);
+	--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5);
+	--shadow-float: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 10px 30px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.35);
+	--shadow-overlay: 0 32px 80px rgba(0, 0, 0, 0.7), 0 1px 0 rgba(255, 255, 255, 0.07) inset;
+	--rail-mobile-shadow: -12px 0 32px rgba(0, 0, 0, 0.6);
+	--backdrop: rgba(0, 0, 0, 0.55);
+
+	--term-0: #4b4b4b;
+	--term-7: #cfcfcf;
+	--term-8: #8b8b8b;
+	--term-15: #f0f0f0;
+	--syn-comment: #8c8c8c;
+	--lang-other: #8c8c8c;
+}
+:root[data-theme="dark"][data-palette-dark="midnight"],
+.sh-appr-pal[data-palette-dark="midnight"] {
+	--bg: #0a0e1a;
+	--panel: #0f1524;
+	--bg-raised: #18203a;
+	--bg-inset: #080c17;
+	--bg-overlay: #141b30;
+	--glass: rgba(20, 28, 50, 0.72);
+	--hover: rgba(190, 210, 255, 0.06);
+	--selected: rgba(190, 210, 255, 0.1);
+	--fg: #e9eefb;
+	--fg-muted: #aeb8d2;
+	--fg-faint: #8995b5;
+	--fg-inverse: #0a0e1a;
+	--border: rgba(170, 196, 255, 0.09);
+	--border-strong: rgba(170, 196, 255, 0.16);
+	--edge-top: rgba(190, 212, 255, 0.15);
+	--edge-bottom: rgba(190, 212, 255, 0.04);
+	--shadow-card: 0 1px 2px rgba(2, 4, 14, 0.55);
+	--shadow-float: 0 1px 0 rgba(200, 220, 255, 0.06) inset, 0 10px 30px rgba(2, 4, 14, 0.5), 0 2px 6px rgba(2, 4, 14, 0.35);
+	--shadow-overlay: 0 32px 80px rgba(2, 4, 14, 0.7), 0 1px 0 rgba(200, 220, 255, 0.07) inset;
+	--rail-mobile-shadow: -12px 0 32px rgba(2, 4, 14, 0.65);
+	--backdrop: rgba(2, 4, 14, 0.6);
+
+	--term-0: #3d4866;
+	--term-7: #c4cce2;
+	--term-8: #7e88a6;
+	--term-15: #ebf0fb;
+	--syn-comment: #7e87a1;
+	--lang-other: #7f88a4;
+}
+:root[data-theme="dark"][data-palette-dark="black"],
+.sh-appr-pal[data-palette-dark="black"] {
+	--bg: #000000;
+	--panel: #0b0b0b;
+	--bg-raised: #171717;
+	--bg-inset: #000000;
+	--bg-overlay: #121212;
+	--glass: rgba(18, 18, 18, 0.72);
+	--hover: rgba(255, 255, 255, 0.06);
+	--selected: rgba(255, 255, 255, 0.11);
+	--fg: #f2f2f2;
+	--fg-muted: #b3b3b3;
+	--fg-faint: #8c8c8c;
+	--fg-inverse: #000000;
+	--border: rgba(255, 255, 255, 0.11);
+	--border-strong: rgba(255, 255, 255, 0.19);
+	--edge-top: rgba(255, 255, 255, 0.16);
+	--edge-bottom: rgba(255, 255, 255, 0.05);
+	--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.8);
+	--shadow-float: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 10px 30px rgba(0, 0, 0, 0.7), 0 2px 6px rgba(0, 0, 0, 0.5);
+	--shadow-overlay: 0 32px 80px rgba(0, 0, 0, 0.85), 0 1px 0 rgba(255, 255, 255, 0.07) inset;
+	--rail-mobile-shadow: -12px 0 32px rgba(0, 0, 0, 0.8);
+	--backdrop: rgba(0, 0, 0, 0.7);
+
+	--term-0: #3c3c3c;
+	--term-7: #cccccc;
+	--term-8: #808080;
+	--term-15: #f5f5f5;
+	--syn-comment: #808080;
+	--lang-other: #808080;
+}
+:root[data-theme="dark"][data-palette-dark="nord"],
+.sh-appr-pal[data-palette-dark="nord"] {
+	--bg: #242933;
+	--panel: #2a303b;
+	--bg-raised: #2e3440;
+	--bg-inset: #20252e;
+	--bg-overlay: #313846;
+	--glass: rgba(46, 52, 64, 0.72);
+	--hover: rgba(216, 222, 233, 0.06);
+	--selected: rgba(216, 222, 233, 0.11);
+	--fg: #eceff4;
+	--fg-muted: #c5cdd9;
+	--fg-faint: #a0abbd;
+	--fg-inverse: #1c212a;
+	--border: rgba(216, 222, 233, 0.1);
+	--border-strong: rgba(216, 222, 233, 0.18);
+	--edge-top: rgba(236, 239, 244, 0.14);
+	--edge-bottom: rgba(236, 239, 244, 0.04);
+	--shadow-card: 0 1px 2px rgba(14, 18, 26, 0.5);
+	--shadow-float: 0 1px 0 rgba(236, 239, 244, 0.06) inset, 0 10px 30px rgba(14, 18, 26, 0.5), 0 2px 6px rgba(14, 18, 26, 0.35);
+	--shadow-overlay: 0 32px 80px rgba(14, 18, 26, 0.7), 0 1px 0 rgba(236, 239, 244, 0.07) inset;
+	--rail-mobile-shadow: -12px 0 32px rgba(14, 18, 26, 0.6);
+	--backdrop: rgba(14, 18, 26, 0.55);
+
+	--term-0: #4c566a;
+	--term-1: #ff7576;
+	--term-7: #d8dee9;
+	--term-8: #93a1bc;
+	--term-15: #eceff4;
+	--syn-comment: #94a2bb;
+	--lang-other: #97a1b5;
+	--ar-kind-external: #a19fad;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme])[data-palette-dark="graphite"] {
+		--bg: #161616;
+		--panel: #1c1c1c;
+		--bg-raised: #252525;
+		--bg-inset: #131313;
+		--bg-overlay: #222222;
+		--glass: rgba(34, 34, 34, 0.72);
+		--hover: rgba(255, 255, 255, 0.05);
+		--selected: rgba(255, 255, 255, 0.09);
+		--fg: #ededed;
+		--fg-muted: #b8b8b8;
+		--fg-faint: #909090;
+		--fg-inverse: #141414;
+		--border: rgba(255, 255, 255, 0.08);
+		--border-strong: rgba(255, 255, 255, 0.15);
+		--edge-top: rgba(255, 255, 255, 0.14);
+		--edge-bottom: rgba(255, 255, 255, 0.04);
+		--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5);
+		--shadow-float: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 10px 30px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.35);
+		--shadow-overlay: 0 32px 80px rgba(0, 0, 0, 0.7), 0 1px 0 rgba(255, 255, 255, 0.07) inset;
+		--rail-mobile-shadow: -12px 0 32px rgba(0, 0, 0, 0.6);
+		--backdrop: rgba(0, 0, 0, 0.55);
+
+		--term-0: #4b4b4b;
+		--term-7: #cfcfcf;
+		--term-8: #8b8b8b;
+		--term-15: #f0f0f0;
+		--syn-comment: #8c8c8c;
+		--lang-other: #8c8c8c;
+	}
+	:root:not([data-theme])[data-palette-dark="midnight"] {
+		--bg: #0a0e1a;
+		--panel: #0f1524;
+		--bg-raised: #18203a;
+		--bg-inset: #080c17;
+		--bg-overlay: #141b30;
+		--glass: rgba(20, 28, 50, 0.72);
+		--hover: rgba(190, 210, 255, 0.06);
+		--selected: rgba(190, 210, 255, 0.1);
+		--fg: #e9eefb;
+		--fg-muted: #aeb8d2;
+		--fg-faint: #8995b5;
+		--fg-inverse: #0a0e1a;
+		--border: rgba(170, 196, 255, 0.09);
+		--border-strong: rgba(170, 196, 255, 0.16);
+		--edge-top: rgba(190, 212, 255, 0.15);
+		--edge-bottom: rgba(190, 212, 255, 0.04);
+		--shadow-card: 0 1px 2px rgba(2, 4, 14, 0.55);
+		--shadow-float: 0 1px 0 rgba(200, 220, 255, 0.06) inset, 0 10px 30px rgba(2, 4, 14, 0.5), 0 2px 6px rgba(2, 4, 14, 0.35);
+		--shadow-overlay: 0 32px 80px rgba(2, 4, 14, 0.7), 0 1px 0 rgba(200, 220, 255, 0.07) inset;
+		--rail-mobile-shadow: -12px 0 32px rgba(2, 4, 14, 0.65);
+		--backdrop: rgba(2, 4, 14, 0.6);
+
+		--term-0: #3d4866;
+		--term-7: #c4cce2;
+		--term-8: #7e88a6;
+		--term-15: #ebf0fb;
+		--syn-comment: #7e87a1;
+		--lang-other: #7f88a4;
+	}
+	:root:not([data-theme])[data-palette-dark="black"] {
+		--bg: #000000;
+		--panel: #0b0b0b;
+		--bg-raised: #171717;
+		--bg-inset: #000000;
+		--bg-overlay: #121212;
+		--glass: rgba(18, 18, 18, 0.72);
+		--hover: rgba(255, 255, 255, 0.06);
+		--selected: rgba(255, 255, 255, 0.11);
+		--fg: #f2f2f2;
+		--fg-muted: #b3b3b3;
+		--fg-faint: #8c8c8c;
+		--fg-inverse: #000000;
+		--border: rgba(255, 255, 255, 0.11);
+		--border-strong: rgba(255, 255, 255, 0.19);
+		--edge-top: rgba(255, 255, 255, 0.16);
+		--edge-bottom: rgba(255, 255, 255, 0.05);
+		--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.8);
+		--shadow-float: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 10px 30px rgba(0, 0, 0, 0.7), 0 2px 6px rgba(0, 0, 0, 0.5);
+		--shadow-overlay: 0 32px 80px rgba(0, 0, 0, 0.85), 0 1px 0 rgba(255, 255, 255, 0.07) inset;
+		--rail-mobile-shadow: -12px 0 32px rgba(0, 0, 0, 0.8);
+		--backdrop: rgba(0, 0, 0, 0.7);
+
+		--term-0: #3c3c3c;
+		--term-7: #cccccc;
+		--term-8: #808080;
+		--term-15: #f5f5f5;
+		--syn-comment: #808080;
+		--lang-other: #808080;
+	}
+	:root:not([data-theme])[data-palette-dark="nord"] {
+		--bg: #242933;
+		--panel: #2a303b;
+		--bg-raised: #2e3440;
+		--bg-inset: #20252e;
+		--bg-overlay: #313846;
+		--glass: rgba(46, 52, 64, 0.72);
+		--hover: rgba(216, 222, 233, 0.06);
+		--selected: rgba(216, 222, 233, 0.11);
+		--fg: #eceff4;
+		--fg-muted: #c5cdd9;
+		--fg-faint: #a0abbd;
+		--fg-inverse: #1c212a;
+		--border: rgba(216, 222, 233, 0.1);
+		--border-strong: rgba(216, 222, 233, 0.18);
+		--edge-top: rgba(236, 239, 244, 0.14);
+		--edge-bottom: rgba(236, 239, 244, 0.04);
+		--shadow-card: 0 1px 2px rgba(14, 18, 26, 0.5);
+		--shadow-float: 0 1px 0 rgba(236, 239, 244, 0.06) inset, 0 10px 30px rgba(14, 18, 26, 0.5), 0 2px 6px rgba(14, 18, 26, 0.35);
+		--shadow-overlay: 0 32px 80px rgba(14, 18, 26, 0.7), 0 1px 0 rgba(236, 239, 244, 0.07) inset;
+		--rail-mobile-shadow: -12px 0 32px rgba(14, 18, 26, 0.6);
+		--backdrop: rgba(14, 18, 26, 0.55);
+
+		--term-0: #4c566a;
+		--term-1: #ff7576;
+		--term-7: #d8dee9;
+		--term-8: #93a1bc;
+		--term-15: #eceff4;
+		--syn-comment: #94a2bb;
+		--lang-other: #97a1b5;
+		--ar-kind-external: #a19fad;
+	}
+}
+
+/* Light palettes (Settings → Appearance → Light palette). Marble is the default above; the same rules as the dark ones, with
+ * --fg >= 7:1 and the muted and faint text >= 4.5:1 on every surface. */
+:root[data-theme="light"][data-palette-light="paper"],
+.sh-appr-pal[data-palette-light="paper"] {
+	--bg: #f1f1f1;
+	--panel: #fafafa;
+	--bg-raised: #ffffff;
+	--bg-inset: #f5f5f5;
+	--bg-overlay: #ffffff;
+	--glass: rgba(255, 255, 255, 0.8);
+	--hover: rgba(0, 0, 0, 0.04);
+	--selected: rgba(0, 0, 0, 0.07);
+	--fg: #1a1a1a;
+	--fg-muted: #4f4f4f;
+	--fg-faint: #686868;
+	--fg-inverse: #ffffff;
+	--border: rgba(0, 0, 0, 0.09);
+	--border-strong: rgba(0, 0, 0, 0.16);
+	--edge-top: rgba(0, 0, 0, 0.1);
+	--edge-bottom: rgba(0, 0, 0, 0.06);
+	--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+	--shadow-float: 0 10px 30px rgba(0, 0, 0, 0.1), 0 2px 6px rgba(0, 0, 0, 0.06);
+	--shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.16);
+	--rail-mobile-shadow: -12px 0 32px rgba(0, 0, 0, 0.12);
+	--backdrop: rgba(0, 0, 0, 0.25);
+
+	--term-0: #333333;
+	--term-7: #666666;
+	--term-8: #8a8a8a;
+	--term-15: #141414;
+	--syn-comment: #6b6b6b;
+	--lang-other: #767676;
+	--ar-kind-external: #6e6e6e;
+	--ar-kind-file: #5c5c5c;
+}
+:root[data-theme="light"][data-palette-light="sand"],
+.sh-appr-pal[data-palette-light="sand"] {
+	--bg: #f1ebdf;
+	--panel: #faf6ed;
+	--bg-raised: #fffdf8;
+	--bg-inset: #f5efe3;
+	--bg-overlay: #fffdf8;
+	--glass: rgba(255, 251, 242, 0.8);
+	--hover: rgba(90, 60, 10, 0.05);
+	--selected: rgba(90, 60, 10, 0.08);
+	--fg: #2b2418;
+	--fg-muted: #5a503d;
+	--fg-faint: #736852;
+	--fg-inverse: #ffffff;
+	--border: rgba(90, 60, 10, 0.1);
+	--border-strong: rgba(90, 60, 10, 0.17);
+	--edge-top: rgba(90, 60, 10, 0.11);
+	--edge-bottom: rgba(90, 60, 10, 0.06);
+	--shadow-card: 0 1px 2px rgba(80, 55, 10, 0.06);
+	--shadow-float: 0 10px 30px rgba(80, 55, 10, 0.1), 0 2px 6px rgba(80, 55, 10, 0.06);
+	--shadow-overlay: 0 24px 64px rgba(80, 55, 10, 0.16);
+	--rail-mobile-shadow: -12px 0 32px rgba(80, 55, 10, 0.12);
+	--backdrop: rgba(40, 28, 5, 0.25);
+
+	--term-0: #3b342a;
+	--term-7: #6b6455;
+	--term-8: #8d8574;
+	--term-15: #1b160c;
+	--syn-comment: #6c6554;
+	--lang-other: #7a7364;
+	--ar-kind-external: #70695a;
+	--ar-kind-file: #5f5848;
+}
+:root[data-theme="light"][data-palette-light="sky"],
+.sh-appr-pal[data-palette-light="sky"] {
+	--bg: #e8eef6;
+	--panel: #f5f8fc;
+	--bg-raised: #ffffff;
+	--bg-inset: #edf2f8;
+	--bg-overlay: #ffffff;
+	--glass: rgba(250, 252, 255, 0.8);
+	--hover: rgba(20, 50, 110, 0.05);
+	--selected: rgba(20, 50, 110, 0.08);
+	--fg: #142033;
+	--fg-muted: #44536b;
+	--fg-faint: #5b6a82;
+	--fg-inverse: #ffffff;
+	--border: rgba(20, 50, 110, 0.1);
+	--border-strong: rgba(20, 50, 110, 0.17);
+	--edge-top: rgba(20, 50, 110, 0.11);
+	--edge-bottom: rgba(20, 50, 110, 0.06);
+	--shadow-card: 0 1px 2px rgba(20, 50, 110, 0.06);
+	--shadow-float: 0 10px 30px rgba(20, 50, 110, 0.1), 0 2px 6px rgba(20, 50, 110, 0.06);
+	--shadow-overlay: 0 24px 64px rgba(20, 50, 110, 0.16);
+	--rail-mobile-shadow: -12px 0 32px rgba(20, 50, 110, 0.12);
+	--backdrop: rgba(10, 25, 55, 0.25);
+
+	--term-0: #333e52;
+	--term-7: #5f6b80;
+	--term-8: #8793a8;
+	--term-15: #0f1828;
+	--syn-comment: #5e6b82;
+	--lang-other: #6f7c94;
+	--ar-kind-external: #66738a;
+	--ar-kind-file: #4e5d78;
+}
+
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme])[data-palette-light="paper"] {
+		--bg: #f1f1f1;
+		--panel: #fafafa;
+		--bg-raised: #ffffff;
+		--bg-inset: #f5f5f5;
+		--bg-overlay: #ffffff;
+		--glass: rgba(255, 255, 255, 0.8);
+		--hover: rgba(0, 0, 0, 0.04);
+		--selected: rgba(0, 0, 0, 0.07);
+		--fg: #1a1a1a;
+		--fg-muted: #4f4f4f;
+		--fg-faint: #686868;
+		--fg-inverse: #ffffff;
+		--border: rgba(0, 0, 0, 0.09);
+		--border-strong: rgba(0, 0, 0, 0.16);
+		--edge-top: rgba(0, 0, 0, 0.1);
+		--edge-bottom: rgba(0, 0, 0, 0.06);
+		--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+		--shadow-float: 0 10px 30px rgba(0, 0, 0, 0.1), 0 2px 6px rgba(0, 0, 0, 0.06);
+		--shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.16);
+		--rail-mobile-shadow: -12px 0 32px rgba(0, 0, 0, 0.12);
+		--backdrop: rgba(0, 0, 0, 0.25);
+
+		--term-0: #333333;
+		--term-7: #666666;
+		--term-8: #8a8a8a;
+		--term-15: #141414;
+		--syn-comment: #6b6b6b;
+		--lang-other: #767676;
+		--ar-kind-external: #6e6e6e;
+		--ar-kind-file: #5c5c5c;
+	}
+	:root:not([data-theme])[data-palette-light="sand"] {
+		--bg: #f1ebdf;
+		--panel: #faf6ed;
+		--bg-raised: #fffdf8;
+		--bg-inset: #f5efe3;
+		--bg-overlay: #fffdf8;
+		--glass: rgba(255, 251, 242, 0.8);
+		--hover: rgba(90, 60, 10, 0.05);
+		--selected: rgba(90, 60, 10, 0.08);
+		--fg: #2b2418;
+		--fg-muted: #5a503d;
+		--fg-faint: #736852;
+		--fg-inverse: #ffffff;
+		--border: rgba(90, 60, 10, 0.1);
+		--border-strong: rgba(90, 60, 10, 0.17);
+		--edge-top: rgba(90, 60, 10, 0.11);
+		--edge-bottom: rgba(90, 60, 10, 0.06);
+		--shadow-card: 0 1px 2px rgba(80, 55, 10, 0.06);
+		--shadow-float: 0 10px 30px rgba(80, 55, 10, 0.1), 0 2px 6px rgba(80, 55, 10, 0.06);
+		--shadow-overlay: 0 24px 64px rgba(80, 55, 10, 0.16);
+		--rail-mobile-shadow: -12px 0 32px rgba(80, 55, 10, 0.12);
+		--backdrop: rgba(40, 28, 5, 0.25);
+
+		--term-0: #3b342a;
+		--term-7: #6b6455;
+		--term-8: #8d8574;
+		--term-15: #1b160c;
+		--syn-comment: #6c6554;
+		--lang-other: #7a7364;
+		--ar-kind-external: #70695a;
+		--ar-kind-file: #5f5848;
+	}
+	:root:not([data-theme])[data-palette-light="sky"] {
+		--bg: #e8eef6;
+		--panel: #f5f8fc;
+		--bg-raised: #ffffff;
+		--bg-inset: #edf2f8;
+		--bg-overlay: #ffffff;
+		--glass: rgba(250, 252, 255, 0.8);
+		--hover: rgba(20, 50, 110, 0.05);
+		--selected: rgba(20, 50, 110, 0.08);
+		--fg: #142033;
+		--fg-muted: #44536b;
+		--fg-faint: #5b6a82;
+		--fg-inverse: #ffffff;
+		--border: rgba(20, 50, 110, 0.1);
+		--border-strong: rgba(20, 50, 110, 0.17);
+		--edge-top: rgba(20, 50, 110, 0.11);
+		--edge-bottom: rgba(20, 50, 110, 0.06);
+		--shadow-card: 0 1px 2px rgba(20, 50, 110, 0.06);
+		--shadow-float: 0 10px 30px rgba(20, 50, 110, 0.1), 0 2px 6px rgba(20, 50, 110, 0.06);
+		--shadow-overlay: 0 24px 64px rgba(20, 50, 110, 0.16);
+		--rail-mobile-shadow: -12px 0 32px rgba(20, 50, 110, 0.12);
+		--backdrop: rgba(10, 25, 55, 0.25);
+
+		--term-0: #333e52;
+		--term-7: #5f6b80;
+		--term-8: #8793a8;
+		--term-15: #0f1828;
+		--syn-comment: #5e6b82;
+		--lang-other: #6f7c94;
+		--ar-kind-external: #66738a;
+		--ar-kind-file: #4e5d78;
+	}
+}
+
 /* Accent presets (Settings → Appearance → Accent colour). Pink is the default above. Each preset overrides every accent
  * token, once per palette: dark, explicit light, and the system-light fallback. Every preset keeps white on
  * --accent-strong at >= 6:1 (its hover >= 4.5:1), --accent and --accent-b >= 4.6:1 as text on every surface of
@@ -549,6 +1027,115 @@
 	--ring: #99a9be;
 	--ring-soft: rgba(153, 169, 190, 0.2);
 	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(108, 127, 151, 0.3);
+}
+:root[data-accent="teal"],
+.sh-appr-swatch[data-accent="teal"] {
+	--accent-a: #68d3c6;
+	--accent-b: #00bae1;
+	--accent: #13c8b9;
+	--accent-muted: rgba(19, 200, 185, 0.14);
+	--accent-soft: rgba(-2, 148, 136, 0.2);
+	--accent-soft-hover: rgba(-2, 148, 136, 0.3);
+	--accent-soft-fg: #bbe9e2;
+	--accent-strong: #007067;
+	--accent-strong-hover: #007f75;
+	--ambient-a: rgba(-2, 148, 136, 0.1);
+	--ambient-b: rgba(-2, 130, 158, 0.06);
+	--ring: #13c8b9;
+	--ring-soft: rgba(19, 200, 185, 0.2);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(-2, 148, 136, 0.3);
+}
+:root[data-accent="red"],
+.sh-appr-swatch[data-accent="red"] {
+	--accent-a: #ffa098;
+	--accent-b: #ff6da9;
+	--accent: #ff847d;
+	--accent-muted: rgba(255, 132, 125, 0.14);
+	--accent-soft: rgba(224, 56, 60, 0.2);
+	--accent-soft-hover: rgba(224, 56, 60, 0.3);
+	--accent-soft-fg: #fdd2ce;
+	--accent-strong: #a92c2d;
+	--accent-strong-hover: #bc3737;
+	--ambient-a: rgba(224, 56, 60, 0.1);
+	--ambient-b: rgba(206, 19, 118, 0.06);
+	--ring: #ff847d;
+	--ring-soft: rgba(255, 132, 125, 0.2);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(224, 56, 60, 0.3);
+}
+:root[data-accent="amber"],
+.sh-appr-swatch[data-accent="amber"] {
+	--accent-a: #e3b668;
+	--accent-b: #f48648;
+	--accent: #dca331;
+	--accent-muted: rgba(220, 163, 49, 0.14);
+	--accent-soft: rgba(167, 118, -2, 0.2);
+	--accent-soft-hover: rgba(167, 118, -2, 0.3);
+	--accent-soft-fg: #efdbbb;
+	--accent-strong: #7e5800;
+	--accent-strong-hover: #8f6500;
+	--ambient-a: rgba(167, 118, -2, 0.1);
+	--ambient-b: rgba(185, 81, -2, 0.06);
+	--ring: #dca331;
+	--ring-soft: rgba(220, 163, 49, 0.2);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(167, 118, -2, 0.3);
+}
+:root[data-accent="indigo"],
+.sh-appr-swatch[data-accent="indigo"] {
+	--accent-a: #aab9ff;
+	--accent-b: #ce85ee;
+	--accent: #96a7ff;
+	--accent-muted: rgba(150, 167, 255, 0.14);
+	--accent-soft: rgba(100, 113, 233, 0.2);
+	--accent-soft-hover: rgba(100, 113, 233, 0.3);
+	--accent-soft-fg: #d4dcff;
+	--accent-strong: #4b55af;
+	--accent-strong-hover: #5662c3;
+	--ambient-a: rgba(100, 113, 233, 0.1);
+	--ambient-b: rgba(158, 69, 193, 0.06);
+	--ring: #96a7ff;
+	--ring-soft: rgba(150, 167, 255, 0.2);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(100, 113, 233, 0.3);
+}
+:root[data-accent="cyan"],
+.sh-appr-swatch[data-accent="cyan"] {
+	--accent-a: #77cbeb;
+	--accent-b: #82a4fb;
+	--accent: #45bde7;
+	--accent-muted: rgba(69, 189, 231, 0.14);
+	--accent-soft: rgba(-2, 142, 179, 0.2);
+	--accent-soft-hover: rgba(-2, 142, 179, 0.3);
+	--accent-soft-fg: #bde5f6;
+	--accent-strong: #006a88;
+	--accent-strong-hover: #00799a;
+	--ambient-a: rgba(-2, 142, 179, 0.1);
+	--ambient-b: rgba(75, 109, 207, 0.06);
+	--ring: #45bde7;
+	--ring-soft: rgba(69, 189, 231, 0.2);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(-2, 142, 179, 0.3);
+}
+
+/* Custom accent: Settings stores one hex in --accent-custom (inline on <html>, or on the Custom swatch) and the tokens below
+ * derive from it in OKLCH, keeping its hue and chroma and pinning the lightness to what the presets use, so any colour
+ * lands in the same readable band (white on --accent-strong, --accent as text on every surface). Browsers without relative
+ * colour syntax skip these rules and keep the default accent. */
+@supports (color: oklch(from red l c h)) {
+	:root[data-accent="custom"],
+	.sh-appr-swatch[data-accent="custom"] {
+		--accent-a: oklch(from var(--accent-custom) 0.80 min(c * 0.8, 0.14) h);
+		--accent-b: oklch(from var(--accent-custom) 0.73 min(c * 1.1, 0.19) calc(h + 38));
+		--accent: oklch(from var(--accent-custom) 0.75 min(c, 0.17) h);
+		--accent-muted: oklch(from var(--accent-custom) 0.75 min(c, 0.17) h / 0.14);
+		--accent-soft: oklch(from var(--accent-custom) 0.60 min(c * 1.2, 0.2) h / 0.2);
+		--accent-soft-hover: oklch(from var(--accent-custom) 0.60 min(c * 1.2, 0.2) h / 0.3);
+		--accent-soft-fg: oklch(from var(--accent-custom) 0.90 min(c, 0.05) h);
+		--accent-strong: oklch(from var(--accent-custom) 0.489 min(c * 0.95, 0.17) h);
+		--accent-strong-hover: oklch(from var(--accent-custom) 0.536 min(c, 0.17) h);
+		--ambient-a: oklch(from var(--accent-custom) 0.60 min(c * 1.2, 0.2) h / 0.1);
+		--ambient-b: oklch(from var(--accent-custom) 0.56 min(c * 1.3, 0.2) calc(h + 38) / 0.06);
+		--ring: oklch(from var(--accent-custom) 0.75 min(c, 0.17) h);
+		--ring-soft: oklch(from var(--accent-custom) 0.75 min(c, 0.17) h / 0.2);
+		--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px oklch(from var(--accent-custom) 0.60 min(c * 1.2, 0.2) h / 0.3);
+	}
 }
 .sh-appr-swatch[data-accent="pink"] {
 	--accent-a: #ff8acb;
@@ -641,6 +1228,111 @@
 	--ring-soft: rgba(100, 116, 138, 0.16);
 	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(84, 99, 119, 0.25);
 }
+:root[data-theme="light"][data-accent="teal"],
+:root[data-theme="light"] .sh-appr-swatch[data-accent="teal"] {
+	--accent-a: #1aa598;
+	--accent-b: #00758f;
+	--accent: #00736a;
+	--accent-muted: rgba(-2, 115, 106, 0.1);
+	--accent-soft: rgba(-2, 148, 136, 0.1);
+	--accent-soft-hover: rgba(-2, 148, 136, 0.16);
+	--accent-soft-fg: #005c54;
+	--accent-strong: #00736a;
+	--accent-strong-hover: #00655d;
+	--ambient-a: rgba(-2, 148, 136, 0.08);
+	--ambient-b: rgba(-2, 130, 158, 0.05);
+	--ring: #00877c;
+	--ring-soft: rgba(-2, 135, 124, 0.16);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(-2, 115, 106, 0.25);
+}
+:root[data-theme="light"][data-accent="red"],
+:root[data-theme="light"] .sh-appr-swatch[data-accent="red"] {
+	--accent-a: #eb5551;
+	--accent-b: #ba126b;
+	--accent: #b02a2d;
+	--accent-muted: rgba(176, 42, 45, 0.1);
+	--accent-soft: rgba(224, 56, 60, 0.1);
+	--accent-soft-hover: rgba(224, 56, 60, 0.16);
+	--accent-soft-fg: #901a1f;
+	--accent-strong: #b02a2d;
+	--accent-strong-hover: #9d1f24;
+	--ambient-a: rgba(224, 56, 60, 0.08);
+	--ambient-b: rgba(206, 19, 118, 0.05);
+	--ring: #c83b3b;
+	--ring-soft: rgba(200, 59, 59, 0.16);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(176, 42, 45, 0.25);
+}
+:root[data-theme="light"][data-accent="amber"],
+:root[data-theme="light"] .sh-appr-swatch[data-accent="amber"] {
+	--accent-a: #b68627;
+	--accent-b: #a34c13;
+	--accent: #825b00;
+	--accent-muted: rgba(130, 91, -2, 0.1);
+	--accent-soft: rgba(167, 118, -2, 0.1);
+	--accent-soft-hover: rgba(167, 118, -2, 0.16);
+	--accent-soft-fg: #684800;
+	--accent-strong: #825b00;
+	--accent-strong-hover: #725000;
+	--ambient-a: rgba(167, 118, -2, 0.08);
+	--ambient-b: rgba(181, 85, 21, 0.05);
+	--ring: #986c02;
+	--ring-soft: rgba(152, 108, 2, 0.16);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(130, 91, -2, 0.25);
+}
+:root[data-theme="light"][data-accent="indigo"],
+:root[data-theme="light"] .sh-appr-swatch[data-accent="indigo"] {
+	--accent-a: #7180ff;
+	--accent-b: #9334b7;
+	--accent: #4b53c2;
+	--accent-muted: rgba(75, 83, 194, 0.1);
+	--accent-soft: rgba(97, 108, 247, 0.1);
+	--accent-soft-hover: rgba(97, 108, 247, 0.16);
+	--accent-soft-fg: #3a40a0;
+	--accent-strong: #4b53c2;
+	--accent-strong-hover: #4148ae;
+	--ambient-a: rgba(97, 108, 247, 0.08);
+	--ambient-b: rgba(163, 57, 203, 0.05);
+	--ring: #5a65db;
+	--ring-soft: rgba(90, 101, 219, 0.16);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(75, 83, 194, 0.25);
+}
+:root[data-theme="light"][data-accent="cyan"],
+:root[data-theme="light"] .sh-appr-swatch[data-accent="cyan"] {
+	--accent-a: #009ec7;
+	--accent-b: #4362bb;
+	--accent: #006e8c;
+	--accent-muted: rgba(-2, 110, 140, 0.1);
+	--accent-soft: rgba(-2, 142, 179, 0.1);
+	--accent-soft-hover: rgba(-2, 142, 179, 0.16);
+	--accent-soft-fg: #005770;
+	--accent-strong: #006e8c;
+	--accent-strong-hover: #00607b;
+	--ambient-a: rgba(-2, 142, 179, 0.08);
+	--ambient-b: rgba(75, 109, 207, 0.05);
+	--ring: #0081a4;
+	--ring-soft: rgba(-2, 129, 164, 0.16);
+	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(-2, 110, 140, 0.25);
+}
+
+@supports (color: oklch(from red l c h)) {
+	:root[data-theme="light"][data-accent="custom"],
+	:root[data-theme="light"] .sh-appr-swatch[data-accent="custom"] {
+		--accent-a: oklch(from var(--accent-custom) 0.65 min(c * 1.1, 0.19) h);
+		--accent-b: oklch(from var(--accent-custom) 0.52 min(c * 1.2, 0.2) calc(h + 38));
+		--accent: oklch(from var(--accent-custom) 0.50 min(c, 0.17) h);
+		--accent-muted: oklch(from var(--accent-custom) 0.50 min(c, 0.17) h / 0.1);
+		--accent-soft: oklch(from var(--accent-custom) 0.60 min(c * 1.2, 0.2) h / 0.1);
+		--accent-soft-hover: oklch(from var(--accent-custom) 0.60 min(c * 1.2, 0.2) h / 0.16);
+		--accent-soft-fg: oklch(from var(--accent-custom) 0.426 min(c * 0.9, 0.14) h);
+		--accent-strong: oklch(from var(--accent-custom) 0.50 min(c, 0.17) h);
+		--accent-strong-hover: oklch(from var(--accent-custom) 0.456 min(c * 0.95, 0.16) h);
+		--ambient-a: oklch(from var(--accent-custom) 0.60 min(c * 1.2, 0.2) h / 0.08);
+		--ambient-b: oklch(from var(--accent-custom) 0.56 min(c * 1.3, 0.2) calc(h + 38) / 0.05);
+		--ring: oklch(from var(--accent-custom) 0.561 min(c * 1.05, 0.18) h);
+		--ring-soft: oklch(from var(--accent-custom) 0.561 min(c * 1.05, 0.18) h / 0.16);
+		--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px oklch(from var(--accent-custom) 0.50 min(c, 0.17) h / 0.25);
+	}
+}
 :root[data-theme="light"] .sh-appr-swatch[data-accent="pink"] {
 	--accent-a: #e2479d;
 	--accent-b: #9a3fd0;
@@ -732,6 +1424,111 @@
 		--ring: #64748a;
 		--ring-soft: rgba(100, 116, 138, 0.16);
 		--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(84, 99, 119, 0.25);
+	}
+	:root:not([data-theme])[data-accent="teal"],
+	:root:not([data-theme]) .sh-appr-swatch[data-accent="teal"] {
+		--accent-a: #1aa598;
+		--accent-b: #00758f;
+		--accent: #00736a;
+		--accent-muted: rgba(-2, 115, 106, 0.1);
+		--accent-soft: rgba(-2, 148, 136, 0.1);
+		--accent-soft-hover: rgba(-2, 148, 136, 0.16);
+		--accent-soft-fg: #005c54;
+		--accent-strong: #00736a;
+		--accent-strong-hover: #00655d;
+		--ambient-a: rgba(-2, 148, 136, 0.08);
+		--ambient-b: rgba(-2, 130, 158, 0.05);
+		--ring: #00877c;
+		--ring-soft: rgba(-2, 135, 124, 0.16);
+		--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(-2, 115, 106, 0.25);
+	}
+	:root:not([data-theme])[data-accent="red"],
+	:root:not([data-theme]) .sh-appr-swatch[data-accent="red"] {
+		--accent-a: #eb5551;
+		--accent-b: #ba126b;
+		--accent: #b02a2d;
+		--accent-muted: rgba(176, 42, 45, 0.1);
+		--accent-soft: rgba(224, 56, 60, 0.1);
+		--accent-soft-hover: rgba(224, 56, 60, 0.16);
+		--accent-soft-fg: #901a1f;
+		--accent-strong: #b02a2d;
+		--accent-strong-hover: #9d1f24;
+		--ambient-a: rgba(224, 56, 60, 0.08);
+		--ambient-b: rgba(206, 19, 118, 0.05);
+		--ring: #c83b3b;
+		--ring-soft: rgba(200, 59, 59, 0.16);
+		--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(176, 42, 45, 0.25);
+	}
+	:root:not([data-theme])[data-accent="amber"],
+	:root:not([data-theme]) .sh-appr-swatch[data-accent="amber"] {
+		--accent-a: #b68627;
+		--accent-b: #a34c13;
+		--accent: #825b00;
+		--accent-muted: rgba(130, 91, -2, 0.1);
+		--accent-soft: rgba(167, 118, -2, 0.1);
+		--accent-soft-hover: rgba(167, 118, -2, 0.16);
+		--accent-soft-fg: #684800;
+		--accent-strong: #825b00;
+		--accent-strong-hover: #725000;
+		--ambient-a: rgba(167, 118, -2, 0.08);
+		--ambient-b: rgba(181, 85, 21, 0.05);
+		--ring: #986c02;
+		--ring-soft: rgba(152, 108, 2, 0.16);
+		--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(130, 91, -2, 0.25);
+	}
+	:root:not([data-theme])[data-accent="indigo"],
+	:root:not([data-theme]) .sh-appr-swatch[data-accent="indigo"] {
+		--accent-a: #7180ff;
+		--accent-b: #9334b7;
+		--accent: #4b53c2;
+		--accent-muted: rgba(75, 83, 194, 0.1);
+		--accent-soft: rgba(97, 108, 247, 0.1);
+		--accent-soft-hover: rgba(97, 108, 247, 0.16);
+		--accent-soft-fg: #3a40a0;
+		--accent-strong: #4b53c2;
+		--accent-strong-hover: #4148ae;
+		--ambient-a: rgba(97, 108, 247, 0.08);
+		--ambient-b: rgba(163, 57, 203, 0.05);
+		--ring: #5a65db;
+		--ring-soft: rgba(90, 101, 219, 0.16);
+		--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(75, 83, 194, 0.25);
+	}
+	:root:not([data-theme])[data-accent="cyan"],
+	:root:not([data-theme]) .sh-appr-swatch[data-accent="cyan"] {
+		--accent-a: #009ec7;
+		--accent-b: #4362bb;
+		--accent: #006e8c;
+		--accent-muted: rgba(-2, 110, 140, 0.1);
+		--accent-soft: rgba(-2, 142, 179, 0.1);
+		--accent-soft-hover: rgba(-2, 142, 179, 0.16);
+		--accent-soft-fg: #005770;
+		--accent-strong: #006e8c;
+		--accent-strong-hover: #00607b;
+		--ambient-a: rgba(-2, 142, 179, 0.08);
+		--ambient-b: rgba(75, 109, 207, 0.05);
+		--ring: #0081a4;
+		--ring-soft: rgba(-2, 129, 164, 0.16);
+		--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px rgba(-2, 110, 140, 0.25);
+	}
+
+	@supports (color: oklch(from red l c h)) {
+		:root:not([data-theme])[data-accent="custom"],
+		:root:not([data-theme]) .sh-appr-swatch[data-accent="custom"] {
+			--accent-a: oklch(from var(--accent-custom) 0.65 min(c * 1.1, 0.19) h);
+			--accent-b: oklch(from var(--accent-custom) 0.52 min(c * 1.2, 0.2) calc(h + 38));
+			--accent: oklch(from var(--accent-custom) 0.50 min(c, 0.17) h);
+			--accent-muted: oklch(from var(--accent-custom) 0.50 min(c, 0.17) h / 0.1);
+			--accent-soft: oklch(from var(--accent-custom) 0.60 min(c * 1.2, 0.2) h / 0.1);
+			--accent-soft-hover: oklch(from var(--accent-custom) 0.60 min(c * 1.2, 0.2) h / 0.16);
+			--accent-soft-fg: oklch(from var(--accent-custom) 0.426 min(c * 0.9, 0.14) h);
+			--accent-strong: oklch(from var(--accent-custom) 0.50 min(c, 0.17) h);
+			--accent-strong-hover: oklch(from var(--accent-custom) 0.456 min(c * 0.95, 0.16) h);
+			--ambient-a: oklch(from var(--accent-custom) 0.60 min(c * 1.2, 0.2) h / 0.08);
+			--ambient-b: oklch(from var(--accent-custom) 0.56 min(c * 1.3, 0.2) calc(h + 38) / 0.05);
+			--ring: oklch(from var(--accent-custom) 0.561 min(c * 1.05, 0.18) h);
+			--ring-soft: oklch(from var(--accent-custom) 0.561 min(c * 1.05, 0.18) h / 0.16);
+			--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 4px 14px oklch(from var(--accent-custom) 0.50 min(c, 0.17) h / 0.25);
+		}
 	}
 	:root:not([data-theme]) .sh-appr-swatch[data-accent="pink"] {
 		--accent-a: #e2479d;

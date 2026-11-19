@@ -1,10 +1,10 @@
 /**
  * Monaco's theme and font from the app's tokens. Monaco wants hex colours, and the tokens are CSS variables
  * (some `color-mix()`es, some translucent), so each is resolved by the browser on a probe element and read
- * back as a computed colour. The theme follows `data-theme`, `data-accent`, `data-code-font` and
- * `data-text-size` on the root (and the device's colour scheme when no theme is set), and the editor theme the
- * IDE sheet wears (`data-editor-theme`, whose inline variables override the tokens below it): {@link watchTheme}
- * calls back whenever one of them changes.
+ * back as a computed colour. The theme follows `data-theme`, `data-accent`, `data-accent-custom`, `data-palette-dark`,
+ * `data-palette-light`, `data-code-font` and `data-text-size` on the root (and the device's colour scheme when no
+ * theme is set), and the editor theme the IDE sheet wears (`data-editor-theme`, whose inline variables override the
+ * tokens below it): {@link watchTheme} calls back whenever one of them changes.
  */
 import { luminance, parseCssColor, toHex } from "./color";
 import type { Rgba } from "./color";
@@ -175,10 +175,18 @@ export function readTheme(host: HTMLElement): ThemeSnapshot {
 }
 
 /** The attributes of the root element the theme and font follow. */
-export const THEME_ATTRIBUTES = ["data-theme", "data-accent", "data-code-font", "data-text-size"];
+export const THEME_ATTRIBUTES = [
+	"data-theme",
+	"data-accent",
+	"data-accent-custom",
+	"data-palette-dark",
+	"data-palette-light",
+	"data-code-font",
+	"data-text-size",
+];
 
 /**
- * Call `onChange` when the page's theme, accent, code font, text size, colour scheme or the editor theme of the sheet
+ * Call `onChange` when the page's theme, palette, accent, code font, text size, colour scheme or the editor theme of the sheet
  * around `host` changes. Returns the stop function.
  */
 export function watchTheme(host: HTMLElement, onChange: () => void): () => void {

@@ -82,7 +82,35 @@
 	</head>
 	<body>
 		<div id="root"></div>
-		<script>(function(){try{var s=localStorage.getItem("omp-collab-theme");var sys=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";var t=(s==="light"||s==="dark")?s:sys;document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t;}catch(e){}})();</script>
+		<script>
+			// Before the first paint: the theme, then the saved palettes and accent (src/lib/appearance.ts applies the same
+			// attributes once React starts; test/appearance.test.ts runs this script against it). A value tokens.css does not know
+			// styles nothing, so the page keeps its defaults until then.
+			(function () {
+				try {
+					var root = document.documentElement;
+					var stored = localStorage.getItem("omp-collab-theme");
+					var system = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+					var theme = stored === "light" || stored === "dark" ? stored : system;
+					root.dataset.theme = theme;
+					root.style.colorScheme = theme;
+					var a = JSON.parse(localStorage.getItem("omp.collab.appearance") || "null") || {};
+					var word = function (v) {
+						return typeof v === "string" && /^[a-z]{1,16}$/.test(v) ? v : null;
+					};
+					var hex = typeof a.customAccent === "string" && /^#[0-9a-f]{6}$/i.test(a.customAccent) ? a.customAccent.toLowerCase() : null;
+					var accent = word(a.accent);
+					if (accent === "custom" && hex === null) accent = null;
+					if (accent) root.dataset.accent = accent;
+					if (hex) {
+						root.dataset.accentCustom = hex;
+						root.style.setProperty("--accent-custom", hex);
+					}
+					if (word(a.darkPalette)) root.dataset.paletteDark = a.darkPalette;
+					if (word(a.lightPalette)) root.dataset.paletteLight = a.lightPalette;
+				} catch (e) {}
+			})();
+		</script>
 		<script type="module" src="./src/main.tsx"></script>
 	</body>
 </html>

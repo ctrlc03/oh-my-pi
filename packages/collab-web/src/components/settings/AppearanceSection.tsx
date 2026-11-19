@@ -26,7 +26,7 @@ import { resetPaneSizes } from "../../lib/pane-size";
 import { type ThemePreference, useThemePreference } from "../../lib/theme";
 import { useHasPaneSizes } from "../../lib/use-pane-layout";
 import { PetPanel } from "../pet/PetPanel";
-import { AccentSwatches, FontPicker, type FontOption } from "./AppearanceControls";
+import { AccentSwatches, DarkPaletteTiles, FontPicker, type FontOption, LightPaletteTiles } from "./AppearanceControls";
 import { AppearancePreview } from "./AppearancePreview";
 import { Choice, SettingsGroup, SettingsRow } from "./SettingsRows";
 import { TopBarControls } from "./TopBarControls";
@@ -108,12 +108,35 @@ export function AppearanceSection(): ReactNode {
 				<SettingsRow label="Theme" hint="System follows your device's light or dark setting.">
 					<Choice label="Theme" value={preference} options={THEMES} onChange={setPreference} />
 				</SettingsRow>
-				<SettingsRow label="Accent colour" hint="Buttons, links, highlights and the focus ring.">
-					<AccentSwatches value={appearance.accent} onChange={accent => setAppearance({ accent })} />
+				<SettingsRow
+					label="Dark palette"
+					hint="The surfaces and text of the dark theme, and of System on a dark device. Accent colours work on every one."
+				>
+					<DarkPaletteTiles
+						value={appearance.darkPalette}
+						onChange={darkPalette => setAppearance({ darkPalette })}
+					/>
+				</SettingsRow>
+				<SettingsRow label="Light palette" hint="The same for the light theme, and for System on a light device.">
+					<LightPaletteTiles
+						value={appearance.lightPalette}
+						onChange={lightPalette => setAppearance({ lightPalette })}
+					/>
+				</SettingsRow>
+				<SettingsRow
+					label="Accent colour"
+					hint="Buttons, links, highlights and the focus ring. Custom takes any colour and adjusts its lightness to stay readable."
+				>
+					<AccentSwatches
+						value={appearance.accent}
+						custom={appearance.customAccent}
+						onSelect={accent => setAppearance({ accent })}
+						onCustom={customAccent => setAppearance({ accent: "custom", customAccent })}
+					/>
 				</SettingsRow>
 				<SettingsRow
 					label="Defaults"
-					hint="Theme, accent, zoom, text size, fonts and line spacing back to their defaults. Pane sizes, the top bar and the pet stay."
+					hint="Theme, palettes, accent (the custom colour too), zoom, text size, fonts and line spacing back to their defaults. Pane sizes, the top bar and the pet stay."
 				>
 					<button
 						type="button"

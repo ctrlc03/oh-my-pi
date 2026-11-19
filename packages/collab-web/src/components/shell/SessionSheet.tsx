@@ -6,6 +6,7 @@ import {
 	Copy,
 	Download,
 	Eye,
+	Focus,
 	type LucideIcon,
 	LogOut,
 	MessageSquare,
@@ -50,7 +51,7 @@ function shortcutHints(): readonly { keys: string; action: string }[] {
 	return [
 		{ keys: formatCombo(effectiveKeys("palette"), IS_MAC), action: "command palette" },
 		{ keys: formatCombo(effectiveKeys("find"), IS_MAC), action: "find in session" },
-		{ keys: formatCombo(effectiveKeys("escape"), IS_MAC), action: "close, or stop a running turn" },
+		{ keys: formatCombo(effectiveKeys("escape"), IS_MAC), action: "close, stop a running turn, or leave focus mode" },
 	];
 }
 
@@ -73,6 +74,9 @@ export interface SessionSheetProps {
 	/** Chat view: prompts and replies only, tool runs folded. */
 	chat: boolean;
 	onChatChange(chat: boolean): void;
+	/** Focus mode: the session without the chrome around it. */
+	focusMode: boolean;
+	onFocusModeChange(on: boolean): void;
 	/** Latest turns this device keeps showing (null: all); undefined until the session is known. */
 	keepTurns: number | null | undefined;
 	onKeepTurnsChange(keep: number | null): void;
@@ -162,6 +166,8 @@ export function SessionSheet({
 	contextPct,
 	chat,
 	onChatChange,
+	focusMode,
+	onFocusModeChange,
 	keepTurns,
 	onKeepTurnsChange,
 	searchOpen,
@@ -581,6 +587,15 @@ export function SessionSheet({
 								</button>
 							))}
 						</div>
+						<button
+							type="button"
+							className={focusMode ? "sh-btn sh-btn-on" : "sh-btn"}
+							aria-pressed={focusMode}
+							onClick={() => onFocusModeChange(!focusMode)}
+							data-shortcut={formatCombo(effectiveKeys("focusMode"), IS_MAC)}
+						>
+							<Focus size={13} /> Focus mode
+						</button>
 					</dd>
 				</div>
 				{keepTurns !== undefined && (

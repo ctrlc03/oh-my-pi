@@ -14,10 +14,12 @@ export interface PetHostProps {
 	client: GuestClient | null;
 	hosts: readonly CompanionHost[];
 	hostsLive: boolean;
+	/** Focus mode is on in the open session: the floating pet stays out of the way (a popped-out pet is its own window and stays). */
+	quiet: boolean;
 }
 
 /** The pet, mounted once at the app's top: the floating layer while it is on, and its palette entries. Its settings are in Settings → Appearance. */
-export function PetHost({ client, hosts, hostsLive }: PetHostProps): ReactNode {
+export function PetHost({ client, hosts, hostsLive, quiet }: PetHostProps): ReactNode {
 	const { enabled } = usePetSettings();
 
 	// Turning the pet off takes the pop-out window with it.
@@ -57,5 +59,5 @@ export function PetHost({ client, hosts, hostsLive }: PetHostProps): ReactNode {
 	);
 	usePaletteEntries(entries);
 
-	return enabled ? <PetLayer client={client} hosts={hosts} hostsLive={hostsLive} /> : null;
+	return enabled ? <PetLayer client={client} hosts={hosts} hostsLive={hostsLive} hidden={quiet} /> : null;
 }

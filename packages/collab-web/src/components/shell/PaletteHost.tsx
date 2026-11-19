@@ -29,6 +29,7 @@ import {
 	Boxes,
 	GitCompare,
 	GraduationCap,
+	Focus,
 	Sun,
 	TextCursorInput,
 	Undo2,
@@ -66,6 +67,9 @@ export interface PaletteActions {
 	openFind(): void;
 	chat: boolean;
 	onChatChange(chat: boolean): void;
+	/** Focus mode: the session without its chrome. */
+	focusMode: boolean;
+	toggleFocusMode(): void;
 	/** Null when there is no other session to list. */
 	toggleSidebar: (() => void) | null;
 	sidebarOpen: boolean;
@@ -209,6 +213,15 @@ export function PaletteHost(props: PaletteHostProps): ReactNode {
 				icon: actions.chat ? Rows3 : MessageSquare,
 				shortcut: "toggleChat",
 				run: () => actions.onChatChange(!actions.chat),
+			},
+			{
+				id: "app:focus",
+				title: actions.focusMode ? "Leave focus mode" : "Enter focus mode",
+				section: "View",
+				keywords: ["zen", "distraction", "reading", "minimal", "hide", "chrome", "sidebar"],
+				icon: Focus,
+				shortcut: "focusMode",
+				run: actions.toggleFocusMode,
 			},
 			{
 				id: "app:rail",

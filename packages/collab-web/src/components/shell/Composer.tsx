@@ -39,6 +39,7 @@ import { MAX_ATTACHMENTS, toImageContent } from "../../lib/images";
 import { isLargePaste, pastedTextFile } from "../../lib/large-paste";
 import { NOT_RECALLING, promptHistory, type RecallState, recallStep } from "../../lib/recall";
 import { IS_MAC, shortcutFires } from "../../lib/shortcuts";
+import { useFocusMode } from "../../lib/focus-mode";
 import { openSketch } from "../../lib/diagram-store";
 import { loadDraft, saveDraft } from "../../lib/rooms";
 import { insertAtCaret } from "../../lib/voice";
@@ -279,6 +280,8 @@ export const Composer = memo(function Composer({
 	// Host-driven controls (ask answers, quick replies, stop) need the live session; typed
 	// prompts do not: while not live the client queues them and sends them in order on reconnect.
 	const canPrompt = live && !readOnly;
+	// Focus mode leaves out the suggestion chips above the box; the box itself and what is queued stay.
+	const focusMode = useFocusMode();
 	const canType = !readOnly && phase !== "ended";
 	const busy = working;
 	// The host counts steers and follow-ups together; follow-ups have their own chips, so the badge counts steers only.
@@ -715,7 +718,7 @@ export const Composer = memo(function Composer({
 
 	return (
 		<div ref={rootRef} className={readOnly ? "sh-composer sh-composer-readonly" : "sh-composer"}>
-			{canPrompt && !text && <QuickReplies disabled={!live} onPick={reply => send(reply)} />}
+			{canPrompt && !text && !focusMode && <QuickReplies disabled={!live} onPick={reply => send(reply)} />}
 			<FollowUps
 				client={client}
 				followUps={followUps}

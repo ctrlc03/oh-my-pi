@@ -48,6 +48,7 @@ export const TOP_BAR_BUTTONS = [
 	{ id: "run", label: "Run", on: false, phone: true },
 	{ id: "timeline", label: "Timeline", on: false, phone: true },
 	{ id: "usage", label: "Usage", on: false, phone: true },
+	{ id: "focus", label: "Focus mode", on: false, phone: true },
 	{ id: "sessions", label: "All sessions", on: false, phone: true },
 ] as const satisfies readonly TopBarButton[];
 

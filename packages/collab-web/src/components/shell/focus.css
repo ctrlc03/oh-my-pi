@@ -1,0 +1,103 @@
+/* Focus mode (lib/focus-mode.ts): the open session without the chrome around it. The markup already leaves most of
+ * that out (the sidebar, the rail, the bar's buttons, the task and cache strips, the suggestion chips); what is here
+ * is the look of what stays: the reading column, the quiet bar, the way out, and the change between the two views.
+ * Token vars only, no raw colors. */
+
+.sh-app[data-focus] {
+	/* The reading width. The transcript, the message box and every bar above it read this one variable, so they stay
+	 * aligned; it still grows with the text size (Appearance → Text) like the working column does. */
+	--chat-width: calc(860px * var(--reading-scale));
+}
+
+/* Another session asking for input is the sidebar's news, and the sidebar is away: the alert is held back, not
+ * dismissed, and shows again once focus mode is left. */
+.sh-app[data-focus] .sh-alert {
+	display: none;
+}
+
+/* ---- the quiet bar: the title, a connection problem if there is one, and the way out ---- */
+.sh-header.sh-header-focus {
+	background: transparent;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+}
+
+.sh-header.sh-header-focus .sh-title {
+	font-weight: 500;
+	color: var(--fg-muted);
+}
+
+/* Wide: the title is centred over the reading column, which is what the transcript below it is centred on. */
+@media (min-width: 641px) {
+	.sh-header.sh-header-focus {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, var(--chat-width)) minmax(0, 1fr);
+	}
+
+	.sh-header.sh-header-focus .sh-header-left {
+		grid-column: 2;
+		justify-content: center;
+	}
+
+	.sh-header.sh-header-focus .sh-header-right {
+		grid-column: 3;
+		justify-self: end;
+	}
+}
+
+/* Out of sight until the pointer comes to the bar (or the keyboard reaches the button): it stays in the tab order
+ * and in the accessibility tree, but cannot be clicked by accident while it is invisible. */
+.sh-header .sh-focus-exit {
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 160ms var(--ease-out);
+	/* Said once on entering: shown for a moment, so the way out is known without being looked for. */
+	animation: sh-focus-hint 3.2s var(--ease-out);
+}
+
+.sh-header-focus:hover .sh-focus-exit,
+.sh-header-focus:focus-within .sh-focus-exit {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+/* No pointer to bring it into view: it is always there, quietly, and a tap reaches it. */
+@media (hover: none) {
+	.sh-header .sh-focus-exit {
+		opacity: 0.6;
+		pointer-events: auto;
+	}
+}
+
+@keyframes sh-focus-hint {
+	0%,
+	70% {
+		opacity: 1;
+		pointer-events: auto;
+	}
+}
+
+/* ---- the change between the two views ----
+ * Only a change made while the session is open is animated (`data-focus-shift`): a reload that keeps focus mode
+ * opens it already settled. The two directions have their own keyframes, so each toggle restarts the animation. */
+.sh-app[data-focus-shift="in"] .sh-panel {
+	animation: sh-focus-in 240ms var(--ease-out);
+}
+
+.sh-app[data-focus-shift="out"] .sh-panel {
+	animation: sh-focus-out 240ms var(--ease-out);
+}
+
+@keyframes sh-focus-in {
+	from {
+		opacity: 0.35;
+		transform: scale(0.992);
+	}
+}
+
+@keyframes sh-focus-out {
+	from {
+		opacity: 0.35;
+		transform: scale(1.006);
+	}
+}

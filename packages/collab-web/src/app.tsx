@@ -75,6 +75,7 @@ import { subscribeDraft } from "./lib/draft-bus";
 import { openDiagramFile, openSketch } from "./lib/diagram-store";
 import { diagramFileKind } from "./lib/diagrams";
 import { adjacentRoom, IS_MAC, type ShortcutId, shortcutFires } from "./lib/shortcuts";
+import { ESCAPE_OWNERS, escapeLeavesFocus, setFocusMode, toggleFocusMode, useFocusMode } from "./lib/focus-mode";
 import { matchesMedia, useUiZoom } from "./lib/zoom";
 import { useEdgeGestures } from "./lib/use-edge-gestures";
 import { sessionMarkdown } from "./lib/export";
@@ -125,6 +126,7 @@ import { deleteOffered, isDeletableSession } from "./lib/session-delete";
 import { type SessionOrgs, useSessionOrgs } from "./lib/use-session-org";
 import type { ToolRenderHost } from "./tool-render";
 import "./components/shell/shell.css";
+import "./components/shell/focus.css";
 import "./components/shell/companion.css";
 import "./components/codemap/codemap.css";
 
@@ -423,6 +425,8 @@ export function App(): ReactNode {
 		[computers],
 	);
 	const anyLive = computers.some(computer => computer.snap.phase === "live");
+	// Focus mode belongs to the open session: the home screen always shows its normal UI.
+	const focusing = useFocusMode() && client !== null && link !== null;
 
 	useEffect(() => {
 		if (!client) document.title = "omp collab";
@@ -433,7 +437,7 @@ export function App(): ReactNode {
 			<PersonalContext.Provider value={personal}>
 				<DeleteHost computers={computers} orgs={orgs} onDeleted={sessionsDeleted}>
 					<UnreadHost computers={computers}>
-						<UpdateBar />
+						<UpdateBar quiet={focusing} />
 						<Tooltip />
 						<FixItHost computers={computers} onOpenHost={openHost} onOpenLink={openLink} />
 						{!client || !link ? (
@@ -470,7 +474,7 @@ export function App(): ReactNode {
 								onOpenLink={openLink}
 							/>
 						)}
-						<PetHost client={client} hosts={allHosts} hostsLive={anyLive} />
+						<PetHost client={client} hosts={allHosts} hostsLive={anyLive} quiet={focusing} />
 						<DesktopBridge computers={computers} onOpen={openDesktopSession} />
 						<SettingsHost env={settingsEnv} />
 						<ZoomHost />
@@ -535,7 +539,17 @@ function Session({
 	beside,
 }: SessionProps): ReactNode {
 	const snap = useGuestSnapshot(client);
-	const [railOpen, setRailOpen] = useState(false);
+	// Focus mode hides the rail; what the reader chose stays, and comes back with the chrome.
+	const focus = useFocusMode();
+	const [railWanted, setRailOpen] = useState(false);
+	const railOpen = railWanted && !focus;
+	// Only a change made while the session is open animates: a reload that keeps focus mode must not replay it.
+	const [seenFocus, setSeenFocus] = useState(focus);
+	const [focusShift, setFocusShift] = useState<"in" | "out" | null>(null);
+	if (seenFocus !== focus) {
+		setSeenFocus(focus);
+		setFocusShift(focus ? "in" : "out");
+	}
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 
 	// Parked and aborted subagents stay in the rail (folded) but do not count on the badge.
@@ -895,7 +909,13 @@ function Session({
 	}, [gone, roomId, onRoomGone]);
 
 	const drawerAgent = selectedId != null ? snap.agents.find(a => a.id === selectedId) : undefined;
-	const toggleRail = useCallback(() => setRailOpen(open => !open), []);
+	// Asking for the rail while focus mode hides it means leaving focus mode.
+	const toggleRail = useCallback(() => {
+		if (focus) {
+			setFocusMode(false);
+			setRailOpen(true);
+		} else setRailOpen(open => !open);
+	}, [focus]);
 	const closeDrawer = useCallback(() => setSelectedId(null), []);
 
 	const [chat, changeChat] = useState(defaultChat);
@@ -1147,7 +1167,11 @@ function Session({
 		if (matchesMedia(SIDEBAR_DOCK_QUERY)) writeJson(SIDEBAR_KEY, next);
 		setSidebarOpen(next);
 	}, []);
-	const toggleSidebar = useCallback(() => changeSidebar(!sidebarOpen), [changeSidebar, sidebarOpen]);
+	// The same for the sessions sidebar: asking for it while focus mode hides it means leaving focus mode.
+	const toggleSidebar = useCallback(() => {
+		if (focus) setFocusMode(false);
+		changeSidebar(focus ? true : !sidebarOpen);
+	}, [changeSidebar, focus, sidebarOpen]);
 	const closeSidebar = useCallback(() => changeSidebar(false), [changeSidebar]);
 	const [statsSheet, setStatsSheet] = useState<"usage" | "sessions" | null>(null);
 	const openUsage = useCallback(() => {
@@ -1214,7 +1238,7 @@ function Session({
 	// running turn on its own Esc. The transcript handles its own keys (blocks, jump, copy, edit).
 	const paired = computers.length > 0;
 	const canShowSidebar = canSwitch || paired;
-	const showSidebar = sidebarOpen && canShowSidebar;
+	const showSidebar = sidebarOpen && canShowSidebar && !focus;
 	const readOnly = snap.readOnly;
 	const working = snap.working;
 	const searchOpen = search !== null;
@@ -1231,6 +1255,8 @@ function Session({
 				if (searchOpen) closeSearch();
 				else if (showSidebar && !matchesMedia(SIDEBAR_DOCK_QUERY)) setSidebarOpen(false);
 				else if (live && !readOnly && working) client.sendAbort();
+				else if (focus && escapeLeavesFocus(target, document.querySelector(ESCAPE_OWNERS) !== null))
+					setFocusMode(false);
 				return;
 			}
 			if (dialogOpen) return;
@@ -1241,6 +1267,9 @@ function Session({
 				if (!canShowSidebar) return;
 				e.preventDefault();
 				toggleSidebar();
+			} else if (fires("focusMode")) {
+				e.preventDefault();
+				toggleFocusMode();
 			} else if (fires("help")) {
 				e.preventDefault();
 				openKeyboardSettings();
@@ -1274,6 +1303,7 @@ function Session({
 		return () => window.removeEventListener("keydown", onKey);
 	}, [
 		canShowSidebar,
+		focus,
 		canStashDraft,
 		chat,
 		changeChat,
@@ -1293,6 +1323,7 @@ function Session({
 	// Touch: edge swipes open and close the sessions sidebar and the agents rail; a swipe down on the composer hides the keyboard.
 	useEdgeGestures({
 		canOpenSidebar: canShowSidebar,
+		drawers: !focus,
 		sidebarDrawerOpen: showSidebar && !matchesMedia(SIDEBAR_DOCK_QUERY),
 		railOpen,
 		setSidebar: changeSidebar,
@@ -1343,6 +1374,8 @@ function Session({
 	const paletteActions = useMemo<PaletteActions>(
 		() => ({
 			openSessionSheet: () => setSessionSheetOpen(true),
+			focusMode: focus,
+			toggleFocusMode,
 			openFind: () => setSearch(open => open ?? { query: "", target: null }),
 			chat,
 			onChatChange: changeChat,
@@ -1429,6 +1462,7 @@ function Session({
 			roomId,
 			rooms,
 			showSidebar,
+			focus,
 			toggleRail,
 			toggleSidebar,
 			turnUndo.control,
@@ -1448,7 +1482,7 @@ function Session({
 	const insertDraft = useCallback((text: string) => composerRef.current?.insert(text), []);
 
 	return (
-		<div className="sh-app">
+		<div className="sh-app" data-focus={focus ? "true" : undefined} data-focus-shift={focusShift ?? undefined}>
 			<div className="sh-ambient" />
 			<HeaderBar
 				header={snap.header}
@@ -1472,6 +1506,8 @@ function Session({
 				sidebarAlert={otherHosts.some(host => host.inputRequired)}
 				chat={chat}
 				onChatChange={changeChat}
+				focusMode={focus}
+				onFocusModeChange={setFocusMode}
 				sheetOpen={sessionSheetOpen}
 				setSheetOpen={setSessionSheetOpen}
 				keepTurns={sessionId === null ? undefined : trim.keep}
@@ -1585,8 +1621,14 @@ function Session({
 								}
 							/>
 						)}
-						<TaskProgress todos={todos} subagents={subagents} hasAgent={hasAgent} onOpenAgent={openAgent} />
-						<CacheStrip cache={Object.hasOwn(snap.features, "cache-stats") ? snap.state?.cache : undefined} />
+						{!focus && (
+							<>
+								<TaskProgress todos={todos} subagents={subagents} hasAgent={hasAgent} onOpenAgent={openAgent} />
+								<CacheStrip
+									cache={Object.hasOwn(snap.features, "cache-stats") ? snap.state?.cache : undefined}
+								/>
+							</>
+						)}
 						<Composer
 							ref={composerRef}
 							key={roomId}

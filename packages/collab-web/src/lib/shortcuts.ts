@@ -66,7 +66,7 @@ export const SHORTCUTS = {
 	},
 	escape: {
 		keys: { key: "Escape" },
-		label: "Clear the selection, close a panel, or stop the running turn",
+		label: "Clear the selection, close a panel, stop the running turn, or leave focus mode",
 		group: "General",
 		typing: "allow",
 		fixed: true,
@@ -98,6 +98,13 @@ export const SHORTCUTS = {
 	sidebar: {
 		keys: { key: "\\", mod: true },
 		label: "Show or hide the sessions sidebar",
+		group: "View",
+		typing: "suppress",
+	},
+	// A bare key like the other session ones: ⌘⇧F is the explorer's "search in files" and ⌃⌘F is full screen on macOS.
+	focusMode: {
+		keys: { key: "f" },
+		label: "Enter or leave focus mode",
 		group: "View",
 		typing: "suppress",
 	},

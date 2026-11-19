@@ -1,5 +1,5 @@
 import type { AgentRef, SessionCommand, SessionHeader, SessionState, WireModel } from "@oh-my-pi/pi-wire";
-import { Ellipsis, PanelLeft, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Ellipsis, Minimize2, PanelLeft, ShieldAlert, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import type { ConnectionPhase, ContextItemsInfo } from "../../lib/client";
@@ -59,6 +59,9 @@ export interface HeaderBarProps {
 	sheetOpen: boolean;
 	setSheetOpen(open: boolean): void;
 	onChatChange(chat: boolean): void;
+	/** Focus mode: the bar keeps only the title, a connection problem and the way out; the session sheet offers the switch. */
+	focusMode: boolean;
+	onFocusModeChange(on: boolean): void;
 	/** Latest turns this device keeps showing (null: all); undefined until the session is known. */
 	keepTurns: number | null | undefined;
 	onKeepTurnsChange(keep: number | null): void;
@@ -142,6 +145,8 @@ export const HeaderBar = memo(function HeaderBar({
 	sheetOpen,
 	setSheetOpen,
 	onChatChange,
+	focusMode,
+	onFocusModeChange,
 	keepTurns,
 	onKeepTurnsChange,
 	changeCount,
@@ -191,6 +196,7 @@ export const HeaderBar = memo(function HeaderBar({
 		},
 		leave: { aria: "Leave session", run: onLeave },
 		changes: { aria: "Open changes", run: changeCount > 0 || workingTree ? onOpenChanges : null },
+		focus: { aria: "Enter focus mode", run: () => onFocusModeChange(true) },
 		architecture: { aria: "Open architecture maps", run: onOpenArchitecture },
 		mapchanges: { aria: "Map what changed", run: onMapChanges },
 		terminal: { aria: "Open terminal", run: onOpenPane },
@@ -219,9 +225,9 @@ export const HeaderBar = memo(function HeaderBar({
 	}
 
 	return (
-		<header className="sh-header">
+		<header className={focusMode ? "sh-header sh-header-focus" : "sh-header"}>
 			<div className="sh-header-left">
-				{onToggleSidebar && (
+				{onToggleSidebar && !focusMode && (
 					<button
 						type="button"
 						className={
@@ -245,10 +251,12 @@ export const HeaderBar = memo(function HeaderBar({
 						{sidebarAlert && <span className="sh-badge sh-badge-dot" />}
 					</button>
 				)}
-				<span className="sh-brand" aria-label="omp collab">
-					<OmpMark />
-					<span className="sh-brand-slash">/</span>
-				</span>
+				{!focusMode && (
+					<span className="sh-brand" aria-label="omp collab">
+						<OmpMark />
+						<span className="sh-brand-slash">/</span>
+					</span>
+				)}
 				<button
 					type="button"
 					className="sh-title-block"
@@ -256,107 +264,134 @@ export const HeaderBar = memo(function HeaderBar({
 					title={state?.cwd ? `${title}\n${state.cwd}` : title}
 				>
 					<span className="sh-title">{title}</span>
-					<span className="sh-title-sub">
-						<span className={`sh-dot sh-dot-${phase} sh-mobile-only`} />
-						{sandboxed && (
-							<span
-								className="sh-sandboxed-mark"
-								role="img"
-								aria-label="Sandboxed"
-								data-tip="Sandboxed: file tools only, edits stay in its folder"
-							>
-								<ShieldCheck size={12} />
-							</span>
-						)}
-						{highStakes?.on && <HighStakesMark />}
-						<AgentChip agent={agent} variant="mark" />
-						{state?.permission === "full" && (
-							<span
-								className="sh-agent-mark sh-agent-mark-warn"
-								role="img"
-								aria-label="Full access"
-								data-tip="Full access: every tool call runs without asking"
-							>
-								<ShieldAlert size={12} />
-							</span>
-						)}
-						{state?.cwd && <span className="sh-cwd">{shortenPath(state.cwd)}</span>}
-					</span>
+					{!focusMode && (
+						<span className="sh-title-sub">
+							<span className={`sh-dot sh-dot-${phase} sh-mobile-only`} />
+							{sandboxed && (
+								<span
+									className="sh-sandboxed-mark"
+									role="img"
+									aria-label="Sandboxed"
+									data-tip="Sandboxed: file tools only, edits stay in its folder"
+								>
+									<ShieldCheck size={12} />
+								</span>
+							)}
+							{highStakes?.on && <HighStakesMark />}
+							<AgentChip agent={agent} variant="mark" />
+							{state?.permission === "full" && (
+								<span
+									className="sh-agent-mark sh-agent-mark-warn"
+									role="img"
+									aria-label="Full access"
+									data-tip="Full access: every tool call runs without asking"
+								>
+									<ShieldAlert size={12} />
+								</span>
+							)}
+							{state?.cwd && <span className="sh-cwd">{shortenPath(state.cwd)}</span>}
+						</span>
+					)}
 				</button>
 			</div>
 			<div className="sh-header-right">
-				<span
-					className={`sh-status sh-status-${phase}`}
-					data-tip={`Connection: ${PHASE_LABEL[phase].toLowerCase()}`}
-				>
-					<span className={`sh-dot sh-dot-${phase}`} />
-					{PHASE_LABEL[phase]}
-				</span>
-				{readOnly && (
-					<span className="sh-chip" data-tip="You joined with a read-only link: watching only">
-						Read-only
-					</span>
-				)}
-				{/* The composer shows model and thinking level, except where a read-only guest has none. */}
-				{readOnly && state?.model && <span className="sh-chip sh-chip-meta">{state.model.name}</span>}
-				{readOnly && state?.thinkingLevel && <span className="sh-chip sh-chip-meta">{state.thinkingLevel}</span>}
-				{pct != null && (
+				{(!focusMode || phase !== "live") && (
 					<span
-						className={pct > 80 ? "sh-gauge sh-gauge-warn" : "sh-gauge"}
-						role="img"
-						aria-label={`Context ${fmtPercent(pct)} full`}
-						data-tip={`Context ${fmtPercent(pct)} full`}
+						className={`sh-status sh-status-${phase}`}
+						data-tip={`Connection: ${PHASE_LABEL[phase].toLowerCase()}`}
 					>
-						<span className="sh-gauge-track">
-							<span className="sh-gauge-fill" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
-						</span>
-						<span className="sh-gauge-pct">{fmtPercent(pct)}</span>
+						<span className={`sh-dot sh-dot-${phase}`} />
+						{PHASE_LABEL[phase]}
 					</span>
 				)}
-				{state && state.participants.length > 0 && (
-					<span className="sh-avatars" role="group" aria-label="People in this session">
-						{state.participants.map((p, i) => (
-							<span
-								key={`${p.name}:${i}`}
-								className={p.role === "host" ? "sh-avatar sh-avatar-host" : "sh-avatar"}
-								role="img"
-								aria-label={`${p.name}, ${p.role}${p.readOnly ? ", view-only" : ""}`}
-								data-tip={`${p.name} · ${p.role}${p.readOnly ? " · view-only" : ""}`}
-							>
-								{(p.name[0] ?? "?").toUpperCase()}
+				{!focusMode && (
+					<>
+						{readOnly && (
+							<span className="sh-chip" data-tip="You joined with a read-only link: watching only">
+								Read-only
 							</span>
-						))}
-					</span>
-				)}
-				{drawn.map(id => {
-					const Icon = TOP_BAR_ICONS[id];
-					const { aria, run } = bar[id];
-					const lit = (id === "find" && searchOpen) || (id === "agents" && railOpen);
-					let className = lit ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon";
-					if (id === "settings") className = "sh-settings-toggle";
-					return (
+						)}
+						{/* The composer shows model and thinking level, except where a read-only guest has none. */}
+						{readOnly && state?.model && <span className="sh-chip sh-chip-meta">{state.model.name}</span>}
+						{readOnly && state?.thinkingLevel && (
+							<span className="sh-chip sh-chip-meta">{state.thinkingLevel}</span>
+						)}
+						{pct != null && (
+							<span
+								className={pct > 80 ? "sh-gauge sh-gauge-warn" : "sh-gauge"}
+								role="img"
+								aria-label={`Context ${fmtPercent(pct)} full`}
+								data-tip={`Context ${fmtPercent(pct)} full`}
+							>
+								<span className="sh-gauge-track">
+									<span className="sh-gauge-fill" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+								</span>
+								<span className="sh-gauge-pct">{fmtPercent(pct)}</span>
+							</span>
+						)}
+						{state && state.participants.length > 0 && (
+							<span className="sh-avatars" role="group" aria-label="People in this session">
+								{state.participants.map((p, i) => (
+									<span
+										key={`${p.name}:${i}`}
+										className={p.role === "host" ? "sh-avatar sh-avatar-host" : "sh-avatar"}
+										role="img"
+										aria-label={`${p.name}, ${p.role}${p.readOnly ? ", view-only" : ""}`}
+										data-tip={`${p.name} · ${p.role}${p.readOnly ? " · view-only" : ""}`}
+									>
+										{(p.name[0] ?? "?").toUpperCase()}
+									</span>
+								))}
+							</span>
+						)}
+						{drawn.map(id => {
+							const Icon = TOP_BAR_ICONS[id];
+							const { aria, run } = bar[id];
+							const lit = (id === "find" && searchOpen) || (id === "agents" && railOpen);
+							let className = lit ? "sh-btn sh-btn-icon sh-btn-on" : "sh-btn sh-btn-icon";
+							if (id === "settings") className = "sh-settings-toggle";
+							return (
+								<button
+									key={id}
+									type="button"
+									className={className}
+									onClick={run ?? undefined}
+									data-shortcut={
+										id === "settings" || id === "find"
+											? shortcutKeys(id)
+											: id === "focus"
+												? shortcutKeys("focusMode")
+												: undefined
+									}
+									aria-label={aria}
+									aria-pressed={id === "find" ? searchOpen : undefined}
+								>
+									<Icon size={16} />
+									{id === "agents" && subCount > 0 && <span className="sh-badge">{subCount}</span>}
+								</button>
+							);
+						})}
 						<button
-							key={id}
 							type="button"
-							className={className}
-							onClick={run ?? undefined}
-							data-shortcut={id === "settings" || id === "find" ? shortcutKeys(id) : undefined}
-							aria-label={aria}
-							aria-pressed={id === "find" ? searchOpen : undefined}
+							className="sh-btn sh-btn-icon"
+							onClick={() => setSheetOpen(true)}
+							aria-label="Open all options"
 						>
-							<Icon size={16} />
-							{id === "agents" && subCount > 0 && <span className="sh-badge">{subCount}</span>}
+							<Ellipsis size={18} />
 						</button>
-					);
-				})}
-				<button
-					type="button"
-					className="sh-btn sh-btn-icon"
-					onClick={() => setSheetOpen(true)}
-					aria-label="Open all options"
-				>
-					<Ellipsis size={18} />
-				</button>
+					</>
+				)}
+				{focusMode && (
+					<button
+						type="button"
+						className="sh-btn sh-btn-icon sh-focus-exit"
+						onClick={() => onFocusModeChange(false)}
+						data-shortcut={shortcutKeys("focusMode")}
+						aria-label="Leave focus mode"
+					>
+						<Minimize2 size={16} />
+					</button>
+				)}
 			</div>
 			{sheetOpen && (
 				<SessionSheet
@@ -373,6 +408,11 @@ export const HeaderBar = memo(function HeaderBar({
 					contextPct={pct}
 					chat={chat}
 					onChatChange={onChatChange}
+					focusMode={focusMode}
+					onFocusModeChange={on => {
+						setSheetOpen(false);
+						onFocusModeChange(on);
+					}}
 					keepTurns={keepTurns}
 					onKeepTurnsChange={onKeepTurnsChange}
 					searchOpen={searchOpen}

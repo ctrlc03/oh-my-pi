@@ -11,6 +11,8 @@ import {
 
 /** Where the drawers stand and how to move them; read at gesture time, so it may change every render. */
 export interface EdgeGestureState {
+	/** The drawers may be swiped open at all; focus mode shows none, and an edge swipe there must not bring one back. */
+	drawers: boolean;
 	/** The sessions sidebar has something to show, so a swipe from the left edge may open it. */
 	canOpenSidebar: boolean;
 	/** The sidebar is open as a drawer over the transcript (not docked beside it). */
@@ -63,7 +65,7 @@ export function useEdgeGestures(state: EdgeGestureState): void {
 				intent = { kind: "close", side: "left" };
 			} else if (now.railOpen && target.closest(".sh-rail, .sh-rail-backdrop") !== null) {
 				intent = { kind: "close", side: "right" };
-			} else if (edgeZone(e.clientX, window.innerWidth) !== null) {
+			} else if (now.drawers && edgeZone(e.clientX, window.innerWidth) !== null) {
 				intent = { kind: "open", edge: edgeZone(e.clientX, window.innerWidth)! };
 			}
 			if (intent !== null) start = { intent, x: e.clientX, y: e.clientY, t: e.timeStamp };

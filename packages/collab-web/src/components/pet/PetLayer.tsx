@@ -47,13 +47,15 @@ export interface PetLayerProps {
 	/** The paired computer's sessions, for the home screen. */
 	hosts: readonly CompanionHost[];
 	hostsLive: boolean;
+	/** Leave the floating pet out; the pop-out window, a window of its own, is not part of the page and stays. */
+	hidden: boolean;
 }
 
 /**
  * The pet: floats over the app (below its sheets), shows what the agent is doing, and moves out into its own
  * window when asked. Mounted once, only while the pet is enabled.
  */
-export function PetLayer({ client, hosts, hostsLive }: PetLayerProps): ReactNode {
+export function PetLayer({ client, hosts, hostsLive, hidden }: PetLayerProps): ReactNode {
 	const settings = usePetSettings();
 	const activity = usePetActivity(client, hosts, hostsLive);
 	const pipWindow = usePetPipWindow();
@@ -80,6 +82,7 @@ export function PetLayer({ client, hosts, hostsLive }: PetLayerProps): ReactNode
 			pipWindow.document.body,
 		);
 	}
+	if (hidden) return null;
 	return (
 		<PetFloat
 			client={client}

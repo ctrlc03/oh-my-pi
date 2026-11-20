@@ -5,6 +5,7 @@ import {
 	shouldUseProviderNativeCompaction,
 } from "@oh-my-pi/pi-agent-core/compaction";
 import type { Model } from "@oh-my-pi/pi-ai";
+import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import { sendsImageInputOnWire } from "@oh-my-pi/pi-ai/providers/vision-guard";
 import type { CompactionSettings } from "./context-settings";
 
@@ -96,6 +97,8 @@ export function resolveMethodSettings(
 ): EngineCompactionSettings {
 	return {
 		...settings,
+		// A custom endpoint receives the whole transcript; a private process never uses one, whichever layer set it.
+		remoteEndpoint: isPrivateModeActive() ? undefined : settings.remoteEndpoint,
 		strategy: STRATEGY_BY_COMPACTION_METHOD[method],
 		remoteEnabled: method === "remote",
 	};

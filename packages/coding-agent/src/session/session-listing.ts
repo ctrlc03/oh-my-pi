@@ -42,6 +42,8 @@ export interface SessionInfo {
 	parentSessionPath?: string;
 	/** Id of the session whose conversation this one continues in a new file (header `continuationOf`). */
 	continuationOf?: string;
+	/** The session is private (header `private: true`): its content stays out of shared indexes and views. */
+	private?: true;
 	created: Date;
 	modified: Date;
 	messageCount: number;
@@ -345,6 +347,7 @@ interface SessionListHeader {
 	parentSession?: string;
 	continuationOf?: string;
 	timestamp?: string;
+	private?: true;
 }
 
 function normalizeTitleOverride(title: string | undefined): string | null | undefined {
@@ -368,6 +371,7 @@ function sessionListHeaderFromRecord(
 		parentSession: typeof record.parentSession === "string" ? record.parentSession : undefined,
 		continuationOf: typeof record.continuationOf === "string" ? record.continuationOf : undefined,
 		timestamp: typeof record.timestamp === "string" ? record.timestamp : undefined,
+		private: record.private === true ? true : undefined,
 	};
 }
 
@@ -383,6 +387,7 @@ function parseSessionListHeaderLine(line: string, titleOverride?: string | null)
 		parentSession: extractStringProperty(line, "parentSession"),
 		continuationOf: extractStringProperty(line, "continuationOf"),
 		timestamp: extractStringProperty(line, "timestamp"),
+		private: /"private"\s*:\s*true/.test(line) ? true : undefined,
 	};
 }
 
@@ -532,6 +537,7 @@ async function scanSessionFile(
 			title: header.title ?? shortSummary,
 			parentSessionPath: header.parentSession,
 			continuationOf: header.continuationOf,
+			private: header.private,
 			created: new Date(header.timestamp ?? ""),
 			modified: mtime,
 			messageCount,

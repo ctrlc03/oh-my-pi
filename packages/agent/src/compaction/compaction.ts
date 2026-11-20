@@ -5,6 +5,7 @@
  * and after compaction the session is reloaded.
  */
 
+import { assertProviderAllowedInPrivateMode, isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import {
 	type AnthropicCompactionFiles,
 	type Api,
@@ -1772,6 +1773,8 @@ export async function compact(
 	signal?: AbortSignal,
 	options?: SummaryOptions,
 ): Promise<CompactionResult> {
+	// Remote compaction posts the transcript straight to the provider, below the pi-ai stream guard.
+	assertProviderAllowedInPrivateMode(model.provider);
 	const {
 		firstKeptEntryId,
 		messagesToSummarize,
@@ -1792,7 +1795,8 @@ export async function compact(
 	const summaryOptions: SummaryOptions = {
 		promptOverride: options?.promptOverride,
 		extraContext: options?.extraContext,
-		remoteEndpoint: settings.remoteEnabled === false ? undefined : settings.remoteEndpoint,
+		// A custom endpoint receives the whole transcript, which a private process must never send off-allowlist.
+		remoteEndpoint: settings.remoteEnabled === false || isPrivateModeActive() ? undefined : settings.remoteEndpoint,
 		remoteSystemPrompt: options?.remoteSystemPrompt,
 		initiatorOverride: options?.initiatorOverride,
 		metadata: options?.metadata,

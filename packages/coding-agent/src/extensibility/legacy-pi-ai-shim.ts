@@ -28,6 +28,7 @@ import {
 	type SimpleStreamOptions,
 	streamSimple,
 } from "@oh-my-pi/pi-ai";
+import { assertProviderAllowedInPrivateMode } from "@oh-my-pi/pi-ai/private-mode";
 import { streamAnthropic } from "@oh-my-pi/pi-ai/providers/register-builtins";
 import type { Effort } from "@oh-my-pi/pi-catalog/effort";
 import { clampThinkingLevelForModel, getSupportedEfforts } from "@oh-my-pi/pi-catalog/model-thinking";
@@ -151,7 +152,11 @@ export const getModels = getBundledModels;
 
 const ANTHROPIC_MESSAGES_API = {
 	// Loads the Anthropic transport on first invocation, not extension setup.
-	stream: streamAnthropic,
+	// A deep transport call skips `stream()`, so it carries its own private-mode check.
+	stream: (...args: Parameters<typeof streamAnthropic>): ReturnType<typeof streamAnthropic> => {
+		assertProviderAllowedInPrivateMode(args[0].provider);
+		return streamAnthropic(...args);
+	},
 	streamSimple: (model: Model<"anthropic-messages">, context: Context, options?: SimpleStreamOptions) =>
 		streamSimple(model, context, options),
 };

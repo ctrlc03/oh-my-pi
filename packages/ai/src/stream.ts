@@ -31,6 +31,7 @@ import type { OAuthRequestIdentity } from "./auth/types";
 import { getEnvApiKey } from "./env-api-key";
 import * as AIError from "./error";
 import { ProviderHttpError } from "./error";
+import { assertProviderAllowedInPrivateMode } from "./private-mode";
 import { assertProviderEnabled } from "./registry/oauth";
 import { isConcurrencyCapExclusion, isUsageLimitOutcome } from "./error/rate-limit";
 import type { BedrockOptions } from "./providers/amazon-bedrock";
@@ -868,6 +869,8 @@ export function stream<TApi extends Api>(
 	context: Context,
 	options?: OptionsForApi<TApi>,
 ): AssistantMessageEventStream {
+	// Fail closed before header resolution, auth, or any transport work.
+	assertProviderAllowedInPrivateMode(model.provider);
 	if (model.resolveHeaders) {
 		return withResolvedModelHeaders(model, options?.signal, resolvedModel => stream(resolvedModel, context, options));
 	}
@@ -895,6 +898,7 @@ function streamDispatch<TApi extends Api>(
 ): AssistantMessageEventStream {
 	// A provider turned off in its auth rules is never called, even with a key passed in directly.
 	assertProviderEnabled(model.provider);
+	assertProviderAllowedInPrivateMode(model.provider);
 	const requestOptions = withSupportedSamplingParams(
 		model,
 		withTransportFetch(model, (options || {}) as StreamOptions),
@@ -1214,6 +1218,7 @@ export function streamSimple<TApi extends Api>(
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
+	assertProviderAllowedInPrivateMode(model.provider);
 	const sessionOptions = withInferenceSessionId(options);
 	// Unverified thinking is opt-in: without a requested effort the request is
 	// byte-identical to a non-reasoning model's.

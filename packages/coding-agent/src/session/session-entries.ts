@@ -67,10 +67,17 @@ export interface SessionHeader {
 	providerPromptCacheKey?: string;
 	/** Local-only Task candidate, gated by the actual request model's cache policy; omitted from shares and HTML. */
 	taskPromptCacheKey?: string;
+	/**
+	 * Present (`true`) on a private session: every model request is limited to `private.providers`.
+	 * Forks, branches, continuations and subagents of a private session copy it; absent otherwise.
+	 */
+	private?: true;
 }
 
 export interface NewSessionOptions {
 	parentSession?: string;
+	/** Mark the new session private (it always is in a process that entered private mode). */
+	private?: boolean;
 	/** Provider prompt-cache identity to seed on the new session header. */
 	providerPromptCacheKey?: string;
 	taskPromptCacheKey?: string;

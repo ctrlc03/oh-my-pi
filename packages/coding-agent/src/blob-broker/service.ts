@@ -8,6 +8,7 @@
  * degrades to inline base64.
  */
 
+import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import * as path from "node:path";
 import type { Context, ImageContent, Model } from "@oh-my-pi/pi-ai";
 import { getBlobsDir, logger } from "@oh-my-pi/pi-utils";
@@ -730,7 +731,8 @@ export function createImageUrlServiceFromSettings(
 	projectDir: string,
 	resolveCredential: ProviderFileCredentialResolver,
 ): ImageUrlService | undefined {
-	if (!cfgImagesUrlsEnabled.get(settings)) return undefined;
+	// Publishing images (public hosts, tunnels, provider file APIs) is egress a private session never makes.
+	if (isPrivateModeActive() || !cfgImagesUrlsEnabled.get(settings)) return undefined;
 	const configs = resolveBlobBrokerConfigs(settings, projectDir);
 	let providerFilePosition: number | undefined;
 	let urlPosition = 0;

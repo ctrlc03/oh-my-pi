@@ -607,7 +607,8 @@ export type CollabFeature =
 	| "mentions"
 	| "approval-grants"
 	| "pr-watch"
-	| "permission-mode";
+	| "permission-mode"
+	| "private";
 
 /** A slash command a writer may run by sending it as a `prompt` (`/name args`). */
 export interface CollabCommand {

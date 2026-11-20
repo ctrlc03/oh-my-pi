@@ -2746,6 +2746,7 @@ export class StatusLineComponent<TSession extends StatusLineSession = StatusLine
 			goalStatusInFooter: this.#goalModeStatus ? this.host.goalStatusInFooter(this.session) : false,
 			vibeMode: this.#vibeModeStatus,
 			profile: this.#profileStatus,
+			private: this.host.isPrivateSession?.(this.session) === true,
 			vim: this.#vimStatus,
 			collab: this.#collabStatus,
 			stream: this.#streamStatus,

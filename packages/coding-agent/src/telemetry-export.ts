@@ -13,6 +13,7 @@
  * `OTEL_EXPORTER_OTLP*_PROTOCOL` of `grpc` or `http/json` declines rather than
  * misrouting protobuf payloads.
  */
+import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import type { AgentTelemetryConfig } from "@oh-my-pi/pi-agent-core";
 import { $otelEnv, logger } from "@oh-my-pi/pi-utils";
 
@@ -79,6 +80,8 @@ export function createTelemetryExportConfig(
 export async function initTelemetryExport(exportEnabled: boolean): Promise<void> {
 	if (initPromise) return initPromise;
 
+	// OTLP ships prompts, tool calls and usage to a collector: a private session exports nothing.
+	if (isPrivateModeActive()) return;
 	if (!exportEnabled || $otelEnv("OTEL_SDK_DISABLED")?.trim().toLowerCase() === "true") return;
 
 	const signalConfig = resolveSignalConfig();

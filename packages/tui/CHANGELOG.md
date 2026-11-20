@@ -9,6 +9,7 @@
 
 ### Added
 
+- Status line: optional `StatusLineHost.isPrivateSession` makes the `mode` segment lead with a `Private` badge for a private session.
 - Added task counts to the Todo status line when work is assigned to multiple targets.
 - Preserved pasted images when copying Composer drafts in Tern.
 - Added the ability to delete the selected prompt from history by pressing Delete at the end of the Ctrl+R search field.

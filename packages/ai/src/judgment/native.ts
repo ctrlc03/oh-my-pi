@@ -34,6 +34,7 @@ import { $env, isRecord, parseImageMetadata, tryParseJson } from "@oh-my-pi/pi-u
 import { type ApiKey, withAuth } from "../auth-retry";
 import * as AIError from "../error";
 import { validateImageInput } from "../images/shared";
+import { assertProviderAllowedInPrivateMode } from "../private-mode";
 import { withInferenceUserAgent } from "../providers/inference-headers";
 import { redactSensitiveInObject } from "../providers/transform-messages";
 import type { ImageContent, Model, Usage } from "../types";
@@ -553,6 +554,7 @@ export class NativeJudge implements Judge {
 		signal: AbortSignal | undefined,
 		requestHeaders: Readonly<Record<string, string>> | undefined,
 	): Promise<unknown> {
+		assertProviderAllowedInPrivateMode(this.provider);
 		const target = this.#wire.target(this.baseUrl, this.model, key);
 		const headers: Record<string, string> = {
 			...this.#headers,

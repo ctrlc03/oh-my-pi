@@ -84,6 +84,7 @@ import type {
 } from "@oh-my-pi/pi-ai";
 import { type Effort, serviceTierFamily, streamSimple } from "@oh-my-pi/pi-ai";
 import * as AIError from "@oh-my-pi/pi-ai/error";
+import { assertProviderAllowedInPrivateMode } from "@oh-my-pi/pi-ai/private-mode";
 import { prewarmModelConnection } from "@oh-my-pi/pi-ai/providers/connection-prewarm";
 import { resetOpenAICodexHistoryAfterCompaction } from "@oh-my-pi/pi-ai/providers/openai-codex-state";
 import { withCredentialRedaction } from "@oh-my-pi/pi-ai/providers/transform-messages";
@@ -14269,6 +14270,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	}
 
 	async #setModelWithProviderSessionReset(model: Model): Promise<void> {
+		// Every model switch (picker, /model, cycling, roles, fallback, collab) lands here: a private session never moves off its allowlist.
+		assertProviderAllowedInPrivateMode(model.provider);
 		const currentModel = this.model;
 		const isChanging = !currentModel || !modelsAreEqual(currentModel, model);
 		if (currentModel) {

@@ -139,6 +139,30 @@ export const cfgModelRoleStorage = register({
 
 export const cfgModelRoles = register({ id: "modelRoles", type: "record", default: EMPTY_STRING_RECORD });
 
+/**
+ * Provider ids a private session (`--private`) may call. A private session refuses every model
+ * request to any other provider. Read through {@link cfgOperatorPrivateProviders}: a repository's
+ * project layer never widens the allowlist.
+ */
+export const cfgPrivateProviders = register({ id: "private.providers", type: "array", default: EMPTY_STRING_ARRAY });
+
+/**
+ * Role assignments a private session uses instead of `modelRoles`, per role; roles not listed here
+ * resolve from `modelRoles` and must still land on an allowed provider. Read through
+ * {@link cfgOperatorPrivateModelRoles}.
+ */
+export const cfgPrivateModelRoles = register({
+	id: "private.modelRoles",
+	type: "record",
+	default: EMPTY_STRING_RECORD,
+});
+
+/** `private.providers` from operator layers only; the allowlist the process enforces. */
+export const cfgOperatorPrivateProviders = operatorValue(cfgPrivateProviders);
+
+/** `private.modelRoles` from operator layers only. */
+export const cfgOperatorPrivateModelRoles = operatorValue(cfgPrivateModelRoles);
+
 /** Total provider budget for one native judge candidate, including setup and retries. */
 export const cfgJudgmentAttemptTimeoutMs = register({
 	id: "judgment.attemptTimeoutMs",

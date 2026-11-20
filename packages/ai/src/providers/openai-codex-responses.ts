@@ -1,4 +1,5 @@
 import { scheduler } from "node:timers/promises";
+import { assertProviderAllowedInPrivateMode } from "../private-mode";
 import { type } from "@oh-my-pi/omptype";
 import { getSupportedEfforts } from "@oh-my-pi/pi-catalog/model-thinking";
 import { calculateCost } from "@oh-my-pi/pi-catalog/models";
@@ -1545,6 +1546,7 @@ export async function openCodexCompactionEventStream(
 	body: OpenAICodexCompactionBody,
 	options: OpenAICodexCompactionStreamOptions,
 ): Promise<AsyncGenerator<Record<string, unknown>>> {
+	assertProviderAllowedInPrivateMode(model.provider);
 	const requestSetup = createRequestSetup(options);
 	let requestContext: CodexRequestContext;
 	let initial: {

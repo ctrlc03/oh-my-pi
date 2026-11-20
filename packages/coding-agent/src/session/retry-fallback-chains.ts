@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { Model } from "@oh-my-pi/pi-ai";
+import { isProviderAllowedInPrivateMode } from "@oh-my-pi/pi-ai/private-mode";
 import type { ModelRegistry } from "../config/model-registry";
 import { cfgModelRoles } from "../config/model-settings";
 import { formatModelSelectorValue, parseModelString } from "@oh-my-pi/pi-tui/overlays/model-selector";
@@ -638,6 +639,19 @@ function getRetryFallbackEffectiveChain(
  * without returning the current selector itself.
  */
 export function findRetryFallbackCandidates(
+	context: RetryFallbackResolutionContext,
+	chainKey: string,
+	currentSelector: string,
+	currentModel?: Model | null,
+	options?: { allowMissingPrimary?: boolean; wrapAround?: boolean },
+): RetryFallbackSelector[] {
+	// A private session's chains skip every candidate off the allowlist; the dispatch guard backs this up.
+	return findChainCandidates(context, chainKey, currentSelector, currentModel, options).filter(candidate =>
+		isProviderAllowedInPrivateMode(candidate.provider),
+	);
+}
+
+function findChainCandidates(
 	context: RetryFallbackResolutionContext,
 	chainKey: string,
 	currentSelector: string,

@@ -141,6 +141,7 @@ import type { ModelOverride, ModelsConfig, ProviderAuthMode } from "./models-con
 import { type Settings, settings } from "./settings";
 
 import { cfgDisabledProviders } from "./model-settings";
+import { effectiveDisabledProviders } from "./private-mode";
 import {
 	cfgCompactionModelThresholds,
 	cfgCompactionModelThresholdsEnabled,
@@ -221,9 +222,9 @@ type ModifyModelsHook = (models: Model<Api>[], credentials: OAuthCredentials) =>
 
 function getDisabledProviderIdsFromSettings(settingsInstance?: Settings): Set<string> {
 	try {
-		return new Set(cfgDisabledProviders.get(settingsInstance ?? settings));
+		return effectiveDisabledProviders(cfgDisabledProviders.get(settingsInstance ?? settings));
 	} catch {
-		return new Set();
+		return effectiveDisabledProviders(undefined);
 	}
 }
 

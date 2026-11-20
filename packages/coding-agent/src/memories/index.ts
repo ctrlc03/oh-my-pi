@@ -701,6 +701,7 @@ export async function collectThreads(session: AgentSession, currentThreadId?: st
 		}
 		let cwd = "";
 		let id = name.slice(0, -6);
+		let isPrivate = false;
 		try {
 			// Bounded head read: session files can grow to hundreds of MBs, but the
 			// session header line always lives at line 1 (or line 2 after a title
@@ -732,6 +733,7 @@ export async function collectThreads(session: AgentSession, currentThreadId?: st
 				if (header?.type === "session") {
 					if (typeof header.cwd === "string") cwd = header.cwd;
 					if (typeof header.id === "string") id = header.id;
+					isPrivate = header.private === true;
 				}
 				break;
 			}
@@ -740,6 +742,8 @@ export async function collectThreads(session: AgentSession, currentThreadId?: st
 		}
 
 		if (currentThreadId && id === currentThreadId) continue;
+		// A private transcript never feeds memory: its content must not reach a model the session did not allow.
+		if (isPrivate) continue;
 		threads.push({
 			id,
 			updatedAt: Math.floor(stat.mtimeMs / 1000),

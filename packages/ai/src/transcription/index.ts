@@ -1,5 +1,6 @@
 import type { Api, Model } from "@oh-my-pi/pi-catalog/types";
 import * as AIError from "../error";
+import { assertProviderAllowedInPrivateMode } from "../private-mode";
 import { transcribeOpenAI, type TranscriptionOptions } from "./openai-transcriptions";
 import type { TranscriptionRequest, TranscriptionResult } from "./types";
 
@@ -12,6 +13,7 @@ export function transcribeAudio(
 	request: TranscriptionRequest,
 	options: TranscriptionOptions,
 ): Promise<TranscriptionResult> {
+	assertProviderAllowedInPrivateMode(model.provider);
 	if (model.api === "openai-transcriptions") return transcribeOpenAI(model, request, options);
 	throw new AIError.ConfigurationError(`Unsupported transcription API: ${model.api}`);
 }

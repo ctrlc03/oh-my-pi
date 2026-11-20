@@ -182,6 +182,19 @@ describe("collab registry", () => {
 		expect(JSON.stringify(view)).not.toContain(f.writeToken);
 	});
 
+	it("carries a private host's `private: true` row through the registry and omits it otherwise", async () => {
+		const privateDir = await tempDir();
+		const privateFixture = makeFixture({ private: true });
+		await publish(privateDir, privateFixture);
+		const [privateRow] = await listCollabHosts({ dir: privateDir });
+		expect(privateRow?.private).toBe(true);
+
+		const plainDir = await tempDir();
+		await publish(plainDir, makeFixture());
+		const [plainRow] = await listCollabHosts({ dir: plainDir });
+		expect(plainRow).not.toHaveProperty("private");
+	});
+
 	it("returns only the requested URL on the link wire, never the control capability to a view request", async () => {
 		const dir = await tempDir();
 		const f = makeFixture();

@@ -1,4 +1,6 @@
 import * as path from "node:path";
+import { isPrivateModeActive, privateModeProviders } from "@oh-my-pi/pi-ai/private-mode";
+import { filtersProviders } from "./config/private-mode";
 import { type CallRecord, ChangeJournal, callLabel } from "./commit/selective/journal";
 import { createCommitPrelude } from "./commit/selective/prelude-definition";
 import {
@@ -3320,14 +3322,12 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 					modelRegistry.refresh("online-if-uncached"),
 				);
 			}
-			const allEnabledModels =
-				disabledProviders.size === 0
-					? modelRegistry.getAll()
-					: modelRegistry.getAll().filter(candidate => !disabledProviders.has(candidate.provider));
-			const availableModels =
-				disabledProviders.size === 0
-					? modelRegistry.getAvailable()
-					: modelRegistry.getAvailable().filter(candidate => !disabledProviders.has(candidate.provider));
+			const allEnabledModels = !filtersProviders(disabledProviders)
+				? modelRegistry.getAll()
+				: modelRegistry.getAll().filter(candidate => !disabledProviders.has(candidate.provider));
+			const availableModels = !filtersProviders(disabledProviders)
+				? modelRegistry.getAvailable()
+				: modelRegistry.getAvailable().filter(candidate => !disabledProviders.has(candidate.provider));
 			const expandedModelPatterns = deferredModelPatterns.flatMap(pattern =>
 				pattern.split(",").flatMap(selector => {
 					const trimmedSelector = selector.trim();
@@ -3758,8 +3758,9 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 				}
 			} else {
 				const patterns = cfgEnabledModels.get(settings);
-				modelFallbackMessage =
-					patterns && patterns.length > 0
+				modelFallbackMessage = isPrivateModeActive()
+					? `Private session: no model is available from the allowed providers (${(privateModeProviders() ?? []).join(", ")}). Define one in models.yml, or point private.modelRoles.default at it.`
+					: patterns && patterns.length > 0
 						? `No model available matching enabledModels (${patterns.join(", ")}) with usable credentials. Configure auth for an allowed provider or adjust enabledModels.`
 						: "No default model selected. Use /login, set an API key environment variable, or select a local model with /model or --model.";
 			}

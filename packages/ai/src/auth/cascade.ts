@@ -3,6 +3,7 @@ import { $env, $envExact, logger } from "@oh-my-pi/pi-utils";
 import { type ApiKeyResolver, createOAuthProvenance, type ResolvedApiKey, resolveAfterRotation } from "../auth-retry";
 import { getEnvApiKey, getEnvApiKeyName } from "../env-api-key";
 import * as AIError from "../error";
+import { assertProviderAllowedInPrivateMode } from "../private-mode";
 import { assertProviderEnabled, providerPauseReason } from "../registry/oauth";
 import { AUTHENTICATED_SENTINEL } from "../registry/types";
 import type { SessionAffinity } from "./affinity";
@@ -333,6 +334,7 @@ export class KeyCascade implements KeysApi {
 		options?: AuthApiKeyOptions,
 	): Promise<ResolvedApiKey | undefined> {
 		assertProviderEnabled(provider);
+		assertProviderAllowedInPrivateMode(provider);
 		let credentialId: number | undefined;
 		let oauthIdentity: OAuthRequestIdentity | undefined;
 		let oauthAccess: string | undefined;
@@ -363,6 +365,7 @@ export class KeyCascade implements KeysApi {
 	 * {@link KeyCascade.getWithCredential}, which surfaces it.
 	 */
 	async get(provider: string, sessionId?: string, options?: AuthApiKeyOptions): Promise<string | undefined> {
+		assertProviderAllowedInPrivateMode(provider);
 		try {
 			return await this.#resolve(provider, sessionId, options);
 		} catch (error) {

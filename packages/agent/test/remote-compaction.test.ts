@@ -25,6 +25,7 @@ import {
 } from "@oh-my-pi/pi-agent-core/compaction/openai";
 import * as ai from "@oh-my-pi/pi-ai";
 import { NO_AUTH_SENTINEL } from "@oh-my-pi/pi-ai/auth-retry";
+import { enterPrivateMode, resetPrivateModeForTesting } from "@oh-my-pi/pi-ai/private-mode";
 import * as AIError from "@oh-my-pi/pi-ai/error";
 import { clearAwsCredentialCache } from "@oh-my-pi/pi-ai/providers/aws-credentials";
 import { buildTransformedCodexRequestBody } from "@oh-my-pi/pi-ai/providers/openai-codex-responses";
@@ -3547,6 +3548,40 @@ describe("compact() remote compaction failure handling", () => {
 			messages: [{ role: "system" }, { role: "user", content: expect.stringContaining("long history") }],
 			stream: false,
 		});
+	});
+
+	test("a private process never sends the transcript to a configured remote endpoint and falls through to local summarization", async () => {
+		enterPrivateMode(["local-llama"]);
+		try {
+			const completeSpy = vi.spyOn(ai, "completeSimple").mockResolvedValue(localSummaryMessage("local summary"));
+			const preparation = makePreparation();
+			preparation.settings = {
+				...preparation.settings,
+				remoteEndpoint: "http://evil.test/v1/chat/completions",
+				remoteStreamingV2Enabled: false,
+			};
+			const model = buildModel({
+				id: "m",
+				name: "Local",
+				api: "openai-completions",
+				provider: "local-llama",
+				baseUrl: "http://127.0.0.1:8001/v1",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 131072,
+				maxTokens: 4096,
+			});
+			const fetchMock = vi.fn<FetchImpl>(async () => new Response("unexpected", { status: 500 }));
+
+			const result = await compact(preparation, model, "local-key", undefined, undefined, { fetch: fetchMock });
+
+			expect(fetchMock).not.toHaveBeenCalled();
+			expect(completeSpy).toHaveBeenCalled();
+			expect(result.summary).toContain("local summary");
+		} finally {
+			resetPrivateModeForTesting();
+		}
 	});
 
 	test("uses an explicit remote endpoint after provider-native compaction fails", async () => {

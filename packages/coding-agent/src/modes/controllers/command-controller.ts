@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import * as os from "node:os";
 import * as path from "node:path";
 import { CompactionCancelledError, type CompactionOutcome } from "@oh-my-pi/pi-agent-core/compaction";
@@ -490,6 +491,12 @@ export class CommandController {
 	}
 
 	async handleShareCommand(): Promise<void> {
+		if (isPrivateModeActive()) {
+			this.ctx.showError(
+				"A private session cannot be shared: sharing uploads the transcript to an external service.",
+			);
+			return;
+		}
 		let customShare: LoadedCustomShare | null;
 		try {
 			customShare = await loadCustomShare();

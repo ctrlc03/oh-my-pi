@@ -123,6 +123,8 @@ Subagent system prompts and tool inventories are not persisted, so subagent file
 
 ## Share
 
+A [private session](./private-sessions.md) cannot be shared: `/share` is refused, including through a custom share script, because sharing uploads the transcript.
+
 `/share` publishes an end-to-end encrypted snapshot of the session and prints
 a viewer link. Implementation: [`../packages/coding-agent/src/export/share.ts`](../packages/coding-agent/src/export/share.ts).
 
@@ -411,6 +413,8 @@ Startup `--fork` is resolved before normal session creation:
 Use `--prompt-cache-key <key>` to pin the provider prompt-cache identity explicitly and independently from both the OMP session id and `--provider-session-id`. `--provider-session-id` continues to control provider session/routing headers and sticky credential selection; `--prompt-cache-key` controls the OpenAI Responses `prompt_cache_key` payload where supported.
 
 ## Resume and continue
+
+Privacy follows the session header: resuming, continuing, restoring or forking a [private session](./private-sessions.md) keeps it private, `--private` cannot make an existing non-private session private, and `/resume` inside a normal process refuses a private session (start it with `omp --resume <id>`).
 
 ## Interactive `/resume [value]`
 

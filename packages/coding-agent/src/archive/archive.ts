@@ -102,7 +102,8 @@ const SHORT_ID_LENGTH = 13;
 
 /** Recent projects, newest activity first. */
 export async function archiveProjects(limit: number): Promise<ArchiveView<ArchiveProject[]>> {
-	const projects = await listRecentProjects(limit);
+	// Private sessions are not part of the shared archive.
+	const projects = (await listRecentProjects(limit)).filter(project => !project.latest.private);
 	const recaps = latestRecaps(projects.map(project => project.latest.id));
 	const records = projects.map(project => ({
 		path: project.cwd,
@@ -124,7 +125,9 @@ export async function archiveProjects(limit: number): Promise<ArchiveView<Archiv
 
 /** Newest non-empty sessions of one project (`cwd`) or of every project. */
 export async function archiveSessions(cwd: string | undefined, limit: number): Promise<ArchiveView<ArchiveSession[]>> {
-	const sessions = await listRecentSessions({ limit, sessionDir: cwd ? sessionDirForCwd(cwd) : undefined });
+	const sessions = (await listRecentSessions({ limit, sessionDir: cwd ? sessionDirForCwd(cwd) : undefined })).filter(
+		session => !session.private,
+	);
 	const recaps = latestRecaps(sessions.map(session => session.id));
 	const records = sessions.map(session => toArchiveSession(session, recaps.get(session.id)));
 	if (records.length === 0) return { text: `No sessions ${scopeLabel(cwd)}.`, records };
@@ -150,7 +153,8 @@ export async function archiveSessions(cwd: string | undefined, limit: number): P
 export async function archiveSession(idOrFile: string, limit: number): Promise<ArchiveView<ArchiveSessionDetail>> {
 	const file = path.isAbsolute(idOrFile) ? idOrFile : await resolveSessionFile(idOrFile);
 	const info = await readSessionInfo(file);
-	if (!info) throw new ToolError(`Not a readable session file: ${shortenPath(file)}`);
+	// A private session reads as absent: its prompts and recaps must not reach a model it did not allow.
+	if (!info || info.private) throw new ToolError(`Not a readable session file: ${shortenPath(file)}`);
 	const recaps = listSessionRecaps({ sessionIds: [info.id] })
 		.map(toArchiveRecap)
 		.reverse();

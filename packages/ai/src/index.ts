@@ -15,6 +15,7 @@ export * from "./transcription";
 export * from "./video";
 export * from "./oneshot-retry";
 export * from "./provider-details";
+export * from "./private-mode";
 export * from "./provider-session-state";
 // Provider-specific runtime APIs are imported from their providers/* subpaths.
 export type * from "./providers/anthropic";

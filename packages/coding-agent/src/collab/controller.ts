@@ -10,6 +10,7 @@
  * and telling guests goodbye — before a replacement room for the new session
  * is started, so a card that names generation N can never reach session N+1.
  */
+import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import { randomBytes } from "node:crypto";
 import { logger } from "@oh-my-pi/pi-utils";
 import { sanitizeDisplayLine } from "@oh-my-pi/pi-tui/overlays/extensions/display-text";
@@ -129,6 +130,7 @@ export class CollabController {
 			startedAt: this.#startedAt,
 			busy: this.#ctx.session.isStreaming,
 			...(todo ? { todo } : {}),
+			...(isPrivateModeActive() ? { private: true } : {}),
 		};
 	}
 

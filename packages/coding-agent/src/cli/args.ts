@@ -91,6 +91,8 @@ export interface Args {
 	noJudge?: boolean;
 	noSpotlight?: boolean;
 	offline?: boolean;
+	/** `--private`: start a new session whose model requests are limited to `private.providers`. */
+	private?: boolean;
 	hooks?: string[];
 	extensions?: string[];
 	trustedExtensions?: string[];
@@ -383,6 +385,8 @@ export function parseArgs(inputArgs: string[], extensionFlags?: Map<string, { ty
 			result.noSpotlight = true;
 		} else if (arg === "--offline") {
 			result.offline = true;
+		} else if (arg === "--private") {
+			result.private = true;
 		} else if (arg === "--hide-thinking") {
 			result.hideThinking = true;
 		} else if (arg === "--advisor") {

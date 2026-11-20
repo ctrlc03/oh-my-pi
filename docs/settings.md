@@ -548,6 +548,17 @@ Existing configs are migrated automatically when loaded. Retired backend selecto
 
 See [Models](./models.md) for the `models.yml` schema and custom-provider definitions.
 
+### Private sessions
+
+`private.providers` lists the provider ids a [private session](./private-sessions.md) may call (default `[]`); starting one while it is empty fails at startup. `private.modelRoles` maps roles to selectors and replaces `modelRoles` per role inside private sessions (default `{}`); an unlisted role resolves from `modelRoles` but must still land on an allowed provider. Both are read from the operator's layers, so a project config cannot widen them.
+
+```yaml
+private:
+  providers: [studio-glm, studio-nanbeige]
+  modelRoles:
+    default: studio-glm/glm-5.3-flash
+```
+
 ### Judgments
 
 | Key                         | Type   | Default | Notes |

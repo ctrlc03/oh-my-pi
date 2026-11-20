@@ -50,6 +50,13 @@ import { managedInstallName } from "./cli/managed-install";
 import { getLatestRelease, isSourceCheckout } from "./cli/update-cli";
 import { findConfigFile } from "./config";
 import { cfgNoJudge, cfgNoSpotlight, cfgOffline } from "./config/auxiliary-model-policy";
+import {
+	isPrivateModeActive,
+	isProviderAllowedInPrivateMode,
+	privateModeProviders,
+} from "@oh-my-pi/pi-ai/private-mode";
+import { activatePrivateMode } from "./config/private-mode";
+import { PrivateSessionError, withPrivateSessionAdoption } from "./session/private-session";
 import { ModelRegistry } from "./config/model-registry";
 import { formatModelSelectorValue } from "@oh-my-pi/pi-tui/overlays/model-selector";
 import {
@@ -930,9 +937,13 @@ export class SessionResolutionError extends Error {
 	}
 }
 
-function exitForSessionResolutionError(error: SessionResolutionError): never {
+function isSessionStartupError(error: unknown): error is SessionResolutionError | PrivateSessionError {
+	return error instanceof SessionResolutionError || error instanceof PrivateSessionError;
+}
+
+function exitForSessionResolutionError(error: SessionResolutionError | PrivateSessionError): never {
 	process.stderr.write(`${chalk.red(`Error: ${error.message}`)}\n`);
-	if (error.hint) {
+	if (error instanceof SessionResolutionError && error.hint) {
 		process.stderr.write(`${chalk.dim(error.hint)}\n`);
 	}
 	process.exit(1);
@@ -2020,6 +2031,19 @@ export async function runRootCommand(
 		// Runtime overrides (not persisted): the session's cost gate reads its thresholds from settings.
 		if (parsedArgs.warnCost !== undefined) cfgSessionWarnCost.override(settingsInstance, parsedArgs.warnCost);
 		if (parsedArgs.maxCost !== undefined) cfgSessionMaxCost.override(settingsInstance, parsedArgs.maxCost);
+		// Before the model registry, auth, or any session exists: a private process must refuse every
+		// non-allowlisted request from its first one, and a bad `private.providers` fails the launch here.
+		const activatePrivateSessionProcess = (): void => {
+			activatePrivateMode(settingsInstance);
+		};
+		if (parsedArgs.private) {
+			try {
+				activatePrivateSessionProcess();
+			} catch (error) {
+				if (!(error instanceof PrivateSessionError)) throw error;
+				exitForSessionResolutionError(error);
+			}
+		}
 		if (parsedArgs.noJudge) cfgNoJudge.override(settingsInstance, true);
 		if (parsedArgs.noSpotlight) cfgNoSpotlight.override(settingsInstance, true);
 		if (parsedArgs.offline) cfgOffline.override(settingsInstance, true);
@@ -2065,6 +2089,21 @@ export async function runRootCommand(
 		const smolModel = parsedArgs.smol ?? $env.PI_SMOL_MODEL;
 		const slowModel = parsedArgs.slow ?? $env.PI_SLOW_MODEL;
 		const planModel = parsedArgs.plan ?? $env.PI_PLAN_MODEL;
+		if (isPrivateModeActive()) {
+			// A role flag naming a provider outside `private.providers` fails here, not later as a missing API key.
+			for (const [flag, value] of [
+				["--smol", smolModel],
+				["--slow", slowModel],
+				["--plan", planModel],
+			] as const) {
+				if (!value) continue;
+				const resolved = resolveCliModel({ cliModel: value, modelRegistry, settings: settingsInstance });
+				if (resolved.disabledProvider !== undefined && !isProviderAllowedInPrivateMode(resolved.disabledProvider)) {
+					process.stderr.write(`${chalk.red(`${flag}: ${resolved.error}`)}\n`);
+					process.exit(1);
+				}
+			}
+		}
 		if (smolModel || slowModel || planModel) {
 			settingsInstance.overrideModelRoles({
 				smol: smolModel,
@@ -2230,21 +2269,23 @@ export async function runRootCommand(
 					throw new SessionResolutionError(`Failed to import ${sourceName} session: ${message}`);
 				}
 			} else {
-				sessionManager = await logger.time(
-					"createSessionManager",
-					createSessionManager,
-					parsedArgs,
-					cwd,
-					settingsInstance,
-					promptMoveSession,
-					{
-						nativeFlagOwnership: "preliminary",
-						onSessionContinuation: continuation => resumedContinuations.push(continuation),
-					},
+				sessionManager = await withPrivateSessionAdoption(activatePrivateSessionProcess, () =>
+					logger.time(
+						"createSessionManager",
+						createSessionManager,
+						parsedArgs,
+						cwd,
+						settingsInstance,
+						promptMoveSession,
+						{
+							nativeFlagOwnership: "preliminary",
+							onSessionContinuation: continuation => resumedContinuations.push(continuation),
+						},
+					),
 				);
 			}
 		} catch (error: unknown) {
-			if (error instanceof SessionResolutionError) {
+			if (isSessionStartupError(error)) {
 				exitForSessionResolutionError(error);
 			}
 			throw error;
@@ -2340,14 +2381,16 @@ export async function runRootCommand(
 			if (continuation) resumedContinuations.push(continuation);
 			const chosen = continuation?.session ?? selected;
 			try {
-				sessionManager = await forkIfMovedAway(
-					(await SessionManager.isStrandedIn(chosen, cwd, parsedArgs.sessionDir))
-						? await openRelocatedSession(chosen, cwd, parsedArgs.sessionDir)
-						: await SessionManager.open(chosen.path),
-					parsedArgs.sessionDir,
+				sessionManager = await withPrivateSessionAdoption(activatePrivateSessionProcess, async () =>
+					forkIfMovedAway(
+						(await SessionManager.isStrandedIn(chosen, cwd, parsedArgs.sessionDir))
+							? await openRelocatedSession(chosen, cwd, parsedArgs.sessionDir)
+							: await SessionManager.open(chosen.path),
+						parsedArgs.sessionDir,
+					),
 				);
 			} catch (error: unknown) {
-				if (error instanceof SessionResolutionError) exitForSessionResolutionError(error);
+				if (isSessionStartupError(error)) exitForSessionResolutionError(error);
 				throw error;
 			}
 			const previousCwd = cwd;
@@ -2365,6 +2408,12 @@ export async function runRootCommand(
 				parsedArgs.cwd = cwd;
 				scopedModels = await resolveScopedModels(parsedArgs, modelRegistry, settingsInstance);
 			}
+		}
+
+		if (isPrivateModeActive()) {
+			const privateNotice = `Private session: models limited to ${(privateModeProviders() ?? []).join(", ")}`;
+			if (isInteractive) notifs.push({ kind: "info", message: privateNotice });
+			else process.stderr.write(`${chalk.yellow(privateNotice)}\n`);
 		}
 
 		for (const continuation of resumedContinuations) {

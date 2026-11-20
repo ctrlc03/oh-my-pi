@@ -1,5 +1,6 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import * as os from "node:os";
+import { enterPrivateMode, resetPrivateModeForTesting } from "@oh-my-pi/pi-ai/private-mode";
 import { ImageUrlService, LiveImageUrlService } from "@oh-my-pi/pi-coding-agent/blob-broker/service";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 
@@ -30,6 +31,31 @@ describe("LiveImageUrlService", () => {
 			cfgImagesUrlsEnabled.set(settings, false);
 			await Promise.resolve();
 			expect(live.current).toBeUndefined();
+		} finally {
+			live.dispose();
+		}
+	});
+});
+
+describe("LiveImageUrlService in a private process", () => {
+	afterEach(() => resetPrivateModeForTesting());
+
+	it("never builds a service, so no image is published and frames render eagerly", async () => {
+		enterPrivateMode(["studio-glm"]);
+		const settings = Settings.isolated({ "images.urls.enabled": true, "images.urls.backends": ["provider-files"] });
+		const live = new LiveImageUrlService(
+			settings,
+			() => os.tmpdir(),
+			async () => undefined,
+		);
+		try {
+			expect(live.current).toBeUndefined();
+			cfgImagesUrlsTtlHours.set(settings, 1);
+			await Promise.resolve();
+			expect(live.current).toBeUndefined();
+			const context = { messages: [] };
+			expect(await live.decorateContext(context, { input: ["image"] } as never)).toBe(context);
+			expect(await live.framesFor("text", "default" as never)).toBeNull();
 		} finally {
 			live.dispose();
 		}

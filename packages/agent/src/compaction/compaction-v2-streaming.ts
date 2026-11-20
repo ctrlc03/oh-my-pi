@@ -8,6 +8,7 @@
  */
 
 import type { Api, CodexCompactionContext, FetchImpl, Model, ProviderSessionState } from "@oh-my-pi/pi-ai";
+import { assertProviderAllowedInPrivateMode } from "@oh-my-pi/pi-ai/private-mode";
 import * as AIError from "@oh-my-pi/pi-ai/error";
 import { createOpenAICodexCompactionRequestContext } from "@oh-my-pi/pi-ai/providers/openai-codex-compaction";
 import { applyCodexResponsesLiteShape } from "@oh-my-pi/pi-ai/providers/openai-codex/request-transformer";
@@ -277,6 +278,7 @@ export async function requestCompactionV2Streaming(
 		codexAccessPrograms?: boolean;
 	},
 ): Promise<CompactionV2Response> {
+	assertProviderAllowedInPrivateMode(model.provider);
 	let fetchImpl: FetchImpl = options?.fetch ?? globalThis.fetch;
 	if (isBedrockOpenAIUrl(model.baseUrl)) {
 		({

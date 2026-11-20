@@ -38,6 +38,7 @@ import type {
 	SimpleStreamOptions,
 } from "@oh-my-pi/pi-ai";
 import { isUsageLimitOutcome, resolveModelServiceTier, streamSimple } from "@oh-my-pi/pi-ai";
+import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import * as AIError from "@oh-my-pi/pi-ai/error";
 import { extractProviderRetryHint } from "@oh-my-pi/pi-ai/utils/retry-after";
 import { modelsAreEqual } from "@oh-my-pi/pi-catalog/models";
@@ -654,7 +655,8 @@ export class SessionAdvisors {
 
 	constructor(host: SessionAdvisorsHost, options: SessionAdvisorsOptions) {
 		this.#host = host;
-		this.#advisorEnabled = options.enabled;
+		// A private session has no advisor: it would hand the transcript to a second model.
+		this.#advisorEnabled = options.enabled && !isPrivateModeActive();
 		this.#advisorTools = options.tools;
 		this.#advisorGetToolContext = options.getToolContext;
 		this.#advisorMcpResources = options.mcpResources;
@@ -2843,6 +2845,7 @@ export class SessionAdvisors {
 	 * @returns true when the advisor is actively running after the call.
 	 */
 	setAdvisorEnabled(enabled: boolean): boolean {
+		if (enabled && isPrivateModeActive()) return false;
 		this.#advisorEnabled = enabled;
 		if (enabled) {
 			if (this.#advisors.length > 0 && !this.#advisorRuntimeMatchesCurrentConfig()) {

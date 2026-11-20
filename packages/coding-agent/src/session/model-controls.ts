@@ -7,6 +7,7 @@ import {
 	serviceTierFamily,
 	shouldSendServiceTier,
 } from "@oh-my-pi/pi-ai";
+import { assertProviderAllowedInPrivateMode } from "@oh-my-pi/pi-ai/private-mode";
 import {
 	clearAnthropicFastModeFallback,
 	isAnthropicFastModeFallbackDisabled,
@@ -330,6 +331,7 @@ export class ModelControls {
 			persist?: boolean;
 		},
 	): Promise<{ switched: boolean }> {
+		assertProviderAllowedInPrivateMode(model.provider);
 		const previousEditMode = this.#host.resolveActiveEditMode();
 		if (!this.#host.modelRegistry.hasConfiguredAuth(model)) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
@@ -376,6 +378,7 @@ export class ModelControls {
 		options?: { ephemeral?: boolean; prewalk?: boolean },
 		selection: "explicit" | "automatic" = "explicit",
 	): Promise<void> {
+		assertProviderAllowedInPrivateMode(model.provider);
 		const previousEditMode = this.#host.resolveActiveEditMode();
 		if (!this.#host.modelRegistry.hasConfiguredAuth(model)) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
@@ -979,6 +982,7 @@ export class ModelControls {
 		model: Model,
 		thinkingLevel: ConfiguredThinkingLevel | undefined,
 	): Promise<void> {
+		assertProviderAllowedInPrivateMode(model.provider);
 		const previousEditMode = this.#host.resolveActiveEditMode();
 		if (!this.#host.modelRegistry.hasConfiguredAuth(model)) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);

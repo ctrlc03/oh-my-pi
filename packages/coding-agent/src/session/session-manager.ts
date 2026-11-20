@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import type {
 	ImageContent,
 	Message,
@@ -119,6 +120,7 @@ import {
 	writeTerminalBreadcrumb,
 } from "./session-paths";
 import { forgetExternalizedImages, prepareEntryForPersistence } from "./session-persistence";
+import { assertSessionPrivacyCompatible } from "./private-session";
 import { loadPinnedSessionIds, sortPinnedFirst } from "./session-pins";
 import {
 	FileSessionStorage,
@@ -2106,6 +2108,7 @@ export class SessionManager {
 			parentSession: options?.parentSession,
 			providerPromptCacheKey: options?.providerPromptCacheKey,
 			taskPromptCacheKey: options?.taskPromptCacheKey,
+			private: options?.private === true || isPrivateModeActive() ? true : undefined,
 		};
 		const workspace = normalizeSessionWorkspace({
 			cwd: this.#cwd,
@@ -2436,6 +2439,14 @@ export class SessionManager {
 		loadedSession?: SessionLoadResult,
 		options?: { throwIfMissing?: boolean; newSession?: NewSessionOptions },
 	): Promise<void> {
+		// A refused session must leave the current one untouched: check privacy before the writer
+		// closes and the claim is released. The file being left is the current one, which only the
+		// drain below makes readable, so it is loaded after it.
+		if (loadedSession === undefined && path.resolve(sessionFile) !== this.#sessionFile) {
+			loadedSession = await loadSessionFile(path.resolve(sessionFile), this.#storage);
+			const probedHeader = loadedSession.entries[0];
+			if (probedHeader?.type === "session") assertSessionPrivacyCompatible(probedHeader.private === true);
+		}
 		await this.#drainAndCloseWriter();
 		this.#clearDiskError();
 		this.#draftOnlySessionCleanupArmed = false;
@@ -2457,6 +2468,10 @@ export class SessionManager {
 				`Cannot resume session "${resolvedSessionFile}": the session header is missing or malformed. The file was not modified.`,
 			);
 		}
+
+		// Before this manager adopts the file: a refused session never becomes the current one.
+		const loadedHeader = loaded.entries[0];
+		if (loadedHeader?.type === "session") assertSessionPrivacyCompatible(loadedHeader.private === true);
 
 		this.#sessionFile = resolvedSessionFile;
 		this.#rememberBreadcrumb(this.#cwd, resolvedSessionFile);
@@ -2581,6 +2596,7 @@ export class SessionManager {
 			parentSession: parentSessionId,
 			providerPromptCacheKey: SessionManager.getInheritedProviderPromptCacheKey(this.#header),
 			taskPromptCacheKey: this.#header.taskPromptCacheKey,
+			private: this.#header.private,
 		};
 		this.#sessionName = this.#header.title;
 		this.#titleSource = this.#header.titleSource;
@@ -2832,7 +2848,10 @@ export class SessionManager {
 		const sessionDir = options?.sessionDir ?? SessionManager.getDefaultSessionDir(this.#cwd, undefined, storage);
 		const manager = new SessionManager(this.#cwd, sessionDir, true, storage);
 		manager.#suppressBreadcrumb = options?.suppressBreadcrumb === true;
-		manager.#resetToNewSession({ taskPromptCacheKey: this.#header.taskPromptCacheKey });
+		manager.#resetToNewSession({
+			taskPromptCacheKey: this.#header.taskPromptCacheKey,
+			private: this.#header.private,
+		});
 		manager.#sessionName = this.#sessionName;
 		manager.#titleSource = this.#titleSource;
 		manager.#titleUpdatedAt = this.#titleUpdatedAt;
@@ -3125,6 +3144,11 @@ export class SessionManager {
 
 	getCwd(): string {
 		return this.#cwd;
+	}
+
+	/** Whether this session is private: its model requests are limited to `private.providers`. */
+	isPrivate(): boolean {
+		return this.#header?.private === true;
 	}
 
 	/** Recorded cwd from the session header (original project), may differ from runtime {@link getCwd} when fallback retained launch cwd. */
@@ -3591,7 +3615,8 @@ export class SessionManager {
 	 * the session file or LLM context; in-memory sessions are not journaled.
 	 */
 	recordRecap(recap: string): void {
-		if (this.#persist && this.#storage instanceof FileSessionStorage) {
+		// Recaps live in the shared history.db; a private session journals none.
+		if (this.#persist && this.#storage instanceof FileSessionStorage && !isPrivateModeActive()) {
 			recordSessionRecap(this.#sessionId, this.#cwd, recap);
 		}
 	}
@@ -4219,6 +4244,7 @@ export class SessionManager {
 			titleSource: this.#titleSource,
 			parentSession: this.#persist ? sourceSessionFile : undefined,
 			additionalDirectories: this.#additionalDirectories.length > 0 ? [...this.#additionalDirectories] : undefined,
+			private: this.#header.private,
 		};
 
 		const labels: LabelEntry[] = [];
@@ -4307,6 +4333,7 @@ export class SessionManager {
 			id,
 			timestamp,
 			cwd: path.resolve(cwd),
+			private: isPrivateModeActive() ? true : undefined,
 		};
 		const file = path.join(sessionDir, `${fileSafeTimestamp(timestamp)}_${id}.jsonl`);
 		storage.writeTextSync(file, `${serializeTitleSlot({ updatedAt: timestamp })}${JSON.stringify(header)}\n`);
@@ -4352,6 +4379,8 @@ export class SessionManager {
 		await resolveBlobRefsInEntries(sourceEntries, manager.#blobs);
 
 		const sourceHeader = sourceEntries.find(entry => entry.type === "session") as SessionHeader | undefined;
+		// Before anything is written: a private process forks only private transcripts, and a fork of a private one stays private.
+		assertSessionPrivacyCompatible(sourceHeader?.private === true);
 		const history = sourceEntries.filter(entry => entry.type !== "session") as SessionEntry[];
 		normalizeLoadedUsage(history);
 		if (options?.resetInheritedCost) SessionManager.#resetInheritedUsageCost(history);
@@ -4360,6 +4389,7 @@ export class SessionManager {
 				parentSession: sourceHeader?.id,
 				providerPromptCacheKey: SessionManager.getInheritedProviderPromptCacheKey(sourceHeader),
 				taskPromptCacheKey: sourceHeader?.taskPromptCacheKey,
+				private: sourceHeader?.private,
 			},
 			options?.sessionFile,
 		);

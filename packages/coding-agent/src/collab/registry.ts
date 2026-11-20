@@ -186,6 +186,8 @@ export interface CollabHostSnapshot {
 	agent?: AgentRef;
 	/** Todo progress of the session; absent while it has no todo list or on an omp that predates the field. */
 	todo?: CollabTodoSummary;
+	/** `true` for a private session (model requests limited to `private.providers`); absent otherwise and on an omp that predates the field. */
+	private?: boolean;
 	/** Highest access the registry will hand out for this host. */
 	access: CollabAccess;
 }
@@ -229,6 +231,8 @@ export interface CollabIdleSnapshot {
 	busy: boolean;
 	/** See {@link CollabHostSnapshot.todo}. */
 	todo?: CollabTodoSummary;
+	/** See {@link CollabHostSnapshot.private}. */
+	private?: boolean;
 }
 
 /** Result of starting hosting through an idle entry; carries the capability for `access`. */
@@ -406,6 +410,8 @@ const SnapshotShape = type({
 	"background?": "boolean | null",
 	// The vendor agent of a foreign host; a malformed value reads as absent (an omp host).
 	"agent?": "unknown",
+	// Added with private sessions; an older host omits it and reads as not private.
+	"private?": "true",
 	access: Access,
 });
 
@@ -434,6 +440,7 @@ const IdleSnapshotShape = type({
 	startedAt: "number",
 	busy: "boolean",
 	"todo?": "unknown",
+	"private?": "true",
 });
 
 function parseIdleSnapshot(raw: unknown): CollabIdleSnapshot | null {

@@ -14,6 +14,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import { roleDefaultModels } from "@oh-my-pi/pi-catalog/compat/behavior";
 import { type GeneratedProvider, getBundledModels } from "@oh-my-pi/pi-catalog/models";
 import { type Api, type Model, modelKind } from "@oh-my-pi/pi-catalog/types";
@@ -55,7 +56,12 @@ import {
 } from "./registry";
 // Registers every setting before any instance is read (definitions live next to their domains).
 import "./all-settings";
-import { cfgDisabledProviders, cfgModelRoles, cfgModelRoleStorage } from "./model-settings";
+import {
+	cfgDisabledProviders,
+	cfgModelRoles,
+	cfgModelRoleStorage,
+	cfgOperatorPrivateModelRoles,
+} from "./model-settings";
 import { cfgShellPath } from "../exec/settings";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2194,8 +2200,22 @@ export class Settings {
 	 * Get a model role (helper for modelRoles record).
 	 */
 	getModelRole(role: ModelRole | string): string | undefined {
+		const privateRole = this.#privateModelRole(role);
+		if (privateRole !== undefined) return privateRole;
 		const roles: unknown = cfgModelRoles.get(this);
 		if (!isRecord(roles)) return undefined;
+		return modelRoleValueFromUnknown(roles[role]);
+	}
+
+	/**
+	 * The role's assignment from `private.modelRoles`, only in a process that entered private mode.
+	 * A runtime override of the role (`--model`, `--smol`, a session-scoped retry role) is a deliberate
+	 * choice for this run and wins; the egress guard still limits it to allowed providers.
+	 */
+	#privateModelRole(role: ModelRole | string): string | undefined {
+		if (!isPrivateModeActive() || this.getModelRoleProvenance(role) === "runtime") return undefined;
+		const roles: unknown = cfgOperatorPrivateModelRoles.get(this);
+		if (!isRecord(roles) || !Object.hasOwn(roles, role)) return undefined;
 		return modelRoleValueFromUnknown(roles[role]);
 	}
 	/**
@@ -2277,14 +2297,23 @@ export class Settings {
 	 */
 	getModelRoles(): ReadOnlyDict<string> {
 		const roles: unknown = cfgModelRoles.get(this);
-		if (!isRecord(roles)) return {};
-
 		const normalized: Record<string, string> = {};
-		for (const role in roles) {
-			if (!Object.hasOwn(roles, role)) continue;
-			const modelId = modelRoleValueFromUnknown(roles[role]);
-			if (modelId !== undefined) {
-				normalized[role] = modelId;
+		if (isRecord(roles)) {
+			for (const role in roles) {
+				if (!Object.hasOwn(roles, role)) continue;
+				const modelId = modelRoleValueFromUnknown(roles[role]);
+				if (modelId !== undefined) {
+					normalized[role] = modelId;
+				}
+			}
+		}
+		if (!isPrivateModeActive()) return normalized;
+		const privateRoles: unknown = cfgOperatorPrivateModelRoles.get(this);
+		if (isRecord(privateRoles)) {
+			for (const role in privateRoles) {
+				if (!Object.hasOwn(privateRoles, role)) continue;
+				const modelId = this.#privateModelRole(role);
+				if (modelId !== undefined) normalized[role] = modelId;
 			}
 		}
 		return normalized;

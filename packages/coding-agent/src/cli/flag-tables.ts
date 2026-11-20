@@ -30,6 +30,7 @@
  * real implementations at the dispatch site.
  */
 
+import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import { isServiceTierOpenAISettingValue, SERVICE_TIER_OPENAI_VALUES } from "../config/service-tier";
 import { parseMaxFps } from "@oh-my-pi/pi-tui/frame-rate";
 import { parseMotionMode } from "../config/motion-presets";
@@ -377,6 +378,7 @@ export const VALUELESS_FLAGS: ReadonlySet<string> = new Set([
 	"--no-judge",
 	"--no-spotlight",
 	"--offline",
+	"--private",
 	"--no-lsp",
 	"--no-pty",
 	"--hide-thinking",
@@ -498,6 +500,8 @@ export function restartArgv(
 		kept.push(arg);
 		if (consumesNext) kept.push(argv[++i]);
 	}
+	// A private process relaunches private even when privacy came from a resumed session, not the flag.
+	if (isPrivateModeActive() && !kept.includes("--private")) kept.push("--private");
 	if (restoreSessionSource !== undefined) kept.push("--restore", restoreSessionSource);
 	return kept;
 }

@@ -78,6 +78,7 @@ Argument handling:
 | `--config <file>`     | Load an extra `config.yml`-style overlay for this run (repeatable).                          |
 | `--session-dir <dir>` | Directory for session storage and lookup.                                                    |
 | `--no-session`        | Don't save the session (ephemeral).                                                          |
+| `--private`           | Start a new [private session](./private-sessions.md): model requests only reach `private.providers`. |
 
 #### Session history
 
@@ -91,6 +92,10 @@ Argument handling:
 | `--from-codex`                          | Import a Codex session into OMP.                                                                                                                                                                                                                                                                              |
 | `--export <session>`                    | Export a session file to HTML and exit.                                                                                                                                                                                                                                                                       |
 | `--no-title`                            | Disable title auto-generation (equivalent to the `PI_NO_TITLE` [environment variable](./environment-variables.md)).                                                                                                                                                                                           |
+
+`--private` applies to new sessions only: with `--resume`, `--continue`, `--restore`
+or `--fork` it is an error unless the session is already private (a private session
+stays private without the flag).
 
 `--continue`, `--resume`, `--restore`, `--fork`, and foreign-session imports require
 persistence and cannot use `--no-session`. `--from-claude` and `--from-codex`

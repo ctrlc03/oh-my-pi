@@ -1,6 +1,7 @@
 import type { AgentOptions, AgentTelemetryConfig, AgentTool, AgentToolContext } from "@oh-my-pi/pi-agent-core";
 import type { ToolConversationState } from "./tool-state";
 import type { FetchImpl, ImageContent, Message, Model, ServiceTierByFamily, ToolChoice } from "@oh-my-pi/pi-ai";
+import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import { logger } from "@oh-my-pi/pi-utils";
 import type { AsyncJobManagerApi } from "../async/job-manager";
 import type { Rule } from "../capability/rule";
@@ -682,6 +683,13 @@ export const HIDDEN_TOOLS: Record<HiddenToolName, ToolFactory> = {
 export type ToolName = BuiltinToolName;
 
 /**
+ * Built-ins that send session content to a third-party service and so are withheld from private
+ * sessions. `bash`, `eval`, MCP servers and extension tools can still reach the network: the guard
+ * covers model requests, not arbitrary tools (see `docs/private-sessions.md`).
+ */
+export const PRIVATE_SESSION_EXCLUDED_TOOLS: ReadonlySet<string> = new Set(["web_search"]);
+
+/**
  * Built-ins whose registration follows live settings through the session's built-in
  * reconcile. Memory-backend tools other than `learn` follow `memory.backend` through
  * the memory backend's own tool replacement instead.
@@ -824,6 +832,8 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 	}
 	const editDisabled = cfgEditMode.get(session.settings) === "none";
 	const isToolAllowed = (name: string) => {
+		// A private session sends nothing to external services: these tools are not offered, however requested.
+		if (isPrivateModeActive() && PRIVATE_SESSION_EXCLUDED_TOOLS.has(name)) return false;
 		// Never in the default set. Explicitly activatable while goal.enabled and
 		// no goal record exists yet — /guided-goal enables it so the agent can
 		// finish the interview with `goal create`, which turns goal mode on. Once

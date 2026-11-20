@@ -1,4 +1,5 @@
 import * as os from "node:os";
+import { assertProviderAllowedInPrivateMode } from "@oh-my-pi/pi-ai/private-mode";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { AssistantMessage } from "@oh-my-pi/pi-ai";
 import { AudioCapture } from "@oh-my-pi/pi-natives";
@@ -370,6 +371,8 @@ export class LiveSessionController {
 	}
 
 	#assertProviderAllowed(): void {
+		// Live audio is a realtime session with the openai-codex provider, below the pi-ai stream guard.
+		assertProviderAllowedInPrivateMode("openai-codex");
 		if (cfgOffline.get(this.#session.settings) && this.#session.model?.provider !== "openai-codex") {
 			throw new Error("Live audio requires the openai-codex session provider in offline mode.");
 		}

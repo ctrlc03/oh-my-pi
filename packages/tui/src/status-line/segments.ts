@@ -580,16 +580,26 @@ const modeSegment: StatusLineSegment = {
 	id: "mode",
 	render(ctx) {
 		const modes = sessionModeSegment.render(ctx);
-		if (!ctx.profile) return modes;
-		const badge = accentFg(ctx, "accent", withIcon(theme.icon.agents, ctx.profile.name));
-		return { content: modes.visible ? `${badge} ${modes.content}` : badge, visible: true };
+		const badges: string[] = [];
+		if (ctx.private) badges.push(theme.fg("warning", "Private"));
+		if (ctx.profile) badges.push(accentFg(ctx, "accent", withIcon(theme.icon.agents, ctx.profile.name)));
+		if (badges.length === 0) return modes;
+		const lead = badges.join(" ");
+		return { content: modes.visible ? `${lead} ${modes.content}` : lead, visible: true };
 	},
 	describe(ctx) {
 		const modes = sessionModeSegment.describe(ctx);
-		if (!ctx.profile) return modes;
-		const badge = span(ctx.profile.name, accentToken(ctx, "accent"));
-		if (!modes) return segView([badge], "agents");
-		return segView([badge, span(" "), ...modes.spans], modes.icon ?? "agents", modes.tone);
+		const badges = [];
+		if (ctx.private) badges.push(span("Private", "warning"));
+		if (ctx.profile) badges.push(span(ctx.profile.name, accentToken(ctx, "accent")));
+		if (badges.length === 0) return modes;
+		const lead = badges.flatMap((badge, index) => (index === 0 ? [badge] : [span(" "), badge]));
+		if (!modes) return segView(lead, ctx.profile ? "agents" : undefined);
+		return segView(
+			[...lead, span(" "), ...modes.spans],
+			modes.icon ?? (ctx.profile ? "agents" : undefined),
+			modes.tone,
+		);
 	},
 };
 

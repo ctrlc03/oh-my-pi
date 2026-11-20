@@ -1,3 +1,4 @@
+import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import { clearSubmittedText } from "./helpers/draft";
 import { Spacer } from "@oh-my-pi/pi-tui";
 import { APP_NAME, formatAge } from "@oh-my-pi/pi-utils";
@@ -25,6 +26,9 @@ import type { SlashCommandSpec } from "./types";
 
 import { cfgBrowserEnabled, cfgBrowserHeadless } from "../tools/browser/settings";
 import { cfgShareRedactSecrets, cfgShareServerUrl, cfgShareStore } from "../commands/settings";
+
+const ADVISOR_PRIVATE_MESSAGE =
+	"The advisor is unavailable in a private session: it would send the transcript to a second model.";
 
 /** Join hint printed by /collab: compact terminal link + clickable browser deep link. */
 function collabLinkHint(host: CollabHost, heading: string, view = false): string {
@@ -83,6 +87,10 @@ export const BUILTIN_COLLABORATION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpe
 		},
 		handle: async (command, runtime) => {
 			const { verb, rest } = parseSubcommand(command.args);
+			if (isPrivateModeActive() && (!verb || verb === "toggle" || verb === "on")) {
+				await runtime.output(ADVISOR_PRIVATE_MESSAGE);
+				return commandConsumed();
+			}
 			if (!verb || verb === "toggle") {
 				const active = runtime.session.toggleAdvisorEnabled();
 				const configured = runtime.session.isAdvisorEnabled();
@@ -127,6 +135,11 @@ export const BUILTIN_COLLABORATION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpe
 		},
 		handleTui: async (command, runtime) => {
 			const { verb, rest } = parseSubcommand(command.args);
+			if (isPrivateModeActive() && (!verb || verb === "toggle" || verb === "on")) {
+				runtime.ctx.showStatus(ADVISOR_PRIVATE_MESSAGE);
+				clearSubmittedText(runtime);
+				return;
+			}
 			if (!verb || verb === "toggle") {
 				const active = runtime.ctx.session.toggleAdvisorEnabled();
 				const configured = runtime.ctx.session.isAdvisorEnabled();

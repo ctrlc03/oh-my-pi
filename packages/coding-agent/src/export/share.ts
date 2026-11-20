@@ -16,6 +16,7 @@
  * decrypts with the fragment key — which never leaves the browser — and
  * renders the same template as `/export`.
  */
+import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -499,6 +500,9 @@ function redactShareMessage(
 
 /** Share the session; uploads to the share server unless `options.store` is `"gist"`. */
 export async function shareSession(sm: SessionManager, options?: ShareSessionOptions): Promise<ShareSessionResult> {
+	if (isPrivateModeActive()) {
+		throw new Error("A private session cannot be shared: sharing uploads the transcript to an external service.");
+	}
 	const data = buildShareSnapshot(sm, options);
 	const keyBytes = new Uint8Array(SHARE_KEY_BYTES);
 	crypto.getRandomValues(keyBytes);

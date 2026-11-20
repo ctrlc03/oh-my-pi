@@ -1,4 +1,5 @@
 import { Database, type SQLQueryBindings, type Statement } from "bun:sqlite";
+import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -276,6 +277,8 @@ ON CONFLICT(prompt) DO UPDATE SET
 	add(prompt: string, cwd?: string, sessionId?: string): Promise<void> {
 		const trimmed = normalizePrompt(prompt);
 		if (!trimmed) return Promise.resolve();
+		// history.db is shared by every session and searched by the archive: a private session leaves no prompts in it.
+		if (isPrivateModeActive()) return Promise.resolve();
 		const session = sessionId ?? this.#sessionResolver?.();
 		try {
 			this.#insertBatch([{ prompt: trimmed, cwd: cwd ?? undefined, sessionId: session || undefined }]);

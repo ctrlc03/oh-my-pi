@@ -1,5 +1,6 @@
 import { resolveExtraCa, withExtraCaInit } from "@oh-my-pi/pi-utils";
 import { coworkFetch } from "../providers/cowork-fetch";
+import { assertProviderAllowedInPrivateMode } from "../private-mode";
 import { withInferenceUserAgent } from "../providers/inference-headers";
 import type { Api, FetchImpl, Model } from "../types";
 import { getProxyForProvider, withProxyInit } from "./proxy";
@@ -36,6 +37,8 @@ export function transportFetch(
 	const proxyUrl = getProxyForProvider(model.provider);
 
 	const fetch: TransportFetch = async (input, init) => {
+		// Last line of defence: every inference HTTP attempt, including retries and warm-ups, passes here.
+		assertProviderAllowedInPrivateMode(model.provider);
 		beforeDispatch?.();
 		if ((init?.method ?? (input instanceof Request ? input.method : "GET")) === "POST") {
 			recordDispatchOrigin(model, input);

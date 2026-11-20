@@ -2,6 +2,7 @@
  * Proxy stream function for apps that route LLM calls through a server.
  * The server manages auth and proxies requests to LLM providers.
  */
+import { assertProviderAllowedInPrivateMode } from "@oh-my-pi/pi-ai/private-mode";
 import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
@@ -95,6 +96,7 @@ export interface ProxyStreamOptions extends SimpleStreamOptions {
  * ```
  */
 export function streamProxy(model: Model, context: Context, options: ProxyStreamOptions): ProxyMessageEventStream {
+	assertProviderAllowedInPrivateMode(model.provider);
 	const stream = new ProxyMessageEventStream();
 
 	(async () => {

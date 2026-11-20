@@ -1,5 +1,6 @@
 import type { Api, Model } from "@oh-my-pi/pi-catalog/types";
 import * as AIError from "../error";
+import { assertProviderAllowedInPrivateMode } from "../private-mode";
 import { synthesizeOpenAiSpeech } from "./openai-speech";
 import type { SpeechOptions, SpeechRequest, SpeechResult } from "./types";
 import { synthesizeXaiSpeech } from "./xai-tts";
@@ -24,6 +25,7 @@ export function synthesizeSpeech(
 	request: SpeechRequest,
 	options: SpeechOptions,
 ): Promise<SpeechResult> {
+	assertProviderAllowedInPrivateMode(model.provider);
 	switch (model.api) {
 		case "xai-tts":
 			return synthesizeXaiSpeech(model, request, options);

@@ -9,6 +9,7 @@
  * and incremental subagent-transcript reads.
  */
 
+import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -920,6 +921,7 @@ export class CollabHost {
 			// is still published.
 			busy: this.#ctx.session.isStreaming,
 			...(todo ? { todo } : {}),
+			...(isPrivateModeActive() ? { private: true } : {}),
 			// Read at query time like `busy`: the companion hibernates a session only while nothing besides it runs.
 			background: this.#ctx.session.hasBackgroundWork,
 			access: this.#access,
@@ -2221,6 +2223,7 @@ export class CollabHost {
 		if (this.#usageLimits?.available) features.push("usage-limits");
 		features.push("receipts");
 		if (this.#ctx.session.canRestoreFiles === true) features.push("turn-diff");
+		if (isPrivateModeActive()) features.push("private");
 		return features;
 	}
 

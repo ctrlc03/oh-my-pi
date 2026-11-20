@@ -16,6 +16,7 @@
  */
 
 import { attach, create, Flag, ProviderHttpError } from "@oh-my-pi/pi-ai/error";
+import { assertProviderAllowedInPrivateMode } from "@oh-my-pi/pi-ai/private-mode";
 import { getCodexAttestationHeader } from "@oh-my-pi/pi-ai/providers/openai-codex-attestation";
 import { createOpenAICodexCompactionRequestContext } from "@oh-my-pi/pi-ai/providers/openai-codex-compaction";
 import { applyCodexResponsesLiteShape } from "@oh-my-pi/pi-ai/providers/openai-codex/request-transformer";
@@ -889,6 +890,7 @@ export async function requestOpenAiRemoteCompaction(
 		rewriteOutputs?: boolean;
 	},
 ): Promise<OpenAiRemoteCompactionResponse> {
+	assertProviderAllowedInPrivateMode(model.provider);
 	let fetchImpl: FetchImpl = opts?.fetch ?? fetch;
 	if (isBedrockOpenAIUrl(model.baseUrl)) {
 		({ model, apiKey, fetch: fetchImpl } = await prepareBedrockCompactionRequest(model, apiKey, opts?.fetch, signal));
@@ -1087,6 +1089,7 @@ export async function requestRemoteCompaction(
 		onPayload?: SimpleStreamOptions["onPayload"];
 	},
 ): Promise<RemoteCompactionResponse> {
+	if (opts?.model) assertProviderAllowedInPrivateMode(opts.model.provider);
 	let endpointPath = endpoint;
 	try {
 		endpointPath = new URL(endpoint).pathname;

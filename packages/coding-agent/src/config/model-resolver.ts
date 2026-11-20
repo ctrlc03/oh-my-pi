@@ -22,6 +22,7 @@ import {
  *   CLI flags, scope globs — onto that pipeline.
  */
 
+import { isProviderAllowedInPrivateMode } from "@oh-my-pi/pi-ai/private-mode";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { ModelRoleLookup } from "@oh-my-pi/pi-tui/overlays/model-browser";
 import type { Api, Effort, KnownProvider, Model, ModelSpec } from "@oh-my-pi/pi-ai";
@@ -60,6 +61,7 @@ import {
 import type { Settings } from "./settings";
 
 import { cfgDisabledProviders, cfgEnabledModels, cfgModelProviderOrder } from "./model-settings";
+import { effectiveDisabledProviders, filtersProviders, privateProviderRefusal } from "./private-mode";
 import { cfgRetryFallbackChains } from "../session/settings";
 
 function isKnownProvider(provider: string): provider is KnownProvider {
@@ -1760,7 +1762,7 @@ export function resolveModelOverride(
  * resolution path filters through this set.
  */
 export function disabledProviderIds(settings?: Settings): ReadonlySet<string> {
-	return new Set(settings ? cfgDisabledProviders.get(settings) : undefined);
+	return effectiveDisabledProviders(settings ? cfgDisabledProviders.get(settings) : undefined);
 }
 
 function parseSessionModelSelector(modelRegistry: ModelRegistry, selector: string) {
@@ -1854,7 +1856,7 @@ export async function resolveModelOverrideWithAuthFallback(
 }> {
 	const disabledProviders = disabledProviderIds(settings);
 	let lookupRegistry: ModelLookupRegistry = modelRegistry;
-	if (disabledProviders.size > 0 || options?.allowedProvider !== undefined) {
+	if (filtersProviders(disabledProviders) || options?.allowedProvider !== undefined) {
 		const enabledModels = modelRegistry
 			.getAvailable()
 			.filter(
@@ -2245,7 +2247,7 @@ export function resolveCliModel(options: CliModelOptions): ResolveCliModelResult
 		available: preferredModels ?? modelRegistry.getAvailable(),
 	};
 	const disabled = disabledProviderIds(settings);
-	if (disabled.size === 0) return resolveCliModelInScope(scoped, scope);
+	if (!filtersProviders(disabled)) return resolveCliModelInScope(scoped, scope);
 
 	const enabled = resolveCliModelInScope(scoped, {
 		all: scope.all.filter(model => !disabled.has(model.provider)),
@@ -2265,7 +2267,9 @@ export function resolveCliModel(options: CliModelOptions): ResolveCliModelResult
 		selector: undefined,
 		thinkingLevel: undefined,
 		warning: enabled.warning,
-		error: `Provider "${blocked}" is disabled. Remove "${blocked}" from disabledProviders to use "${cliModel.trim()}".`,
+		error: isProviderAllowedInPrivateMode(blocked)
+			? `Provider "${blocked}" is disabled. Remove "${blocked}" from disabledProviders to use "${cliModel.trim()}".`
+			: privateProviderRefusal(blocked),
 		disabledProvider: blocked,
 	};
 }

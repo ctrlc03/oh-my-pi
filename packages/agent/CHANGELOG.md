@@ -4,6 +4,7 @@
 
 ### Added
 
+- Compaction and proxy requests that bypass `streamSimple` (`compact`, remote and streaming compaction, `streamProxy`) refuse providers a private-mode process does not allow.
 - `Agent.transformContext` getter and setter: a host can wrap the transform every provider request applies to the message list.
 - `AgentLoopConfig.shouldStop` and `Agent.setShouldStop()`: a graceful stop predicate checked at the same boundaries as `deadline` (run start, after each turn's tools, before each model call) that ends the run without aborting a running tool.
 ## [18.20.1] - 2026-11-14

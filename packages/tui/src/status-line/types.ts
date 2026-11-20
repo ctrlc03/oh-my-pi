@@ -117,6 +117,8 @@ export interface SegmentContext {
 	} | null;
 	/** Active agent profile other than the default, shown in the `mode` segment; null/absent when none. */
 	profile?: { name: string } | null;
+	/** The session is private (model requests limited to an allowlist); the `mode` segment leads with a badge. */
+	private?: boolean;
 	/** Modal editing state, or null when `tui.vimMode` is off. */
 	vim: {
 		mode: "insert" | "normal" | "visual" | "visual-line" | "replace";

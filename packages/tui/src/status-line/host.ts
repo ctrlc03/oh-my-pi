@@ -160,6 +160,8 @@ export interface StatusLineHost<TSession extends StatusLineSession = StatusLineS
 	 */
 	resetExpiryNotice?(session: TSession, reports: readonly UsageReport[], nowMs: number): string | undefined;
 	computeCompactionBoundaries(session: TSession, contextWindow: number, model?: Model): CompactionBoundaries | null;
+	/** Whether `session` is a private session; absent on hosts without private sessions. */
+	isPrivateSession?(session: TSession): boolean;
 }
 
 export interface FooterHost {

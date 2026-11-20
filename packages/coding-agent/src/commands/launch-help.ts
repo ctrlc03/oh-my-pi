@@ -79,6 +79,10 @@ export const launchHelp = {
 		offline: Flags.boolean({
 			description: "Restrict auxiliary services to the active model's provider (not a network firewall)",
 		}),
+		private: Flags.boolean({
+			description:
+				"Start a private session: every model request is limited to the providers in private.providers (new sessions only)",
+		}),
 		"no-lsp": Flags.boolean({ description: "Disable LSP tools, formatting, and diagnostics" }),
 		"no-pty": Flags.boolean({ description: "Disable PTY-based interactive bash execution" }),
 		tools: Flags.string({

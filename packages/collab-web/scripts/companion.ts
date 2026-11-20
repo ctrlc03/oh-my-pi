@@ -1560,26 +1560,6 @@ async function startSession(
 	);
 	if (worktree !== undefined && resume !== undefined)
 		throw new Error("a worktree needs a new session, not a resumed one");
-	if (resume !== undefined) {
-		const listed = await loadSessions();
-		const live = listed.hosts.find(host => (plan ? host.sessionId === resume : host.sessionId.startsWith(resume)));
-		if (live) {
-			if (prompt !== undefined) throw new Error("that session is already open; the scheduled prompt was not sent");
-			return live.instanceId;
-		}
-		// A vendor session has no omp process another terminal could hold.
-		if (!plan && force !== true) {
-			const listedPids = listed.idle
-				.filter(session => session.sessionId.startsWith(resume))
-				.flatMap(session => knownPids.get(session.instanceId) ?? []);
-			const holders = await findSessionHolders(
-				resume,
-				await findSessionFile(personal.sessionDirs(), resume),
-				listedPids,
-			);
-			if (holders.length > 0) throw new SessionOpenElsewhereError(holders);
-		}
-	}
 	const tmux = await findTmux();
 	if (!tmux) throw new Error("tmux is not installed on this computer");
 	// omp runs under sandbox-exec; a vendor agent never does (`planForeignStart` refuses a sandboxed one).
@@ -1615,6 +1595,30 @@ async function startSession(
 		if (sandboxed) await settleCleanup.recordSandboxed(launchCwd);
 		const lockKey = await fs.realpath(launchCwd).catch(() => launchCwd);
 		return await startLock(lockKey, async () => {
+			// Under the lock: a start queued behind another (or stalled, e.g. on a macOS folder-access prompt) must
+			// see the session the earlier one opened, not the listing from before it waited.
+			if (resume !== undefined) {
+				const listed = await loadSessions();
+				const live = listed.hosts.find(host =>
+					plan ? host.sessionId === resume : host.sessionId.startsWith(resume),
+				);
+				if (live) {
+					if (prompt !== undefined) throw new Error("that session is already open; the scheduled prompt was not sent");
+					return live.instanceId;
+				}
+				// A vendor session has no omp process another terminal could hold.
+				if (!plan && force !== true) {
+					const listedPids = listed.idle
+						.filter(session => session.sessionId.startsWith(resume))
+						.flatMap(session => knownPids.get(session.instanceId) ?? []);
+					const holders = await findSessionHolders(
+						resume,
+						await findSessionFile(personal.sessionDirs(), resume),
+						listedPids,
+					);
+					if (holders.length > 0) throw new SessionOpenElsewhereError(holders);
+				}
+			}
 			const before = new Set((await loadSessions()).hosts.map(h => h.instanceId));
 			const spawnedAt = Date.now();
 			// The folder is gated before omp runs in it, so the session never has a moment without the hook.

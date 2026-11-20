@@ -6,7 +6,7 @@
  *
  *   bun scripts/mock-companion.ts [--port 7468] [--web http://localhost:3000/] [--dir /tmp/mock-companion] [--session-link <room link>]
  *                                 [--machine <name>] [--hosts 1,2,3] [--session-id <id>]
- *                                 [--personal fresh|enabled] [--personal-login ready|missing] [--personal-chat-tree on|off] [--stakes on|off] [--stakes-on 7,9] [--disk on|off] [--accounts on|off] [--hibernate on|off] [--vm on|off] [--vm-github ready|missing] [--delete on|off] [--terminal on|off]
+ *                                 [--personal fresh|enabled] [--personal-login ready|missing] [--personal-chat-tree on|off] [--stakes on|off] [--stakes-on 7,9] [--private on|off] [--private-on 8,9] [--disk on|off] [--accounts on|off] [--hibernate on|off] [--vm on|off] [--vm-github ready|missing] [--delete on|off] [--terminal on|off]
  *
  * `--machine` names the computer and gives its sessions ids of their own (the way two real computers never share a session id,
  * though their processes may share an instance id: `inst-1` here and there); `--hosts` lists only those fixture sessions
@@ -188,8 +188,13 @@ const host = (n: number, name: string, over: Partial<CompanionHost> = {}): Compa
 	busy: false,
 	inputRequired: false,
 	relayConnected: true,
+	...(privateOn.has(n) ? { private: true, model: "studio-glm/glm-5.3-flash" } : {}),
 	...over,
 });
+/** Private sessions: `--private off` is a companion that predates them (no Private option in the start sheet); `--private-on 8,9` lists those fixture sessions as private. */
+const privateFlag = flag("--private", "on");
+if (privateFlag !== "on" && privateFlag !== "off") throw new Error("--private takes on or off");
+const privateOn = new Set(flag("--private-on", "").split(",").filter(Boolean).map(Number));
 const hosts: CompanionHost[] = [
 	host(1, "refactor-auth", {
 		busy: true,
@@ -339,6 +344,7 @@ const fanout = await createMockFanout({
 /** Starting sessions (in the folders, in new worktrees, or without a project) over real folders; `folders` adds the scratch ones. */
 const starts = createMockStart({
 	dir,
+	canPrivate: privateFlag === "on",
 	hosts,
 	baseFolders: async () => {
 		const reply = await fanout.answer({ t: "folders", reqId: 0 });

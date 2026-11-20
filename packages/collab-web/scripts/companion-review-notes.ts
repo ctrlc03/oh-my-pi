@@ -34,7 +34,7 @@ import {
 	type SessionEdit,
 	scanSessionEdits,
 } from "./companion-review-edits";
-import { findSessionFile, readSessionHead } from "./companion-sessions";
+import { findSessionFile, isPrivateSession, readSessionHead } from "./companion-sessions";
 
 const MAX_QUERY_FILES = 3_000;
 const MAX_PATH_CHARS = 4_096;
@@ -373,12 +373,14 @@ async function askModel(
 	generator: Generator,
 	prompt: string,
 	known: ReadonlySet<string>,
+	isPrivate: boolean,
 ): Promise<Map<string, string>> {
 	const argv = headlessOmpArgs({
 		ompBin: generator.ompBin,
 		model: generator.model(),
 		systemPrompt: SYSTEM_PROMPT,
 		maxCostUsd: MAX_COST_USD,
+		private: isPrivate,
 	});
 	// A neutral folder: the project's own context files and settings have no part in this.
 	const result = await generator.run(argv, prompt, os.tmpdir());
@@ -420,6 +422,7 @@ async function generateNotes(
 	work: readonly FileWork[],
 	sessionTitle: string | null,
 	now: () => number,
+	isPrivate: boolean,
 ): Promise<{ notes: HunkNote[]; failure: string | null }> {
 	const jobs = work.flatMap(file => batchHunks(file.hunks).map(hunks => ({ file, hunks }))).slice(0, MAX_RUNS);
 	const notes: HunkNote[] = [];
@@ -435,6 +438,7 @@ async function generateNotes(
 						generator,
 						buildNotesPrompt({ path: job.file.path, sessionTitle, excerpts: job.file.excerpts, hunks: todo }),
 						known,
+						isPrivate,
 					);
 					for (const [hunk, text] of answer)
 						notes.push({ path: job.file.path, hunk, text, source: "generated", at: now() });
@@ -528,7 +532,9 @@ export function createReviewNotes(deps: ReviewNotesDeps): ReviewNotes {
 				].slice(0, EXCERPTS);
 				work.push({ path: file.path, hunks: todo, excerpts });
 			}
-			const made = await generateNotes(deps.generator, work, request.sessionTitle, deps.now);
+			// The notes quote the session and its changes: a private session's are written by local models only.
+			const isPrivate = await isPrivateSession(deps.sessionsDirs(), request.sessionId);
+			const made = await generateNotes(deps.generator, work, request.sessionTitle, deps.now, isPrivate);
 			generated = [...generated, ...made.notes.map(note => rewritten(note, weak.get(hunkId(note.path, note.hunk))))];
 			failure = made.failure;
 			write ||= made.notes.length > 0;

@@ -218,6 +218,8 @@ export interface CompanionHost {
 	sandboxed?: boolean;
 	/** Pushing and pull requests need a passed quiz on the session's changes (`@oh-my-pi/pi-wire/stakes`). Absent from companions that predate it. */
 	highStakes?: boolean;
+	/** A private session: every model call stays on this computer's allowlisted local providers. Absent from companions and omps that predate it. */
+	private?: boolean;
 	/** Started by a best-of-N fan-out: the group it belongs to and the model it runs on. */
 	fanout?: HostFanout;
 	/** The vendor agent behind a foreign session; absent for an omp session. */
@@ -244,6 +246,8 @@ export interface CompanionIdleSession {
 	sandboxed?: boolean;
 	/** See {@link CompanionHost.highStakes}. */
 	highStakes?: boolean;
+	/** See {@link CompanionHost.private}. */
+	private?: boolean;
 	/** The vendor agent behind a foreign session; absent for an omp session. */
 	agent?: AgentRef;
 	/** See {@link CompanionHost.todo}. */
@@ -682,6 +686,8 @@ export interface SessionOverview {
 	/** Present when the session is hosting collab or listed as idle right now. */
 	instanceId?: string;
 	live?: "host" | "idle";
+	/** The session is live and private (see {@link CompanionHost.private}); ended sessions carry no mark. */
+	private?: boolean;
 	/** The folder is a git worktree the companion created and it still exists: it can be removed once no omp runs in it. */
 	worktree?: boolean;
 	/** The vendor agent behind a foreign session; absent for an omp session. */
@@ -1129,6 +1135,8 @@ export type CompanionRequest =
 			sandboxed?: boolean;
 			/** New sessions only (needs `canHighStakes`): block pushes and pull requests until a quiz on the session's changes is passed. Ignored for vendor agents. */
 			highStakes?: boolean;
+			/** New omp sessions only (needs `canPrivate`): launch with `--private`, so every model call stays on this computer's allowlisted local providers. Ignored for vendor agents and for resumes. */
+			private?: boolean;
 			worktree?: { branch?: string };
 			scratch?: { hint?: string };
 			prompt?: string;
@@ -1336,6 +1344,8 @@ export type CompanionReply =
 			canQuizTopic?: boolean;
 			/** The companion can gate pushes and pull requests behind a quiz (`stakes-*` requests, `highStakes` on a host). */
 			canHighStakes?: boolean;
+			/** The companion can start private sessions (`private` on `start`, `private` on a host). Follows `canStart`. */
+			canPrivate?: boolean;
 			/** The companion can write, argue and store sparring sessions (`spar-*` requests). */
 			canSpar?: boolean;
 			/** The companion can run, review and store design bake-offs (`bakeoff-*` requests). */
@@ -1676,6 +1686,8 @@ export interface CompanionSnapshot {
 	canQuizTopic: boolean;
 	/** The companion can gate pushes and pull requests behind a quiz. */
 	canHighStakes: boolean;
+	/** The companion can start private sessions (omp with `--private`). */
+	canPrivate: boolean;
 	/** The companion can write, argue and store sparring sessions on code changes and designs. */
 	canSpar: boolean;
 	/** The companion can run, review and store design bake-offs. */
@@ -1819,6 +1831,7 @@ export const INITIAL_SNAPSHOT: CompanionSnapshot = {
 	canQuiz: false,
 	canQuizTopic: false,
 	canHighStakes: false,
+	canPrivate: false,
 	canSpar: false,
 	canBakeoff: false,
 	canBakeoffPatch: false,
@@ -2672,6 +2685,8 @@ export class CompanionClient {
 			resume?: string;
 			sandboxed?: boolean;
 			highStakes?: boolean;
+			/** New omp sessions only (needs `canPrivate`): see the `start` request. */
+			private?: boolean;
 			worktree?: { branch?: string };
 			scratch?: { hint?: string };
 			prompt?: string;
@@ -2828,6 +2843,7 @@ export class CompanionClient {
 				canQuiz: frame.canQuiz ?? false,
 				canQuizTopic: frame.canQuizTopic ?? false,
 				canHighStakes: frame.canHighStakes ?? false,
+				canPrivate: frame.canPrivate ?? false,
 				canSpar: frame.canSpar ?? false,
 				canBakeoff: frame.canBakeoff ?? false,
 				canBakeoffPatch: frame.canBakeoffPatch ?? false,

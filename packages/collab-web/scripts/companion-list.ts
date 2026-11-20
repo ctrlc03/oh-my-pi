@@ -148,6 +148,7 @@ export function createSessionLister(options: SessionListerOptions): SessionListe
 					inputRequired: host.inputRequired,
 					relayConnected: host.relayConnected,
 					sandboxed: sandboxed.has(host.pid),
+					...(host.private === true ? { private: true } : {}),
 					...(host.agent ? { agent: host.agent } : {}),
 					...(todo ? { todo } : {}),
 				};
@@ -165,6 +166,7 @@ export function createSessionLister(options: SessionListerOptions): SessionListe
 					startedAt: row.startedAt,
 					busy: row.busy ?? null,
 					sandboxed: sandboxed.has(row.pid),
+					...(row.private === true ? { private: true } : {}),
 					...(todo ? { todo } : {}),
 				};
 			})

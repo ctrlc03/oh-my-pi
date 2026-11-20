@@ -1,0 +1,12 @@
+/* Private sessions: the chip and the icon-only mark. */
+
+.sh-chip.sh-chip-private {
+	gap: 4px;
+	color: var(--accent);
+}
+
+.sh-private-mark {
+	display: inline-flex;
+	flex: none;
+	color: var(--accent);
+}

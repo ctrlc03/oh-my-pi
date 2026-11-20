@@ -819,3 +819,69 @@ describe("a bake-off request with fields this companion does not know", () => {
 		);
 	});
 });
+
+const PRIVATE_SESSION_ID = "01b23fa5-0000-7000-8000-00000000aaaa";
+
+/** The fixture session again under another id, with `private: true` in its header when `isPrivate`. */
+async function writeSession(dir: string, id: string, isPrivate: boolean): Promise<void> {
+	const folder = path.join(dir, "-work-repo");
+	await fs.mkdir(folder, { recursive: true });
+	const text = (await Bun.file(path.join(import.meta.dir, "fixtures/quiz/session.jsonl")).text())
+		.replaceAll("01a12fa5-758e-7595-b768-bb9462d6e44e", id)
+		.replace('"cwd":"/work/repo"}', `"cwd":"/work/repo"${isPrivate ? ',"private":true' : ""}}`);
+	await fs.writeFile(path.join(folder, `2026-10-12T10-25-35-118Z_${id}.jsonl`), text);
+}
+
+describe("a bake-off of a private session", () => {
+	it("starts every session --private and asks no judge, and a bake-off of another session does neither", async () => {
+		const sessions = path.join(tmp, "sessions");
+		await writeSession(sessions, PRIVATE_SESSION_ID, true);
+		await writeSession(sessions, "01a12fa5-758e-7595-b768-bb9462d6e44e", false);
+		const h = harness("private1", { judge: "ok" });
+		const { id } = await h.bakeoffs.create(request({ sessionId: PRIVATE_SESSION_ID }));
+		const bakeoff = await done(h, id);
+		expect(bakeoff.entries.every(entry => entry.status === "ready")).toBe(true);
+		expect(h.seen.length).toBeGreaterThan(0);
+		expect(h.seen.every(seen => seen.launch.private === true)).toBe(true);
+		expect(h.judged.calls).toBe(0);
+		expect(bakeoff.result!.judgeNote).toContain("private session");
+
+		const plain = harness("private2", { judge: "ok" });
+		const other = await plain.bakeoffs.create(request({ sessionId: "01a12fa5-758e-7595-b768-bb9462d6e44e" }));
+		await done(plain, other.id);
+		expect(plain.seen.some(seen => seen.launch.private === true)).toBe(false);
+		expect(plain.judged.calls).toBeGreaterThan(0);
+	});
+
+	it("asks the fan-out for --private sessions in implementation mode", async () => {
+		const asked: { models: string[]; private?: boolean }[] = [];
+		const bakeoffs = createBakeoffs({
+			storeDir: path.join(tmp, "private3", "agent", "bakeoffs"),
+			cacheDir: path.join(tmp, "private3", "cache", "bakeoffs"),
+			sessionsDir: path.join(tmp, "sessions"),
+			now: () => Date.now(),
+			changed: () => undefined,
+			agent: {
+				start: async () => "x",
+				hosts: async () => [],
+				stop: async () => undefined,
+				cost: async () => 0,
+			},
+			fanout: {
+				start: async input => {
+					asked.push({ models: input.models, private: input.private });
+					throw new Error("stub fan-out stops here");
+				},
+				group: () => undefined,
+				keep: async () => ({ removed: [], skipped: [] }),
+				unlink: async () => undefined,
+			},
+			watch: { pollMs: 5, settleMs: 20, idleMs: 20, goneMs: 30, timeoutMs: 5_000 },
+		});
+		await bakeoffs.create(
+			request({ mode: "implementation", sessionId: PRIVATE_SESSION_ID, goal: "make the access a type" }),
+		);
+		await bakeoffs.idle();
+		expect(asked).toEqual([{ models: MODELS, private: true }]);
+	});
+});

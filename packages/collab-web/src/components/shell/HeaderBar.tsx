@@ -15,6 +15,7 @@ import { TOP_BAR_ICONS } from "./top-bar-icons";
 import { PHONE_QUERY, useMedia } from "../codemap/shared";
 import type { HiddenMessagesControl } from "./HiddenMessages";
 import type { CardEdit } from "./SessionCardSheet";
+import { PrivateMark } from "./PrivateMark";
 import { HighStakesMark, type StakesControl } from "./StakesControl";
 import type { TurnUndoControl } from "./TurnUndo";
 
@@ -33,6 +34,8 @@ export interface HeaderBarProps {
 	readOnly: boolean;
 	/** The paired computer reports this session as sandboxed (file tools only, edits confined to its folder). */
 	sandboxed: boolean;
+	/** A private session: the host advertises `private` (or the computer lists it as one); every model call stays on local providers. */
+	isPrivate: boolean;
 	/** This session's high-stakes mode; null unless the paired computer can gate pushes behind a quiz and this is an omp session. */
 	highStakes: StakesControl | null;
 	/** This session's status and note, editable where the paired computer keeps them; null otherwise. */
@@ -127,6 +130,7 @@ export const HeaderBar = memo(function HeaderBar({
 	phase,
 	readOnly,
 	sandboxed,
+	isPrivate,
 	highStakes,
 	sessionCard,
 	agent,
@@ -278,6 +282,7 @@ export const HeaderBar = memo(function HeaderBar({
 								</span>
 							)}
 							{highStakes?.on && <HighStakesMark />}
+							{isPrivate && <PrivateMark />}
 							<AgentChip agent={agent} variant="mark" />
 							{state?.permission === "full" && (
 								<span
@@ -401,6 +406,7 @@ export const HeaderBar = memo(function HeaderBar({
 					phaseLabel={PHASE_LABEL[phase]}
 					readOnly={readOnly}
 					sandboxed={sandboxed}
+					isPrivate={isPrivate}
 					highStakes={highStakes}
 					sessionCard={sessionCard}
 					agent={agent}

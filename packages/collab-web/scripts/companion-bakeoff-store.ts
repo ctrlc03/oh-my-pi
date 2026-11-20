@@ -43,6 +43,11 @@ export interface BakeoffDoc {
 	 * copy the entries read, by path. There is no commit to read them from afterwards.
 	 */
 	files?: Record<string, string[]>;
+	/**
+	 * The bake-off is about a private session: every session it starts runs `--private` (so a model the `private.providers`
+	 * setting does not allow fails at launch), and no second opinion is asked of the judge role, which runs in this process.
+	 */
+	private?: true;
 }
 
 export type BakeoffStore = DocStore<BakeoffSummary, BakeoffDoc>;

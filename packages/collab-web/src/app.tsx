@@ -1046,6 +1046,8 @@ function Session({
 		},
 		[computerId],
 	);
+	// The host says so itself (`welcome.features`), so a session opened by link without a companion shows it too.
+	const isPrivateSession = Object.hasOwn(snap.features, "private") || hostRow?.private === true;
 	const canStakes = computer?.snap.canHighStakes === true;
 	const listed = hostRow !== undefined;
 	const stakesIsOn = listed && stakesOn({ canHighStakes: canStakes }, hostRow);
@@ -1490,6 +1492,7 @@ function Session({
 				phase={snap.phase}
 				readOnly={snap.readOnly}
 				sandboxed={computer?.snap.hosts.some(host => host.sessionId === sessionId && host.sandboxed) ?? false}
+				isPrivate={isPrivateSession}
 				highStakes={highStakes}
 				sessionCard={sessionCard}
 				agent={snap.agent}

@@ -206,6 +206,8 @@ export interface GradeOpenOptions {
 	run: RunOmp;
 	/** What is left of the quiz's spending limit, USD. */
 	budgetUsd: number;
+	/** The quiz comes from a private session: the grading run is started `--private`. */
+	private?: boolean;
 	input: GradeInput;
 }
 
@@ -236,6 +238,7 @@ export async function gradeOpen(options: GradeOpenOptions): Promise<GradeOpenRes
 		model: options.model,
 		systemPrompt: GRADE_SYSTEM_PROMPT,
 		maxCostUsd,
+		private: options.private,
 		extra: ["--mode", "json"],
 	});
 	let result: RunResult;

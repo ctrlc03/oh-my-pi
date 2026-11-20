@@ -70,8 +70,8 @@ export interface ChangeSet {
 const decoder = new TextDecoder();
 
 /** Headless omp: cheap model, no session file, tools, extensions, skills, rules or LSP, and a hard spend cap. */
-export function ompArgs(ompBin: string, model: string): string[] {
-	return headlessOmpArgs({ ompBin, model, systemPrompt: SYSTEM_PROMPT, maxCostUsd: MAX_COST_USD });
+export function ompArgs(ompBin: string, model: string, isPrivate = false): string[] {
+	return headlessOmpArgs({ ompBin, model, systemPrompt: SYSTEM_PROMPT, maxCostUsd: MAX_COST_USD, private: isPrivate });
 }
 
 const SYSTEM_PROMPT =
@@ -356,6 +356,8 @@ export interface GenerateOptions {
 	ompBin: string;
 	/** Model id or role (`smol`). */
 	model: string;
+	/** The session is private: the run is started `--private`, so the model must be one `private.providers` allows. */
+	private?: boolean;
 	run?: RunOmp;
 }
 
@@ -367,7 +369,11 @@ export async function generateGitText(options: GenerateOptions): Promise<GitText
 	let note: string;
 	try {
 		// A neutral folder: the project's own context files and settings have no part in this.
-		const result = await run(ompArgs(options.ompBin, options.model), buildPrompt(context, want), os.tmpdir());
+		const result = await run(
+			ompArgs(options.ompBin, options.model, options.private === true),
+			buildPrompt(context, want),
+			os.tmpdir(),
+		);
 		if (result.code === 0) {
 			const answer = parseAnswer(result.out, want);
 			if (answer !== null) return { ...answer, source: "model" };

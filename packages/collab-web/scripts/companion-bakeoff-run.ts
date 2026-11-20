@@ -93,6 +93,8 @@ export interface BakeoffFanout {
 		sandboxed?: boolean;
 		startCommit: string;
 		bakeoff: string;
+		/** Every session starts `omp --private`. */
+		private?: boolean;
 	}): Promise<FanoutGroup>;
 	group(id: string): FanoutGroup | undefined;
 	/** Keep one session's worktree and, when asked, remove the others; saves the group. */
@@ -290,6 +292,7 @@ async function fileTask<T>(ctx: Ctx, task: FileTask<T>): Promise<FileResult<T>> 
 				prompt: task.brief(outFile, note),
 				maxCostUsd: limit,
 				model: task.model,
+				private: doc.private,
 				outFile,
 				overlayPath,
 				overlayYaml: restrictedOverlayYaml(outFile, READONLY_AGENT_TOOLS),
@@ -508,6 +511,7 @@ export async function implementationStage(ctx: Ctx, startCommit: string, prompt:
 		sandboxed: doc.request.sandboxed,
 		startCommit,
 		bakeoff: doc.id,
+		private: doc.private,
 	});
 	doc.bakeoff.group = group.id;
 	for (const [index, entry] of challengers.entries()) {
@@ -972,6 +976,10 @@ export interface JudgeOutcome {
 export async function judgeStage(ctx: Ctx, entries: BakeoffEntry[]): Promise<JudgeOutcome> {
 	const { deps, doc } = ctx;
 	if (doc.bakeoff.judge === "off") return {};
+	if (doc.private)
+		return {
+			note: "No second opinion: the bake-off is about a private session, and the judge role may not be local.",
+		};
 	if (!deps.openJudge) return { note: "No second opinion: no judge model is set up on this computer." };
 	await ctx.progress("Asking the judge model for a second opinion");
 	const budget = splitBakeoffBudget(doc.maxCostUsd, doc.bakeoff.mode);

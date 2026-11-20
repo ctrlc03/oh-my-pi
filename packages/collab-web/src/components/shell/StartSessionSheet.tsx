@@ -7,6 +7,7 @@ import {
 	GitBranch,
 	GitCompareArrows,
 	LoaderCircle,
+	Lock,
 	Plus,
 	RefreshCw,
 	Server,
@@ -47,6 +48,7 @@ import {
 	type StartDraft,
 	type StartTarget,
 	startOptions,
+	startsPrivate,
 } from "../../lib/start-session";
 import { ComputerActionsContext } from "../../lib/use-fresh-computers";
 import { type RequestState, useRequest } from "../../lib/use-request";
@@ -127,6 +129,7 @@ export function StartSessionSheet({
 	const canBackgroundStart = computer?.snap.canBackgroundStart ?? false;
 	const canForeign = computer?.snap.canForeign ?? false;
 	const canHighStakes = computer?.snap.canHighStakes ?? false;
+	const canPrivate = computer?.snap.canPrivate ?? false;
 	const loadAgents = useCallback(
 		() => (canForeign && client !== null ? client.requestAgents() : Promise.resolve<CompanionAgent[]>([])),
 		[client, canForeign],
@@ -159,6 +162,7 @@ export function StartSessionSheet({
 	const [browsing, setBrowsing] = useState(false);
 	const [sandboxed, setSandboxed] = useState(false);
 	const [highStakes, setHighStakes] = useState(false);
+	const [isPrivate, setIsPrivate] = useState(false);
 	const [worktree, setWorktree] = useState(false);
 	const [branch, setBranch] = useState("");
 	const [prompt, setPrompt] = useState(initial?.prompt ?? "");
@@ -189,6 +193,7 @@ export function StartSessionSheet({
 		setAgent(null);
 		setModel("");
 		setFan(false);
+		setIsPrivate(false);
 		setError(null);
 	}, [computerId]);
 
@@ -215,6 +220,9 @@ export function StartSessionSheet({
 	// Vendor agents' pushes are not gated: only omp sessions offer the mode, and only in a repository.
 	const canStakesHere = agent === null && canHighStakes;
 	const effectiveStakes = highStakes && canStakesHere;
+	// Vendor agents' model calls go to their vendors: only omp sessions offer Private, and only on a companion that launches `--private`.
+	const canPrivateHere = startsPrivate(true, canPrivate, agent);
+	const effectivePrivate = startsPrivate(isPrivate, canPrivate, agent);
 	const agentName = (id: string | undefined): string =>
 		id === undefined ? "omp" : (agentList.find(entry => entry.id === id)?.name ?? id);
 
@@ -222,6 +230,7 @@ export function StartSessionSheet({
 		cwd,
 		sandboxed: effectiveSandbox,
 		highStakes: effectiveStakes && !isProjectless(cwd),
+		private: effectivePrivate,
 		worktree,
 		branch,
 		prompt,
@@ -341,6 +350,7 @@ export function StartSessionSheet({
 				target.agent === undefined ? null : agentName(target.agent),
 				target.sandboxed ? "Sandboxed" : null,
 				target.highStakes ? "High stakes" : null,
+				target.private ? "Private" : null,
 				target.worktree ? "New worktree" : null,
 			]
 				.filter(Boolean)
@@ -488,6 +498,7 @@ export function StartSessionSheet({
 					<LoaderCircle size={22} className="sh-spin" />
 					<div className="sh-start-progress-title">
 						{starting.resume ? "Resuming" : "Starting"} {starting.sandboxed ? "sandboxed " : ""}
+						{starting.private ? "private " : ""}
 						{agentName(starting.agent)} in {starting.scratch ? "a new scratch folder" : folderLabel(starting.cwd)}
 						{starting.worktree ? " on a new worktree" : ""}…
 					</div>
@@ -582,6 +593,26 @@ export function StartSessionSheet({
 							</span>
 						</label>
 					)}
+					{canPrivateHere && (
+						<label className="sh-start-sandbox">
+							<input
+								type="checkbox"
+								checked={effectivePrivate}
+								onChange={e => {
+									setIsPrivate(e.currentTarget.checked);
+									if (e.currentTarget.checked) setFan(false);
+								}}
+							/>
+							<span className="sh-start-sandbox-text">
+								<span className="sh-start-sandbox-title">
+									<Lock size={14} /> Private
+								</span>
+								<span className="sh-field-hint">
+									Only this computer's local models; no Claude, no web search. It cannot be turned off later.
+								</span>
+							</span>
+						</label>
+					)}
 					{!projectless && (
 						<label className="sh-start-sandbox">
 							<input type="checkbox" checked={worktree} onChange={e => setWorktree(e.currentTarget.checked)} />
@@ -621,13 +652,20 @@ export function StartSessionSheet({
 					<QuickReplies disabled={false} onPick={text => setPrompt(prev => (prev ? `${prev}\n${text}` : text))} />
 					{canFanout && !projectless && (
 						<label className="sh-start-sandbox">
-							<input type="checkbox" checked={fan} onChange={e => setFan(e.currentTarget.checked)} />
+							<input
+								type="checkbox"
+								checked={fan}
+								disabled={effectivePrivate}
+								onChange={e => setFan(e.currentTarget.checked)}
+							/>
 							<span className="sh-start-sandbox-text">
 								<span className="sh-start-sandbox-title">
 									<GitCompareArrows size={14} /> Compare models
 								</span>
 								<span className="sh-field-hint">
-									Run the prompt on 2–4 models at once, each in its own worktree, then keep the best.
+									{effectivePrivate
+										? "Not available for a private session: it only runs on this computer's local models."
+										: "Run the prompt on 2–4 models at once, each in its own worktree, then keep the best."}
 								</span>
 							</span>
 						</label>

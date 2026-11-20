@@ -36,6 +36,7 @@ import { PermissionControl } from "./PermissionControl";
 import { PrWatch } from "./PrWatch";
 import { SessionCardRow, type CardEdit } from "./SessionCardSheet";
 import { SandboxedChip } from "./CompanionCard";
+import { PrivateChip } from "./PrivateMark";
 import { HighStakesChip, HighStakesRow, type StakesControl } from "./StakesControl";
 import { ModelList } from "./ModelControls";
 import { Sheet, SheetPlacementButton } from "./Sheet";
@@ -62,6 +63,8 @@ export interface SessionSheetProps {
 	phaseLabel: string;
 	readOnly: boolean;
 	sandboxed: boolean;
+	/** See `HeaderBarProps.isPrivate`. */
+	isPrivate: boolean;
 	/** This session's high-stakes mode; null unless the paired computer can gate pushes behind a quiz and this is an omp session. */
 	highStakes: StakesControl | null;
 	/** This session's status and note, editable where the paired computer keeps them; null otherwise. */
@@ -159,6 +162,7 @@ export function SessionSheet({
 	phaseLabel,
 	readOnly,
 	sandboxed,
+	isPrivate,
 	highStakes,
 	sessionCard,
 	agent,
@@ -350,6 +354,7 @@ export function SessionSheet({
 						<AgentChip agent={agent} />
 						{sandboxed && <SandboxedChip />}
 						{highStakes?.on && <HighStakesChip />}
+						{isPrivate && <PrivateChip />}
 					</dd>
 				</div>
 				{canPermission && state?.permission !== undefined && !readOnly && phase === "live" && (

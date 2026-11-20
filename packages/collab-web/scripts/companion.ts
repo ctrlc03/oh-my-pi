@@ -126,6 +126,7 @@ import { type AgentRunner } from "./companion-agent";
 import { createBakeoffs } from "./companion-bakeoff";
 import type { OpenedJudge } from "./companion-bakeoff-run";
 import { createBlueprints } from "./companion-blueprint";
+import { launchesPrivate, privateHostsFields } from "./companion-private";
 import { createQuizzes } from "./companion-quiz";
 import { createSpars } from "./companion-spar";
 import {
@@ -1196,7 +1197,11 @@ const accounts = createAccounts(ompBin);
 
 const schedulesPath = path.join(path.dirname(statePath), "collab-companion-schedules.json");
 
-/** Starts the prompts the user scheduled in the app, pushing when one starts or fails to; see ./companion-schedule. */
+/**
+ * Starts the prompts the user scheduled in the app, pushing when one starts or fails to; see ./companion-schedule.
+ * A schedule has no private option: a new run is never `--private` (a run that resumes a private session keeps it private, as
+ * every resume does), so schedules cannot be used to start private sessions.
+ */
 const scheduler = createScheduler({
 	now: Date.now,
 	initial: await loadSchedules(schedulesPath, Date.now()),
@@ -1432,6 +1437,7 @@ async function refresh(targetPeer?: number): Promise<void> {
 		disk: diskGuard.health() ?? undefined,
 		...vm.hostsFields(),
 		...personal.hostsFields(extras.canStart),
+		...privateHostsFields(extras.canStart),
 	};
 	const json = JSON.stringify(frame);
 	if (json !== lastHostsJson) for (const peer of peers) room.send(frame, peer, zipPeers.has(peer));
@@ -1517,6 +1523,8 @@ async function startSession(
 	restrict?: RestrictLaunch,
 	/** New omp sessions: block pushes and pull requests until a quiz is passed (./companion-stakes); the device that asked. */
 	highStakes?: string,
+	/** New omp sessions: `omp --private`, so no model call leaves this computer. Ignored for vendor agents and resumes. */
+	isPrivate?: boolean,
 ): Promise<string> {
 	// A hibernated session resumes the way it ran: a sandboxed one stays sandboxed, whatever this request says.
 	if (typeof resume === "string" && hibernation.record(resume)?.sandboxed === true) sandboxed = true;
@@ -1525,6 +1533,7 @@ async function startSession(
 		(resume !== undefined && typeof resume !== "string") ||
 		(sandboxed !== undefined && typeof sandboxed !== "boolean") ||
 		(force !== undefined && typeof force !== "boolean") ||
+		(isPrivate !== undefined && typeof isPrivate !== "boolean") ||
 		(worktree !== undefined && (typeof worktree !== "object" || worktree === null)) ||
 		(worktree?.branch !== undefined && typeof worktree.branch !== "string")
 	) {
@@ -1624,6 +1633,7 @@ async function startSession(
 				prompt,
 				maxCostUsd: plan ? plan.maxCostUsd : maxCostUsd,
 				model: plan ? plan.model : model,
+				private: launchesPrivate({ private: isPrivate, foreign: Boolean(plan), resume }),
 				restrict,
 				keepEnded: true,
 				foreign: plan
@@ -1726,6 +1736,7 @@ async function startFromRequest(frame: Extract<CompanionRequest, { t: "start" }>
 			foreign,
 			undefined,
 			frame.highStakes === true ? deviceName : undefined,
+			frame.private,
 		);
 	if (
 		typeof frame.scratch !== "object" ||
@@ -1750,6 +1761,9 @@ async function startFromRequest(frame: Extract<CompanionRequest, { t: "start" }>
 			undefined,
 			undefined,
 			foreign,
+			undefined,
+			undefined,
+			frame.private,
 		);
 	} catch (err) {
 		await fs.rmdir(folder).catch(() => undefined);
@@ -1843,6 +1857,8 @@ const agentRunner: AgentRunner = {
 			launch.model,
 			undefined,
 			{ overlayPath: launch.overlayPath, overlayYaml: launch.overlayYaml, tools: launch.tools },
+			undefined,
+			launch.private,
 		);
 	},
 	hosts: async () =>
@@ -1939,8 +1955,8 @@ const bakeoffs = createBakeoffs({
 	},
 	agent: agentRunner,
 	fanout: {
-		start: async ({ cwd, prompt, models, budgetUsd, sandboxed, startCommit, bakeoff }) =>
-			fanoutStart({ cwd, prompt, models, budgetUsd, sandboxed }, { id: bakeoff, startCommit }),
+		start: async ({ cwd, prompt, models, budgetUsd, sandboxed, startCommit, bakeoff, private: isPrivate }) =>
+			fanoutStart({ cwd, prompt, models, budgetUsd, sandboxed }, { id: bakeoff, startCommit, private: isPrivate }),
 		group: id => fanoutGroups.find(group => group.id === id),
 		keep: (_group, request) => fanoutKeep(request),
 		unlink: async id => {
@@ -1983,9 +1999,17 @@ function fanoutGroup(id: unknown): FanoutGroup {
 	return group;
 }
 
-async function fanoutStart(input: unknown, bakeoff?: { id: string; startCommit: string }): Promise<FanoutGroup> {
+async function fanoutStart(
+	input: unknown,
+	bakeoff?: { id: string; startCommit: string; private?: boolean },
+): Promise<FanoutGroup> {
 	const request = parseFanoutRequest(input);
 	if (!(await findTmux())) throw new Error("tmux is not installed on this computer");
+	// A vendor agent sends the work to its vendor: a bake-off of a private session never starts one.
+	if (bakeoff?.private && request.models.some(model => parseForeignSelector(model) !== null))
+		throw new Error(
+			"A private session's bake-off runs omp models only: other agents send the work to their vendors.",
+		);
 	// Other agents run unsandboxed for now: refuse before any member starts rather than run some of them unconfined.
 	if (request.sandboxed && request.models.some(model => parseForeignSelector(model) !== null))
 		throw new Error("Other agents cannot run sandboxed yet: untick Sandboxed or pick omp models only.");
@@ -1999,6 +2023,7 @@ async function fanoutStart(input: unknown, bakeoff?: { id: string; startCommit: 
 		// A bake-off's worktrees all start from one commit and its group is kept until the bake-off is deleted.
 		startCommit: bakeoff?.startCommit,
 		bakeoff: bakeoff?.id,
+		private: bakeoff?.private,
 		branchName: bakeoff
 			? (index, model) => fanoutBranch(bakeoff.id, index, model, gitFlow.settings.branchPrefix, "bake")
 			: undefined,
@@ -2008,9 +2033,23 @@ async function fanoutStart(input: unknown, bakeoff?: { id: string; startCommit: 
 			const parsed = parseForeignSelector(model);
 			return parsed ? agentDirectory.ref(parsed.agent) : undefined;
 		},
-		launch: ({ cwd, prompt, model, maxCostUsd, sandboxed, group: groupId }) => {
+		launch: ({ cwd, prompt, model, maxCostUsd, sandboxed, group: groupId, private: isPrivate }) => {
 			const parsed = parseForeignSelector(model);
-			if (!parsed) return startSession(cwd, undefined, sandboxed, undefined, undefined, prompt, maxCostUsd, model);
+			if (!parsed)
+				return startSession(
+					cwd,
+					undefined,
+					sandboxed,
+					undefined,
+					undefined,
+					prompt,
+					maxCostUsd,
+					model,
+					undefined,
+					undefined,
+					undefined,
+					isPrivate,
+				);
 			return startSession(cwd, undefined, sandboxed, undefined, undefined, prompt, maxCostUsd, undefined, {
 				agent: parsed.agent,
 				model: parsed.model === "" ? undefined : parsed.model,
@@ -2484,6 +2523,7 @@ room.onFrame = (frame, fromPeer) => {
 					},
 					ompBin,
 					model: gitFlow.settings.messageModel,
+					private: session.private === true,
 				});
 				return { t: "git-message", reqId: frame.reqId, text };
 			});

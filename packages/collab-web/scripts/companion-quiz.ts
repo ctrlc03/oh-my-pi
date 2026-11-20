@@ -68,6 +68,7 @@ import {
 } from "./companion-blueprint-git";
 import { splitLines } from "./companion-excerpt";
 import { headlessRunner, type RunOmp } from "./companion-headless";
+import { isPrivateSession } from "./companion-sessions";
 import { buildQuizBrief, buildTopicBrief, DEFAULT_QUIZ_MAX_COST_USD } from "./companion-quiz-agent";
 import {
 	DEFAULT_GRADE_MODEL,
@@ -337,6 +338,8 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 			const files = topic ? await listFolderFiles(topic) : [];
 			const code = hasCode(files);
 			if (topic && job.focus === "implementation" && !code) throw new Error(NO_CODE_ERROR);
+			// What a private session said or changed goes only to local models: its question writer is started `--private`.
+			const isPrivate = job.sessionId !== undefined && (await isPrivateSession(deps.sessionsDir, job.sessionId));
 			const digest = await readDigest(deps.sessionsDir, job.sessionId, warnings, "questions", {
 				ids: citeSession,
 				without: topic ? "the folder's files and general background" : undefined,
@@ -411,6 +414,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 						prompt: note === undefined ? prompt : `${prompt}\n\n${note}`,
 						maxCostUsd: limit,
 						model: job.model,
+						private: isPrivate || undefined,
 						outFile,
 						overlayPath,
 						overlayYaml: restrictedOverlayYaml(outFile, READONLY_AGENT_TOOLS),
@@ -511,7 +515,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 				repo: { root: job.root, name: job.name, ...(job.github ? { github: job.github } : {}) },
 				createdAt,
 				...(model ? { model } : {}),
-				...(digest && job.sessionId ? { sessionId: job.sessionId } : {}),
+				...((digest || isPrivate) && job.sessionId ? { sessionId: job.sessionId } : {}),
 				about: job.about,
 				focus: job.focus,
 				parts: parts.map((part, index) => ({
@@ -788,6 +792,8 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 					if (text.length > QUIZ_MAX_ANSWER_CHARS)
 						throw new Error(`The answer is longer than ${QUIZ_MAX_ANSWER_CHARS} characters.`);
 					if (!key.rubric) throw new Error("This question has no answer key to grade against.");
+					// The answer is graded against the quiz's session: a private session's grader runs `--private`.
+					const gradedSession = doc.stakes?.sessionId ?? doc.quiz.sessionId;
 					const budget = doc.maxCostUsd - doc.generationCostUsd - doc.gradingCostUsd;
 					if (budget < MIN_GRADE_BUDGET_USD)
 						throw new Error(
@@ -801,6 +807,7 @@ export function createQuizzes(deps: QuizDeps): Quizzes {
 							model: deps.gradeModel ?? DEFAULT_GRADE_MODEL,
 							run: runOmp,
 							budgetUsd: budget,
+							private: gradedSession !== undefined && (await isPrivateSession(deps.sessionsDir, gradedSession)),
 							input: {
 								question,
 								partTitle: doc.quiz.parts[question.part]?.title ?? "",

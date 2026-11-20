@@ -22,6 +22,8 @@ export interface HeadlessOptions {
 	maxCostUsd: number;
 	/** More omp flags, before the model. */
 	extra?: readonly string[];
+	/** `omp --private`: the run reads a private session's content, so the model must be one `private.providers` allows. */
+	private?: boolean;
 }
 
 /** The argv of a headless omp: cheap model, no session file, tools, extensions, skills, rules or LSP, and a hard spend cap. */
@@ -40,6 +42,7 @@ export function headlessOmpArgs(options: HeadlessOptions): string[] {
 		"off",
 		"--max-cost",
 		String(options.maxCostUsd),
+		...(options.private === true ? ["--private"] : []),
 		...(options.extra ?? []),
 		"--model",
 		options.model,

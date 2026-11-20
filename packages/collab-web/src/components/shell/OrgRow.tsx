@@ -22,6 +22,7 @@ import type { OrgSection } from "../../lib/session-org";
 import { HostState, hostTitle, SandboxedChip } from "./CompanionCard";
 import { AgentChip } from "./AgentChip";
 import { FanoutChip } from "./FanoutSheet";
+import { PrivateMark } from "./PrivateMark";
 import { HighStakesMark } from "./StakesControl";
 import { SessionCardLine } from "./SessionCardLine";
 import { UnreadBadge } from "./UnreadBadge";
@@ -237,6 +238,7 @@ export function OrgRow(props: OrgRowProps): ReactNode {
 						)}
 						{item.host.sandboxed && <SandboxedChip />}
 						{item.host.highStakes === true && <HighStakesMark />}
+						{item.host.private === true && <PrivateMark />}
 						{item.host.fanout && <FanoutChip fanout={item.host.fanout} />}
 						{joining === item.host.instanceId && <LoaderCircle size={13} className="sh-spin" />}
 					</span>
@@ -266,6 +268,7 @@ export function OrgRow(props: OrgRowProps): ReactNode {
 						<span className="sh-recent-name">{title}</span>
 						{item.session.sandboxed && <SandboxedChip />}
 						{item.session.highStakes === true && <HighStakesMark />}
+						{item.session.private === true && <PrivateMark />}
 					</span>
 					<span className="sh-recent-meta">
 						{props.wake && <span className="sh-host-state">snoozed {props.wake}</span>}

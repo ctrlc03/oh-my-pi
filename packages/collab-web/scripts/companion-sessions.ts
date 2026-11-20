@@ -312,6 +312,22 @@ export async function readSessionHead(file: string): Promise<SessionHead | null>
 	};
 }
 
+/**
+ * Whether the session's header says it is private (`private: true`): every model call of it stays on this computer's
+ * allowlisted local providers. A run the companion starts that reads such a session's conversation or changes is
+ * itself started `--private` (see docs/collab.md, Private sessions). A session that cannot be found or read is not
+ * private: nothing of it can be read either.
+ */
+export async function isPrivateSession(sessionsDir: string | readonly string[], sessionId: string): Promise<boolean> {
+	try {
+		const file = await findSessionFile(sessionsDir, sessionId);
+		if (file === null) return false;
+		return (await readHead(file)).find(e => e.type === "session")?.private === true;
+	} catch {
+		return false;
+	}
+}
+
 export interface SessionFile {
 	file: string;
 	mtime: number;

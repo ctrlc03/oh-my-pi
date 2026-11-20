@@ -120,6 +120,8 @@ export interface FanoutStartDeps {
 		maxCostUsd?: number;
 		sandboxed?: boolean;
 		group: string;
+		/** `omp --private`; see {@link FanoutStartDeps.private}. */
+		private?: boolean;
 	}): Promise<string>;
 	now?: () => number;
 	newId?: () => string;
@@ -129,6 +131,8 @@ export interface FanoutStartDeps {
 	branchName?(index: number, model: string): string;
 	/** The bake-off this group belongs to: its group is kept until the bake-off is deleted. */
 	bakeoff?: string;
+	/** Every member starts `omp --private` (a bake-off of a private session). */
+	private?: boolean;
 }
 
 /**
@@ -179,6 +183,7 @@ export async function startFanout(request: FanoutRequest, deps: FanoutStartDeps)
 					maxCostUsd: perSession,
 					sandboxed: request.sandboxed,
 					group: id,
+					private: deps.private,
 				});
 			} catch (err) {
 				run.error = err instanceof Error ? err.message : String(err);

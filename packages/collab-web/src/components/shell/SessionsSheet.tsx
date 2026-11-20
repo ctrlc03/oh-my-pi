@@ -17,6 +17,7 @@ import { ComputerChip } from "./ComputerChip";
 import { useDeleteSessions } from "./DeleteSessions";
 import { MessageSearch } from "./MessageSearch";
 import { useOpenElsewhere } from "./OpenElsewhere";
+import { PrivateChip } from "./PrivateMark";
 import { SessionCardLine } from "./SessionCardLine";
 import { Sheet, SheetPlacementButton } from "./Sheet";
 import { UnreadBadge } from "./UnreadBadge";
@@ -635,6 +636,7 @@ export function SessionRow({
 						<UnreadBadge computerId={computerId} instanceId={instanceId} />
 					)}
 					{session.live === "idle" && <span className="sh-chip">running</span>}
+					{session.private === true && <PrivateChip />}
 					{hibernated && <span className="sh-chip">hibernated</span>}
 				</span>
 				<span className="sh-recent-meta">

@@ -57,6 +57,7 @@ import {
 import { normalizeRepoPath } from "./companion-citations";
 import { splitLines } from "./companion-excerpt";
 import { headlessRunner, type RunOmp } from "./companion-headless";
+import { isPrivateSession } from "./companion-sessions";
 import { MIN_GRADE_BUDGET_USD } from "./companion-quiz-grade";
 import { detectStack, ghPrSource, type PrSource } from "./companion-quiz-stack";
 import {
@@ -305,6 +306,8 @@ export function createSpars(deps: SparDeps): Spars {
 
 			await progress(run, "Reading the work");
 			const briefs = await briefParts(job.root, parts, job.subject, warnings, "points");
+			// What a private session said or changed goes only to local models: the sparring session is started `--private`.
+			const isPrivate = job.sessionId !== undefined && (await isPrivateSession(deps.sessionsDir, job.sessionId));
 			const digest = await readDigest(deps.sessionsDir, job.sessionId, warnings, "points");
 
 			if (run.cancelled) throw new Cancelled();
@@ -340,6 +343,7 @@ export function createSpars(deps: SparDeps): Spars {
 					prompt,
 					maxCostUsd: generationLimit,
 					model: job.model,
+					private: isPrivate || undefined,
 					outFile,
 					overlayPath,
 					overlayYaml: restrictedOverlayYaml(outFile, READONLY_AGENT_TOOLS),
@@ -415,7 +419,7 @@ export function createSpars(deps: SparDeps): Spars {
 				repo: { root: job.root, name: job.name, ...(job.github ? { github: job.github } : {}) },
 				createdAt,
 				...(model ? { model } : {}),
-				...(digest && job.sessionId ? { sessionId: job.sessionId } : {}),
+				...((digest || isPrivate) && job.sessionId ? { sessionId: job.sessionId } : {}),
 				parts: quizParts,
 				points: verified.points,
 				warnings,
@@ -649,6 +653,8 @@ export function createSpars(deps: SparDeps): Spars {
 						model: replyModel,
 						run: runOmp,
 						budgetUsd: budget,
+						private:
+							doc.spar.sessionId !== undefined && (await isPrivateSession(deps.sessionsDir, doc.spar.sessionId)),
 						input: {
 							point,
 							partTitle: doc.spar.parts[point.part]?.title ?? "",

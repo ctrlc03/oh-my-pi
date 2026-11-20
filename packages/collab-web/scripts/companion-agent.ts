@@ -100,6 +100,8 @@ export interface AgentLaunch {
 	prompt: string;
 	maxCostUsd: number;
 	model?: string;
+	/** Started `omp --private`: the run reads a private session's content, so no model request may leave this computer. */
+	private?: boolean;
 	outFile: string;
 	/** Overlay file this launch writes (the run removes it). */
 	overlayPath: string;

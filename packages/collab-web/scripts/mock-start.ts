@@ -14,6 +14,7 @@ import { browseFolders, checkStartFolder } from "./companion-browse";
 import type { CompanionHost, CompanionReply, CompanionRequest, RecentFolder } from "../src/lib/companion";
 import { createScratchFolder } from "./companion-scratch";
 import { createWorktree } from "./companion-gitflow";
+import { launchesPrivate } from "./companion-private";
 import { parseStartPrompt } from "./companion-start";
 import type { MockForeign } from "./mock-foreign";
 
@@ -51,6 +52,8 @@ const MOCK_BIG_FOLDER = 520;
 /** How long the fake omp "boots": long enough to see the starting row in the sheet. */
 const BOOT_MS = 1_800;
 const WORK_MS = 5_000;
+/** The local model a private session of the mock runs on (`studio-glm` is a provider the user's `private.providers` allows). */
+const MOCK_PRIVATE_MODEL = "studio-glm/glm-5.3-flash";
 
 export interface MockStart {
 	/** Fields the mock companion's `hosts` frame needs for the app to offer these starts. */
@@ -60,6 +63,8 @@ export interface MockStart {
 		canScratch: true;
 		canBackgroundStart: true;
 		canBrowseFolders: true;
+		/** Absent (an older companion): the start sheet offers no Private option. */
+		canPrivate?: true;
 	};
 	handles(request: CompanionRequest): boolean;
 	answer(request: CompanionRequest): Promise<CompanionReply>;
@@ -74,6 +79,8 @@ export function createMockStart(options: {
 	onChange(): void;
 	/** Vendor agents: a `start` with an `agent` (or resuming one of their ended sessions) runs one. */
 	foreign: Pick<MockForeign, "plan">;
+	/** Advertise `canPrivate` and start a `private` request as a private session (a host row with `private: true` on a local model). Default on. */
+	canPrivate?: boolean;
 }): MockStart {
 	const configDir = path.join(options.dir, "config");
 	const worktrees = path.join(options.dir, "worktrees");
@@ -95,6 +102,7 @@ export function createMockStart(options: {
 			canScratch: true,
 			canBackgroundStart: true,
 			canBrowseFolders: true,
+			...(options.canPrivate === false ? {} : { canPrivate: true as const }),
 		},
 		handles: request => request.t === "start" || request.t === "folders" || request.t === "browse-folders",
 		async answer(request) {
@@ -133,19 +141,24 @@ export function createMockStart(options: {
 			}
 			await Bun.sleep(BOOT_MS);
 			const n = ++started;
+			// As the companion: a private session is a new omp one; a vendor agent's or a resume's request ignores the flag.
+			const isPrivate =
+				options.canPrivate !== false &&
+				launchesPrivate({ private: request.private, foreign: Boolean(foreign), resume: request.resume });
 			const instanceId = `start-${n}-${crypto.randomUUID().slice(0, 6)}`;
 			options.hosts.push({
 				instanceId,
 				sessionId: foreign?.resumed?.sessionId ?? instanceId,
 				sessionName: prompt?.split("\n")[0]?.slice(0, 60) || name,
 				cwd,
-				model: foreign ? (foreign.model ?? null) : "anthropic/claude-sonnet-5-5",
+				model: foreign ? (foreign.model ?? null) : isPrivate ? MOCK_PRIVATE_MODEL : "anthropic/claude-sonnet-5-5",
 				startedAt: Date.now(),
 				participants: 1,
 				busy: prompt !== undefined,
 				inputRequired: false,
 				relayConnected: true,
 				sandboxed: request.sandboxed === true ? true : undefined,
+				private: isPrivate ? true : undefined,
 				agent: foreign?.agent,
 			});
 			if (prompt !== undefined) {

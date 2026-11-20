@@ -179,9 +179,19 @@ export function mergeLive(
 	summaries: readonly SessionSummary[],
 	live: { hosts: readonly CompanionHost[]; idle: readonly CompanionIdleSession[] },
 ): SessionOverview[] {
-	const instances = new Map<string, { instanceId: string; live: "host" | "idle" }>();
-	for (const idle of live.idle) instances.set(idle.sessionId, { instanceId: idle.instanceId, live: "idle" });
-	for (const host of live.hosts) instances.set(host.sessionId, { instanceId: host.instanceId, live: "host" });
+	const instances = new Map<string, { instanceId: string; live: "host" | "idle"; private?: true }>();
+	for (const idle of live.idle)
+		instances.set(idle.sessionId, {
+			instanceId: idle.instanceId,
+			live: "idle",
+			...(idle.private === true ? { private: true as const } : {}),
+		});
+	for (const host of live.hosts)
+		instances.set(host.sessionId, {
+			instanceId: host.instanceId,
+			live: "host",
+			...(host.private === true ? { private: true as const } : {}),
+		});
 	const sessions: SessionOverview[] = [];
 	for (const summary of summaries) {
 		const sessionId = sessionIdOfFile(summary.file);

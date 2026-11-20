@@ -198,6 +198,8 @@ export interface ReplyOptions {
 	run: RunOmp;
 	/** What is left of the spar's spending limit, USD. */
 	budgetUsd: number;
+	/** The spar comes from a private session: the reply run is started `--private`. */
+	private?: boolean;
 	input: SparReplyInput;
 }
 
@@ -228,6 +230,7 @@ export async function replyToDefence(options: ReplyOptions): Promise<ReplyResult
 		model: options.model,
 		systemPrompt: REPLY_SYSTEM_PROMPT,
 		maxCostUsd,
+		private: options.private,
 		extra: ["--mode", "json"],
 	});
 	let result: RunResult;

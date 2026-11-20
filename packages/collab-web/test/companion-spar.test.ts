@@ -612,3 +612,33 @@ describe("a spar on a design", () => {
 		expect(spar.parts[0]!.base).toBeDefined();
 	});
 });
+
+const PRIVATE_SESSION_ID = "01b23fa5-0000-7000-8000-00000000aaaa";
+
+/** The fixture session again under another id, with `private: true` in its header when `isPrivate`. */
+async function writeSession(dir: string, id: string, isPrivate: boolean): Promise<void> {
+	const folder = path.join(dir, "-work-repo");
+	await fs.mkdir(folder, { recursive: true });
+	const text = (await Bun.file(path.join(import.meta.dir, "fixtures/quiz/session.jsonl")).text())
+		.replaceAll("01a12fa5-758e-7595-b768-bb9462d6e44e", id)
+		.replace('"cwd":"/work/repo"}', `"cwd":"/work/repo"${isPrivate ? ',"private":true' : ""}}`);
+	await fs.writeFile(path.join(folder, `2026-10-12T10-25-35-118Z_${id}.jsonl`), text);
+}
+
+describe("a spar of a private session", () => {
+	it("starts its sparring session and its replies --private, and a spar of another session neither", async () => {
+		await writeSession(sessionsDir(), PRIVATE_SESSION_ID, true);
+		await writeSession(sessionsDir(), "01a12fa5-758e-7595-b768-bb9462d6e44e", false);
+		const h = harness("private1");
+		const id = await ready(h, { ...CHANGE, cwd: repo, sessionId: PRIVATE_SESSION_ID });
+		expect(h.launches[0]!.private).toBe(true);
+		await h.spars.reply({ id, run: "r1", point: "p1", text: "It is checked by `src/runtime.ts:1`." });
+		expect(h.calls[0]!.argv).toContain("--private");
+
+		const plain = harness("private2");
+		const other = await ready(plain, { ...CHANGE, cwd: repo, sessionId: "01a12fa5-758e-7595-b768-bb9462d6e44e" });
+		expect(plain.launches[0]!.private).toBeUndefined();
+		await plain.spars.reply({ id: other, run: "r1", point: "p1", text: "It is checked by `src/runtime.ts:1`." });
+		expect(plain.calls[0]!.argv).not.toContain("--private");
+	});
+});

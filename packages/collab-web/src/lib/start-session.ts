@@ -16,6 +16,8 @@ export interface StartDraft {
 	sandboxed: boolean;
 	/** Pushes and pull requests need a passed quiz (needs `canHighStakes`). Ignored for vendor agents. */
 	highStakes?: boolean;
+	/** Only this computer's local models: no Claude, no web search (needs `canPrivate`). Ignored for vendor agents. */
+	private?: boolean;
 	/** Work on a new branch in its own git worktree. */
 	worktree: boolean;
 	/** The worktree's branch name; empty for the default. */
@@ -37,6 +39,8 @@ export interface StartTarget {
 	sandboxed: boolean;
 	/** New sessions only: a resumed session keeps the mode it was stored with. */
 	highStakes?: boolean;
+	/** New sessions only: a resumed session keeps the privacy it was stored with. */
+	private?: boolean;
 	worktree?: { branch?: string };
 	/** A session without a project; `hint` names its folder. */
 	scratch?: { hint?: string };
@@ -59,6 +63,14 @@ export function folderLabel(cwd: string): string {
 	return scratchLabel(cwd) ?? cwd.split("/").filter(Boolean).pop() ?? cwd;
 }
 
+/**
+ * Whether a new session is started private: asked for, the computer's companion launches `omp --private` (`canPrivate`), and
+ * the agent is omp (a vendor agent's model calls go to its vendor, so the option does not apply to it).
+ */
+export function startsPrivate(wanted: boolean, canPrivate: boolean, agent: string | null): boolean {
+	return wanted && canPrivate && agent === null;
+}
+
 /** The new session the draft asks for. A worktree needs a repository: a folder without a project never gets one. */
 export function newSessionTarget(draft: StartDraft): StartTarget {
 	const hint = draft.prompt.trim() || undefined;
@@ -66,6 +78,7 @@ export function newSessionTarget(draft: StartDraft): StartTarget {
 		cwd: draft.cwd,
 		sandboxed: draft.sandboxed,
 		highStakes: draft.highStakes === true && draft.agent === null ? true : undefined,
+		private: draft.private === true && draft.agent === null ? true : undefined,
 		worktree: draft.worktree && !isProjectless(draft.cwd) ? { branch: draft.branch.trim() || undefined } : undefined,
 		scratch: draft.cwd === NO_PROJECT ? { hint } : undefined,
 		...(draft.agent === null
@@ -80,6 +93,7 @@ export function startOptions(target: StartTarget, extra: { prompt?: string; forc
 		resume: target.resume,
 		sandboxed: target.sandboxed || undefined,
 		highStakes: target.highStakes || undefined,
+		private: target.private || undefined,
 		worktree: target.worktree,
 		scratch: target.scratch,
 		agent: target.agent,

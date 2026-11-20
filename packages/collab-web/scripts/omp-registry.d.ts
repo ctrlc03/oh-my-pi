@@ -27,6 +27,8 @@ export interface CollabHostSnapshot {
 	agent?: AgentRef;
 	/** Todo progress of the session; absent from an omp that predates it. Read through `parseTodoProgress`, which checks its shape. */
 	todo?: unknown;
+	/** `true` for a private session (model requests limited to `private.providers`); absent otherwise and on an omp that predates it. */
+	private?: boolean;
 	access: "view" | "control";
 }
 
@@ -42,6 +44,8 @@ export interface CollabIdleSnapshot {
 	busy: boolean;
 	/** See {@link CollabHostSnapshot.todo}. */
 	todo?: unknown;
+	/** See {@link CollabHostSnapshot.private}. */
+	private?: boolean;
 }
 
 export interface CollabSessionListing {

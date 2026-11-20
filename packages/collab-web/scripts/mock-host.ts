@@ -2,7 +2,7 @@
  * Offline mock collab host: starts the local relay, opens a room as host, and
  * serves the canned fixture session to any collab-web guest that joins.
  *
- *   bun scripts/mock-host.ts [--port 7466] [--local-relay [PORT]] [--many-models] [--agent <id>] [--stakes-markers <file>] [--topic]
+ *   bun scripts/mock-host.ts [--port 7466] [--local-relay [PORT]] [--many-models] [--agent <id>] [--stakes-markers <file>] [--topic] [--private]
  *
  * Prints a full join link (guests may prompt and run session controls) and a
  * view link (read-only). Replays a scripted streaming turn on every guest
@@ -25,6 +25,9 @@
  * switched with a `permission` session command), `approve [command]` asks with the vendor's three choices, and the
  * features omp alone has (profiles, usage limits, cache stats, context items, PR watch) are not offered.
  *
+ * `--private` presents the session as a private one (feature `private` in the welcome): the header shows the Private badge, as for a
+ * session the mock companion lists with `--private-on`. Not for `--agent` sessions (vendor agents are never private).
+ *
  * `--local-relay` also serves the room on a second loopback relay (default: the port after
  * `--port`) and puts it in the links as `?local=`, the way omp does with `collab.localRelayUrl`:
  * a guest on this computer joins through it and falls back to the main relay when it is down.
@@ -34,6 +37,7 @@
 import type {
 	AgentRef,
 	AgentSnapshot,
+	CollabFeature,
 	ContextItemRow,
 	GuestFrame,
 	HostFrame,
@@ -146,6 +150,9 @@ function parseMockAgent(args: string[]): AgentRef | undefined {
 	return { id, name: Object.hasOwn(MOCK_AGENT_NAMES, id) ? MOCK_AGENT_NAMES[id]! : id.slice("custom:".length) };
 }
 const mockAgent = parseMockAgent(argv);
+const mockPrivate = argv.includes("--private") && mockAgent === undefined;
+/** The welcome's features, with `private` when the mock presents a private session. */
+const withPrivate = (features: CollabFeature[]): CollabFeature[] => (mockPrivate ? [...features, "private"] : features);
 /** How a vendor agent's session answers tool permission requests; `full` approves them all. */
 let permission: SessionPermission = "supervised";
 /** Watched pull requests act out a scripted timeline (feature `pr-watch`): a failing check wakes the session with a log, a comment wakes it again, a merge ends the watch. */
@@ -455,38 +462,40 @@ function handleHello(peer: RoomPeer, hello: HelloFrame): void {
 			})),
 			profiles: mockAgent ? [] : fixtureProfiles.map(candidate => ({ ...candidate })),
 			agent: mockAgent,
-			features: mockAgent
-				? [
-						"follow-up",
-						"commands",
-						"prompt-model",
-						"approval-grants",
-						"permission-mode",
-						"turn-diff",
-						"rewind",
-						"rewind-files",
-						...(Number.isFinite(mockMaxCostUsd) ? (["spend-cap"] as const) : []),
-					]
-				: [
-						"follow-up",
-						"rewind",
-						"commands",
-						"rewind-files",
-						"prompt-model",
-						"context-items",
-						"inspect",
-						"spend-cap",
-						"undo",
-						"profiles",
-						"usage-limits",
-						"cache-stats",
-						"queue-edit",
-						"mentions",
-						"approval-grants",
-						"pr-watch",
-						"turn-diff",
-						"receipts",
-					],
+			features: withPrivate(
+				mockAgent
+					? [
+							"follow-up",
+							"commands",
+							"prompt-model",
+							"approval-grants",
+							"permission-mode",
+							"turn-diff",
+							"rewind",
+							"rewind-files",
+							...(Number.isFinite(mockMaxCostUsd) ? (["spend-cap"] as const) : []),
+						]
+					: [
+							"follow-up",
+							"rewind",
+							"commands",
+							"rewind-files",
+							"prompt-model",
+							"context-items",
+							"inspect",
+							"spend-cap",
+							"undo",
+							"profiles",
+							"usage-limits",
+							"cache-stats",
+							"queue-edit",
+							"mentions",
+							"approval-grants",
+							"pr-watch",
+							"turn-diff",
+							"receipts",
+						],
+			),
 			commands: mockAgent ? fixtureCommands.filter(command => command.name !== "clear") : fixtureCommands,
 		},
 		entries,

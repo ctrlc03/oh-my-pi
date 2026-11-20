@@ -83,6 +83,7 @@ export function createMockSearch(
 				models: host.model === null ? [] : [host.model],
 				instanceId: host.instanceId,
 				live: "host" as const,
+				private: host.private,
 				agent: host.agent,
 				todo: host.todo,
 			},

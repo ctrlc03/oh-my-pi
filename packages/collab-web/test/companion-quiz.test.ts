@@ -545,3 +545,56 @@ describe("a quiz on a stack of pull requests", () => {
 		expect(await git(stackRepo, "for-each-ref", "refs/omp-blueprint/maps")).toBe("");
 	});
 });
+
+const PRIVATE_SESSION_ID = "01b23fa5-0000-7000-8000-00000000aaaa";
+
+/** The fixture session again under another id, with `private: true` in its header when `isPrivate`. */
+async function writeSession(dir: string, id: string, isPrivate: boolean): Promise<void> {
+	const folder = path.join(dir, "-work-repo");
+	await fs.mkdir(folder, { recursive: true });
+	const text = (await Bun.file(path.join(import.meta.dir, "fixtures/quiz/session.jsonl")).text())
+		.replaceAll("01a12fa5-758e-7595-b768-bb9462d6e44e", id)
+		.replace('"cwd":"/work/repo"}', `"cwd":"/work/repo"${isPrivate ? ',"private":true' : ""}}`);
+	await fs.writeFile(path.join(folder, `2026-10-12T10-25-35-118Z_${id}.jsonl`), text);
+}
+
+describe("a quiz of a private session", () => {
+	it("starts its question writer and its grader --private, and a quiz of another session neither", async () => {
+		await writeSession(sessionsDir, PRIVATE_SESSION_ID, true);
+		const h = harness("private1");
+		const { id } = await h.quizzes.create({
+			cwd: repo,
+			ref: "feature/typestate",
+			base: "main",
+			sessionId: PRIVATE_SESSION_ID,
+		});
+		await h.quizzes.idle();
+		expect(h.launches).toHaveLength(1);
+		expect(h.launches[0]!.private).toBe(true);
+		const open = await h.quizzes.answer({
+			id,
+			attempt: "a1",
+			question: "q1",
+			text: "The type carries the permission.",
+		});
+		expect(open.verdict.graded).toBe("model");
+		expect(h.graded[0]!.argv).toContain("--private");
+
+		const plain = harness("private2");
+		const other = await plain.quizzes.create({
+			cwd: repo,
+			ref: "feature/typestate",
+			base: "main",
+			sessionId: "01a12fa5-758e-7595-b768-bb9462d6e44e",
+		});
+		await plain.quizzes.idle();
+		expect(plain.launches[0]!.private).toBeUndefined();
+		await plain.quizzes.answer({
+			id: other.id,
+			attempt: "a1",
+			question: "q1",
+			text: "The type carries the permission.",
+		});
+		expect(plain.graded[0]!.argv).not.toContain("--private");
+	});
+});

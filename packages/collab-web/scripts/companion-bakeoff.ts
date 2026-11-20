@@ -10,6 +10,7 @@
  * worktrees (./companion-fanout), citations verified against commits (./companion-citations).
  */
 
+import { isPrivateSession } from "./companion-sessions";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { BlueprintExcerpt, BlueprintExcerptRef } from "@oh-my-pi/pi-wire/blueprint";
@@ -490,6 +491,7 @@ export function createBakeoffs(deps: BakeoffDeps): Bakeoffs {
 				document = { text, name: request.doc.path };
 			}
 		}
+		const isPrivate = job.sessionId !== undefined && (await isPrivateSession(deps.sessionsDir, job.sessionId));
 		const digest = await readDigest(deps.sessionsDir, job.sessionId, warnings, "entries");
 		if (
 			request.mode === "implementation" &&
@@ -572,6 +574,7 @@ export function createBakeoffs(deps: BakeoffDeps): Bakeoffs {
 			maxCostUsd: request.maxCostUsd,
 			held: Array.from({ length: run.held }, (_, index) => `${run.id}/p${index}`),
 			...(document ? { document } : {}),
+			...(isPrivate ? { private: true as const } : {}),
 		};
 	}
 

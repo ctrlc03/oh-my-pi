@@ -109,6 +109,8 @@ export interface TmuxLaunch {
 	maxCostUsd?: number;
 	/** Run on this model (`omp --model provider/id`); validated like a fan-out model selector. */
 	model?: string;
+	/** A new private omp session (`omp --private`): every model call stays on the providers `private.providers` allows. Not for a vendor agent or a resume. */
+	private?: boolean;
 	/** Run a vendor agent's host (`scripts/foreign/host-main.ts`) instead of omp; `ompBin`, `overlayPath` and `sandbox` then go unused (a vendor agent never runs sandboxed). */
 	foreign?: ForeignLaunch;
 	/**
@@ -248,6 +250,7 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 				...(launch.resume ? ["-r", launch.resume] : []),
 				...(launch.maxCostUsd !== undefined ? ["--max-cost", String(launch.maxCostUsd)] : []),
 				...(launch.model !== undefined ? ["--model", launch.model] : []),
+				...(launch.private === true ? ["--private"] : []),
 			];
 	// tmux format-expands `-c` (`#(cmd)` would run in the tmux server, outside any sandbox), so the folder is never a
 	// tmux argument: the shell enters it from a positional parameter, which tmux passes on untouched.

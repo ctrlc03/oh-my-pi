@@ -11,8 +11,19 @@ import {
 import { PrivateSessionError } from "../session/private-session";
 import { cfgOffline } from "./auxiliary-model-policy";
 import { cfgMemoryBackend } from "../memory-backend/settings";
+import { cfgOperatorPersonalEnabled } from "../personal/settings";
 import { cfgOperatorPrivateProviders } from "./model-settings";
 import type { Settings } from "./settings";
+
+/**
+ * Whether a private process keeps its memory: only the Personal agent's Mnemopi (`personal.enabled` from operator layers,
+ * `memory.backend: mnemopi`). Its bank is a file in the profile, and what the backend asks a model is limited by the egress
+ * guard (`private.providers`) and by `models.offline`, which private mode turns on: extraction stays on the active private
+ * provider, and embeddings are not loaded or fetched. Every other backend, and Mnemopi outside Personal, stays off.
+ */
+export function privateKeepsMemory(settings: Settings): boolean {
+	return cfgOperatorPersonalEnabled.get(settings) && cfgMemoryBackend.get(settings) === "mnemopi";
+}
 
 /**
  * Make this process private, limited to `private.providers`. Idempotent for the same allowlist;
@@ -35,8 +46,8 @@ export function activatePrivateMode(settings: Settings): readonly string[] {
 	// Auxiliary services (judge, Spotlight, memory, live audio, hosted web search, ...) already honor
 	// `models.offline`: they stay on the active model's provider, which a private session limits to the allowlist.
 	cfgOffline.override(settings, true);
-	// Memory backends (local, Hindsight, Mnemopi, Sharpshooter) call models or ship transcripts to a store.
-	cfgMemoryBackend.override(settings, "off");
+	// Memory backends (local, Hindsight, Mnemopi, Sharpshooter) call models or ship transcripts to a store; the Personal agent's Mnemopi is the exception.
+	if (!privateKeepsMemory(settings)) cfgMemoryBackend.override(settings, "off");
 	return privateModeProviders() ?? [];
 }
 

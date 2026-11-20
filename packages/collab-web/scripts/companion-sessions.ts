@@ -187,6 +187,34 @@ export function assistantReplySince(entries: Entry[], since: number): string | n
 }
 
 /**
+ * The conversation in `entries` as plain `role: text` paragraphs (user and assistant messages, and custom messages such as an
+ * owner's prompt from the app), the newest `maxChars` of it. For a run that has to carry a session on without being able to
+ * resume it: the Personal agent's handoff note when privacy turns on and the live session is a normal one.
+ */
+export function conversationText(entries: Entry[], maxChars: number): string {
+	const parts: string[] = [];
+	for (const entry of entries) {
+		const message = messageOf(entry);
+		const role = message === null ? (entry.type === "custom_message" ? "owner" : null) : String(message.role);
+		if (role === null || (message !== null && role !== "user" && role !== "assistant")) continue;
+		const content = message === null ? entry.content : message.content;
+		const text =
+			typeof content === "string"
+				? content
+				: Array.isArray(content)
+					? content
+							.filter(isRecord)
+							.filter(b => b.type === "text" && typeof b.text === "string")
+							.map(b => b.text as string)
+							.join("\n")
+					: "";
+		if (text.trim() !== "") parts.push(`${role}: ${text.trim()}`);
+	}
+	const all = parts.join("\n\n");
+	return all.length > maxChars ? all.slice(all.length - maxChars) : all;
+}
+
+/**
  * Where vendor agent sessions keep their transcripts, beside omp's `sessionsDir` (`<config>/agent/sessions`): one flat file per
  * session, `<sessionId>.jsonl`, in omp's entry schema. Never under `sessionsDir`, so omp's own resume does not list them.
  */

@@ -70,7 +70,8 @@ import {
 	releaseLaunch,
 	type TmuxLaunch,
 } from "./companion-start";
-import { assistantReplySince, findSessionFile, readSessionTail } from "./companion-sessions";
+import { assistantReplySince, findSessionFile, isPrivateSession, readSessionTail } from "./companion-sessions";
+import { HANDOFF_REQUEST, privateHandoffNote } from "./companion-personal-private";
 
 // ── shared helpers ───────────────────────────────────────────────────────────
 
@@ -116,6 +117,8 @@ export interface PersonalDeps {
 	onError(err: unknown): void;
 	/** A memory handle over the profile's bank; the caller closes it. */
 	openAdmin(options?: { readOnly?: boolean }): MemoryAdmin;
+	/** Personal's Private setting (`on`), and why a private run cannot start now (`problem`: no `private.providers` in the profile, or none defined in its `models.yml`). */
+	privacy(): Promise<{ on: boolean; problem: string | null }>;
 }
 
 /** What the companion hands the runtime: the computer it runs on and the few things only `companion.ts` can do. */
@@ -244,6 +247,10 @@ export interface KeepAliveInput {
 	chatTree: boolean;
 	/** The live session was launched in another memory mode than the configured one: restarting it makes the switch. */
 	modeMismatch: boolean;
+	/** Private is on and the live session is a normal one: it has to be replaced by a private session, busy or not. */
+	privacyMismatch: boolean;
+	/** Private is on and cannot run (see {@link PersonalDeps.privacy}): nothing may start. */
+	privacyBlocked: boolean;
 }
 
 /** `renew` starts a fresh omp session in chat-tree mode (no handoff, the chat is kept); `rollover` restarts with a handoff or a mode change. */
@@ -253,19 +260,19 @@ export type KeepAliveAction = "none" | "start" | "rollover" | "renew";
 export function keepAliveDecision(input: KeepAliveInput): KeepAliveAction {
 	if (!input.enabled || input.lifecycleBusy) return "none";
 	if (input.live === null)
-		return !input.stopped && input.loginReady && input.now >= input.nextStartAt ? "start" : "none";
+		return !input.stopped && input.loginReady && !input.privacyBlocked && input.now >= input.nextStartAt
+			? "start"
+			: "none";
+	// A normal session while privacy is on makes hosted-model calls with every turn: not waited out until it is idle.
+	if (input.privacyMismatch) return "rollover";
+	// A private session that cannot be replaced by another private one keeps running: no rollover until private can run.
+	if (input.privacyBlocked) return "none";
 	const idle = input.live.busy === false && !input.live.inputRequired;
 	if (!idle) return "none";
 	if (input.modeMismatch) return "rollover";
 	if (input.chatTree) return input.contextFull ? "renew" : "none";
 	return input.rolloverDue || input.contextFull ? "rollover" : "none";
 }
-
-const ROLLOVER_REQUEST = [
-	"The day's session is ending. Reply with one handoff note for your next session, nothing else.",
-	"Include what you were doing, anything you promised the owner, open questions you asked, and what to check next.",
-	"Do not repeat what is already in memory or About you.",
-].join(" ");
 
 /** The first prompt of the session that follows a rollover. */
 export function handoffPrompt(note: string): string {
@@ -299,6 +306,9 @@ const CONTEXT_CHECK_MS = 60_000;
 const CHAT_STATUS_PUSH_MS = 5_000;
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** Private is on and cannot run (see {@link PersonalDeps.privacy}): a setting to fix, not a failed start. */
+class PrivateUnavailable extends Error {}
 
 // ── the runtime ──────────────────────────────────────────────────────────────
 
@@ -408,6 +418,14 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 		return ok;
 	};
 
+	// Private: the setting, and whether a private run can start now. `privacyProblem` is the last answer (tick and status refresh it).
+	const privacy = async (): Promise<{ on: boolean; problem: string | null }> => {
+		const on = settings().private === true;
+		return { on, problem: on ? await profile.privateProblem() : null };
+	};
+	let privacyProblem: string | null = null;
+	let privacyAlerted: string | null = null;
+
 	const deps: PersonalDeps = {
 		paths,
 		profile,
@@ -425,6 +443,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 		settings,
 		onError,
 		openAdmin: options => openMemoryAdmin({ agentDir: paths.agentDir, ...options }),
+		privacy,
 	};
 
 	const inbox = createPersonalInbox(deps);
@@ -446,6 +465,20 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 	let contextFull = false;
 	let lastContextCheck = 0;
 	let lastRun: PersonalRunState = "off";
+
+	/** The reason the live session cannot be private, told once to the owner as an alert (and on every status as `error`). */
+	const refreshPrivacy = async (): Promise<{ on: boolean; problem: string | null }> => {
+		const answer = await privacy();
+		privacyProblem = answer.problem;
+		if (answer.problem === null) privacyAlerted = null;
+		else if (enabled() && privacyAlerted !== answer.problem) {
+			privacyAlerted = answer.problem;
+			void inbox
+				.alert({ title: "Private cannot run", body: answer.problem, tag: "personal-private" })
+				.catch(onError);
+		}
+		return answer;
+	};
 
 	/** A host registers the folder as its process sees it (`/var/...` for `/private/var/...` on macOS), so compare resolved paths too. */
 	const inWorkspace = (cwd: string): boolean => {
@@ -484,7 +517,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 			return live.busy === false ? "idle" : "working";
 		}
 		if (lifecycle !== null) return "starting";
-		if (failures >= FAILED_AFTER) return "failed";
+		if (failures >= FAILED_AFTER || privacyProblem !== null) return "failed";
 		if (state.read().stopped || !loginOk) return "stopped";
 		return "starting";
 	};
@@ -569,21 +602,53 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 	/** Start the session: resume the recorded one, or begin a new one with the handoff as its first prompt. */
 	const launch = async (): Promise<void> => {
 		if (!(await loginReady())) throw new Error(`The Personal agent has no login: run ${PERSONAL_LOGIN_COMMAND}`);
+		const wantPrivate = settings().private === true;
+		if (wantPrivate) {
+			const problem = await profile.privateProblem();
+			if (problem !== null) throw new PrivateUnavailable(problem);
+		}
 		const tmux = await launcher.findTmux();
 		if (tmux === null) throw new Error("tmux is not installed on this computer");
 		const target = mode();
 		const recorded = state.read().session;
-		const handoff = state.read().handoff;
+		let handoff = state.read().handoff;
 		// The first start of the endless chat takes the stored note as its first message; once it has messages the note is stale.
 		const chatNote = target === "chat-tree" && handoff !== null && !(await chatHasMessages(paths)) ? handoff : null;
 		// A recall session resumes unless a note waits for it; any session starts anew when the memory mode changed.
-		const recordedFile =
+		let recordedFile =
 			recorded !== null &&
 			(target === "chat-tree" || handoff === null) &&
 			(recorded.mode ?? PERSONAL_DEFAULTS.memoryMode) === target &&
 			failures < FAILED_AFTER
 				? await findSessionFile(paths.sessionsDir, recorded.sessionId)
 				: null;
+		// Private is on and the recorded session is a normal one: `--private` refuses to resume it, and a normal session may not run.
+		// A new private session takes its place, with a note written by a private run (the old session cannot be asked: it is not private).
+		if (
+			wantPrivate &&
+			recordedFile !== null &&
+			recorded !== null &&
+			!(await isPrivateSession(paths.sessionsDir, recorded.sessionId))
+		) {
+			recordedFile = null;
+			const made =
+				target === "recall"
+					? await privateHandoffNote({ paths, ompBin: env.ompBin, runOmp }, recorded.sessionId)
+					: { note: null, why: "the endless chat carries it" };
+			if (made.note !== null) {
+				const note = made.note;
+				handoff = note;
+				await state.update(s => ({ ...s, handoff: note }));
+			}
+			await events.log(
+				"Private is on: replacing the normal session",
+				`The last session was a normal one, which a private session cannot resume and which may call hosted models. A new private session starts instead. ${
+					made.note !== null
+						? "Its handoff note was written by a private run from the session's conversation."
+						: `No handoff note was written (${made.why ?? "none was needed"}).`
+				}`,
+			);
+		}
 		const resume = recordedFile === null || recorded === null ? undefined : recorded.sessionId;
 		const spawnedAt = now();
 		const launched = await launcher.launch({
@@ -594,6 +659,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 			localRelayUrl: env.localRelayUrl(),
 			cwd: paths.workspace,
 			resume,
+			private: wantPrivate,
 			prompt: target === "recall" && resume === undefined && handoff !== null ? handoffPrompt(handoff) : undefined,
 			keepEnded: true,
 			profile: { name: PERSONAL_PROFILE, overlayYaml: profile.overlayText("live") },
@@ -659,6 +725,12 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 
 	/** The session finishes the turn in progress, retains and consolidates its memory, and exits; it is ended when it does not. */
 	const exitSession = async (host: CompanionHost): Promise<void> => {
+		// The exit retains and consolidates memory, which a normal session does with a hosted model: while privacy is on, it is ended instead.
+		if (settings().private === true && host.private !== true) {
+			await env.endHost(host.instanceId);
+			live = null;
+			return;
+		}
 		await events.enqueueOwner({ source: "companion", kind: "control", title: "Exit", body: "exit" });
 		const gone = await waitFor(timing.exitWaitMs, async () =>
 			(await hostNow(host.sessionId)) === null ? true : null,
@@ -684,12 +756,55 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 		try {
 			await launch();
 		} catch (err) {
-			await recordFailure(errorText(err));
+			// Private that cannot run is a setting to fix, not a start that failed: no back-off, no count, no alert (the status says why).
+			if (!(err instanceof PrivateUnavailable)) await recordFailure(errorText(err));
 			throw err;
 		}
 	};
 
 	const start = (): Promise<void> => exclusive("starting", launchOrFail);
+
+	/**
+	 * Private is on and the live session is a normal one. It is ended at once, without the exit it would make (retaining and
+	 * consolidating memory calls a hosted model), and a new private session starts in its place with a handoff note written by
+	 * a private run from the old session's conversation, because the old session cannot be asked for one. When a private run
+	 * cannot start (`private.providers` missing), the normal session is ended all the same and the status says why.
+	 */
+	const switchToPrivate = async (host: CompanionHost): Promise<void> => {
+		const running = launchedMode(host) ?? mode();
+		await env.endHost(host.instanceId);
+		live = null;
+		const problem = await profile.privateProblem();
+		if (problem !== null) {
+			privacyProblem = problem;
+			await events.log(
+				"Private is on: ended the normal session",
+				`The live session was a normal one, so it was ended. Private cannot run yet, so nothing starts: ${problem}`,
+			);
+			changed(["status"]);
+			throw new PrivateUnavailable(problem);
+		}
+		const made =
+			running === "recall"
+				? await privateHandoffNote({ paths, ompBin: env.ompBin, runOmp }, host.sessionId)
+				: { note: null, why: "the endless chat carries it" };
+		await events.log(
+			"Private is on: replaced the normal session",
+			`The live session was a normal one: it may call hosted models and a private session cannot resume it, so it was ended without its usual exit and a new private session starts. ${
+				made.note !== null
+					? "Its handoff note was written by a private run from the session's conversation."
+					: `No handoff note was written (${made.why ?? "none was needed"}).`
+			}`,
+		);
+		await state.update(s => ({
+			...s,
+			handoff: made.note ?? s.handoff,
+			session: null,
+			rolloverDay: localDay(now()),
+		}));
+		contextFull = false;
+		await launchOrFail();
+	};
 
 	/**
 	 * Restart the live session. A recall session is asked for a handoff note first and the next one starts with it as
@@ -704,6 +819,14 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 				await launchOrFail();
 				return;
 			}
+			if (settings().private === true && host.private !== true) {
+				await switchToPrivate(host);
+				return;
+			}
+			if (settings().private === true) {
+				const problem = await profile.privateProblem();
+				if (problem !== null) throw new PrivateUnavailable(problem);
+			}
 			const running = launchedMode(host) ?? mode();
 			const idle = await waitFor(timing.replyWaitMs, async () => {
 				const current = await hostNow(host.sessionId);
@@ -717,7 +840,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 					source: "companion",
 					kind: "rollover",
 					title: "Rollover",
-					body: ROLLOVER_REQUEST,
+					body: HANDOFF_REQUEST,
 				});
 				note = await waitFor(timing.replyWaitMs, async () => {
 					const current = await hostNow(host.sessionId);
@@ -726,7 +849,12 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 				});
 			}
 			await exitSession(host);
-			const resumes = !fresh && running === "chat-tree" && mode() === "chat-tree";
+			// A private session cannot become a normal one: with privacy turned off, the next session is a new one.
+			const resumes =
+				!fresh &&
+				running === "chat-tree" &&
+				mode() === "chat-tree" &&
+				!(host.private === true && settings().private !== true);
 			await state.update(s => ({
 				...s,
 				handoff: note ?? s.handoff,
@@ -769,6 +897,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 			inbox.counts(),
 		]);
 		loginOk = login.state === "ready";
+		await refreshPrivacy();
 		const session = sessionOf();
 		const chat = enabled() && mode() === "chat-tree" ? await readChatTreeStatus(paths) : null;
 		return {
@@ -793,7 +922,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 			counts,
 			rev: s.rev,
 			...(chat !== null ? { chatTree: chat } : {}),
-			...(s.error !== undefined && enabled() ? { error: s.error } : {}),
+			...(enabled() && (privacyProblem ?? s.error) !== undefined ? { error: privacyProblem ?? s.error } : {}),
 		};
 	};
 
@@ -945,6 +1074,7 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 				contextFull = false;
 			}
 			const ready = await loginReady();
+			const privateNow = await refreshPrivacy();
 			const run = runState();
 			if (run !== lastRun) {
 				lastRun = run;
@@ -972,6 +1102,8 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 				contextFull,
 				chatTree: mode() === "chat-tree",
 				modeMismatch: launchedAs !== null && launchedAs !== mode(),
+				privacyMismatch: privateNow.on && live !== null && live.private !== true,
+				privacyBlocked: privateNow.problem !== null,
 			});
 			if (action === "start") guard("starting the session", start);
 			else if (action === "rollover") guard("rollover", () => rollover());

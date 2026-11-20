@@ -17,6 +17,7 @@
 
 ### Changed
 
+- A private process keeps the Personal agent's Mnemopi memory (`personal.enabled` and `memory.backend: mnemopi` in the operator's layers) so a private Personal agent still remembers; every other memory backend, and Mnemopi outside Personal, stays off. `models.offline` confines what it asks a model to the session's provider (`privateKeepsMemory` in `src/config/private-mode.ts`).
 - Changed the default local text-to-speech model to Phonon 31M: faster synthesis, a smaller download, and new voices (Kokoro voice settings migrate automatically); the speaking-rate range is now 0.8–1.3×, and old Kokoro caches are removed after the first Phonon install
 - Bash calls that overlap a running or backgrounded call now carry the variables, functions, aliases, options and traps they set into the session's shell (the call that ends last wins a name both set), instead of discarding them with a "Ran in a copy of the busy session shell" notice on every overlapping call; background jobs they start are no longer killed when that copy is garbage-collected
 - `omp update` on a fork build reports a failed check or install as an error and returns an outcome like upstream builds, instead of exiting the process, so background auto-update can drive it.

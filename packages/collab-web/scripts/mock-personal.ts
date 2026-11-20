@@ -301,6 +301,7 @@ export function createMockPersonal(options: MockPersonalOptions): MockPersonal {
 		review: { ...PERSONAL_DEFAULTS.review },
 		rollover: { ...PERSONAL_DEFAULTS.rollover },
 		memoryMode: PERSONAL_DEFAULTS.memoryMode,
+		private: PERSONAL_DEFAULTS.private,
 		backup: { folder: null },
 		sources: [],
 	};
@@ -364,6 +365,7 @@ export function createMockPersonal(options: MockPersonalOptions): MockPersonal {
 			inputRequired: false,
 			relayConnected: true,
 			personal: true,
+			...(settings.private === true ? { private: true } : {}),
 		};
 		if (at >= 0) options.hosts[at] = row;
 		else options.hosts.push(row);
@@ -1059,6 +1061,10 @@ export function createMockPersonal(options: MockPersonalOptions): MockPersonal {
 			if (patch.memoryMode !== "recall" && patch.memoryMode !== "chat-tree")
 				throw new Error('The memory mode must be "recall" or "chat-tree".');
 			next.memoryMode = patch.memoryMode;
+		}
+		if (patch.private !== undefined) {
+			if (typeof patch.private !== "boolean") throw new Error("private must be true or false");
+			next.private = patch.private;
 		}
 		if (patch.backup?.folder !== undefined) {
 			const folder = patch.backup.folder;

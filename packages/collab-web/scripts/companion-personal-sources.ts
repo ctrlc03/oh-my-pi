@@ -57,6 +57,8 @@ export interface SourcesDeps {
 	/** Personal is set up and switched on. */
 	enabled(): boolean;
 	loginReady(): Promise<boolean>;
+	/** Personal's Private setting is on and a private run cannot start now (`problem`), or is off/ready (null). */
+	privacy(): Promise<{ on: boolean; problem: string | null }>;
 	/** Neither the day nor the month limit is reached (`PersonalSpendMonitor.limitsAllow`). */
 	limitsAllow(): Promise<boolean>;
 	enqueueExternalEvent(draft: EventDraft): Promise<PersonalEvent>;
@@ -145,6 +147,7 @@ export function createPersonalSources(deps: SourcesDeps): PersonalSources {
 			timeoutMs: SOURCE_POLL_TIMEOUT_MS,
 			signal: abort.signal,
 			extraArgs: SOURCE_RUN_ARGS,
+			private: deps.state.read().settings.private === true,
 		});
 		if (abort.signal.aborted) return;
 		if (result.timedOut || result.exitCode !== 0) {
@@ -172,6 +175,7 @@ export function createPersonalSources(deps: SourcesDeps): PersonalSources {
 			const [source] = dueSources(deps.state.read().settings, deps.now());
 			if (source === undefined) return;
 			if (!(await deps.loginReady()) || !(await deps.limitsAllow())) return;
+			if ((await deps.privacy()).problem !== null) return;
 			if (current !== undefined || !deps.enabled()) return;
 			const abort = new AbortController();
 			const done = poll(source, abort)

@@ -151,6 +151,8 @@ export interface PersonalProfile {
 	/** Rewrite the managed keys that follow the settings (limits, backup folder) when `config.yml` exists. */
 	applySettings(settings: PersonalSettings): Promise<void>;
 	login(): Promise<PersonalLogin>;
+	/** Why a private run cannot start now (`private.providers` empty in the profile's `config.yml`, or none of them defined in its `models.yml`), or null. */
+	privateProblem(): Promise<string | null>;
 	/** Server names of the profile's `mcp.json`, read only. */
 	mcpServers(): Promise<string[]>;
 	/** The owner key (created at setup, never rotated); null before setup. */
@@ -199,6 +201,54 @@ export function createPersonalProfile(options: PersonalProfileOptions): Personal
 		// A review or source-poll run is never the live chat: only the live session gets the memory mode.
 		const mode = kind === "live" ? `  memoryMode: ${options.memoryMode()}\n` : "";
 		return `${collab}personal:\n  runKind: ${kind}\n${mode}session:\n  spendLimits:\n    dayUsd: ${limits.dayUsd}\n    monthUsd: ${limits.monthUsd}\n${extraYaml ?? ""}`;
+	};
+
+	const login = async (): Promise<PersonalLogin> => {
+		const providers = new Set<string>();
+		try {
+			if (await Bun.file(paths.agentDb).exists()) {
+				const db = new Database(paths.agentDb, { readonly: true });
+				try {
+					for (const row of db
+						.query("SELECT DISTINCT provider FROM auth_credentials WHERE disabled_cause IS NULL")
+						.all() as { provider: string }[])
+						providers.add(row.provider);
+				} finally {
+					db.close();
+				}
+			}
+		} catch {
+			// no table yet, or the database is being written: not a login
+		}
+		const models = (await readYaml(paths.modelsYml)).providers;
+		if (isObject(models))
+			for (const [name, provider] of Object.entries(models))
+				if (
+					isObject(provider) &&
+					((typeof provider.apiKey === "string" && provider.apiKey !== "") || provider.auth === "none")
+				)
+					providers.add(name);
+		return {
+			state: providers.size > 0 ? "ready" : "missing",
+			providers: [...providers].sort(),
+			command: PERSONAL_LOGIN_COMMAND,
+			checkedAt: options.now(),
+		};
+	};
+
+	const privateProblem = async (): Promise<string | null> => {
+		const named = (await readYaml(paths.configYml)).private;
+		const allowed = (isObject(named) && Array.isArray(named.providers) ? named.providers : [])
+			.filter((provider): provider is string => typeof provider === "string" && provider.trim() !== "")
+			.map(provider => provider.trim());
+		if (allowed.length === 0) {
+			return `Private needs \`private.providers\` in the Personal profile's config.yml (${paths.configYml}): list the local providers it may call, for example private: { providers: [studio-glm] }. The profile does not read your normal ~/.omp/agent/config.yml.`;
+		}
+		const usable = (await login()).providers;
+		if (!allowed.some(provider => usable.includes(provider))) {
+			return `None of the private providers (${allowed.join(", ")}) is defined in the Personal profile's models.yml (${paths.modelsYml}) with an apiKey or auth: none. The profile does not read your normal ~/.omp/agent/models.yml.`;
+		}
+		return null;
 	};
 
 	return {
@@ -256,38 +306,8 @@ export function createPersonalProfile(options: PersonalProfileOptions): Personal
 		async applySettings(settings) {
 			if (await Bun.file(paths.configYml).exists()) await writeConfig(settings);
 		},
-		async login() {
-			const providers = new Set<string>();
-			try {
-				if (await Bun.file(paths.agentDb).exists()) {
-					const db = new Database(paths.agentDb, { readonly: true });
-					try {
-						for (const row of db
-							.query("SELECT DISTINCT provider FROM auth_credentials WHERE disabled_cause IS NULL")
-							.all() as { provider: string }[])
-							providers.add(row.provider);
-					} finally {
-						db.close();
-					}
-				}
-			} catch {
-				// no table yet, or the database is being written: not a login
-			}
-			const models = (await readYaml(paths.modelsYml)).providers;
-			if (isObject(models))
-				for (const [name, provider] of Object.entries(models))
-					if (
-						isObject(provider) &&
-						((typeof provider.apiKey === "string" && provider.apiKey !== "") || provider.auth === "none")
-					)
-						providers.add(name);
-			return {
-				state: providers.size > 0 ? "ready" : "missing",
-				providers: [...providers].sort(),
-				command: PERSONAL_LOGIN_COMMAND,
-				checkedAt: options.now(),
-			};
-		},
+		login,
+		privateProblem,
 		async mcpServers() {
 			try {
 				const parsed: unknown = JSON.parse(await Bun.file(paths.mcpJson).text());

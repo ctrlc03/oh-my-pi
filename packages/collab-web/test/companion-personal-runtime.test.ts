@@ -26,6 +26,7 @@ import {
 import { NOTE_CHUNK_CHARS, NOTE_CONTROL_PREFIX } from "../scripts/companion-personal-chat";
 import { type PersonalPaths, personalPaths } from "../scripts/companion-personal-store";
 import { parseScheduleInput } from "../scripts/companion-schedule";
+import type { PersonalOmpRun } from "../scripts/companion-personal-run";
 import { createSessionOrg, type OrgFile } from "../scripts/companion-sessionorg";
 import { assistantReplySince, findSessionFile, readSessionTail } from "../scripts/companion-sessions";
 import { applyOrg, emptyOrg, withSettings } from "../src/lib/session-org";
@@ -45,6 +46,8 @@ const base: KeepAliveInput = {
 	contextFull: false,
 	chatTree: false,
 	modeMismatch: false,
+	privacyMismatch: false,
+	privacyBlocked: false,
 };
 
 describe("keep-alive decision", () => {
@@ -82,6 +85,15 @@ describe("keep-alive decision", () => {
 
 	it("never starts a second session beside a live one", () => {
 		expect(keepAliveDecision({ ...base, live: { busy: true, inputRequired: false } })).toBe("none");
+	});
+
+	it("replaces a normal session at once, busy or not, once privacy is on; with privacy blocked it starts nothing", () => {
+		const busy = { busy: true, inputRequired: false };
+		expect(keepAliveDecision({ ...base, live: busy, privacyMismatch: true })).toBe("rollover");
+		expect(keepAliveDecision({ ...base, live: busy, privacyMismatch: true, lifecycleBusy: true })).toBe("none");
+		expect(keepAliveDecision({ ...base, privacyBlocked: true })).toBe("none");
+		const idle = { busy: false, inputRequired: false };
+		expect(keepAliveDecision({ ...base, live: idle, rolloverDue: true, privacyBlocked: true })).toBe("none");
 	});
 
 	it("backs off 15 s doubling to 5 minutes", () => {
@@ -186,6 +198,7 @@ const launcher: Launcher = {
 			busy: false,
 			inputRequired: false,
 			relayConnected: true,
+			...(launch.private === true ? { private: true } : {}),
 		});
 		return { name: `omp-${counter}`, cwd };
 	},
@@ -591,6 +604,127 @@ describe("rollover", () => {
 		await request(personal, { t: "personal-control", action: "restart" });
 		expect(launches).toHaveLength(2);
 		expect(launches[1]?.prompt).toContain("renew the passport");
+	});
+});
+
+describe("Private", () => {
+	const note = "Private note: renew the passport.";
+	/** The profile's `private.providers`, which the owner writes: the login's `ollama` is the local provider. */
+	const allow = async (): Promise<void> => {
+		await fs.appendFile(paths.configYml, "\nprivate:\n  providers: [ollama]\n");
+	};
+	const noteRuns = (runs: PersonalOmpRun[]): Partial<PersonalEnv> => ({
+		runOmp: async run => {
+			runs.push(run);
+			return { exitCode: 0, stdout: note, stderr: "", timedOut: false };
+		},
+	});
+	const say = async (file: string, role: string, text: string): Promise<void> => {
+		await fs.appendFile(
+			file,
+			`${JSON.stringify({ type: "message", message: { role, content: [{ type: "text", text }] } })}\n`,
+		);
+	};
+	const turnOn = async (personal: Personal): Promise<void> => {
+		await request(personal, { t: "personal-settings-set", patch: { private: true } });
+	};
+
+	it("starts every session private, the first start and a rollover alike", async () => {
+		const personal = await build();
+		await setUp(personal);
+		await allow();
+		await turnOn(personal);
+		await personal.tick([]);
+		await personal.idle();
+		await sessionFile("sess-1");
+		await request(personal, { t: "personal-control", action: "restart" });
+		expect(launches.map(launch => launch.private)).toEqual([true, true]);
+		expect(launches[1]?.resume).toBeUndefined();
+		expect(launches[1]?.prompt).toContain("renew the passport");
+	});
+
+	it("replaces a live normal session when Private is turned on: ended without an exit, the note written by a private run, the reason logged", async () => {
+		const runs: PersonalOmpRun[] = [];
+		const personal = await build(noteRuns(runs));
+		await setUp(personal);
+		await allow();
+		await personal.tick([]);
+		await personal.idle();
+		expect(launches[0]?.private).toBe(false);
+		const file = await sessionFile("sess-1");
+		await say(file, "user", "remind me to renew my passport");
+		await say(file, "assistant", "I will.");
+
+		await turnOn(personal);
+		await personal.tick([...hosts]);
+		await personal.idle();
+
+		// The normal session is ended, never asked for a note or an exit: either would call its hosted model.
+		expect(ended).toEqual(["inst-1"]);
+		expect(consumed).toEqual([]);
+		// A private run wrote the note from the conversation.
+		expect(runs).toHaveLength(1);
+		expect(runs[0]).toMatchObject({ private: true, cwd: paths.workspace });
+		expect(runs[0]?.extraArgs).toContain("--no-session");
+		expect(runs[0]?.prompt).toContain("remind me to renew my passport");
+		// A new private session, not `--private --resume` of the normal one, starts with it.
+		expect(launches).toHaveLength(2);
+		expect(launches[1]).toMatchObject({ private: true, resume: undefined });
+		expect(launches[1]?.prompt).toContain(note);
+		expect((await statusOf(personal)).session).toMatchObject({ sessionId: "sess-2", generation: 2 });
+		const log = await personal.deps.stores.events.list();
+		expect(log.map(event => event.title)).toContain("Private is on: replaced the normal session");
+		expect(log.map(event => event.kind)).not.toContain("rollover");
+
+		// Settled: another poll changes nothing.
+		await personal.tick([...hosts]);
+		await personal.idle();
+		expect(launches).toHaveLength(2);
+	});
+
+	it("ends the normal session and starts nothing while `private.providers` is missing, and says so in the status", async () => {
+		const runs: PersonalOmpRun[] = [];
+		const personal = await build(noteRuns(runs));
+		await setUp(personal);
+		await personal.tick([]);
+		await personal.idle();
+		await turnOn(personal);
+		await personal.tick([...hosts]);
+		await personal.idle();
+		expect(ended).toEqual(["inst-1"]);
+		expect(runs).toEqual([]);
+		await personal.tick([]);
+		await personal.idle();
+		expect(launches).toHaveLength(1);
+		const status = await statusOf(personal);
+		expect(status.run).toBe("failed");
+		expect(status.error).toContain("private.providers");
+
+		// Fixing the profile starts the private session.
+		await allow();
+		await personal.tick([]);
+		await personal.idle();
+		expect(launches).toHaveLength(2);
+		expect(launches[1]?.private).toBe(true);
+		expect((await statusOf(personal)).error).toBeUndefined();
+	});
+
+	it("turning it off leaves the private session alone; the next rollover is a normal session", async () => {
+		const personal = await build();
+		await setUp(personal);
+		await allow();
+		await turnOn(personal);
+		await personal.tick([]);
+		await personal.idle();
+		expect(hosts[0]?.private).toBe(true);
+		await sessionFile("sess-1");
+		await request(personal, { t: "personal-settings-set", patch: { private: false } });
+		await personal.tick([...hosts]);
+		await personal.idle();
+		expect(launches).toHaveLength(1);
+		await request(personal, { t: "personal-control", action: "restart" });
+		expect(launches).toHaveLength(2);
+		expect(launches[1]).toMatchObject({ private: false, resume: undefined });
 	});
 });
 

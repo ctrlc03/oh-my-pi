@@ -59,17 +59,20 @@ export interface SettingsForm {
 	reviewBudgetUsd: string;
 	rolloverTime: string;
 	memoryMode: PersonalMemoryMode;
+	/** Private (local models only). */
+	private: boolean;
 	/** Empty = the default folder inside the profile. */
 	backupFolder: string;
 }
 
-export type FormGroup = "limits" | "review" | "rollover" | "memory" | "backup";
+export type FormGroup = "limits" | "review" | "rollover" | "memory" | "privacy" | "backup";
 
 const GROUP_FIELDS: Record<FormGroup, readonly (keyof SettingsForm)[]> = {
 	limits: ["dayUsd", "monthUsd"],
 	review: ["reviewEnabled", "reviewTime", "reviewBudgetUsd"],
 	rollover: ["rolloverTime"],
 	memory: ["memoryMode"],
+	privacy: ["private"],
 	backup: ["backupFolder"],
 };
 
@@ -84,6 +87,7 @@ export function formFromSettings(settings: PersonalSettings): SettingsForm {
 		reviewBudgetUsd: String(settings.review.budgetUsd),
 		rolloverTime: settings.rollover.time,
 		memoryMode: settings.memoryMode ?? PERSONAL_DEFAULTS.memoryMode,
+		private: settings.private === true,
 		backupFolder: settings.backup.folder ?? "",
 	};
 }
@@ -128,6 +132,10 @@ export function groupChange(group: FormGroup, form: SettingsForm, base: Personal
 		case "memory": {
 			const saved = base.memoryMode ?? PERSONAL_DEFAULTS.memoryMode;
 			return { patch: form.memoryMode === saved ? {} : { memoryMode: form.memoryMode }, error: null };
+		}
+		case "privacy": {
+			const saved = base.private === true;
+			return { patch: form.private === saved ? {} : { private: form.private }, error: null };
 		}
 		case "backup": {
 			const folder = form.backupFolder.trim() === "" ? null : form.backupFolder.trim();
@@ -285,6 +293,7 @@ export const REVIEW_SKIPPED: Record<NonNullable<PersonalReviewStatus["skipped"]>
 	"spend-limit": "Skipped: a spend limit is reached.",
 	"nothing-new": "Nothing new to review.",
 	"agent-busy": "Skipped: the agent was busy; will retry.",
+	"private-unavailable": "Skipped: Private cannot run (see the Agent tab).",
 };
 
 /** One sentence about what the agent is doing. */

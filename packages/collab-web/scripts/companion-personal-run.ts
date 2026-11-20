@@ -21,6 +21,8 @@ export interface PersonalOmpRun {
 	signal?: AbortSignal;
 	/** Further omp flags (`--no-session` …), placed right before the prompt. */
 	extraArgs?: readonly string[];
+	/** `omp --private`: no model request may leave this computer (Personal's `private` setting). */
+	private?: boolean;
 }
 
 export interface PersonalOmpResult {
@@ -40,6 +42,7 @@ export function personalOmpArgv(run: PersonalOmpRun): string[] {
 		String(run.maxCostUsd),
 		"--config",
 		run.overlayFile,
+		...(run.private === true ? ["--private"] : []),
 		...(run.extraArgs ?? []),
 		"--",
 		run.prompt,

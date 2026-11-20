@@ -390,6 +390,28 @@ describe("private memory", () => {
 		expect((await resolveMemoryBackend(settings)).id).toBe("off");
 	});
 
+	it("keeps only the Personal agent's Mnemopi in a private process", async () => {
+		const personal = await loadConfiguredSettings({
+			personal: { enabled: true },
+			memory: { backend: "mnemopi" },
+			private: { providers: ["studio-glm"] },
+		});
+		activatePrivateMode(personal);
+		expect((await resolveMemoryBackend(personal)).id).toBe("mnemopi");
+		resetPrivateModeForTesting();
+
+		for (const config of [
+			{ memory: { backend: "mnemopi" } },
+			{ personal: { enabled: true }, memory: { backend: "hindsight" } },
+			{ personal: { enabled: true }, memory: { backend: "local" } },
+		]) {
+			const settings = await loadConfiguredSettings({ ...config, private: { providers: ["studio-glm"] } });
+			activatePrivateMode(settings);
+			expect((await resolveMemoryBackend(settings)).id).toBe("off");
+			resetPrivateModeForTesting();
+		}
+	});
+
 	it("does not collect private transcripts into a normal process's memory", async () => {
 		const sessionDir = makeTempDir("@pi-memory-threads-");
 		const header = (id: string, extra: Record<string, unknown> = {}) =>

@@ -167,6 +167,7 @@ export function mergeSettings(
 			time: rollover.time === undefined ? current.rollover.time : time(rollover.time, "the rollover time"),
 		},
 		memoryMode: current.memoryMode ?? PERSONAL_DEFAULTS.memoryMode,
+		private: current.private === true,
 		backup: { folder: current.backup.folder },
 		sources: current.sources,
 	};
@@ -174,6 +175,10 @@ export function mergeSettings(
 		if (patch.memoryMode !== "recall" && patch.memoryMode !== "chat-tree")
 			throw new Error('the memory mode must be "recall" or "chat-tree"');
 		next.memoryMode = patch.memoryMode;
+	}
+	if (patch.private !== undefined) {
+		if (typeof patch.private !== "boolean") throw new Error("private must be true or false");
+		next.private = patch.private;
 	}
 	if (review.enabled !== undefined) {
 		if (typeof review.enabled !== "boolean") throw new Error("review.enabled must be true or false");

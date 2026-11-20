@@ -59,6 +59,8 @@ export interface ReviewDeps {
 	ompBin: string;
 	openAdmin(options?: { readOnly?: boolean }): MemoryAdmin;
 	loginReady(): Promise<boolean>;
+	/** Personal's Private setting is on and a private run cannot start now (`problem`), or is off/ready (null). */
+	privacy(): Promise<{ on: boolean; problem: string | null }>;
 	/** The day and month spend windows allow another run. */
 	limitsAllow(): Promise<boolean>;
 	/** The live Personal session is working; null when there is no live session. */
@@ -167,6 +169,7 @@ export function createPersonalReview(deps: ReviewDeps): PersonalReview {
 		const review = deps.settings().review;
 		if (manual && (!review.enabled || review.budgetUsd <= 0)) return "disabled";
 		if (!(await deps.loginReady())) return "no-login";
+		if ((await deps.privacy()).problem !== null) return "private-unavailable";
 		if (!(await deps.limitsAllow())) return "spend-limit";
 		if (deps.sessionBusy() === true) return "agent-busy";
 		return undefined;
@@ -244,6 +247,7 @@ export function createPersonalReview(deps: ReviewDeps): PersonalReview {
 				overlayFile: deps.overlayFile,
 				cwd: deps.paths.workspace,
 				timeoutMs: REVIEW_TIMEOUT_MS,
+				private: deps.settings().private === true,
 			});
 		} catch (err) {
 			const error = err instanceof Error ? err.message : String(err);

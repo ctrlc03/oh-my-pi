@@ -31,6 +31,8 @@ export const PERSONAL_DEFAULTS = {
 	rollover: { time: "04:00" },
 	/** Daily sessions with recall; the endless chat (`chat-tree`) is opt-in. */
 	memoryMode: "recall",
+	/** Private (local models only) is off until the owner turns it on. */
+	private: false,
 	/** Backups: a daily run at `time` (local, not configurable), DB snapshots kept; the session-JSONL mirror is never pruned. */
 	backup: { time: "03:00", keepDaily: 30, keepMonthly: 12 },
 	/** About you is kept short on purpose: it is loaded into every session. */
@@ -103,7 +105,7 @@ export interface PersonalReviewStatus {
 	digestId?: string;
 	error?: string;
 	/** Why the last due review did not run, when it did not. */
-	skipped?: "disabled" | "no-login" | "spend-limit" | "nothing-new" | "agent-busy";
+	skipped?: "disabled" | "no-login" | "spend-limit" | "nothing-new" | "agent-busy" | "private-unavailable";
 	nextAt: number | null;
 }
 
@@ -187,6 +189,13 @@ export interface PersonalSettings {
 	review: { enabled: boolean; /** `HH:MM`, local. */ time: string; budgetUsd: number };
 	/** Absent from an older companion = `recall`. A change takes effect when the live session restarts, which the companion does itself once the session is idle. */
 	memoryMode?: PersonalMemoryMode;
+	/**
+	 * Private: every Personal run (the live session, its rollovers, the nightly review, source polls, the handoff note) is started
+	 * `omp --private`, so no model request leaves the computer. Absent from an older companion = off. Turning it on while the live
+	 * session is a normal one replaces that session with a private one; turning it off applies from the next rollover, because a
+	 * private session cannot become a normal one.
+	 */
+	private?: boolean;
 	rollover: { /** `HH:MM`, local. */ time: string };
 	/** null = the default folder inside the profile. */
 	backup: { folder: string | null };
@@ -197,6 +206,7 @@ export interface PersonalSettings {
 export interface PersonalSettingsPatch {
 	limits?: Partial<PersonalSettings["limits"]>;
 	memoryMode?: PersonalMemoryMode;
+	private?: boolean;
 	review?: Partial<PersonalSettings["review"]>;
 	rollover?: Partial<PersonalSettings["rollover"]>;
 	backup?: Partial<PersonalSettings["backup"]>;

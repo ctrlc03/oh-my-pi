@@ -174,6 +174,26 @@ export function SettingsForms({ answer }: { answer: Snapshot }): ReactNode {
 				<SaveBar group="limits" {...bars} />
 			</SettingsGroup>
 
+			{snap.settings.private !== undefined && (
+				<SettingsGroup title="Privacy">
+					<SettingsRow
+						label="Private (local models only)"
+						hint="No model request leaves this computer. Turning it on replaces a normal session now; turning it off applies from the next daily session."
+					>
+						<Choice
+							label="Private"
+							value={form.private}
+							options={[
+								{ value: true, label: "On" },
+								{ value: false, label: "Off" },
+							]}
+							onChange={value => edit({ private: value })}
+						/>
+					</SettingsRow>
+					<SaveBar group="privacy" {...bars} />
+				</SettingsGroup>
+			)}
+
 			<SettingsGroup title="Nightly review">
 				<SettingsRow
 					label="Review"

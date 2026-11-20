@@ -4,7 +4,7 @@
  * (written by the collab companion at setup). None has a settings-panel row: the app's Personal settings
  * are the editing surface; the companion writes the profile's `config.yml` and per-launch overlay.
  */
-import { register } from "../config/registry";
+import { operatorValue, register } from "../config/registry";
 
 function validateNonNegativeInteger(raw: unknown): void {
 	if (raw !== undefined && (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0)) {
@@ -18,6 +18,9 @@ function validateNonNegativeInteger(raw: unknown): void {
  * limits are on. Off by default; nothing about omp changes while it is off.
  */
 export const cfgPersonalEnabled = register({ id: "personal.enabled", type: "boolean", default: false });
+
+/** `personal.enabled` from operator layers only: what private mode reads to keep the Personal agent's memory (a repository's `.omp/config.yml` cannot switch that on). */
+export const cfgOperatorPersonalEnabled = operatorValue(cfgPersonalEnabled);
 
 /**
  * `live`: the long-lived Personal session. `review`: the nightly learning run (headless): it may write the

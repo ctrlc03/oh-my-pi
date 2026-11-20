@@ -85,6 +85,8 @@ export interface PersonalEvents {
 	maintain(): Promise<void>;
 	/** Files waiting in `inbox/`. */
 	pending(): Promise<number>;
+	/** A line in the event log that is not an event for the session: something the companion did and why (never delivered to the agent). */
+	log(title: string, detail: string): Promise<void>;
 }
 
 export interface PersonalEventsOptions {
@@ -271,6 +273,21 @@ export function createPersonalEvents(options: PersonalEventsOptions): PersonalEv
 		},
 		async enqueueExternal(draft) {
 			return await enqueue(normalise(draft, "external"));
+		},
+		async log(title, detail) {
+			const at = now();
+			await records.put({
+				id: `log-${at}-${crypto.randomUUID().slice(0, 8)}`,
+				source: "companion",
+				kind: "control",
+				trust: "owner",
+				at,
+				title: title.replace(/\s+/g, " ").trim().slice(0, MAX_EVENT_TITLE_CHARS),
+				status: "delivered",
+				detail,
+				deliveredAt: at,
+			});
+			options.changed(["events"]);
 		},
 		async receipt(eventId, outcome, detail) {
 			const existing = await records.get(eventId);

@@ -162,6 +162,7 @@ flowchart LR
 - **One permanent identity, not one permanent context.** The app shows a single pinned **Personal** entry (a host row marked `personal: true`). Underneath, the companion rolls over to a new omp session daily (04:00 local by default, when idle) or when the context fills. The new session starts with a handoff note and the memory. This keeps each context short and accurate, and keeps spend limits meaningful, while the owner sees one thread. An alternative, one session that never ends and relies on compaction, is simpler, but summaries of summaries drift.
   - The `hosts` frame carries no context gauge, so "the context fills" is a proxy the companion can read: the session file passes about 6 MiB (checked at most once a minute). Nothing else triggers an early rollover.
   - Rollover steps: the companion waits until the session is idle, sends a signed `rollover` event; the old session replies with a handoff note; the companion reads it (`assistantReplySince` over `readSessionTail`; it waits up to five minutes), sends a signed `control` event `exit` (the session finishes, retains and consolidates), waits up to 90 seconds for the host to go (then ends its tmux session), and starts the next session in the same workspace with the handoff as its first prompt. A session that never gives a note is replaced without one; a failed start keeps the note for the retry. `restart` in the app is a rollover now.
+  - **Private.** With Private on, none of this calls a hosted model: a normal live session is never asked for a note or an exit (it is ended and its note is written by a private run), and every start passes `--private` ([Private](#private)).
 - **Kept alive.** The companion resumes the Personal session if its tmux session is missing (a fresh one, with the stored handoff, when its session file is gone: omp writes a session's file with its first assistant message, so a session that never took a turn comes back as a new session, and that counts as a new generation), checked on the existing host poll (`companion.ts` poll; `scheduler.tick` 15 s). That poll keeps running while Personal is on, even with no device connected. Failed starts back off (15 s, doubling to 5 minutes) and, after three in a row, go to `failed` with an `alert` inbox item; a `stop` from the app keeps it down until `start`.
   - The Personal session is exempt from settling, auto-settle, end-on-settle and `endSession` (`companion-sessionorg.ts`).
 - **Memory modes.** `personal.memoryMode` (Settings → *Personal agent* → *Settings* → *Memory*) picks how the agent remembers. It is `recall` until the owner changes it, and then everything above is as described. `chat-tree` is a second mode, one chat that never ends, whose design, files and tools are in [personal-chat-tree.md](./personal-chat-tree.md); this is what the companion does differently for it:
@@ -264,9 +265,11 @@ The extraction and contradiction prompts reuse the existing stage-one and consol
 ### App
 
 - **Personal at the top of the sidebar.** Pinned, with its own icon; it can't be settled or ended from the app. It opens the live session's thread; the daily rollover is invisible. It shows the run state (*Spend limit reached* instead of *Ready* or *Waiting for you* while a day or month limit is reached; the Agent tab says the same) and a badge for what waits for the owner, offers *Start* while no session is up, and is hidden while Personal is turned off (turn it on again in Settings → *Personal agent*). A phone shows it in the sessions sheet.
+  - While the live session is private the entry carries the private mark (the one private sessions show elsewhere).
 - **Settings → Personal agent**, a new section that needs the home computer:
   - setup, on/off, start/stop/restart, login state, spend (day/month against the limits), the review and rollover times and budget, the backup folder, status and a *Back up now* button, sources;
   - **Memory mode** (only when the home computer says `canPersonalChatTree`): *Daily sessions with recall* (the default) or *One endless chat*. Choosing the chat hides the rollover time. While the companion runs the chat, one line under the choice gives its numbers: messages, size of the view in KB (1 KB = 1,000 bytes), lines still being summarised and failed summaries. The choice is saved with its own *Save* and takes effect when the live session restarts, which the companion does by itself once the session is idle (see [Memory modes](#memory-modes));
+  - **Private (local models only)** (only when the home computer's settings carry `private`): one on/off choice with its own *Save*. It makes every Personal run private ([Private](#private)); turning it on replaces a normal live session at once, turning it off applies from the next daily session;
   - **About you:** view and edit, with history;
   - **Memory:** search of the knowledge layer, with each memory's origin, date and the memory it replaces (*Replaces N earlier* only on a memory that did replace some, from the optional `replacesCount` on the memory); **Retract** (hide from recall) and **Pin** (always recall); **Export** as a JSON or Markdown bundle;
   - **Digests** and **proposals**, and the **events** list.
@@ -289,6 +292,58 @@ The Personal profile ships with stricter defaults than ordinary sessions:
 | `memory_edit` | `invalidate` and `update` only, never on pinned or owner-retracted rows; About-you changes always go through proposals | No silent rewriting of what the agent knows |
 | Sharing | No `/collab` share links | Only the owner's paired devices reach the session |
 
+### Private
+
+**Settings → Personal agent → Settings → Privacy → Private (local models only)** (`PersonalSettings.private`, off by default, kept in `state.json`) makes the agent run on local models only: no model request leaves the computer, and only the providers in the profile's `private.providers` can be called. It builds on [private sessions](./private-sessions.md): `omp --private`, the egress guard, the filtered catalog and `models.offline`. The companion has no model client of its own, so every model request the Personal agent causes is made by an omp process, and with the setting on every one of those is launched with `--private`.
+
+**Where model requests come from, and what stops them**
+
+| Path | Process | Guarded how |
+|---|---|---|
+| Live session: chat turns, subagents, titles, compaction, judge, Spotlight | The live Personal omp (tmux) | Launched with `--private` on first start, keep-alive restart or resume, daily rollover, chat-tree restart and `restart`. The pi-ai egress guard refuses a provider outside `private.providers` before any I/O, the catalog drops it, and `models.offline` keeps auxiliary services on the session's provider |
+| Handoff note of a private session | The live Personal omp, asked by a signed `rollover` event | The same private session |
+| Handoff note when Private replaces a normal session | A helper omp: `omp --profile personal -p --private --no-session --no-tools --no-extensions --no-skills --no-lsp --no-title`, with the old session's conversation as fenced, untrusted text and an overlay that turns Personal's features, memory and schedules off (`companion-personal-private.ts`) | `--private`, `--max-cost` $0.25. The normal session is not asked: it would call its hosted model |
+| Normal live session while the setting is on | The old Personal omp | Never given a request: the keep-alive sees `host.private !== true`, and ends it at once (`endHost`), without `rollover` or `exit` events, even mid-turn |
+| Nightly review, its digests and proposals | A helper omp (`companion-personal-review.ts`) | `--private`; skipped as `private-unavailable` while private cannot run |
+| Source polls | A helper omp (`companion-personal-sources.ts`) | `--private`; no poll while private cannot run. MCP servers a poll uses are separate processes: see the limits |
+| Memory: retain, consolidation, recall | Inside the live and review omp | Mnemopi stays on in a private Personal process (the exception in [private-sessions.md](./private-sessions.md#what-is-enforced)). Extraction uses the `memory` role model, which `models.offline` and the catalog confine to the allowed providers; embeddings are not loaded or fetched, so recall is keyword-only unless a local embedding model is the session's provider; consolidation is concatenation and uses no model |
+| Chat-tree summaries | Inside the live omp | The model comes from the filtered registry: with `personal.chatTree.model` empty the Anthropic Haiku is gone and it falls to the `smol` role, then the session model; a configured hosted model fails as "not an available model" |
+| Memory admin, backups, spend, inbox, events, Web Push | The companion process | No model request exists on these paths (SQLite reads and writes, files, push) |
+| App-started helpers on a Personal session (commit and pull-request text, review notes) | A helper omp from the companion | `--private` whenever the session's header says private (`isPrivateSession`); the Personal sessions folder is read by no other helper |
+| `omp --profile personal` started by hand | Your terminal | Not guarded: pass `--private` yourself |
+
+**What the setting does**
+
+- **Every start is private.** `TmuxLaunch.private` adds `--private` to the live launch and `PersonalOmpRun.private` to every helper run (after `--config`, before the other flags). A resume of a private session is private with or without the flag.
+- **Turning it on while the live session is a normal one.** `--private --resume` of a normal session is refused, so the companion does not try it. At the next poll it ends the session, writes the handoff note with a private helper run over the old transcript (recall mode; chat-tree mode keeps its chat), logs *Private is on: replaced the normal session* in the event log, and starts a fresh private session whose first prompt is the note. A session that ignores a note request is never waited for.
+- **Turning it off.** A private session cannot become normal, so it stays private until the next rollover (daily, full context, `restart`, or switching memory mode), which starts a normal session; its note comes from the private session. A chat-tree session whose live omp session is private starts a fresh omp session on restart rather than resuming it.
+- **Private cannot run.** The setting needs `private.providers` in the profile and a login in the profile's `models.yml` for one of them. When it is missing the companion starts nothing, ends a normal session it would have kept, shows run state `failed` with the reason in `status.error` (*Private needs `private.providers` in the Personal profile's config.yml …*), sends one *Private cannot run* inbox alert, skips the review and the polls, and does not retry or back off. Fixing the profile starts the private session on the next poll.
+
+**What the profile needs.** `omp --profile personal` relocates the agent directory to `<config root>/profiles/personal/agent/` and reads nothing of `~/.omp/agent/` except keybindings: the profile does not see your global `config.yml` (so not your `private.*`) or `models.yml` (so not `studio-glm` and `studio-nanbeige`). Put both in the profile (the config root is `$HOME/.omp`, or `PI_CONFIG_DIR`):
+
+- `<config root>/profiles/personal/agent/models.yml`: copy the `studio-glm` and `studio-nanbeige` provider entries from `~/.omp/agent/models.yml` (each with a local `baseUrl`, such as `http://127.0.0.1:8080/v1` and `:8081/v1`, and `apiKey` or `auth: none`; the companion's login check counts a provider with either).
+- `<config root>/profiles/personal/agent/config.yml`, next to the keys setup manages (the companion preserves keys it does not manage, Repair included):
+
+  ```yaml
+  modelRoles:
+    default: studio-glm/glm-5.3-flash
+  private:
+    providers: [studio-glm, studio-nanbeige]
+    modelRoles:
+      default: studio-glm/glm-5.3-flash
+      smol: studio-nanbeige/nanbeige
+  ```
+
+  `private.*` is read from the profile's `config.yml` and the companion's `--config` overlays only, never from the workspace's `.omp/config.yml`. The `modelRoles` block is optional; a role missing from `private.modelRoles` falls back to it and must still resolve to an allowed provider. Do not set `memory.backend` or `personal.*` yourself: setup manages them.
+
+**Limits.** What cannot be made private by this setting:
+
+- `bash`, `fetch`, `read` of URLs, the browser and MCP servers (a Personal session's email and calendar servers, and what a source poll fetches) reach the network as usual; private mode limits model requests only ([private-sessions.md](./private-sessions.md#what-is-not-guaranteed)). Turn those tools and servers off for a stricter agent.
+- An allowed provider whose `baseUrl` is not local sends its requests there.
+- A session someone starts by hand is not covered, and a rollover already waiting for its note when Private is switched on is cut short by the switch (its normal session is ended).
+- Memory and chat formed while private stay in the profile; if Private is turned off, a normal session recalls them and may send them to a hosted model. Turn it off knowingly.
+- The app reaches the companion through the collab relay: that carries the session's messages to your paired devices, not to a model.
+
 ## Contracts
 
 ### App ↔ companion: `packages/wire/src/personal.ts`
@@ -297,7 +352,7 @@ The Personal profile ships with stricter defaults than ordinary sessions:
 - Requests (answered by `reqId`, `t` equal): `personal-status`, `-setup`, `-enable`, `-disable`, `-control` (`start`/`stop`/`restart`), `-settings-get`, `-settings-set`, `-memory-search`, `-memory-get`, `-memory-retract`, `-memory-pin`, `-memory-unpin`, `-memory-export`, `-about-get`, `-about-set`, `-about-history`, `-proposals`, `-proposal-edit`, `-proposal-accept`, `-proposal-reject`, `-digests`, `-digest-read`, `-inbox`, `-inbox-ack`, `-answer`, `-events`.
 - Push: `personal-changed` `{ what, rev }` to every authenticated device. Web Push payloads use `open` routes from `PERSONAL_ROUTES`. Those routes (`personal`, `personal/inbox`, ...) have no `kind:id` colon, so the service worker's `open` check (`scripts/build-sw.ts`) and the app's `parseRoute` (`lib/notify-route.ts`) accept the `personal` and `personal/<name>` shapes as well.
 - Status: `PersonalStatus` (enabled, home computer, login, run state, session, spend today and this month against the limits, backups, last review, counts, `rev`). In chat-tree mode `nextRolloverAt` is `null` and the optional `chatTree` (`messages`, `nodesPending`, `viewBytes`, `compactionsFailed`) carries the numbers of `personal-chat/status.json`, once the session has written it.
-- Settings: `PersonalSettings.memoryMode` (`recall` by default, or `chat-tree`); an older companion sends none, which is `recall`.
+- Settings: `PersonalSettings.memoryMode` (`recall` by default, or `chat-tree`); an older companion sends none, which is `recall`. `PersonalSettings.private` (`false` by default; an older companion sends none, and the app then hides the toggle) is Private, kept in `state.json` and set with `personal-settings-set` (`private` must be a boolean); see [Private](#private). `PersonalReviewStatus.skipped` can be `private-unavailable`.
 - Writes (setup, enable/disable, control, settings, retract, pin, About, proposals, answers) need a paired device, like the other write requests.
 
 ### Companion ↔ session: `packages/wire/src/personal-ipc.ts`
@@ -344,7 +399,7 @@ P/
     config.yml                    written by setup (below); the owner may edit it
     AGENTS.md                     About you (owner-approved only)
     APPEND_SYSTEM.md              who the agent is; restored by Repair
-    models.yml, mcp.json          the owner's: a local model server, MCP email/calendar servers
+    models.yml, mcp.json          the owner's: a local model server, MCP email/calendar servers; for Private, models.yml holds the local providers (the profile never reads ~/.omp/agent/models.yml)
     agent.db                      this profile's logins (omp --profile personal login)
     sessions/                     the profile's session JSONL files (omp creates the folder with the first session and a session's file with its first assistant message, so a session that took no turn has no file and cannot be resumed)
     personal-chat/                the endless chat of chat-tree mode (`main/`, `tree/`, `view.json`, `lock`, `status.json`), written only by the session, only in that mode: see [personal-chat-tree.md](./personal-chat-tree.md)
@@ -357,6 +412,7 @@ P/
   workspace/                      the agent's working folder (cwd, sandbox-writable)
   personal/                       the companion's state; the agent can read but not write it
     state.json                    setup, enabled, settings, schedules of review/rollover/backup, the current session
+    handoff-overlay.yml           config overlay of the private run that writes a handoff note when Private replaces a normal session
     inbox.jsonl                   the persistent inbox (append-only; later lines update an item by id)
     proposals.jsonl, digests.jsonl, events.jsonl, reviews.jsonl
     rejected.jsonl                rejected proposals (never proposed again)

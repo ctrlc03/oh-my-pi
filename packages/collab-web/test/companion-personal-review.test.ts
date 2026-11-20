@@ -81,7 +81,14 @@ interface Harness {
 	alerts: { title: string; body: string; tag: string }[];
 	changes: PersonalChangeKind[][];
 	finished: { since: number; costUsd: number | null }[];
-	flags: { login: boolean; limits: boolean; busy: boolean | null; ids: string[]; record: string };
+	flags: {
+		login: boolean;
+		limits: boolean;
+		busy: boolean | null;
+		ids: string[];
+		privateProblem: string | null;
+		record: string;
+	};
 	script: { next: () => Promise<PersonalOmpResult> };
 	reviews: JsonlStore<PersonalReviewRecord>;
 	proposals: JsonlStore<PersonalProposal>;
@@ -115,6 +122,7 @@ function harness(): Harness {
 		limits: true,
 		busy: false,
 		ids: ["w:1", "e:2"],
+		privateProblem: null,
 		record: "### 03:10 · owner · w:1\nI prefer squash merges.\n",
 	};
 	const script: Harness["script"] = { next: async () => ok() };
@@ -154,6 +162,7 @@ function harness(): Harness {
 		},
 		loginReady: async () => flags.login,
 		limitsAllow: async () => flags.limits,
+		privacy: async () => ({ on: settings.private === true, problem: flags.privateProblem }),
 		sessionBusy: () => flags.busy,
 		runOmp: async run => {
 			runs.push(run);
@@ -261,6 +270,12 @@ describe("skips", () => {
 			"spend-limit",
 			flags => {
 				flags.limits = false;
+			},
+		],
+		[
+			"private-unavailable",
+			flags => {
+				flags.privateProblem = "Private needs `private.providers`";
 			},
 		],
 		[
@@ -404,6 +419,19 @@ describe("the run", () => {
 			timeoutMs: REVIEW_TIMEOUT_MS,
 		});
 		expect(REVIEW_TIMEOUT_MS).toBe(20 * MIN);
+	});
+
+	it("runs the review private when Private is on", async () => {
+		const h = harness();
+		h.settings.private = true;
+		await h.review.tick();
+		expect(h.runs[0]?.private).toBe(true);
+	});
+
+	it("runs the review as a normal run when Private is off", async () => {
+		const h = harness();
+		await h.review.tick();
+		expect(h.runs[0]?.private).toBe(false);
 	});
 
 	it("records a success with the cost from the ledger window, the live session left out", async () => {

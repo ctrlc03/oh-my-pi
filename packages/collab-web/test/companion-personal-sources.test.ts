@@ -88,7 +88,12 @@ describe("companion-personal-sources", () => {
 		const changes: PersonalChangeKind[][] = [];
 		const errors: unknown[] = [];
 		let now = NOW;
-		const enabled = { on: opts.enabled ?? true, login: opts.login ?? true, allow: opts.allow ?? true };
+		const enabled = {
+			on: opts.enabled ?? true,
+			login: opts.login ?? true,
+			allow: opts.allow ?? true,
+			problem: null as string | null,
+		};
 		const sourcesJob = createPersonalSources({
 			paths,
 			state,
@@ -96,6 +101,7 @@ describe("companion-personal-sources", () => {
 			enabled: () => enabled.on,
 			loginReady: async () => enabled.login,
 			limitsAllow: async () => enabled.allow,
+			privacy: async () => ({ on: state.read().settings.private === true, problem: enabled.problem }),
 			enqueueExternalEvent: async draft => {
 				events.push(draft);
 				return { ...draft, id: draft.id ?? "x", at: draft.at ?? now, trust: "external" } as PersonalEvent;
@@ -231,6 +237,7 @@ describe("companion-personal-sources", () => {
 			enabled: () => true,
 			loginReady: async () => true,
 			limitsAllow: async () => true,
+			privacy: async () => ({ on: false, problem: null }),
 			enqueueExternalEvent: async () => {
 				throw new Error("unreachable");
 			},
@@ -264,6 +271,20 @@ describe("companion-personal-sources", () => {
 			h.enabled.allow = true;
 			await h.poll();
 			expect(h.runs).toHaveLength(1);
+		});
+
+		it("polls private when Private is on, and not at all while Private cannot run", async () => {
+			const h = await harness([source()], { result: { stdout: "x" } });
+			await h.poll();
+			expect(h.runs[0]?.private).toBe(false);
+			await h.state.update(s => ({ ...s, settings: { ...s.settings, private: true } }));
+			h.clock(NOW + 20 * MIN);
+			await h.poll();
+			expect(h.runs[1]?.private).toBe(true);
+			h.enabled.problem = "Private needs `private.providers`";
+			h.clock(NOW + 40 * MIN);
+			await h.poll();
+			expect(h.runs).toHaveLength(2);
 		});
 
 		it("a source that is disabled or not there, and writes nothing then", async () => {

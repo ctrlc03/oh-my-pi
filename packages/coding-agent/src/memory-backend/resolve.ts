@@ -1,4 +1,5 @@
 import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
+import { privateKeepsMemory } from "../config/private-mode";
 import type { Settings } from "../config/settings";
 import { localBackend } from "./local-backend";
 import { offBackend } from "./off-backend";
@@ -21,8 +22,8 @@ import { cfgMemoryBackend } from "./settings";
  * a config is loaded, `memory.backend` is the sole runtime selector.
  */
 export async function resolveMemoryBackend(settings: Settings): Promise<MemoryBackend> {
-	// Every backend either calls a model or sends transcripts to a store; a private process runs none.
-	if (isPrivateModeActive()) return offBackend;
+	// Every backend either calls a model or sends transcripts to a store; a private process runs none, except the Personal agent's Mnemopi.
+	if (isPrivateModeActive() && !privateKeepsMemory(settings)) return offBackend;
 	const id = cfgMemoryBackend.get(settings);
 	if (id === "hindsight") return (await import("../hindsight/backend")).hindsightBackend;
 	if (id === "mnemopi") return (await import("../mnemopi/backend")).mnemopiBackend;

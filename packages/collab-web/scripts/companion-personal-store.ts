@@ -16,6 +16,7 @@ import type {
 	PersonalInboxItem,
 	PersonalMemoryMode,
 	PersonalProposal,
+	PersonalReviewStatus,
 	PersonalSettings,
 } from "@oh-my-pi/pi-wire/personal";
 import { MAX_ABOUT_BYTES, PERSONAL_DEFAULTS } from "@oh-my-pi/pi-wire/personal";
@@ -200,7 +201,7 @@ export interface PersonalReviewRecord {
 	proposals: number;
 	digestId?: string;
 	error?: string;
-	skipped?: "disabled" | "no-login" | "spend-limit" | "nothing-new" | "agent-busy";
+	skipped?: PersonalReviewStatus["skipped"];
 	/** Ids of the memories of the day's record the run was shown: a second review of the day skips when nothing new arrived. */
 	covered?: string[];
 }
@@ -287,6 +288,7 @@ export function defaultSettings(): PersonalSettings {
 		},
 		rollover: { time: PERSONAL_DEFAULTS.rollover.time },
 		memoryMode: PERSONAL_DEFAULTS.memoryMode,
+		private: PERSONAL_DEFAULTS.private,
 		backup: { folder: null },
 		sources: [],
 	};
@@ -339,6 +341,7 @@ export function parseState(raw: unknown): PersonalState {
 			review: { ...base.settings.review, ...settings.review },
 			rollover: { ...base.settings.rollover, ...settings.rollover },
 			memoryMode: settings.memoryMode === "chat-tree" ? "chat-tree" : "recall",
+			private: settings.private === true,
 			backup: { ...base.settings.backup, ...settings.backup },
 			sources: Array.isArray(settings.sources) ? settings.sources : [],
 		},

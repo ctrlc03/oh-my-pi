@@ -49,13 +49,17 @@ Private mode is process-wide and one-way: once a process enters it, nothing in t
 - **Model switching.** The picker, `/model`, prompt model overrides and collab model pills refuse a disallowed model with a clear message.
 - **Subagents.** Subagents run in the same process and inherit private mode; worker threads receive the allowlist at boot and enter private mode before any other service starts.
 - **Auxiliary services.** Private mode turns on `models.offline`, so the judge, Spotlight, live audio, title and commit generators and similar services stay on the active model's provider.
-- **Memory.** Every memory backend (local, Hindsight, Mnemopi, Sharpshooter) is off in a private process, whatever `memory.backend` says in any layer. A normal process's memory collection skips sessions whose header is private, so private transcripts never feed it.
+- **Memory.** Every memory backend (local, Hindsight, Mnemopi, Sharpshooter) is off in a private process, whatever `memory.backend` says in any layer, with one exception: the [Personal agent](./personal-agent.md#private)'s Mnemopi (`personal.enabled` and `memory.backend: mnemopi` in the operator's layers) stays on. Its bank is a file in the profile, and `models.offline` keeps what it asks a model on the session's provider, which the allowlist limits (embeddings are not loaded or fetched). A normal process's memory collection skips sessions whose header is private, so private transcripts never feed it.
 - **Shared stores.** A private session writes no prompts into the shared `history.db` and journals no recaps there, and the `archive` eval prelude lists and reads no private session.
 - **Advisor.** Disabled; `/advisor on` is refused.
 - **Tools.** `web_search` is removed from the tool set.
 - **Sharing.** `/share` is refused (including custom share scripts).
 - **Telemetry and tunnels.** OTLP export is not started, and the image-URL blob broker is never built, so no image is published to a public host, tunnel or provider file API.
 - **Marker.** A startup notice reads "Private session: models limited to …", the TUI status line shows a `Private` badge in the `mode` segment, and a collab host advertises the `private` feature and `private: true` in its registry row.
+
+## The Personal agent
+
+The collab companion's [Personal agent](./personal-agent.md#private) has a **Private (local models only)** setting (Settings → *Personal agent* → *Settings*). While it is on, the companion starts every Personal omp run with `--private`: the live session (first start, keep-alive restarts, daily rollover, restart), the nightly review, each source poll and the handoff note a switch writes. The profile reads only its own `config.yml` and `models.yml`, never the global ones, so `private.providers` and the local providers' definitions must be in the profile (`<config root>/profiles/personal/agent/`). Turning the setting on while the live session is a normal one replaces it with a private session; it cannot make an existing private session normal.
 
 ## What is not guaranteed
 
@@ -75,3 +79,4 @@ Private mode limits **model requests**. It is not a network firewall.
 - `packages/coding-agent/src/config/private-mode.ts`: activation, catalog filter.
 - `packages/coding-agent/src/session/private-session.ts`: adoption rules for resume, fork and switch.
 - `packages/coding-agent/src/thread/services/private-mode.ts`: hand-off to worker threads.
+- `packages/collab-web/scripts/companion-personal-private.ts`: the Personal agent's handoff note written by a private run.

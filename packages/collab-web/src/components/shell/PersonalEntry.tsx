@@ -6,6 +6,7 @@ import { entryState, openCount, personalHostOf } from "../../lib/personal";
 import { openPersonalSettings } from "../../lib/personal-ui";
 import { usePersonal } from "../../lib/use-personal";
 import { StatusDot } from "../personal/StatusDot";
+import { PrivateMark } from "./PrivateMark";
 import "./personal-entry.css";
 
 export interface PersonalSlotProps {
@@ -91,6 +92,7 @@ export function PersonalSlot({ computer, grouped, currentSessionId, onOpenHost }
 						<span className="sh-recent-title">
 							<Brain size={14} aria-hidden="true" />
 							<span className="sh-recent-name">Personal</span>
+							{homeHost?.private === true && <PrivateMark />}
 							{current && <span className="sh-chip">here</span>}
 							{busy && <LoaderCircle size={13} className="sh-spin" aria-hidden="true" />}
 							{open > 0 && <span className="sh-inbox-badge pa-entry-badge">{open}</span>}

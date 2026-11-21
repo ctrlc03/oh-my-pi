@@ -222,7 +222,9 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 
 	const name = `omp-${crypto.randomUUID().slice(0, 8)}`;
 	// A tmux server that is already running does not pass our environment on to new sessions.
-	const env = [`PATH=${process.env.PATH ?? ""}`, `HOME=${os.homedir()}`];
+	// OMP_SKIP_SETUP: nobody sees this terminal, so a first-run setup wizard there would hold the session in startup
+	// ("prompting is unavailable until the host finishes starting up") until someone attaches and answers it.
+	const env = [`PATH=${process.env.PATH ?? ""}`, `HOME=${os.homedir()}`, "OMP_SKIP_SETUP=1"];
 	if (process.env.PI_CONFIG_DIR) env.push(`PI_CONFIG_DIR=${process.env.PI_CONFIG_DIR}`);
 	let promptFile: string | null = null;
 	if (launch.prompt !== undefined) {

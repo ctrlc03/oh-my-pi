@@ -130,6 +130,117 @@
 	overflow-wrap: anywhere;
 }
 
+/* ---- advisor notes ---- */
+
+/*
+ * An advisor's notes read like a message, set apart from the agent's replies by a tinted card whose
+ * edge takes the colour of the worst note: neutral for nits and plain notes, amber for a concern, red
+ * for a blocker. The row is a custom one, which mutes its text; notes are meant to be read, so they keep
+ * the body colour. Two classes, so the generic `.tr-block` rules further down do not win; selection and
+ * copy states (`.tr-block[data-selected]`, later) still do.
+ */
+.tr-block.tr-block--advisor {
+	--advisor-tone: var(--fg-faint);
+	color: var(--fg);
+	background: color-mix(in srgb, var(--advisor-tone) 5%, var(--bg-raised));
+	border-color: color-mix(in srgb, var(--advisor-tone) 30%, var(--border));
+	box-shadow: inset 3px 0 0 var(--advisor-tone);
+}
+
+.tr-block--advisor:has(> .tr-block-main > .tr-advisor[data-severity="concern"]) {
+	--advisor-tone: var(--warn);
+}
+
+.tr-block--advisor:has(> .tr-block-main > .tr-advisor[data-severity="blocker"]) {
+	--advisor-tone: var(--err);
+}
+
+.tr-block--advisor .tr-block-main {
+	padding: 8px 14px 10px 8px;
+}
+
+.tr-advisor-author {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	color: var(--fg-muted);
+	font-weight: 600;
+}
+
+.tr-advisor-author svg {
+	flex: none;
+	color: var(--advisor-tone);
+}
+
+/* Sized like the card's header line, so a note's chips inside the body do not take the body's reading size. */
+.tr-advisor-meta {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 18px;
+}
+
+.tr-advisor-severity {
+	padding: 0 7px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--fg-faint) 14%, transparent);
+	color: var(--fg-muted);
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 18px;
+}
+
+.tr-advisor-severity[data-severity="concern"] {
+	background: color-mix(in oklch, var(--warn) 14%, transparent);
+	color: var(--warn);
+}
+
+.tr-advisor-severity[data-severity="blocker"] {
+	background: color-mix(in oklch, var(--err) 14%, transparent);
+	color: var(--err);
+}
+
+.tr-advisor-who,
+.tr-advisor-age,
+.tr-advisor-count {
+	color: var(--fg-faint);
+	font-weight: 500;
+}
+
+.tr-advisor {
+	min-width: 0;
+}
+
+.tr-advisor-notes {
+	display: flex;
+	flex-direction: column;
+	gap: calc(8px * var(--reading-gap));
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.tr-advisor-note {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 2px;
+	min-width: 0;
+}
+
+.tr-advisor-note + .tr-advisor-note {
+	padding-top: calc(8px * var(--reading-gap));
+	border-top: 1px solid var(--border);
+}
+
+.tr-advisor-note > .tr-md {
+	align-self: stretch;
+}
+
 /* The delivered output of a background job, inside its card row. */
 .tr-job-body {
 	font-family: var(--font-ui);

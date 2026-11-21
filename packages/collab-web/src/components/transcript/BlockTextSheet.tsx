@@ -6,10 +6,11 @@ import { Sheet } from "../shell/Sheet";
 import { type BlockApi, useFlash } from "./Block";
 import { Markdown } from "./Markdown";
 
-/** What the sheet calls a block: a prompt its author, a reply "Reply", a tool call its name. */
+/** What the sheet calls a block: a prompt its author, an advisor's notes the advisor, a reply "Reply", a tool call its name. */
 function blockLabel(block: Block): string {
 	switch (block.kind) {
 		case "prompt":
+		case "advisor":
 			return block.author;
 		case "reply":
 			return "Reply";

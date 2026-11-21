@@ -22,6 +22,7 @@ import {
 	resultTextOf,
 	stripAnsi,
 } from "../tool-render/util";
+import { ADVISOR_TYPE, advisorAuthor, advisorMarkdown, advisorNotes } from "./advisor";
 import { authorOf, contentMarkdown } from "./export";
 import { isPrompt } from "./trim";
 
@@ -40,6 +41,15 @@ export interface ReplyBlock {
 	kind: "reply";
 	id: string;
 	entryId: string | null;
+	text: string;
+}
+
+/** Notes an advisor gave the agent: the author is the advisor, the text the notes as Markdown. */
+export interface AdvisorBlock {
+	kind: "advisor";
+	id: string;
+	entryId: string;
+	author: string;
 	text: string;
 }
 
@@ -64,7 +74,7 @@ export interface RunBlock {
 	tools: ToolBlock[];
 }
 
-export type Block = PromptBlock | ReplyBlock | ToolBlock | RunBlock;
+export type Block = PromptBlock | ReplyBlock | AdvisorBlock | ToolBlock | RunBlock;
 
 /** What the chat view hands over per item (`ChatItem` satisfies it); the model stays free of UI modules. */
 export type ChatSource =
@@ -108,6 +118,18 @@ function promptOf(entry: SessionEntry): PromptBlock | null {
 	};
 }
 
+function advisorOf(entry: SessionEntry): AdvisorBlock | null {
+	if (entry.type !== "custom_message" || entry.customType !== ADVISOR_TYPE || !entry.display) return null;
+	const notes = advisorNotes(entry.details);
+	return {
+		kind: "advisor",
+		id: entry.id,
+		entryId: entry.id,
+		author: notes === null ? "Advisor" : advisorAuthor(notes),
+		text: notes === null ? contentMarkdown(entry.content) : advisorMarkdown(notes),
+	};
+}
+
 /** The call as `ToolView` renders it: a `write xd://<tool>` dispatch is the device tool it ran. */
 export function effectiveCall(
 	name: string,
@@ -139,9 +161,9 @@ export function buildBlocks(
 ): Block[] {
 	const blocks: Block[] = [];
 	for (const entry of entries) {
-		const prompt = promptOf(entry);
-		if (prompt !== null) {
-			blocks.push(prompt);
+		const whole = promptOf(entry) ?? advisorOf(entry);
+		if (whole !== null) {
+			blocks.push(whole);
 			continue;
 		}
 		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
@@ -166,8 +188,8 @@ export function buildChatBlocks(
 	for (const item of items) {
 		switch (item.kind) {
 			case "entry": {
-				const prompt = promptOf(item.entry);
-				if (prompt !== null) blocks.push(prompt);
+				const block = promptOf(item.entry) ?? advisorOf(item.entry);
+				if (block !== null) blocks.push(block);
 				break;
 			}
 			case "text":
@@ -372,6 +394,7 @@ export function hasOutput(block: Block): boolean {
 export function blockMarkdown(block: Block, labeled = false, options: MarkdownOptions = {}): string {
 	switch (block.kind) {
 		case "prompt":
+		case "advisor":
 			return labeled ? `**${block.author}:**\n\n${block.text}` : block.text;
 		case "reply":
 			return block.text;
@@ -409,6 +432,7 @@ export function blockTitle(block: Block): string {
 	switch (block.kind) {
 		case "prompt":
 		case "reply":
+		case "advisor":
 			return normalizeWs(block.text).slice(0, 80) || block.kind;
 		case "tool":
 			return toolCommand(block).split("\n", 1)[0]!.slice(0, 80);

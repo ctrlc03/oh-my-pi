@@ -1,6 +1,18 @@
 import type { AssistantMessage, ImageContent, SessionEntry, TextContent, ToolResultMessage } from "@oh-my-pi/pi-wire";
 import { STAKES_MARKER_TYPE } from "@oh-my-pi/pi-wire/stakes";
-import { ArrowDown, ArrowUp, Check, ChevronRight, Copy, FileDiff, Pencil, Share2, ShieldAlert, X } from "lucide-react";
+import {
+	ArrowDown,
+	ArrowUp,
+	Check,
+	ChevronRight,
+	Copy,
+	FileDiff,
+	Lightbulb,
+	Pencil,
+	Share2,
+	ShieldAlert,
+	X,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { Fragment, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ActiveTool, ConnectionPhase } from "../../lib/client";
@@ -10,6 +22,17 @@ import { type Block, buildBlocks, buildChatBlocks, replyId, toolResults } from "
 import { type HideControl, hiddenSlots, memberIds, withoutHidden } from "../../lib/hidden-messages";
 import { fmtDuration, fmtTokens } from "../../lib/format";
 import { ASYNC_RESULT_TYPE, asyncResultJobs } from "../../lib/async-result";
+import {
+	ADVISOR_TYPE,
+	type AdvisorNote,
+	type AdvisorSeverity,
+	advisorAuthor,
+	advisorNotes,
+	severityLabel,
+	sharedAdvisor,
+	turnsAgoLabel,
+	worstSeverity,
+} from "../../lib/advisor";
 import type { NewSince } from "../../lib/new-since";
 import { answeredByOtherModel } from "../../lib/prompt-model";
 import type { QueuedPrompt } from "../../lib/rooms";
@@ -254,6 +277,74 @@ function AsyncResultRow({ entry }: { entry: Extract<SessionEntry, { type: "custo
 						<div className="tv-body tr-job-body">
 							<MsgContent content={entry.content} />
 						</div>
+					)}
+				</div>
+			</BlockShell>
+		</Row>
+	);
+}
+
+function SeverityChip({ severity }: { severity: AdvisorSeverity }): ReactNode {
+	return (
+		<span className="tr-advisor-severity" data-severity={severity}>
+			{severityLabel(severity)}
+		</span>
+	);
+}
+
+/** A note's severity, its advisor when the card mixes several, and how late it came, as a line of chips. */
+function AdvisorNoteHead({ note, named }: { note: AdvisorNote; named: boolean }): ReactNode {
+	const who = named ? note.advisor : null;
+	if (note.severity === null && who === null && note.turnsAgo === null) return null;
+	return (
+		<span className="tr-advisor-meta">
+			{note.severity !== null && <SeverityChip severity={note.severity} />}
+			{who !== null && <span className="tr-advisor-who">{who}</span>}
+			{note.turnsAgo !== null && <span className="tr-advisor-age">{turnsAgoLabel(note.turnsAgo)}</span>}
+		</span>
+	);
+}
+
+/**
+ * An advisor's notes to the agent, drawn as a message under the advisor's name rather than the
+ * agent-facing `<advisory>` text the content holds: each note's severity is a chip, a card's edge
+ * takes the colour of its worst note, and a note the agent got late says how many turns ago it was
+ * written. A message whose details carry no notes (an older host) shows its content as it is.
+ */
+function AdvisorRow({ entry }: { entry: Extract<SessionEntry, { type: "custom_message" }> }): ReactNode {
+	const notes = advisorNotes(entry.details);
+	const single = notes?.length === 1 ? notes[0] : undefined;
+	// Each note names its advisor only when the card mixes several; a shared one is the card's author.
+	const named = notes !== null && sharedAdvisor(notes) === null;
+	return (
+		<Row kind="custom" gutter="" entryId={entry.id} blockIds={[entry.id]}>
+			<BlockShell
+				id={entry.id}
+				kind="advisor"
+				title={entry.timestamp}
+				label={
+					<span className="tr-advisor-author">
+						<Lightbulb size={13} aria-hidden="true" />
+						<span>{notes === null ? "Advisor" : advisorAuthor(notes)}</span>
+						{single !== undefined && <AdvisorNoteHead note={single} named={false} />}
+						{notes !== null && notes.length > 1 && <span className="tr-advisor-count">{notes.length} notes</span>}
+					</span>
+				}
+			>
+				<div className="tr-advisor" data-severity={(notes && worstSeverity(notes)) ?? undefined}>
+					{notes === null ? (
+						<MsgContent content={entry.content} />
+					) : single !== undefined ? (
+						<Markdown text={single.note} />
+					) : (
+						<ul className="tr-advisor-notes">
+							{notes.map((note, i) => (
+								<li key={i} className="tr-advisor-note" data-severity={note.severity ?? undefined}>
+									<AdvisorNoteHead note={note} named={named} />
+									<Markdown text={note.note} />
+								</li>
+							))}
+						</ul>
 					)}
 				</div>
 			</BlockShell>
@@ -565,6 +656,7 @@ const EntryRow = memo(function EntryRow({
 			}
 			if (entry.customType === ASYNC_RESULT_TYPE) return <AsyncResultRow entry={entry} />;
 			if (!entry.display) return null;
+			if (entry.customType === ADVISOR_TYPE) return <AdvisorRow entry={entry} />;
 			if (entry.customType === STAKES_MARKER_TYPE) {
 				return (
 					<Row kind="custom" gutter="" title={entry.timestamp} entryId={entry.id}>

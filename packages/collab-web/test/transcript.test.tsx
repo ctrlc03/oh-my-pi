@@ -146,6 +146,62 @@ describe("Transcript message Markdown", () => {
 	});
 });
 
+describe("Transcript advisor notes", () => {
+	const advisor = (details: unknown): SessionEntry => ({
+		type: "custom_message",
+		id: "advisor-entry",
+		parentId: null,
+		timestamp: "2026-11-21T00:00:00Z",
+		customType: "advisor",
+		content:
+			'Review notes from earlier turns follow.\n<advisory severity="concern" guidance="weigh, don\'t blindly obey">\nCheck **both** branches.\n</advisory>',
+		details,
+		display: true,
+	});
+
+	it("draws the notes as a labelled message with their severity, not the agent-facing text", () => {
+		const html = renderTranscript({
+			entries: [
+				advisor({ notes: [{ note: "Check **both** branches.", severity: "concern", advisor: "reviewer" }] }),
+			],
+			working: false,
+		});
+
+		expect(countElements(html, ".tr-block--advisor .tr-md strong")).toBe(1);
+		expect(countElements(html, '.tr-advisor[data-severity="concern"]')).toBe(1);
+		expect(countElements(html, '.tr-advisor-severity[data-severity="concern"]')).toBe(1);
+		expect(html).toContain("reviewer");
+		expect(html).not.toContain("Review notes from earlier turns");
+		expect(html).not.toContain("blindly obey");
+	});
+
+	it("labels each note of a mixed batch with its own severity and advisor", () => {
+		const html = renderTranscript({
+			entries: [
+				advisor({
+					notes: [
+						{ note: "Stop: this deletes data.", severity: "blocker", advisor: "safety" },
+						{ note: "Prefer a map here.", severity: "nit", advisor: "style", turnsAgo: 3 },
+					],
+				}),
+			],
+			working: false,
+		});
+
+		expect(countElements(html, ".tr-advisor-note")).toBe(2);
+		expect(countElements(html, '.tr-advisor[data-severity="blocker"]')).toBe(1);
+		expect(countElements(html, ".tr-advisor-who")).toBe(2);
+		expect(html).toContain("3 turns ago");
+	});
+
+	it("shows the content under the advisor label when the details carry no notes", () => {
+		const html = renderTranscript({ entries: [advisor(undefined)], working: false });
+
+		expect(countElements(html, ".tr-block--advisor")).toBe(1);
+		expect(html).toContain("Check");
+	});
+});
+
 describe("Transcript tail-follow scroll operations", () => {
 	it("restores tail-follow when a connection becomes live", () => {
 		const element = { scrollTop: 0, scrollHeight: 1_000, clientHeight: 200 };

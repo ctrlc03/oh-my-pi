@@ -5,6 +5,7 @@
  */
 
 import type { ImageContent, SessionEntry, TextContent } from "@oh-my-pi/pi-wire";
+import { ADVISOR_TYPE, advisorNotes } from "../../lib/advisor";
 
 function contentText(content: string | readonly (TextContent | ImageContent)[]): string {
 	if (typeof content === "string") return content;
@@ -13,10 +14,13 @@ function contentText(content: string | readonly (TextContent | ImageContent)[]):
 	return text;
 }
 
-/** The prompt or reply text of `entry` (empty for anything else). */
+/** The prompt or reply text of `entry` (empty for anything else); an advisor's message is its notes, as shown. */
 export function entryText(entry: SessionEntry): string {
-	if (entry.type === "custom_message")
-		return entry.display || entry.customType === "collab-prompt" ? contentText(entry.content) : "";
+	if (entry.type === "custom_message") {
+		if (!entry.display && entry.customType !== "collab-prompt") return "";
+		const notes = entry.customType === ADVISOR_TYPE ? advisorNotes(entry.details) : null;
+		return notes === null ? contentText(entry.content) : notes.map(note => `${note.note}\n`).join("");
+	}
 	if (entry.type !== "message") return "";
 	const message = entry.message;
 	if (message.role === "user") return contentText(message.content);

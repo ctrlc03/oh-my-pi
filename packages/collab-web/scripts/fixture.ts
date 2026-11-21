@@ -564,9 +564,53 @@ export const fixtureEntries: SessionEntry[] = [
 			timestamp: NOW - 20 * MIN,
 		},
 	},
+	// Advisor notes as omp sends them: the agent-facing `<advisory>` text as content, the notes themselves in details.
+	{
+		id: "e09-advice",
+		parentId: "e09",
+		timestamp: iso(NOW - 19 * MIN - 50_000),
+		type: "custom_message",
+		customType: "advisor",
+		content:
+			'<advisory severity="concern" guidance="weigh, don\'t blindly obey">\nDropping frames past 256 is silent: log the count at warn, or the next memory report has nothing to go on.\n</advisory>',
+		details: {
+			notes: [
+				{
+					note: "Dropping frames past 256 is silent: log the count at warn, or the next memory report has nothing to go on.",
+					severity: "concern",
+				},
+			],
+		},
+		display: true,
+	},
+	{
+		id: "e09-advice-batch",
+		parentId: "e09-advice",
+		timestamp: iso(NOW - 19 * MIN - 40_000),
+		type: "custom_message",
+		customType: "advisor",
+		content:
+			'Notes from reviews of earlier turns follow; some may already be resolved.\n<advisory advisor="security" severity="blocker" turns_ago="2" guidance="weigh, don\'t blindly obey">\nThe reconnect URL is logged with the room key in its fragment. Strip `#…` before logging.\n</advisory>\n<advisory advisor="style" severity="nit" guidance="weigh, don\'t blindly obey">\n`MAX_PENDING_SENDS` reads better next to the other limits in `limits.ts`.\n</advisory>',
+		details: {
+			notes: [
+				{
+					note: "The reconnect URL is logged with the room key in its fragment. Strip `#…` before logging.",
+					severity: "blocker",
+					advisor: "security",
+					turnsAgo: 2,
+				},
+				{
+					note: "`MAX_PENDING_SENDS` reads better next to the other limits in `limits.ts`.",
+					severity: "nit",
+					advisor: "style",
+				},
+			],
+		},
+		display: true,
+	},
 	{
 		id: "e09-job",
-		parentId: "e09",
+		parentId: "e09-advice-batch",
 		timestamp: iso(NOW - 19 * MIN - 30_000),
 		type: "custom_message",
 		customType: "async-result",

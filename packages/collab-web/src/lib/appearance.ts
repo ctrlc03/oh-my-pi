@@ -22,8 +22,11 @@ export type Zoom = (typeof ZOOM_STEPS)[number];
 export const TEXT_SIZES = ["small", "default", "large", "xlarge"] as const;
 export type TextSize = (typeof TEXT_SIZES)[number];
 
-/** UI and prose font. */
-export const FONTS = ["system", "serif", "rounded", "mono"] as const;
+/**
+ * UI and prose font. `system` is the app's own default face (Inter, bundled) and keeps its name so a saved choice
+ * stays valid; `native` is the device's UI font.
+ */
+export const FONTS = ["system", "native", "serif", "rounded", "mono"] as const;
 export type Font = (typeof FONTS)[number];
 
 export const CODE_FONTS = ["system", "jetbrains", "fira", "cascadia", "sfmono", "menlo"] as const;

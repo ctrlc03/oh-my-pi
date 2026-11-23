@@ -80,31 +80,166 @@ export function roomOrgKey(roomId: string): string {
 export interface ListedSession {
 	instanceId: string;
 	sessionId: string;
+	/** With `cwd`, what a room remembered before it carried a session id is matched by. */
+	sessionName?: string | null;
+	cwd?: string;
 }
 
 /** Recent rooms of one computer, split by whether a session it lists already stands for them. */
 export interface RoomMatch {
 	/** Rooms no listed session stands for: rows of their own, the one on screen included. */
 	alone: RecentRoom[];
-	/** Listed session id → the rooms remembered for its process, newest first (the same session, listed once: as the session). */
+	/** Listed session id → the rooms remembered for it, newest first (the same session, listed once: as the session). */
 	twins: Map<string, RecentRoom[]>;
+	/** Rooms of a process the computer's complete listing no longer has, which no listed session could take: not rows. */
+	stale: RecentRoom[];
+}
+
+/** How far a computer's listing can be trusted when matching rooms against it. */
+export interface MatchOptions {
+	/**
+	 * The listing is the computer's whole, current one (it is live and has sent its hosts frame), so a process it does
+	 * not list has ended. Off while connecting or offline: an empty or old listing must not hide anything.
+	 */
+	complete?: boolean;
+}
+
+/** The name a session is shown under when it has none of its own: its folder. */
+function listedTitle(session: ListedSession): string {
+	return session.sessionName || session.cwd?.split("/").filter(Boolean).pop() || "session";
 }
 
 /**
- * Which rooms are rows of their own and which are a listed session seen through its room. A room remembered while
- * its process was open carries the process's id, so a room and the session row of that process are one session:
- * the room never shows beside it, whether or not it is the one on screen.
+ * Which rooms are rows of their own and which are a listed session seen through one of its rooms. The room never
+ * shows beside the session row, whether or not it is the one on screen.
+ *
+ * A room belongs to a session by the session id it was remembered with. A resumed session (woken from hibernation,
+ * relaunched with the companion, restarted with `omp -r`) is a new process with a new room, so its earlier rooms
+ * match no process any more but still carry the session id. A room remembered before it carried one falls back to
+ * the process id, and past that to its title and folder, but only when exactly one listed session has both: a guess
+ * between two sessions would fold a room into the wrong one. A view-only room is never matched that way, as it may
+ * be someone else's link.
+ *
+ * With a `complete` listing, a room remembered before rooms carried a session id, whose process the computer no
+ * longer lists, is an earlier process of a session that ended or was resumed (its title may have changed since, so
+ * the title match can miss it). Every session the computer has is in the listing, so the room folds into the one
+ * listed session in its folder, or, when none or several are there, is `stale` and shows no row: opening it could
+ * only lead back to the listed session.
  */
-export function matchRooms(rooms: readonly RecentRoom[], listed: readonly ListedSession[]): RoomMatch {
+export function matchRooms(
+	rooms: readonly RecentRoom[],
+	listed: readonly ListedSession[],
+	options: MatchOptions = {},
+): RoomMatch {
+	const bySession = new Set(listed.map(session => session.sessionId));
 	const byInstance = new Map(listed.map(session => [session.instanceId, session.sessionId]));
 	const alone: RecentRoom[] = [];
+	const stale: RecentRoom[] = [];
 	const twins = new Map<string, RecentRoom[]>();
 	for (const room of rooms) {
-		const sessionId = room.instanceId === undefined ? undefined : byInstance.get(room.instanceId);
-		if (sessionId === undefined) alone.push(room);
+		const sessionId = sessionOf(room, listed, bySession, byInstance) ?? endedProcessSession(room, listed, options);
+		if (sessionId === null) stale.push(room);
+		else if (sessionId === undefined) alone.push(room);
 		else twins.set(sessionId, [...(twins.get(sessionId) ?? []), room]);
 	}
-	return { alone, twins };
+	return { alone, twins, stale };
+}
+
+/**
+ * For a room `sessionOf` could not place: the listed session in its folder when the room is an ended process of this
+ * computer (see {@link matchRooms}), null when it is one but no single session takes it, undefined when the rule does
+ * not apply (an incomplete listing, a view-only link, a room that has a session id or was never tied to a process).
+ */
+function endedProcessSession(
+	room: RecentRoom,
+	listed: readonly ListedSession[],
+	options: MatchOptions,
+): string | null | undefined {
+	if (!options.complete || room.readOnly || room.sessionId !== undefined || room.instanceId === undefined) {
+		return undefined;
+	}
+	const inFolder = room.cwd === null ? [] : listed.filter(session => session.cwd === room.cwd);
+	return inFolder.length === 1 ? inFolder[0]!.sessionId : null;
+}
+
+function sessionOf(
+	room: RecentRoom,
+	listed: readonly ListedSession[],
+	bySession: ReadonlySet<string>,
+	byInstance: ReadonlyMap<string, string>,
+): string | undefined {
+	if (room.sessionId !== undefined && bySession.has(room.sessionId)) return room.sessionId;
+	if (room.instanceId !== undefined) {
+		const sessionId = byInstance.get(room.instanceId);
+		if (sessionId !== undefined) return sessionId;
+	}
+	if (room.sessionId !== undefined || room.readOnly || room.cwd === null) return undefined;
+	const same = listed.filter(session => session.cwd === room.cwd && listedTitle(session) === room.title);
+	return same.length === 1 ? same[0]!.sessionId : undefined;
+}
+
+/** What `roomsNotListed` reads of a computer. */
+export interface ListingComputer {
+	id: string;
+	snap: {
+		/** `live` once the computer has sent its listing: only then may a room of a process it lacks be dropped. */
+		phase: string;
+		hosts: readonly ListedSession[];
+		idle: readonly ListedSession[];
+		hibernated: readonly ListedSession[];
+	};
+}
+
+/**
+ * The rooms no computer's listing stands for: what the lists that show rooms beside computers (home, the command
+ * palette) keep, so a session is one entry there too. A room of a computer not paired here always stays.
+ */
+export function roomsNotListed(rooms: readonly RecentRoom[], computers: readonly ListingComputer[]): RecentRoom[] {
+	const byComputer = new Map<string, RecentRoom[]>();
+	const rest: RecentRoom[] = [];
+	for (const room of rooms) {
+		if (room.computerId !== undefined && computers.some(computer => computer.id === room.computerId)) {
+			byComputer.set(room.computerId, [...(byComputer.get(room.computerId) ?? []), room]);
+		} else rest.push(room);
+	}
+	const kept = new Set(rest);
+	for (const computer of computers) {
+		const own = byComputer.get(computer.id);
+		if (own === undefined) continue;
+		const listed = [...computer.snap.hosts, ...computer.snap.idle, ...computer.snap.hibernated];
+		for (const room of matchRooms(own, listed, { complete: computer.snap.phase === "live" }).alone) {
+			kept.add(room);
+		}
+	}
+	return rooms.filter(room => kept.has(room));
+}
+
+/**
+ * The session id of each room that has none and whose process a computer lists: stamped on the room, the id keeps
+ * matching once the process is gone. Empty when there is nothing to learn.
+ */
+export function learnSessionIds(
+	rooms: readonly RecentRoom[],
+	computers: readonly ListingComputer[],
+): Map<string, string> {
+	const learned = new Map<string, string>();
+	for (const room of rooms) {
+		if (room.sessionId !== undefined || room.instanceId === undefined || room.computerId === undefined) continue;
+		const computer = computers.find(candidate => candidate.id === room.computerId);
+		if (computer === undefined) continue;
+		const session = [...computer.snap.hosts, ...computer.snap.idle, ...computer.snap.hibernated].find(
+			candidate => candidate.instanceId === room.instanceId,
+		);
+		if (session !== undefined) learned.set(room.roomId, session.sessionId);
+	}
+	return learned;
+}
+
+/** Whether `key` has an entry the user made: pinned, snoozed, or settled by hand (not settled for being idle). */
+export function organisedByUser(doc: OrgDoc, key: string): boolean {
+	if (!Object.hasOwn(doc.entries, key)) return false;
+	const { status, reason } = doc.entries[key];
+	return status !== "active" && (reason === undefined || reason === "user");
 }
 
 /**
@@ -114,13 +249,7 @@ export function matchRooms(rooms: readonly RecentRoom[], listed: readonly Listed
  */
 export function sessionOrgKey(doc: OrgDoc, sessionId: string, twins: readonly RecentRoom[] = []): string {
 	if (Object.hasOwn(doc.entries, sessionId)) return sessionId;
-	for (const twin of twins) {
-		const key = roomOrgKey(twin.roomId);
-		if (!Object.hasOwn(doc.entries, key)) continue;
-		const { status, reason } = doc.entries[key];
-		if (status !== "active" && (reason === undefined || reason === "user")) return key;
-	}
-	return sessionId;
+	return twins.map(twin => roomOrgKey(twin.roomId)).find(key => organisedByUser(doc, key)) ?? sessionId;
 }
 
 const isTime = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;

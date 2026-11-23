@@ -70,7 +70,7 @@ const md = new Marked({
 			if (cleaned === "") return "";
 			return escapeHtml(unescapeHtml(cleaned));
 		},
-		// Fenced and indented code, wrapped with a copy button handled by `onCopyClick`.
+		// Fenced and indented code, wrapped with a copy button handled by `onCopyClick`. `data-lang` is the header's label.
 		code({ text, lang, escaped, raw }) {
 			const language = /^\S*/.exec(lang ?? "")?.[0] ?? "";
 			const code = `${text.replace(/\n$/, "")}\n`;
@@ -78,7 +78,7 @@ const md = new Marked({
 			// A closed diagram fence gets a placeholder that `MarkdownBody` replaces with the rendered diagram.
 			const kind = isClosedFence(raw) ? diagramKindOf(language, text) : null;
 			const diagram = kind === null ? "" : ` tr-diagram" data-diagram="${kind}`;
-			return `<div class="tr-code${diagram}"><pre><code${cls}>${escaped ? code : escapeHtml(code)}</code></pre><button type="button" class="tr-copy" aria-label="Copy code"></button></div>\n`;
+			return `<div class="tr-code${diagram}" data-lang="${escapeHtml(language || "text")}"><pre><code${cls}>${escaped ? code : escapeHtml(code)}</code></pre><button type="button" class="tr-copy" aria-label="Copy code"></button></div>\n`;
 		},
 		link({ href, title, tokens }) {
 			const inner = this.parser.parseInline(tokens);

@@ -71,6 +71,8 @@ describe("diagram engines stay lazy", () => {
 		const result = await Bun.build({
 			entrypoints: [path.join(root, "index.html")],
 			splitting: true,
+			// Left as URLs, as in scripts/build-app.ts: the UI font is a file under public/fonts, not a source module.
+			external: ["./fonts/inter-*"],
 			minify: false,
 			metafile: true,
 			define: { "process.env.NODE_ENV": '"production"' },

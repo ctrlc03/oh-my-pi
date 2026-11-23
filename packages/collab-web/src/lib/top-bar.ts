@@ -1,7 +1,8 @@
 /**
  * Which action buttons the session's top bar shows, and in what order: a per-device choice made in Settings →
- * Appearance → *Top bar*. The bar keeps its fixed parts (sessions toggle, name, status, ⋯); the buttons here are
- * the optional ones. Every action stays in the ⋯ sheet and the command palette, shown or not.
+ * Appearance → *Top bar*. The bar keeps its fixed parts (sessions toggle, name, connection, ⋯); the buttons here are
+ * the optional ones.
+ * Every action stays in the ⋯ sheet and the command palette, shown or not.
  *
  * The saved choice is the full order plus the hidden ids. Anything unknown in it (a button a later build removed,
  * a hand-edited entry) is ignored, and a button the saved choice does not mention (one a later build added) shows
@@ -24,21 +25,22 @@ export interface TopBarButton {
 }
 
 /**
- * Every optional button. The first ten are the default bar, in order; the rest are actions that otherwise live
- * only in the ⋯ sheet, off until chosen. Sparring and Bake-off stand after Agents so a phone's compact bar keeps
- * Find, Explorer, Code map and Agents.
+ * Every optional button. Only Agents is on by default, so the bar stays calm: the title, the connection dot, that
+ * button and ⋯. It leads because it carries the badge counting active sub-agents. The other actions live in the ⋯
+ * sheet and the command palette until chosen here. Sparring and Bake-off stand after the buttons a phone's compact
+ * bar is most likely to keep (Find, Explorer, Code map, Agents).
  */
 export const TOP_BAR_BUTTONS = [
-	{ id: "settings", label: "Settings", on: true, phone: false },
-	{ id: "find", label: "Find in session", on: true, phone: true },
-	{ id: "editor", label: "Explorer", on: true, phone: true },
-	{ id: "codemap", label: "Code map", on: true, phone: true },
-	{ id: "quizzes", label: "Quizzes", on: true, phone: false },
-	{ id: "github", label: "GitHub", on: true, phone: false },
 	{ id: "agents", label: "Agents", on: true, phone: true },
-	{ id: "sparring", label: "Sparring", on: true, phone: true },
-	{ id: "bakeoff", label: "Bake-off", on: true, phone: true },
-	{ id: "leave", label: "Leave session", on: true, phone: false },
+	{ id: "settings", label: "Settings", on: false, phone: false },
+	{ id: "find", label: "Find in session", on: false, phone: true },
+	{ id: "editor", label: "Explorer", on: false, phone: true },
+	{ id: "codemap", label: "Code map", on: false, phone: true },
+	{ id: "quizzes", label: "Quizzes", on: false, phone: false },
+	{ id: "github", label: "GitHub", on: false, phone: false },
+	{ id: "sparring", label: "Sparring", on: false, phone: true },
+	{ id: "bakeoff", label: "Bake-off", on: false, phone: true },
+	{ id: "leave", label: "Leave session", on: false, phone: false },
 	{ id: "changes", label: "Changes", on: false, phone: true },
 	{ id: "architecture", label: "Architecture", on: false, phone: true },
 	{ id: "mapchanges", label: "Map of what changed", on: false, phone: true },

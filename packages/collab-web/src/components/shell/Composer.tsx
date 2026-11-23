@@ -26,14 +26,7 @@ import {
 	planUpload,
 } from "../../lib/files";
 import { useEnterWhileRunning } from "../../lib/composer-prefs";
-import {
-	type DragKind,
-	dragKindOf,
-	droppedFiles,
-	insertMention,
-	PATH_DRAG_MIME,
-	parsePathDrag,
-} from "../../lib/drop";
+import { type DragKind, dragKindOf, droppedFiles, insertMention, PATH_DRAG_MIME, parsePathDrag } from "../../lib/drop";
 import { dropStashed, type StashedDraft, stashDraft, useStashedDrafts } from "../../lib/draft-stash";
 import { MAX_ATTACHMENTS, toImageContent } from "../../lib/images";
 import { isLargePaste, pastedTextFile } from "../../lib/large-paste";
@@ -52,6 +45,7 @@ import { ApprovalChoices, AskTitle } from "./ApprovalChoices";
 import { modelOfChoice, PromptModelPicker } from "./PromptModelPicker";
 import { QuickReplies } from "./QuickReplies";
 import { useSlashMenu } from "./SlashMenu";
+import { TaskProgress, type TaskProgressProps } from "./TaskProgress";
 import { useVoiceInput, VoiceButton, type VoiceSource, VoiceStatus } from "./VoiceInput";
 import { useHandsFree } from "./VoiceMode";
 
@@ -99,6 +93,8 @@ export interface ComposerProps {
 	fanout?: FanoutTarget | null;
 	/** The host advertises `approval-grants`: a tool-approval ask shows the always-allow / deny-always choices. */
 	approvalGrants?: boolean;
+	/** The agent's task list and subagents, shown as the slim header line of the card; null (or absent) hides it. */
+	tasks?: TaskProgressProps | null;
 	onSessionCommand(cmd: SessionCommand, arg?: string): void;
 	ref?: Ref<ComposerHandle>;
 }
@@ -249,6 +245,7 @@ export const Composer = memo(function Composer({
 	promptModel,
 	fanout = null,
 	approvalGrants = false,
+	tasks = null,
 	onSessionCommand,
 	ref,
 }: ComposerProps): ReactNode {
@@ -648,265 +645,59 @@ export const Composer = memo(function Composer({
 	if (uiRequest && canPrompt) {
 		return (
 			<div className="sh-composer sh-composer-ask">
-				{handsFree.status}
-				<div className="sh-ask-body">
-					<AskTitle title={uiRequest.title} />
-					{uiRequest.kind === "select" && approvalGrants && typeof uiRequest.approval === "object" ? (
-						<ApprovalChoices
-							approval={uiRequest.approval}
-							onChoose={label => client.sendUiResponse(uiRequest.reqId, label)}
-						/>
-					) : uiRequest.kind === "select" ? (
-						<div className="sh-ask-options">
-							{uiRequest.options.map((option, index) => {
-								const label = typeof option === "string" ? option : option.label;
-								const checked = uiRequest.checkedIndices?.includes(index) ?? false;
-								return (
-									<button
-										key={`${uiRequest.reqId}-${index}-${label}`}
-										type="button"
-										className={`sh-ask-option${checked ? " sh-ask-option-checked" : ""}`}
-										onClick={() => client.sendUiResponse(uiRequest.reqId, label)}
-									>
-										<span className="sh-ask-option-marker">
-											{uiRequest.selectionMarker === "checkbox"
-												? checked
-													? "☑"
-													: "☐"
-												: checked
-													? "◉"
-													: "○"}
-										</span>
-										<span className="sh-ask-option-copy">
-											<span className="sh-ask-option-label">{label}</span>
-											{typeof option !== "string" && option.description && (
-												<span className="sh-ask-option-description">{option.description}</span>
-											)}
-										</span>
-									</button>
-								);
-							})}
-						</div>
-					) : (
-						<AskEditor
-							key={uiRequest.reqId}
-							prefill={uiRequest.prefill}
-							onSubmit={value => client.sendUiResponse(uiRequest.reqId, value)}
-						/>
-					)}
-				</div>
-				<div className="sh-composer-actions sh-ask-actions">
-					<button type="button" className="sh-btn" onClick={() => client.sendUiResponse(uiRequest.reqId)}>
-						Cancel
-					</button>
-					{busy && (
-						<button
-							type="button"
-							className="sh-btn sh-btn-stop"
-							onClick={() => client.sendAbort()}
-							disabled={!live}
-							aria-label="Stop the current turn"
-							title="Stop the current turn"
-						>
-							<Square size={11} /> Stop
-						</button>
-					)}
-				</div>
-			</div>
-		);
-	}
-
-	return (
-		<div ref={rootRef} className={readOnly ? "sh-composer sh-composer-readonly" : "sh-composer"}>
-			{canPrompt && !text && !focusMode && <QuickReplies disabled={!live} onPick={reply => send(reply)} />}
-			<FollowUps
-				client={client}
-				followUps={followUps}
-				ids={followUpIds}
-				editable={queueEdit && followUpIds.length === followUps.length}
-				readOnly={readOnly}
-				live={live}
-				resolveMentions={resolveMentions}
-			/>
-			{(images.length > 0 || files.length > 0 || attachError) && (
-				<div className="sh-attachments">
-					{images.map((image, i) => (
-						<div key={`${i}-${image.data.length}`} className="sh-attachment">
-							<img src={`data:${image.mimeType};base64,${image.data}`} alt={`attachment ${i + 1}`} />
-							<button
-								type="button"
-								className="sh-attachment-remove"
-								onClick={() => setImages(prev => prev.filter((_, j) => j !== i))}
-								aria-label={`Remove attachment ${i + 1}`}
-							>
-								<X size={12} />
-							</button>
-						</div>
-					))}
-					{files.map(file => (
-						<div key={file.id} className="sh-file-chip" title={file.name}>
-							{file.kind === "upload" && file.path === null ? (
-								<LoaderCircle size={14} className="sh-spin" />
-							) : file.kind === "inline" ? (
-								<FileText size={14} />
-							) : (
-								<FileIcon size={14} />
-							)}
-							<span className="sh-file-name">{file.name}</span>
-							<span className="sh-file-size">{formatSize(file.size)}</span>
-							<button
-								type="button"
-								className="sh-file-remove"
-								onClick={() => setFiles(prev => prev.filter(f => f.id !== file.id))}
-								aria-label={`Remove ${file.name}`}
-							>
-								<X size={12} />
-							</button>
-						</div>
-					))}
-					{attachError && <span className="sh-attachments-error">{attachError}</span>}
-				</div>
-			)}
-			{showVoice && <VoiceStatus voice={voice} input={voiceInput} />}
-			{handsFree.status}
-			{slash.menu}
-			{mention.menu}
-			{stashNote !== null && (
-				<div className="sh-stash-note" role="status">
-					{stashNote}
-				</div>
-			)}
-			<div className="sh-composer-inner">
-				{!readOnly && (
-					<>
-						<input
-							ref={fileRef}
-							type="file"
-							multiple
-							hidden
-							onChange={e => {
-								void attach(Array.from(e.target.files ?? []));
-								e.target.value = "";
-							}}
-						/>
-						<div className="sh-composer-attach">
-							<button
-								type="button"
-								className="sh-btn sh-btn-icon"
-								onClick={() => fileRef.current?.click()}
-								disabled={!canType || (images.length >= MAX_ATTACHMENTS && files.length >= MAX_FILES)}
-								aria-label="Attach images or files"
-								title="Attach images or files"
-							>
-								<Paperclip size={18} />
-							</button>
-							<button
-								type="button"
-								className="sh-btn sh-btn-icon sh-sketch"
-								onClick={openSketch}
-								disabled={!canType || images.length >= MAX_ATTACHMENTS || files.length >= MAX_FILES}
-								aria-label="Sketch a drawing"
-								title="Sketch a drawing"
-							>
-								<PenLine size={18} />
-							</button>
-							<DraftStash
-								drafts={stashed}
-								canStash={text.trim() !== ""}
-								disabled={!canType}
-								onStash={() => void stashNow()}
-								onRestore={restoreStashed}
-								onDrop={dropStashed}
+				<div className="sh-composer-card">
+					{tasks !== null && <TaskProgress {...tasks} />}
+					{handsFree.status}
+					<div className="sh-ask-body">
+						<AskTitle title={uiRequest.title} />
+						{uiRequest.kind === "select" && approvalGrants && typeof uiRequest.approval === "object" ? (
+							<ApprovalChoices
+								approval={uiRequest.approval}
+								onChoose={label => client.sendUiResponse(uiRequest.reqId, label)}
 							/>
-						</div>
-						{models !== null ? (
-							<ModelControls
-								models={models}
-								model={model}
-								thinkingLevel={thinkingLevel}
-								thinkingLevels={thinkingLevels}
-								profiles={profiles}
-								profile={profile}
-								disabled={!live}
-								onSessionCommand={onSessionCommand}
-							>
-								{promptModel && (
-									<PromptModelPicker
-										models={models}
-										sessionModel={model}
-										choice={promptChoice}
-										onChoice={setPromptChoice}
-										disabled={!canType}
-									/>
-								)}
-								{fanout && (
-									<FanoutPill
-										prompt={composePrompt(text, files)}
-										target={fanout}
-										disabled={!canType || uploading}
-									/>
-								)}
-							</ModelControls>
+						) : uiRequest.kind === "select" ? (
+							<div className="sh-ask-options">
+								{uiRequest.options.map((option, index) => {
+									const label = typeof option === "string" ? option : option.label;
+									const checked = uiRequest.checkedIndices?.includes(index) ?? false;
+									return (
+										<button
+											key={`${uiRequest.reqId}-${index}-${label}`}
+											type="button"
+											className={`sh-ask-option${checked ? " sh-ask-option-checked" : ""}`}
+											onClick={() => client.sendUiResponse(uiRequest.reqId, label)}
+										>
+											<span className="sh-ask-option-marker">
+												{uiRequest.selectionMarker === "checkbox"
+													? checked
+														? "☑"
+														: "☐"
+													: checked
+														? "◉"
+														: "○"}
+											</span>
+											<span className="sh-ask-option-copy">
+												<span className="sh-ask-option-label">{label}</span>
+												{typeof option !== "string" && option.description && (
+													<span className="sh-ask-option-description">{option.description}</span>
+												)}
+											</span>
+										</button>
+									);
+								})}
+							</div>
 						) : (
-							fanout && (
-								<div className="sh-composer-tools">
-									<FanoutPill
-										prompt={composePrompt(text, files)}
-										target={fanout}
-										disabled={!canType || uploading}
-									/>
-								</div>
-							)
+							<AskEditor
+								key={uiRequest.reqId}
+								prefill={uiRequest.prefill}
+								onSubmit={value => client.sendUiResponse(uiRequest.reqId, value)}
+							/>
 						)}
-					</>
-				)}
-				<textarea
-					ref={taRef}
-					className="sh-composer-input"
-					value={text}
-					onChange={e => {
-						setText(e.target.value);
-						setCaretPos(e.target.selectionStart);
-					}}
-					onSelect={e => {
-						const { selectionStart, selectionEnd } = e.currentTarget;
-						caretRef.current = { start: selectionStart, end: selectionEnd };
-						setCaretPos(selectionEnd);
-					}}
-					onKeyDown={onKeyDown}
-					onPaste={onPaste}
-					onCompositionStart={onCompositionStart}
-					onCompositionEnd={onCompositionEnd}
-					placeholder={
-						readOnly
-							? "Read-only link: you can watch but not send"
-							: phase === "ended"
-								? "Session ended"
-								: !live
-									? "Offline — sends when back"
-									: images.length > 0 || files.length > 0
-										? "Add a message…"
-										: "Message the agent…"
-					}
-					disabled={!canType}
-					rows={1}
-					spellCheck={false}
-					enterKeyHint={isTouch() ? "enter" : "send"}
-				/>
-				{!readOnly && (
-					<div className="sh-composer-actions">
-						{busy && queued > 0 && (
-							<span
-								className="sh-queued"
-								role="status"
-								title={`${queued} ${queued === 1 ? "message" : "messages"} queued behind the running turn`}
-								aria-label={`${queued} ${queued === 1 ? "message" : "messages"} queued`}
-							>
-								<ListEnd size={12} aria-hidden /> {queued}
-							</span>
-						)}
-						{showVoice && <VoiceButton input={voiceInput} />}
-						{handsFree.button}
+					</div>
+					<div className="sh-composer-actions sh-ask-actions">
+						<button type="button" className="sh-btn" onClick={() => client.sendUiResponse(uiRequest.reqId)}>
+							Cancel
+						</button>
 						{busy && (
 							<button
 								type="button"
@@ -914,49 +705,263 @@ export const Composer = memo(function Composer({
 								onClick={() => client.sendAbort()}
 								disabled={!live}
 								aria-label="Stop the current turn"
-								title="Stop the current turn (Esc)"
+								title="Stop the current turn"
 							>
-								<Square size={11} /> <span className="sh-btn-label">Stop</span>
+								<Square size={11} /> Stop
 							</button>
 						)}
-						{canFollowUp && (
-							<button
-								type="button"
-								className="sh-btn sh-btn-after"
-								onClick={() => send(undefined, queueFirst ? undefined : "follow-up")}
-								disabled={!canSend}
-								aria-label={queueFirst ? "Send into the running turn" : "Send after this turn"}
-								title={
-									queueFirst
-										? "Send now, steering the running turn (Alt+Enter)"
-										: "Send when this turn ends (Alt+Enter)"
-								}
-							>
-								{queueFirst ? <Zap size={16} /> : <ListEnd size={16} />}
-							</button>
-						)}
-						<button
-							type="button"
-							className="sh-btn sh-btn-primary"
-							onClick={() => send(undefined, queueFirst ? "follow-up" : undefined)}
-							disabled={!canSend}
-							aria-label={
-								canFollowUp ? (queueFirst ? "Send after this turn" : "Send into the running turn") : "Send"
-							}
-							title={
-								!live
-									? "Queue until reconnected (Enter)"
-									: queueFirst
-										? "Send when this turn ends (Enter)"
-										: canFollowUp
-											? "Send now, steering the running turn (Enter)"
-											: "Send (Enter)"
-							}
-						>
-							<SendHorizontal size={16} /> <span className="sh-btn-label">Send</span>
-						</button>
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	return (
+		<div ref={rootRef} className={readOnly ? "sh-composer sh-composer-readonly" : "sh-composer"}>
+			{slash.menu}
+			{mention.menu}
+			<div className="sh-composer-card">
+				{tasks !== null && <TaskProgress {...tasks} />}
+				<FollowUps
+					client={client}
+					followUps={followUps}
+					ids={followUpIds}
+					editable={queueEdit && followUpIds.length === followUps.length}
+					readOnly={readOnly}
+					live={live}
+					resolveMentions={resolveMentions}
+				/>
+				{(images.length > 0 || files.length > 0 || attachError) && (
+					<div className="sh-attachments">
+						{images.map((image, i) => (
+							<div key={`${i}-${image.data.length}`} className="sh-attachment">
+								<img src={`data:${image.mimeType};base64,${image.data}`} alt={`attachment ${i + 1}`} />
+								<button
+									type="button"
+									className="sh-attachment-remove"
+									onClick={() => setImages(prev => prev.filter((_, j) => j !== i))}
+									aria-label={`Remove attachment ${i + 1}`}
+								>
+									<X size={12} />
+								</button>
+							</div>
+						))}
+						{files.map(file => (
+							<div key={file.id} className="sh-file-chip" title={file.name}>
+								{file.kind === "upload" && file.path === null ? (
+									<LoaderCircle size={14} className="sh-spin" />
+								) : file.kind === "inline" ? (
+									<FileText size={14} />
+								) : (
+									<FileIcon size={14} />
+								)}
+								<span className="sh-file-name">{file.name}</span>
+								<span className="sh-file-size">{formatSize(file.size)}</span>
+								<button
+									type="button"
+									className="sh-file-remove"
+									onClick={() => setFiles(prev => prev.filter(f => f.id !== file.id))}
+									aria-label={`Remove ${file.name}`}
+								>
+									<X size={12} />
+								</button>
+							</div>
+						))}
+						{attachError && <span className="sh-attachments-error">{attachError}</span>}
 					</div>
 				)}
+				{showVoice && <VoiceStatus voice={voice} input={voiceInput} />}
+				{handsFree.status}
+				{canPrompt && !text && !focusMode && !busy && (
+					<QuickReplies disabled={!live} onPick={reply => send(reply)} />
+				)}
+				{stashNote !== null && (
+					<div className="sh-stash-note" role="status">
+						{stashNote}
+					</div>
+				)}
+				<div className="sh-composer-inner">
+					{!readOnly && (
+						<>
+							<input
+								ref={fileRef}
+								type="file"
+								multiple
+								hidden
+								onChange={e => {
+									void attach(Array.from(e.target.files ?? []));
+									e.target.value = "";
+								}}
+							/>
+							<div className="sh-composer-attach">
+								<button
+									type="button"
+									className="sh-btn sh-btn-icon"
+									onClick={() => fileRef.current?.click()}
+									disabled={!canType || (images.length >= MAX_ATTACHMENTS && files.length >= MAX_FILES)}
+									aria-label="Attach images or files"
+									title="Attach images or files"
+								>
+									<Paperclip size={18} />
+								</button>
+								<button
+									type="button"
+									className="sh-btn sh-btn-icon sh-sketch"
+									onClick={openSketch}
+									disabled={!canType || images.length >= MAX_ATTACHMENTS || files.length >= MAX_FILES}
+									aria-label="Sketch a drawing"
+									title="Sketch a drawing"
+								>
+									<PenLine size={18} />
+								</button>
+								<DraftStash
+									drafts={stashed}
+									canStash={text.trim() !== ""}
+									disabled={!canType}
+									onStash={() => void stashNow()}
+									onRestore={restoreStashed}
+									onDrop={dropStashed}
+								/>
+							</div>
+							{models !== null ? (
+								<ModelControls
+									models={models}
+									model={model}
+									thinkingLevel={thinkingLevel}
+									thinkingLevels={thinkingLevels}
+									profiles={profiles}
+									profile={profile}
+									disabled={!live}
+									onSessionCommand={onSessionCommand}
+								>
+									{promptModel && (
+										<PromptModelPicker
+											models={models}
+											sessionModel={model}
+											choice={promptChoice}
+											onChoice={setPromptChoice}
+											disabled={!canType}
+										/>
+									)}
+									{fanout && (
+										<FanoutPill
+											prompt={composePrompt(text, files)}
+											target={fanout}
+											disabled={!canType || uploading}
+										/>
+									)}
+								</ModelControls>
+							) : (
+								fanout && (
+									<div className="sh-composer-tools">
+										<FanoutPill
+											prompt={composePrompt(text, files)}
+											target={fanout}
+											disabled={!canType || uploading}
+										/>
+									</div>
+								)
+							)}
+						</>
+					)}
+					<textarea
+						ref={taRef}
+						className="sh-composer-input"
+						value={text}
+						onChange={e => {
+							setText(e.target.value);
+							setCaretPos(e.target.selectionStart);
+						}}
+						onSelect={e => {
+							const { selectionStart, selectionEnd } = e.currentTarget;
+							caretRef.current = { start: selectionStart, end: selectionEnd };
+							setCaretPos(selectionEnd);
+						}}
+						onKeyDown={onKeyDown}
+						onPaste={onPaste}
+						onCompositionStart={onCompositionStart}
+						onCompositionEnd={onCompositionEnd}
+						placeholder={
+							readOnly
+								? "Read-only link: you can watch but not send"
+								: phase === "ended"
+									? "Session ended"
+									: !live
+										? "Offline — sends when back"
+										: images.length > 0 || files.length > 0
+											? "Add a message…"
+											: "Message the agent…"
+						}
+						disabled={!canType}
+						rows={1}
+						spellCheck={false}
+						enterKeyHint={isTouch() ? "enter" : "send"}
+					/>
+					{!readOnly && (
+						<div className="sh-composer-actions">
+							{busy && queued > 0 && (
+								<span
+									className="sh-queued"
+									role="status"
+									title={`${queued} ${queued === 1 ? "message" : "messages"} queued behind the running turn`}
+									aria-label={`${queued} ${queued === 1 ? "message" : "messages"} queued`}
+								>
+									<ListEnd size={12} aria-hidden /> {queued}
+								</span>
+							)}
+							{showVoice && <VoiceButton input={voiceInput} />}
+							{handsFree.button}
+							{busy && (
+								<button
+									type="button"
+									className="sh-btn sh-btn-stop"
+									onClick={() => client.sendAbort()}
+									disabled={!live}
+									aria-label="Stop the current turn"
+									title="Stop the current turn (Esc)"
+								>
+									<Square size={11} /> <span className="sh-btn-label">Stop</span>
+								</button>
+							)}
+							{canFollowUp && (
+								<button
+									type="button"
+									className="sh-btn sh-btn-after"
+									onClick={() => send(undefined, queueFirst ? undefined : "follow-up")}
+									disabled={!canSend}
+									aria-label={queueFirst ? "Send into the running turn" : "Send after this turn"}
+									title={
+										queueFirst
+											? "Send now, steering the running turn (Alt+Enter)"
+											: "Send when this turn ends (Alt+Enter)"
+									}
+								>
+									{queueFirst ? <Zap size={16} /> : <ListEnd size={16} />}
+								</button>
+							)}
+							<button
+								type="button"
+								className="sh-btn sh-btn-primary"
+								onClick={() => send(undefined, queueFirst ? "follow-up" : undefined)}
+								disabled={!canSend}
+								aria-label={
+									canFollowUp ? (queueFirst ? "Send after this turn" : "Send into the running turn") : "Send"
+								}
+								title={
+									!live
+										? "Queue until reconnected (Enter)"
+										: queueFirst
+											? "Send when this turn ends (Enter)"
+											: canFollowUp
+												? "Send now, steering the running turn (Enter)"
+												: "Send (Enter)"
+								}
+							>
+								<SendHorizontal size={16} /> <span className="sh-btn-label">Send</span>
+							</button>
+						</div>
+					)}
+				</div>
 			</div>
 		</div>
 	);

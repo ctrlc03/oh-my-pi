@@ -30,7 +30,7 @@ export function SourceBlock({ kind, source }: { kind: DiagramKind; source: strin
 		});
 	};
 	return (
-		<div className="tr-code">
+		<div className="tr-code" data-lang={kind}>
 			<pre>
 				<code className={`language-${kind}`}>{source.replace(/\n$/, "")}</code>
 			</pre>

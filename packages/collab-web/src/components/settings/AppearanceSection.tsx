@@ -63,7 +63,8 @@ const ZOOMS: readonly { value: Zoom; label: string }[] = ZOOM_STEPS.map(step => 
 }));
 
 const FONT_OPTIONS: readonly FontOption<Font>[] = [
-	{ value: "system", label: "System", stack: "var(--font-ui-system)" },
+	{ value: "system", label: "Inter", stack: "var(--font-ui-system)" },
+	{ value: "native", label: "System", stack: "var(--font-ui-native)" },
 	{ value: "serif", label: "Serif", stack: "var(--font-ui-serif)" },
 	{ value: "rounded", label: "Rounded", stack: "var(--font-ui-rounded)" },
 	{ value: "mono", label: "Monospace", stack: "var(--font-mono)" },
@@ -257,7 +258,7 @@ export function AppearanceSection(): ReactNode {
 			<SettingsGroup title="Top bar">
 				<SettingsRow
 					label="Buttons"
-					hint="Hidden buttons stay in the ⋯ menu and the command palette. A phone's bar has room for four: the first four of yours, not counting the ones marked Not on phones."
+					hint="The header stays quiet: only Agents is on until you add more. Every button, shown or not, stays in the ⋯ menu and the command palette. A phone's bar has room for four: the first four of yours, not counting the ones marked Not on phones."
 				>
 					<TopBarControls />
 				</SettingsRow>

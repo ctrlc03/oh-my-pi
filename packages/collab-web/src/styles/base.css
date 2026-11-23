@@ -63,6 +63,24 @@ button {
 	cursor: pointer;
 }
 
+/* The app's default hover pace: colours ease under the pointer instead of snapping. Element selectors are the weakest
+ * in the cascade, so any rule that sets its own `transition` (a panel sliding, a bar growing) replaces this wholesale. */
+button,
+a,
+summary,
+input,
+textarea,
+select,
+[role="button"],
+[role="tab"],
+[role="menuitem"],
+[role="option"] {
+	transition:
+		background-color var(--dur-fast) var(--ease-out),
+		border-color var(--dur-fast) var(--ease-out),
+		color var(--dur-fast) var(--ease-out);
+}
+
 a {
 	color: var(--accent);
 }

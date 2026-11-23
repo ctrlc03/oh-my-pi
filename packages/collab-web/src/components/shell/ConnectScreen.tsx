@@ -1,16 +1,20 @@
 import { ArrowRight, ClipboardPaste, Eye, Lock, Plus, ScanLine, Settings, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { extractPairing, type PairingLink } from "../../lib/companion";
 import type { ComputerHandle } from "../../lib/computers";
 import { relTime, shortenPath } from "../../lib/format";
 import { openSettings } from "../../lib/settings-ui";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
+import { roomsNotListed } from "../../lib/session-org";
 import { AddComputer } from "./AddComputer";
 import { CompanionCard } from "./CompanionCard";
 import { ComputerChip } from "./ComputerChip";
 import { OmpMark } from "./OmpMark";
 import { QrScanner } from "./QrScanner";
+
+const JOIN_BLURB =
+	"Watch an omp agent work in real time — transcript, tool calls and subagents — and prompt it from here.";
 
 export interface ConnectScreenProps {
 	error: string | null;
@@ -30,7 +34,7 @@ export interface ConnectScreenProps {
 
 export function ConnectScreen({
 	error,
-	rooms,
+	rooms: remembered,
 	computers,
 	onConnect,
 	onOpenHost,
@@ -38,6 +42,8 @@ export function ConnectScreen({
 	onPair,
 	onRemoveComputer,
 }: ConnectScreenProps): ReactNode {
+	// A room of a session a computer card lists is that card's row, not a second one under Recent sessions.
+	const rooms = useMemo(() => roomsNotListed(remembered, computers), [remembered, computers]);
 	const [link, setLink] = useState("");
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [scanning, setScanning] = useState(false);
@@ -84,6 +90,8 @@ export function ConnectScreen({
 
 	const shown = localError ?? error;
 	const canPaste = typeof navigator !== "undefined" && typeof navigator.clipboard?.readText === "function";
+	/** Something to open already: the page greets the person back, and joining by link steps down to a card. */
+	const hasSessions = computers.length > 0 || rooms.length > 0;
 
 	const remove = (computer: ComputerHandle): void => {
 		const confirmed = window.confirm(
@@ -122,130 +130,139 @@ export function ConnectScreen({
 					</button>
 				</div>
 			</div>
-			<div className="sh-connect-stack">
-				{computers.length > 0 && (
-					<div className="sh-connect-cards">
-						{computers.map(computer => (
-							<CompanionCard
-								key={computer.id}
-								computer={computer}
-								showName={computers.length > 1}
-								onPair={onPair}
-								onJoin={next => {
-									setLocalError(null);
-									onConnect(next);
-								}}
-								onOpenHost={onOpenHost}
-								onRemove={() => remove(computer)}
-							/>
-						))}
-						<div className="sh-connect-add">
-							<button
-								type="button"
-								className="sh-btn"
-								aria-expanded={adding}
-								onClick={() => setAdding(open => !open)}
-							>
-								<Plus size={15} /> Add a computer
-							</button>
-							{adding && (
-								<section className="sh-connect-card" aria-label="Add a computer">
-									<AddComputer computers={computers} onPair={onPair} onPaired={() => setAdding(false)} />
-								</section>
-							)}
-						</div>
-					</div>
-				)}
-				{rooms.length > 0 && (
-					<section className="sh-connect-card sh-recents" aria-label="Recent sessions">
-						<h2 className="sh-recents-title">Recent sessions</h2>
-						<ul className="sh-recents-list">
-							{rooms.map(room => (
-								<li key={room.roomId} className="sh-recent">
-									<button
-										type="button"
-										className="sh-recent-join"
-										onClick={() => join(room.link)}
-										title={room.cwd ?? room.title}
-									>
-										<span className="sh-recent-title">
-											<span className="sh-recent-name">{room.title}</span>
-											{computerChip(room)}
-											{room.readOnly && <Eye size={13} aria-label="View-only" />}
-										</span>
-										<span className="sh-recent-meta">
-											{room.cwd && <span className="sh-recent-cwd">{shortenPath(room.cwd)}</span>}
-											<span>{relTime(room.lastSeen)}</span>
-										</span>
-									</button>
-									<button
-										type="button"
-										className="sh-btn sh-btn-icon"
-										onClick={() => onForget(room.roomId)}
-										aria-label={`Forget ${room.title}`}
-									>
-										<X size={15} />
-									</button>
-								</li>
-							))}
-						</ul>
-					</section>
-				)}
-				<form className="sh-connect-card" onSubmit={submit}>
-					<div className="sh-connect-head">
-						<h1 className="sh-connect-title">Join a live session</h1>
-						<p className="sh-connect-sub">
-							Watch an omp agent work in real time — transcript, tool calls and subagents — and prompt it from
-							here.
+			<div className="sh-connect-panel">
+				<div className="sh-connect-stack">
+					<header className="sh-home-head">
+						<h1 className="sh-home-title">
+							{hasSessions ? "Pick up where you left off" : "Join a live session"}
+						</h1>
+						<p className="sh-home-sub">
+							{hasSessions ? "Open a session on your computer, or join one with a link." : JOIN_BLURB}
 						</p>
-					</div>
-					<div className="sh-connect-quick">
-						{canPaste && (
-							<button
-								type="button"
-								className={link.trim() === "" ? "sh-btn sh-btn-primary" : "sh-btn"}
-								onClick={() => void paste()}
-							>
-								<ClipboardPaste size={16} /> Paste link
-							</button>
+					</header>
+					{computers.length > 0 && (
+						<div className="sh-connect-cards">
+							{computers.map(computer => (
+								<CompanionCard
+									key={computer.id}
+									computer={computer}
+									showName={computers.length > 1}
+									onPair={onPair}
+									onJoin={next => {
+										setLocalError(null);
+										onConnect(next);
+									}}
+									onOpenHost={onOpenHost}
+									onRemove={() => remove(computer)}
+								/>
+							))}
+							<div className="sh-connect-add">
+								<button
+									type="button"
+									className="sh-btn"
+									aria-expanded={adding}
+									onClick={() => setAdding(open => !open)}
+								>
+									<Plus size={15} /> Add a computer
+								</button>
+								{adding && (
+									<section className="sh-connect-card" aria-label="Add a computer">
+										<AddComputer computers={computers} onPair={onPair} onPaired={() => setAdding(false)} />
+									</section>
+								)}
+							</div>
+						</div>
+					)}
+					{rooms.length > 0 && (
+						<section className="sh-connect-card sh-recents" aria-label="Recent sessions">
+							<h2 className="sh-recents-title">Recent sessions</h2>
+							<ul className="sh-recents-list">
+								{rooms.map(room => (
+									<li key={room.roomId} className="sh-recent">
+										<button
+											type="button"
+											className="sh-recent-join"
+											onClick={() => join(room.link)}
+											title={room.cwd ?? room.title}
+										>
+											<span className="sh-recent-title">
+												<span className="sh-recent-name">{room.title}</span>
+												{computerChip(room)}
+												{room.readOnly && <Eye size={13} aria-label="View-only" />}
+											</span>
+											<span className="sh-recent-meta">
+												{room.cwd && <span className="sh-recent-cwd">{shortenPath(room.cwd)}</span>}
+												<span>{relTime(room.lastSeen)}</span>
+											</span>
+										</button>
+										<button
+											type="button"
+											className="sh-btn sh-btn-icon"
+											onClick={() => onForget(room.roomId)}
+											aria-label={`Forget ${room.title}`}
+										>
+											<X size={15} />
+										</button>
+									</li>
+								))}
+							</ul>
+						</section>
+					)}
+					<form className="sh-connect-card" onSubmit={submit}>
+						{hasSessions && (
+							<div className="sh-connect-head">
+								<h2 className="sh-connect-title">Join a live session</h2>
+								<p className="sh-connect-sub">{JOIN_BLURB}</p>
+							</div>
 						)}
-						<button type="button" className="sh-btn" onClick={() => setScanning(true)}>
-							<ScanLine size={16} /> Scan QR
+						<div className="sh-connect-quick">
+							{canPaste && (
+								<button
+									type="button"
+									className={link.trim() === "" ? "sh-btn sh-btn-primary" : "sh-btn"}
+									onClick={() => void paste()}
+								>
+									<ClipboardPaste size={16} /> Paste link
+								</button>
+							)}
+							<button type="button" className="sh-btn" onClick={() => setScanning(true)}>
+								<ScanLine size={16} /> Scan QR
+							</button>
+						</div>
+						<label className="sh-field">
+							<span className="sh-field-label">Join link</span>
+							<input
+								className="sh-input sh-input-mono"
+								type="text"
+								inputMode="url"
+								enterKeyHint="go"
+								value={link}
+								onChange={e => setLink(e.target.value)}
+								placeholder="ws://host:port/r/room.key"
+								spellCheck={false}
+								autoComplete="off"
+								autoCapitalize="off"
+								autoCorrect="off"
+							/>
+							<span className="sh-field-hint">
+								Run <code>/collab</code> in any omp session to get one.
+							</span>
+						</label>
+						{shown && <div className="sh-connect-error">{shown}</div>}
+						<button
+							className={
+								link.trim() === "" ? "sh-btn sh-connect-submit" : "sh-btn sh-btn-primary sh-connect-submit"
+							}
+							type="submit"
+						>
+							Connect <ArrowRight size={14} />
 						</button>
-					</div>
-					<label className="sh-field">
-						<span className="sh-field-label">Join link</span>
-						<input
-							className="sh-input sh-input-mono"
-							type="text"
-							inputMode="url"
-							enterKeyHint="go"
-							value={link}
-							onChange={e => setLink(e.target.value)}
-							placeholder="ws://host:port/r/room.key"
-							spellCheck={false}
-							autoComplete="off"
-							autoCapitalize="off"
-							autoCorrect="off"
-						/>
-						<span className="sh-field-hint">
-							Run <code>/collab</code> in any omp session to get one.
-						</span>
-					</label>
-					{shown && <div className="sh-connect-error">{shown}</div>}
-					<button
-						className={
-							link.trim() === "" ? "sh-btn sh-connect-submit" : "sh-btn sh-btn-primary sh-connect-submit"
-						}
-						type="submit"
-					>
-						Connect <ArrowRight size={14} />
-					</button>
-					<div className="sh-connect-foot">
-						<Lock size={12} />
-						End-to-end encrypted. The room key stays in the link and never reaches the relay.
-					</div>
-				</form>
+						<div className="sh-connect-foot">
+							<Lock size={12} />
+							End-to-end encrypted. The room key stays in the link and never reaches the relay.
+						</div>
+					</form>
+				</div>
 			</div>
 			{scanning && (
 				<QrScanner

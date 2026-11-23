@@ -6,7 +6,7 @@ export interface QuickRepliesProps {
 	onPick(text: string): void;
 }
 
-/** Saved prompts as a horizontally scrolling chip row, above the composer and in the start sheet. They are edited in Settings → Messages. */
+/** Saved prompts as quiet ghost pills in a horizontally scrolling row inside the composer card, shown while the draft is empty and the agent is idle. They are edited in Settings → Messages. */
 export function QuickReplies({ disabled, onPick }: QuickRepliesProps): ReactNode {
 	const replies = useQuickReplies();
 	return (

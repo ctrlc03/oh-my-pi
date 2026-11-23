@@ -6,7 +6,6 @@ import type { AgentRef, CompanionClient, SessionOverview, SessionSearchHit } fro
 import { computerById, type ComputerHandle } from "../../lib/computers";
 import { highlightRuns } from "../../lib/fuzzy";
 import { relTime, shortenPath } from "../../lib/format";
-import { hostKey } from "../../lib/inbox";
 import { setJumpIntent } from "../../lib/jump-intent";
 import {
 	closePalette,
@@ -24,6 +23,7 @@ import {
 } from "../../lib/palette";
 import { findMessages } from "../../lib/palette-messages";
 import { extractLink, type RecentRoom } from "../../lib/rooms";
+import { roomsNotListed } from "../../lib/session-org";
 import { queryTerms, searchable, splitMatches } from "../../lib/search-terms";
 import type { SessionCard, TodoProgress } from "../../lib/session-card";
 import { effectiveKeys, formatCombo, IS_MAC, shortcutFires, useOverrides } from "../../lib/shortcuts";
@@ -314,12 +314,10 @@ export function CommandPalette({
 			sessionId !== null && id === sessionId && (currentComputerId === null || computerId === currentComputerId);
 		const named = (computerId: string | undefined): string | undefined =>
 			several && computerId !== undefined ? computerById(computers, computerId)?.name : undefined;
-		const hostInstances = new Set<string>();
 		for (const computer of computers) {
 			const { client } = computer;
 			if (computer.snap.phase !== "live" || client === null) continue;
 			for (const host of computer.snap.hosts) {
-				hostInstances.add(hostKey(computer.id, host.instanceId));
 				if (isCurrent(computer.id, host.sessionId) || seen.has(`${computer.id}:${host.sessionId}`)) continue;
 				seen.add(`${computer.id}:${host.sessionId}`);
 				const state = host.inputRequired ? "needs input" : host.busy === true ? "working" : "live";
@@ -341,7 +339,6 @@ export function CommandPalette({
 				});
 			}
 			for (const idle of computer.snap.idle) {
-				hostInstances.add(hostKey(computer.id, idle.instanceId));
 				if (isCurrent(computer.id, idle.sessionId) || seen.has(`${computer.id}:${idle.sessionId}`)) continue;
 				seen.add(`${computer.id}:${idle.sessionId}`);
 				list.push({
@@ -366,7 +363,6 @@ export function CommandPalette({
 			}
 			// Opening a hibernated session resumes it: the same open as a live one, only slower.
 			for (const asleep of computer.snap.hibernated) {
-				hostInstances.add(hostKey(computer.id, asleep.instanceId));
 				if (isCurrent(computer.id, asleep.sessionId) || seen.has(`${computer.id}:${asleep.sessionId}`)) continue;
 				seen.add(`${computer.id}:${asleep.sessionId}`);
 				list.push({
@@ -383,14 +379,10 @@ export function CommandPalette({
 				});
 			}
 		}
-		for (const room of rooms) {
+		// A room of a session a live computer lists is that session's entry above, not a second one.
+		const listing = computers.filter(computer => computer.snap.phase === "live" && computer.client !== null);
+		for (const room of roomsNotListed(rooms, listing)) {
 			if (room.roomId === currentRoomId) continue;
-			if (
-				room.instanceId !== undefined &&
-				room.computerId !== undefined &&
-				hostInstances.has(hostKey(room.computerId, room.instanceId))
-			)
-				continue;
 			list.push({
 				key: `room:${room.roomId}`,
 				kind: "session",

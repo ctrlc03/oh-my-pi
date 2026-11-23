@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { CompanionClient, INITIAL_SNAPSHOT, type PairingLink } from "./companion";
 import {
 	type Computer,
@@ -12,6 +12,7 @@ import {
 	saveLastComputer,
 	unpairComputer,
 } from "./computers";
+import { loadComputerOrder, mergeOrder, moveInOrder, orderComputers, saveComputerOrder } from "./computer-order";
 import { dropOrg } from "./org-storage";
 import { forgetComputerRooms, type RecentRoom } from "./rooms";
 import { suspendsHiddenPages } from "./socket";
@@ -155,8 +156,10 @@ class ComputerStore {
 }
 
 export interface ComputersControl {
-	/** Every paired computer, in the order they were paired. */
+	/** Every paired computer, in the order the user arranged them; those not placed yet (and everyone until then) in the order they were paired. */
 	computers: readonly ComputerHandle[];
+	/** Put a computer at index `to` of the arranged order, kept on this device. */
+	arrange(id: string, to: number): void;
 	/** Pair with the computer a link names: a new one is added, one already paired takes the link's invite. `fresh` marks it as a fresh VM. Its id; null when the link does not parse. */
 	pair(link: PairingLink, fresh?: FreshComputer): string | null;
 	/**
@@ -173,11 +176,26 @@ export interface ComputersControl {
  */
 export function useComputers(): ComputersControl {
 	const [store] = useState(() => new ComputerStore(loadComputers()));
-	const computers = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+	const paired = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+	const [stored, setStored] = useState(loadComputerOrder);
+	const computers = useMemo(() => orderComputers(paired, stored), [paired, stored]);
 	useEffect(() => {
 		store.attach();
 		return () => store.detach();
 	}, [store]);
+
+	const arrange = useCallback(
+		(id: string, to: number): void => {
+			const ids = mergeOrder(
+				stored,
+				paired.map(computer => computer.id),
+			);
+			const next = moveInOrder(ids, id, to);
+			saveComputerOrder(next);
+			setStored(next);
+		},
+		[stored, paired],
+	);
 
 	const pair = useCallback(
 		(link: PairingLink, fresh?: FreshComputer): string | null => {
@@ -197,10 +215,14 @@ export function useComputers(): ComputersControl {
 			store.sync(unpairComputer(id));
 			dropOrg(id);
 			if (loadLastComputer() === id) saveLastComputer(null);
+			// A removed computer's place is forgotten; one paired again later goes to the end.
+			const kept = loadComputerOrder().filter(other => other !== id);
+			saveComputerOrder(kept);
+			setStored(kept);
 			return forgetComputerRooms(id);
 		},
 		[store],
 	);
 
-	return { computers, pair, remove };
+	return { computers, arrange, pair, remove };
 }

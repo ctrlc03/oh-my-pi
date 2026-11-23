@@ -168,11 +168,13 @@ export function useSessionOrgs(computers: readonly ComputerHandle[], rooms: read
 			const snap = computersRef.current.find(computer => computer.id === owner)?.snap;
 			const own = rooms.filter(room => roomOwner(room, computersRef.current) === owner);
 			const listed = snap === undefined ? null : [...snap.hosts, ...snap.idle, ...snap.hibernated];
-			const idle = (listed === null ? own : matchRooms(own, listed).alone).map(room => ({
-				key: roomOrgKey(room.roomId),
-				lastActive: room.lastSeen,
-				working: false,
-			}));
+			const idle = (listed === null ? own : matchRooms(own, listed, { complete: snap?.phase === "live" }).alone).map(
+				room => ({
+					key: roomOrgKey(room.roomId),
+					lastActive: room.lastSeen,
+					working: false,
+				}),
+			);
 			change(owner, autoSettleIdle(docOf(owner), idle, now));
 		}
 	}, [rooms, now, idleDays, change, docOf]);

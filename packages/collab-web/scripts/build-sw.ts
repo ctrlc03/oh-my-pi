@@ -17,9 +17,9 @@
  * Requests made with `cache: "no-store"` (the app's own update check) pass through.
  *
  * The diagram engines (Mermaid, Excalidraw), Excalidraw's fonts (`excalidraw-assets/`), the Monaco editor
- * (`monaco-assets/`: engine, stylesheet, worker) and the terminal's icon font (`terminal-assets/`) are not
- * precached: the worker caches them on first use, so diagrams, the desktop editor and the terminal work offline
- * after being shown once.
+ * (`monaco-assets/`: engine, stylesheet, worker), the terminal's icon font (`terminal-assets/`) and the UI font
+ * (`fonts/`) are not precached: the worker caches them on first use, so diagrams, the desktop editor, the terminal
+ * and the typeface work offline after being shown once.
  *
  * It also shows the companion's Web Push notifications (see scripts/companion.ts):
  * a payload's `badge` sets the app icon badge, `reply` adds an inline text-reply action,
@@ -167,7 +167,8 @@ function isRuntimeAsset(url) {
 		rel.startsWith("excalidraw-assets/") ||
 		rel.startsWith("architecture-assets/") ||
 		rel.startsWith("monaco-assets/") ||
-		rel.startsWith("terminal-assets/")
+		rel.startsWith("terminal-assets/") ||
+		rel.startsWith("fonts/")
 	)
 		return true;
 	return !rel.includes("/") && (rel.endsWith(".js") || rel.endsWith(".css") || rel.endsWith(".woff2"));

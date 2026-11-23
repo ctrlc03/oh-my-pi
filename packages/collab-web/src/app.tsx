@@ -56,7 +56,6 @@ import { TabSlots, WorkspaceTabs, panelId } from "./components/shell/WorkspaceTa
 import { LimitBar } from "./components/shell/LimitBar";
 import { SpendCapBar } from "./components/shell/SpendCapBar";
 import { CacheStrip } from "./components/shell/CacheStrip";
-import { TaskProgress } from "./components/shell/TaskProgress";
 import { Toasts } from "./components/shell/Toasts";
 import { UpdateBar } from "./components/shell/UpdateBar";
 import { UnreadHost, useViewing } from "./components/shell/UnreadHost";
@@ -97,6 +96,7 @@ import {
 	loadRooms,
 	moveRoom,
 	type RecentRoom,
+	recordRoomSessions,
 	rememberRoom,
 	roomIdOf,
 	setActiveLink,
@@ -123,6 +123,7 @@ import { useHostRecovery } from "./lib/use-host-recovery";
 import { useGuestSnapshot } from "./lib/use-guest";
 import { DEVICE_ORG } from "./lib/org-storage";
 import { deleteOffered, isDeletableSession } from "./lib/session-delete";
+import { learnSessionIds } from "./lib/session-org";
 import { type SessionOrgs, useSessionOrgs } from "./lib/use-session-org";
 import type { ToolRenderHost } from "./tool-render";
 import "./components/shell/shell.css";
@@ -179,7 +180,7 @@ export function App(): ReactNode {
 	const lastLinkRef = useRef<string | null>(null);
 	/** The current session was reopened from storage, not chosen by the user this launch. */
 	const resumedRef = useRef(false);
-	const { computers, pair: pairComputer, remove } = useComputers();
+	const { computers, arrange, pair: pairComputer, remove } = useComputers();
 	const personal = usePersonalProvider(computers);
 	const pushes = usePush(computers);
 	usePresence(computers, pushes);
@@ -250,6 +251,13 @@ export function App(): ReactNode {
 	}, [connect]);
 
 	const remember = useCallback((room: Omit<RecentRoom, "lastSeen">): void => setRooms(rememberRoom(room)), []);
+
+	// A room remembered before it carried its session id learns it from the computer that lists its process, so it
+	// still folds into the session after the process is replaced (see `matchRooms`).
+	useEffect(() => {
+		const learned = learnSessionIds(rooms, computers);
+		if (learned.size > 0) setRooms(recordRoomSessions(learned));
+	}, [rooms, computers]);
 
 	// The host replaced the session's room: follow it, carrying the draft and queued prompts.
 	const replaceRoom = useCallback(
@@ -463,6 +471,7 @@ export function App(): ReactNode {
 								computers={computers}
 								orgs={orgs}
 								onPair={pair}
+								onArrangeComputer={arrange}
 								rooms={rooms}
 								onLeave={leave}
 								onRejoin={rejoin}
@@ -494,6 +503,8 @@ interface SessionProps {
 	computers: readonly ComputerHandle[];
 	orgs: SessionOrgs;
 	onPair(link: PairingLink): void;
+	/** Put a computer at an index of the arranged order. */
+	onArrangeComputer(id: string, to: number): void;
 	rooms: readonly RecentRoom[];
 	onLeave(): void;
 	onRejoin(): void;
@@ -528,6 +539,7 @@ function Session({
 	computers,
 	orgs,
 	onPair,
+	onArrangeComputer,
 	rooms,
 	onLeave,
 	onRejoin,
@@ -885,9 +897,10 @@ function Session({
 				readOnly: snap.readOnly,
 				computerId: computerId ?? undefined,
 				instanceId: instanceId ?? undefined,
+				sessionId: sessionId ?? undefined,
 			});
 		}
-	}, [live, roomId, link, title, cwd, snap.readOnly, computerId, instanceId, onRemember]);
+	}, [live, roomId, link, title, cwd, snap.readOnly, computerId, instanceId, sessionId, onRemember]);
 
 	// A room the host replaced reopens through the computer that runs it; "ended" and
 	// forgetting the room wait until the computer has answered.
@@ -995,6 +1008,11 @@ function Session({
 	const subagents = useMemo(
 		() => currentSubagents(snap.progress, snap.lifecycle, snap.agents),
 		[snap.progress, snap.lifecycle, snap.agents],
+	);
+	// The composer shows these as its header line; one object that changes only with its parts keeps the memoized composer still while frames stream.
+	const taskWork = useMemo(
+		() => ({ todos, subagents, hasAgent, onOpenAgent: openAgent }),
+		[todos, subagents, hasAgent, openAgent],
 	);
 	const [screensOpen, setScreensOpen] = useState(false);
 	const openScreens = useCallback(() => {
@@ -1563,6 +1581,7 @@ function Session({
 								beside={beside.available ? beside : null}
 								orgs={orgs}
 								onPair={onPair}
+								onMoveComputer={onArrangeComputer}
 								limitResetAt={limitedUntil(snap.state ?? undefined, Date.now())}
 							/>
 						</aside>
@@ -1625,12 +1644,7 @@ function Session({
 							/>
 						)}
 						{!focus && (
-							<>
-								<TaskProgress todos={todos} subagents={subagents} hasAgent={hasAgent} onOpenAgent={openAgent} />
-								<CacheStrip
-									cache={Object.hasOwn(snap.features, "cache-stats") ? snap.state?.cache : undefined}
-								/>
-							</>
+							<CacheStrip cache={Object.hasOwn(snap.features, "cache-stats") ? snap.state?.cache : undefined} />
 						)}
 						<Composer
 							ref={composerRef}
@@ -1643,6 +1657,7 @@ function Session({
 							queuedMessageCount={snap.state?.queuedMessageCount ?? 0}
 							followUp={Object.hasOwn(snap.features, "follow-up") && !snap.readOnly}
 							approvalGrants={Object.hasOwn(snap.features, "approval-grants")}
+							tasks={focus ? null : taskWork}
 							followUps={snap.followUps}
 							followUpIds={composerExtras.followUpIds}
 							queueEdit={composerExtras.queueEdit}

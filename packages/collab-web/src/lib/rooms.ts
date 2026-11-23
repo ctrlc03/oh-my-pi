@@ -31,6 +31,11 @@ export interface RecentRoom {
 	computerId?: string;
 	/** omp process that computer lists for this room (an id only that computer makes sense of). */
 	instanceId?: string;
+	/**
+	 * The session the room showed. A resumed session is a new process in a new room, so this, not the process id, is what
+	 * ties the rooms of one session together. Absent from rooms remembered before it was recorded.
+	 */
+	sessionId?: string;
 	/** epoch ms of the last successful join. */
 	lastSeen: number;
 }
@@ -46,6 +51,7 @@ function isRoom(value: unknown): value is RecentRoom {
 		typeof r.readOnly === "boolean" &&
 		(r.computerId === undefined || typeof r.computerId === "string") &&
 		(r.instanceId === undefined || typeof r.instanceId === "string") &&
+		(r.sessionId === undefined || typeof r.sessionId === "string") &&
 		typeof r.lastSeen === "number"
 	);
 }
@@ -81,6 +87,16 @@ export function claimLegacyRooms(computerId: string): void {
 		ROOMS_KEY,
 		raw.map(room => (isRoom(room) && room.computerId === undefined ? { ...room, computerId } : room)),
 	);
+}
+
+/** Record the session id of rooms that were remembered without one (room id → session id); the rooms as stored. */
+export function recordRoomSessions(sessionIds: ReadonlyMap<string, string>): RecentRoom[] {
+	const next = loadRooms().map(room => {
+		const sessionId = sessionIds.get(room.roomId);
+		return sessionId === undefined || room.sessionId !== undefined ? room : { ...room, sessionId };
+	});
+	writeJson(ROOMS_KEY, next);
+	return next;
 }
 
 export function forgetRoom(roomId: string): RecentRoom[] {

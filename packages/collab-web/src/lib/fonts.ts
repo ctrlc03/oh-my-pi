@@ -1,6 +1,7 @@
 /**
- * Which of the fonts Settings offers are available on this device. The page loads no web fonts, so a named family
- * either exists locally or its stack silently falls through to the system font; the pickers say which.
+ * Which of the fonts Settings offers are available on this device. The page bundles only Inter (the default UI
+ * face), so any other named family either exists locally or its stack silently falls through to the system font; the
+ * pickers say which.
  *
  * `document.fonts.check()` answers true for a family it has never heard of, so availability is measured: the same
  * text is drawn in `<family>, monospace` and `<family>, serif` and compared with plain `monospace` and `serif`. An
@@ -13,10 +14,12 @@ import { CODE_FONTS, type CodeFont, FONTS, type Font } from "./appearance";
 
 /**
  * The families each option's stack in tokens.css tries first, as CSS tokens; the option works if any of them is
- * available. An empty list is a stack that always renders (the system stacks, and serif, which ends in `serif`).
+ * available. An empty list is a stack that always renders (Inter, which is bundled, the system stack, and serif,
+ * which ends in `serif`).
  */
 export const FONT_FAMILIES: Readonly<Record<Font, readonly string[]>> = {
 	system: [],
+	native: [],
 	serif: [],
 	rounded: ["ui-rounded", '"SF Pro Rounded"'],
 	mono: [],
@@ -113,7 +116,7 @@ function getSnapshot(): FontAvailability {
 }
 
 const EVERYTHING: FontAvailability = {
-	font: { system: true, serif: true, rounded: true, mono: true },
+	font: { system: true, native: true, serif: true, rounded: true, mono: true },
 	codeFont: { system: true, jetbrains: true, fira: true, cascadia: true, sfmono: true, menlo: true },
 };
 

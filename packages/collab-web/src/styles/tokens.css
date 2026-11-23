@@ -6,6 +6,32 @@
  * (Settings → Appearance; `data-palette-dark` / `data-palette-light` on <html>): Plum and Marble here,
  * the others further down. Accents are independent of the palette.
  * The ONLY file allowed to contain raw color values. */
+/* Inter, the default UI face: one variable file per script range (OFL, see fonts/Inter-OFL.txt), self-hosted so the page
+ * stays free of third-party requests. The browser fetches a range only when text on the page uses it, and index.html
+ * preloads the Latin one, which carries nearly everything an English session shows. `swap` paints the fallback at once
+ * and trades to Inter when it lands, so text never waits on the network. */
+@font-face {
+	font-family: "Inter Variable";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 100 900;
+	src: url("./fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
+	unicode-range:
+		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
+		U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: "Inter Variable";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 100 900;
+	src: url("./fonts/inter-latin-ext-wght-normal.woff2") format("woff2-variations");
+	unicode-range:
+		U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+		U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 :root {
 	color-scheme: dark;
 
@@ -119,8 +145,11 @@
 	--pet-cover: #7a52d6;
 	--pet-lens: rgba(210, 245, 255, 0.28);
 
-	/* type — local stacks only, no web fonts. Settings → Appearance swaps --font-ui / --font-mono (see the end of this file). */
-	--font-ui-system: "Inter var", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+	/* type — Inter (bundled above) leads the UI stack, the device's own UI font follows while it loads and where it cannot.
+	 * Code stays on the device's monospace: no code face is shipped. Settings → Appearance swaps --font-ui / --font-mono
+	 * (see the end of this file). */
+	--font-ui-system: "Inter Variable", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+	--font-ui-native: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 	--font-mono-system: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 	--font-ui: var(--font-ui-system);
 	--font-mono: var(--font-mono-system);
@@ -148,12 +177,19 @@
 	 * so a bigger font keeps its line length; the column is the room tool output, code and tables run in, and
 	 * --prose-w caps the lines of running text inside it. --chat-inset is the column's side padding: the
 	 * transcript, the composer and the bars above it all use it, so their edges line up. */
-	--chat-width: calc(1080px * var(--reading-scale));
-	--prose-w: calc(880px * var(--reading-scale));
+	--chat-width: calc(860px * var(--reading-scale));
+	--prose-w: calc(740px * var(--reading-scale));
 	--chat-inset: 16px;
 
 	--topbar-h: 52px;
+
+	/* motion: one easing and three durations, so a hover, a panel and a message entering all move at the same pace.
+	 * --dur-fast is for colour changes under a pointer, --dur for things that move or fade in, --dur-slow for entrances. */
 	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+	--ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+	--dur-fast: 120ms;
+	--dur: 200ms;
+	--dur-slow: 340ms;
 
 	--shadow-accent: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 4px 14px rgba(219, 39, 119, 0.3);
 
@@ -1538,6 +1574,10 @@
 }
 
 /* Text settings (Settings → Appearance → Text and Layout). The attributes sit on <html>; the defaults need no rule. */
+:root[data-font="native"] {
+	--font-ui: var(--font-ui-native);
+}
+
 :root[data-font="serif"] {
 	--font-ui: var(--font-ui-serif);
 }

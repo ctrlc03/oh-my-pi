@@ -23,6 +23,7 @@ describe("service worker runtime cache", () => {
 		expect(at("/", "monaco-assets/editor.worker.js")).toBe(true);
 		expect(at("/", "monaco-assets/monaco.css")).toBe(true);
 		expect(at("/", "terminal-assets/SymbolsNerdFontMono-Regular.woff2")).toBe(true);
+		expect(at("/", "fonts/inter-latin-wght-normal.woff2")).toBe(true);
 		expect(at("/", "monaco-assets/monaco.js?x")).toBe(false);
 	});
 

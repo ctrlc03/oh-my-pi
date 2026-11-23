@@ -23,7 +23,7 @@ import { Sheet } from "./Sheet";
 
 const IDLE_DAY_CHOICES = [3, 7, 14, 30];
 
-function SheetHead({ title, onClose }: { title: string; onClose(): void }): ReactNode {
+export function OrgMenuHead({ title, onClose }: { title: string; onClose(): void }): ReactNode {
 	return (
 		<div className="sh-sheet-head">
 			<div className="sh-sheet-title">{title}</div>
@@ -76,7 +76,7 @@ export interface OrgMenuProps {
 export function OrgMenu(props: OrgMenuProps): ReactNode {
 	return (
 		<Sheet label={`organise ${props.title}`} fixed onClose={props.onClose}>
-			<SheetHead title={props.title} onClose={props.onClose} />
+			<OrgMenuHead title={props.title} onClose={props.onClose} />
 			<OrgMenuBody {...props} />
 		</Sheet>
 	);
@@ -253,7 +253,7 @@ export function OrgSnoozeSheet(props: {
 }): ReactNode {
 	return (
 		<Sheet label={props.title} fixed onClose={props.onClose}>
-			<SheetHead title={props.title} onClose={props.onClose} />
+			<OrgMenuHead title={props.title} onClose={props.onClose} />
 			<div className="sh-org-menu">
 				<SnoozeList choices={snoozeChoices(props.now, null)} onPick={props.onPick} />
 			</div>

@@ -4,7 +4,16 @@ import { SessionsSidebar } from "../src/components/shell/SessionsSidebar";
 import { type CompanionHost, type CompanionSnapshot, INITIAL_SNAPSHOT } from "../src/lib/companion";
 import type { ComputerHandle } from "../src/lib/computers";
 import type { RecentRoom } from "../src/lib/rooms";
-import { applyOrg, emptyOrg, matchRooms, type OrgDoc, roomOrgKey, sessionOrgKey } from "../src/lib/session-org";
+import {
+	applyOrg,
+	emptyOrg,
+	learnSessionIds,
+	matchRooms,
+	type OrgDoc,
+	roomOrgKey,
+	roomsNotListed,
+	sessionOrgKey,
+} from "../src/lib/session-org";
 import type { SessionOrgControl, SessionOrgs } from "../src/lib/use-session-org";
 
 const NOW = 1_800_000_000_000;
@@ -192,5 +201,209 @@ describe("matching rooms to listed sessions", () => {
 		).toBe("s-1");
 		const byRule = applyOrg(emptyOrg(), roomKey, { type: "settle", reason: "idle" }, NOW);
 		expect(sessionOrgKey(byRule, "s-1", [twin, stale])).toBe("s-1");
+	});
+});
+
+describe("a resumed session is one row", () => {
+	// A resume (hibernation wake, companion restart, `omp -r`) is a new process in a new room: the session id is what stays.
+	const resumed = host({ instanceId: "resumed-1-ab12cd" });
+	const wokenRooms = (): RecentRoom[] => [
+		room({
+			roomId: "r-new",
+			title: "docs-pass",
+			cwd: "/work/docs-pass",
+			computerId: "mac",
+			instanceId: "resumed-1-ab12cd",
+			sessionId: "s-1",
+			lastSeen: NOW + 2,
+		}),
+		room({
+			roomId: "r-mid",
+			title: "docs-pass",
+			cwd: "/work/docs-pass",
+			computerId: "mac",
+			instanceId: "inst-1",
+			sessionId: "s-1",
+			lastSeen: NOW + 1,
+		}),
+		room({
+			roomId: "r-old",
+			title: "docs-pass",
+			cwd: "/work/docs-pass",
+			computerId: "mac",
+			instanceId: "inst-0",
+			sessionId: "s-1",
+		}),
+	];
+
+	it("rooms of earlier processes of the session fold into its row", () => {
+		const { alone, twins } = matchRooms(wokenRooms(), [resumed]);
+		expect(alone).toEqual([]);
+		expect(twins.get("s-1")?.map(twin => twin.roomId)).toEqual(["r-new", "r-mid", "r-old"]);
+		const markup = sidebar({ computers: [computer("mac", [resumed])], rooms: wokenRooms(), doc: emptyOrg() });
+		expect(rowsOf(markup, "active")).toEqual(["docs-pass"]);
+	});
+
+	it("an old room without a session id folds when its process is gone and one listed session has its title and folder", () => {
+		const old = room({
+			roomId: "old",
+			title: "docs-pass",
+			cwd: "/work/docs-pass",
+			computerId: "mac",
+			instanceId: "inst-0",
+		});
+		expect(matchRooms([old], [resumed]).alone).toEqual([]);
+		const markup = sidebar({ computers: [computer("mac", [resumed])], rooms: [old], doc: emptyOrg() });
+		expect(rowsOf(markup, "active")).toEqual(["docs-pass"]);
+	});
+
+	it("an old room is not folded on a guess: two sessions with its title and folder, a view-only link, another folder or title", () => {
+		const base = { title: "docs-pass", cwd: "/work/docs-pass", instanceId: "inst-0" };
+		const twin = host({ instanceId: "inst-2", sessionId: "s-2" });
+		expect(matchRooms([room({ roomId: "a", ...base })], [resumed, twin]).alone).toHaveLength(1);
+		expect(matchRooms([room({ roomId: "b", ...base, readOnly: true })], [resumed]).alone).toHaveLength(1);
+		expect(matchRooms([room({ roomId: "c", ...base, cwd: "/work/elsewhere" })], [resumed]).alone).toHaveLength(1);
+		expect(matchRooms([room({ roomId: "d", ...base, title: "other" })], [resumed]).alone).toHaveLength(1);
+	});
+
+	it("a room of another session id stays, whatever its title", () => {
+		const foreign = room({
+			roomId: "f",
+			title: "docs-pass",
+			cwd: "/work/docs-pass",
+			instanceId: "inst-9",
+			sessionId: "s-other",
+		});
+		expect(matchRooms([foreign], [resumed]).alone).toEqual([foreign]);
+	});
+
+	it("an unlisted room of a computer, or of none, stays a row of its own", () => {
+		const computers = [computer("mac", [resumed])];
+		const unpaired = room({ roomId: "u", computerId: "gone", sessionId: "s-1" });
+		const none = room({ roomId: "n", sessionId: "s-1" });
+		expect(roomsNotListed([...wokenRooms(), unpaired, none], computers)).toEqual([unpaired, none]);
+	});
+
+	it("the pin of an older room of the session carries over to its row", () => {
+		const doc = applyOrg(emptyOrg(), roomOrgKey("r-old"), { type: "pin" }, NOW);
+		const markup = sidebar({ computers: [computer("mac", [resumed])], rooms: wokenRooms(), doc });
+		expect(rowsOf(markup, "pinned")).toEqual(["docs-pass"]);
+		expect(rowsOf(markup, "active")).toEqual([]);
+	});
+
+	it("rooms learn the session id of the process they were remembered for", () => {
+		const rooms = [
+			room({ roomId: "a", computerId: "mac", instanceId: "resumed-1-ab12cd" }),
+			room({ roomId: "b", computerId: "mac", instanceId: "gone" }),
+			room({ roomId: "c", computerId: "mac", instanceId: "resumed-1-ab12cd", sessionId: "kept" }),
+			room({ roomId: "d", instanceId: "resumed-1-ab12cd" }),
+		];
+		expect([...learnSessionIds(rooms, [computer("mac", [resumed])])]).toEqual([["a", "s-1"]]);
+	});
+
+	describe("rooms saved before rooms carried a session id, against a live computer's complete listing", () => {
+		// The copies a user already has: no session id, and a process the computer no longer runs.
+		const preFix = (over: Partial<RecentRoom> = {}): RecentRoom =>
+			room({
+				roomId: "pre",
+				title: "an older title",
+				cwd: "/work/docs-pass",
+				computerId: "mac",
+				instanceId: "inst-0",
+				...over,
+			});
+		const complete = { complete: true };
+
+		it("folds into the one listed session in its folder, even after the session was renamed", () => {
+			const { alone, twins, stale } = matchRooms([preFix()], [resumed], complete);
+			expect(alone).toEqual([]);
+			expect(stale).toEqual([]);
+			expect(twins.get("s-1")?.map(twin => twin.roomId)).toEqual(["pre"]);
+		});
+
+		it("shows no row when no single listed session is in its folder", () => {
+			const elsewhere = preFix({ cwd: "/work/elsewhere" });
+			expect(matchRooms([elsewhere], [resumed], complete)).toMatchObject({ alone: [], stale: [elsewhere] });
+			const crowded = preFix();
+			const twin = host({ instanceId: "inst-2", sessionId: "s-2" });
+			expect(matchRooms([crowded], [resumed, twin], complete).stale).toEqual([crowded]);
+			const markup = sidebar({ computers: [computer("mac", [resumed])], rooms: [elsewhere], doc: emptyOrg() });
+			expect(rowsOf(markup, "active")).toEqual(["docs-pass"]);
+		});
+
+		it("keeps what it cannot know is ended: a view-only link, a room with a session id, one never tied to a process", () => {
+			const viewOnly = preFix({ cwd: "/work/elsewhere", readOnly: true });
+			const withId = preFix({ cwd: "/work/elsewhere", sessionId: "s-ended" });
+			const noProcess = preFix({ cwd: "/work/elsewhere", instanceId: undefined });
+			expect(matchRooms([viewOnly, withId, noProcess], [resumed], complete).alone).toEqual([
+				viewOnly,
+				withId,
+				noProcess,
+			]);
+		});
+
+		it("drops nothing while the computer is not live: its listing may be empty or old", () => {
+			const elsewhere = preFix({ cwd: "/work/elsewhere" });
+			expect(matchRooms([elsewhere], [], {}).alone).toEqual([elsewhere]);
+			const connecting = computer("mac", []);
+			const offline: ComputerHandle = { ...connecting, snap: { ...connecting.snap, phase: "connecting" } };
+			expect(roomsNotListed([elsewhere], [offline])).toEqual([elsewhere]);
+			expect(roomsNotListed([elsewhere], [computer("mac", [resumed])])).toEqual([]);
+		});
+	});
+});
+
+describe("sessions sidebar: arranging the computers", () => {
+	const names = (markup: string): string[] =>
+		[...markup.matchAll(/aria-label="Sessions on ([^"]*)"/g)].map(match => match[1]!);
+
+	it("lists the groups in the order given, each with a menu button and a draggable heading once there are several", () => {
+		const orgs: SessionOrgs = { of: () => control(emptyOrg()) };
+		const render = (computers: ComputerHandle[]): string =>
+			renderToStaticMarkup(
+				<SessionsSidebar
+					computers={computers}
+					rooms={[]}
+					orgs={orgs}
+					currentSessionId={null}
+					currentRoomId={null}
+					onOpenHost={() => Promise.resolve()}
+					onOpenLink={() => {}}
+					onOpenUsage={null}
+					onOpenSessions={null}
+					onClose={() => {}}
+					onMoveComputer={() => {}}
+				/>,
+			);
+		const several = render([computer("studio", []), computer("mac", [])]);
+		expect(names(several)).toEqual(["studio", "mac"]);
+		expect(several.match(/draggable="true"/g)).toHaveLength(2);
+		expect(several).toContain('aria-label="Arrange studio"');
+		const one = render([computer("mac", [])]);
+		expect(one).not.toContain("Arrange");
+		expect(one).not.toContain("draggable");
+	});
+});
+
+describe("sessions sidebar: the top of the sidebar", () => {
+	it("puts Start session first, then the search field, above the sessions", () => {
+		const startable = computer("mac", [host()]);
+		const markup = sidebar({
+			computers: [{ ...startable, snap: { ...startable.snap, canStart: true } }],
+			rooms: [],
+			doc: emptyOrg(),
+		});
+		const start = markup.indexOf("Start session");
+		const search = markup.indexOf('aria-label="Search sessions"');
+		const list = markup.indexOf('class="sh-sidebar-body"');
+		expect(start).toBeGreaterThan(-1);
+		expect(search).toBeGreaterThan(start);
+		expect(list).toBeGreaterThan(search);
+	});
+
+	it("offers no Start session where no computer can start one, but keeps the search", () => {
+		const markup = sidebar({ computers: [computer("mac", [host()])], rooms: [], doc: emptyOrg() });
+		expect(markup).not.toContain("Start session");
+		expect(markup).toContain('aria-label="Search sessions"');
 	});
 });

@@ -53,6 +53,9 @@ export async function buildApp(outdir: string, options: { local: boolean; quiet?
 			`--metafile=${path.join(outdir, ".meta.json")}`,
 			"--define",
 			'process.env.NODE_ENV="production"',
+			// The UI font stays a file under `fonts/` (copied from `public/` below): the bundler would inline a font this
+			// small into the stylesheet as base64, which blocks first paint on it and defeats the preload in index.html.
+			"--external=./fonts/inter-*",
 			"--entry-naming=[hash].[ext]",
 			"--chunk-naming=[hash].[ext]",
 			"--asset-naming=[hash].[ext]",

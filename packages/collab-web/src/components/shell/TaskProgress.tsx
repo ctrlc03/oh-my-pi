@@ -45,10 +45,10 @@ function agentsSummary(work: SubagentWork): string {
 }
 
 /**
- * The agent's work as a slim bar above the composer: its task list's count and
- * the task in hand, and how many subagents are still working, with a thin
- * meter. Tapping opens both lists. Hidden once nothing is left to do or
- * running, so a finished run never lingers.
+ * The agent's work as the slim header line of the composer card: its task
+ * list's count and the task in hand, and how many subagents are still working,
+ * with a hairline meter along its foot. Tapping opens both lists. Hidden once
+ * nothing is left to do or running, so a finished run never lingers.
  */
 export function TaskProgress({ todos, subagents, hasAgent, onOpenAgent }: TaskProgressProps): ReactNode {
 	const [anchor, setAnchor] = useState<DOMRect | null>(null);

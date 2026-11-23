@@ -22,6 +22,8 @@ const result = await Bun.build({
 	outdir: target,
 	target: "browser",
 	format: "iife",
+	// Left as URLs, as in build-app.ts: the exported page has no `fonts/` beside it, so it draws in the device's own fonts.
+	external: ["./fonts/inter-*"],
 	minify: true,
 	splitting: false,
 	naming: "standalone.[ext]",

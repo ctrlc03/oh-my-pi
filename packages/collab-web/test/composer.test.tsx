@@ -121,6 +121,41 @@ describe("Composer follow-ups", () => {
 	});
 });
 
+describe("Composer docked card", () => {
+	const idle = props(null);
+	const tasks = {
+		todos: { phases: [], done: 2, total: 5, current: "Check half-open socket handling" },
+		subagents: null,
+		hasAgent: () => false,
+		onOpenAgent: () => {},
+	};
+
+	it("holds the task line, the chips and the field in one card", () => {
+		const html = renderToStaticMarkup(<Composer {...idle} working={false} tasks={tasks} />);
+		const card = html.indexOf("sh-composer-card");
+		expect(card).toBeGreaterThan(-1);
+		expect(html.indexOf("sh-tasks", card)).toBeGreaterThan(card);
+		expect(html).toContain("Tasks 2/5");
+		expect(html.indexOf("sh-quick-chip", card)).toBeGreaterThan(card);
+		expect(html.indexOf("sh-composer-input", card)).toBeGreaterThan(html.indexOf("sh-quick-chip"));
+		expect(html.split("sh-composer-card").length - 1).toBe(1);
+	});
+
+	it("shows no task line without tasks, and no chips while the agent works", () => {
+		expect(renderToStaticMarkup(<Composer {...idle} working={false} />)).not.toContain("sh-tasks");
+		const working = renderToStaticMarkup(<Composer {...idle} working tasks={tasks} />);
+		expect(working).toContain("Tasks 2/5");
+		expect(working).not.toContain("sh-quick-chip");
+	});
+
+	it("takes an agent's question into the same card, task line included", () => {
+		const ask = props({ reqId: 3, kind: "editor", title: "Name it", prefill: "" });
+		const html = renderToStaticMarkup(<Composer {...ask} tasks={tasks} />);
+		expect(html).toContain("sh-composer-ask");
+		expect(html.indexOf("sh-tasks", html.indexOf("sh-composer-card"))).toBeGreaterThan(-1);
+	});
+});
+
 type KeyEvt = KeyboardEvent<HTMLTextAreaElement>;
 
 function keydown(key: string, opts: { shiftKey?: boolean; isComposing?: boolean } = {}): KeyEvt {

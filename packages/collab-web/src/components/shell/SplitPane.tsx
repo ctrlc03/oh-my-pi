@@ -96,8 +96,9 @@ export function SplitPane({
 				readOnly: snap.readOnly,
 				computerId,
 				instanceId: instanceId ?? undefined,
+				sessionId: sessionId ?? undefined,
 			});
-	}, [live, roomId, link, title, cwd, snap.readOnly, computerId, instanceId, onRemember]);
+	}, [live, roomId, link, title, cwd, snap.readOnly, computerId, instanceId, sessionId, onRemember]);
 
 	const recovery = useHostRecovery(computer, instanceId, snap.phase, roomId, onReplaced);
 	const ended = snap.phase === "ended" && recovery === "absent";

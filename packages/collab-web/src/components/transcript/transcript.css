@@ -29,7 +29,13 @@
 	flex-direction: column;
 	gap: calc(6px * var(--reading-gap));
 	padding: calc(5px * var(--reading-gap)) 0;
-	animation: rise 320ms var(--ease-out) backwards;
+	animation: tr-enter var(--dur-slow) var(--ease-out) backwards;
+}
+
+/* A person's prompt comes up from its own corner, the bubble's tail: it reads as sent, not as something that appeared. */
+.tr-row--user {
+	transform-origin: right bottom;
+	animation-name: tr-enter-sent;
 }
 
 .tr-gutter {
@@ -60,7 +66,7 @@
 	align-items: flex-end;
 }
 
-.tr-block--prompt,
+/* A queued follow-up looks like the prompt bubble it will become (`.tr-block.tr-block--prompt`, in the blocks section). */
 .tr-row--user .tr-body:has(> .tr-queued) {
 	max-width: min(85%, calc(var(--prose-w) * 0.8));
 	background: color-mix(in srgb, var(--accent) 9%, var(--bg-raised));
@@ -345,7 +351,7 @@
 .tr-chev {
 	flex: none;
 	color: var(--fg-faint);
-	transition: transform 150ms ease-out;
+	transition: transform var(--dur) var(--ease-out);
 }
 
 .tr-chev--open {
@@ -537,7 +543,7 @@
 	border: 1px solid var(--border-strong);
 	border-radius: 999px;
 	box-shadow: var(--shadow-overlay);
-	animation: rise 240ms var(--ease-out) backwards;
+	animation: rise var(--dur-slow) var(--ease-out) backwards;
 	cursor: pointer;
 }
 
@@ -588,7 +594,7 @@
 	border: 0;
 	border-radius: 999px;
 	box-shadow: var(--shadow-overlay);
-	animation: rise 240ms var(--ease-out) backwards;
+	animation: rise var(--dur-slow) var(--ease-out) backwards;
 	cursor: pointer;
 }
 
@@ -688,89 +694,141 @@
 	max-width: var(--prose-w);
 }
 
+/* Paragraphs keep the writer's spacing. List items do not: the newline the renderer leaves after a nested list would
+ * otherwise show as an empty line under it. */
 .tr-md p {
 	margin: calc(8px * var(--reading-gap)) 0;
-}
-
-.tr-md p,
-.tr-md li {
 	white-space: pre-wrap;
 }
 
+/* Headings: a tight scale in confident weights. Inter's heavier cuts carry the hierarchy, so the sizes stay close
+ * to the body text and the space above a heading (more than below it) does the separating. `text-wrap` stays at its
+ * default on purpose: balancing re-flows a heading with every streamed token. */
 .tr-md h1,
 .tr-md h2,
 .tr-md h3,
 .tr-md h4,
 .tr-md h5,
 .tr-md h6 {
-	margin: calc(20px * var(--reading-gap)) 0 calc(8px * var(--reading-gap));
+	margin: calc(22px * var(--reading-gap)) 0 calc(6px * var(--reading-gap));
 	font-weight: 600;
 	line-height: 1.3;
-	letter-spacing: -0.01em;
+	letter-spacing: -0.014em;
 }
 
 .tr-md h1 {
-	font-size: calc(21px * var(--reading-scale));
+	margin-top: calc(28px * var(--reading-gap));
+	font-size: calc(22px * var(--reading-scale));
+	font-weight: 700;
+	line-height: 1.25;
+	letter-spacing: -0.026em;
 }
 
 .tr-md h2 {
-	font-size: calc(18px * var(--reading-scale));
+	margin-top: calc(26px * var(--reading-gap));
+	font-size: calc(18.5px * var(--reading-scale));
+	font-weight: 650;
+	letter-spacing: -0.02em;
 }
 
 .tr-md h3 {
 	font-size: calc(16px * var(--reading-scale));
+	letter-spacing: -0.014em;
 }
 
 .tr-md h4,
 .tr-md h5,
 .tr-md h6 {
+	margin-top: calc(18px * var(--reading-gap));
 	font-size: calc(14.5px * var(--reading-scale));
+	letter-spacing: -0.006em;
 }
 
+.tr-md h5,
+.tr-md h6 {
+	color: var(--fg-muted);
+}
+
+/* Lists breathe a little more than the lines inside an item, so each item reads as one unit; markers sit back. */
 .tr-md ul,
 .tr-md ol {
 	margin: calc(8px * var(--reading-gap)) 0;
-	padding-left: 22px;
+	padding-left: 24px;
 }
 
 .tr-md li {
-	margin: calc(3px * var(--reading-gap)) 0;
+	margin: calc(4px * var(--reading-gap)) 0;
+	padding-left: 2px;
+}
+
+.tr-md li::marker {
+	color: var(--fg-faint);
+	font-variant-numeric: tabular-nums;
 }
 
 .tr-md li > ul,
 .tr-md li > ol {
-	white-space: normal;
+	margin: calc(4px * var(--reading-gap)) 0 calc(2px * var(--reading-gap));
 }
 
 .tr-md li > p {
 	margin: 2px 0;
 }
 
+/* Inline code is a tinted chip, not a boxed one: the tint is taken from the text colour so it suits every palette. */
 .tr-md code {
-	padding: 1px 6px;
-	border: 1px solid var(--border);
+	padding: 0.12em 0.4em;
 	border-radius: 6px;
-	background: var(--hover);
+	background: color-mix(in srgb, var(--fg) 8%, transparent);
 	font-family: var(--font-mono);
-	font-size: 0.84em;
+	font-size: 0.875em;
 }
 
-.tr-md pre {
+/* A fenced block is one soft surface: a header line carrying the language, the copy button at its right edge, then the
+ * code. The header is the wrapper's `::before` (the language comes from its `data-lang`) so the copy button stays
+ * where it was in the markup. The header is always one line tall, so a fence that is still streaming does not move
+ * what sits below it when its first token lands. */
+.tr-md .tr-code {
 	margin: calc(12px * var(--reading-gap)) 0;
-	padding: 14px 16px;
-	overflow-x: auto;
-	border: 1px solid var(--border);
+	overflow: hidden;
 	border-radius: var(--radius-lg);
 	background: var(--bg-inset);
 }
 
+.tr-md .tr-code::before {
+	content: attr(data-lang);
+	display: block;
+	padding: 6px 14px 0 16px;
+	font: 500 11.5px / 22px var(--font-ui);
+	letter-spacing: 0.01em;
+	color: var(--fg-faint);
+	user-select: none;
+}
+
+/* The rendered diagram replaces the source block, and brings its own bar. */
+.tr-md .tr-diagram[data-mounted] {
+	margin: 0;
+	overflow: visible;
+	border-radius: 0;
+	background: none;
+}
+
+.tr-md .tr-diagram[data-mounted]::before {
+	display: none;
+}
+
+.tr-md pre {
+	margin: 0;
+	padding: 2px 16px 14px;
+	overflow-x: auto;
+}
+
 .tr-md pre code {
 	padding: 0;
-	border: 0;
 	border-radius: 0;
 	background: none;
 	font-size: calc(12.5px * var(--reading-scale));
-	line-height: 1.6;
+	line-height: 1.65;
 }
 
 .tr-code {
@@ -779,17 +837,21 @@
 
 .tr-copy {
 	position: absolute;
-	top: 6px;
-	right: 6px;
+	top: 5px;
+	right: 8px;
 	height: 24px;
 	padding: 0 8px;
-	font: 500 11px / 1 var(--font-ui);
-	color: var(--fg-muted);
-	background: var(--bg-overlay);
-	border: 1px solid var(--border-strong);
+	font: 500 11.5px / 1 var(--font-ui);
+	color: var(--fg-faint);
+	background: transparent;
+	border: 0;
 	border-radius: var(--radius-sm);
-	opacity: 0;
-	transition: opacity 120ms ease-out;
+}
+
+.tr-copy:hover,
+.tr-copy:focus-visible {
+	color: var(--fg);
+	background: color-mix(in srgb, var(--fg) 9%, transparent);
 }
 
 .tr-copy::after {
@@ -804,22 +866,6 @@
 	content: "Copied";
 }
 
-.tr-code:hover .tr-copy,
-.tr-copy:focus-visible,
-.tr-copy[data-copied] {
-	opacity: 1;
-}
-
-/* No hover on touch screens: keep the button visible, above the first line. */
-@media (hover: none) {
-	.tr-copy {
-		opacity: 0.85;
-	}
-	.tr-md .tr-code pre {
-		padding-top: 34px;
-	}
-}
-
 /* ---- turn actions & prompt edit: quiet until the row is hovered or focused ---- */
 
 .tr-turn-actions {
@@ -828,7 +874,7 @@
 	margin-top: -6px;
 	padding-bottom: 6px;
 	opacity: 0;
-	transition: opacity 120ms ease-out;
+	transition: opacity var(--dur-fast) var(--ease-out);
 }
 
 .tr-row:hover + .tr-turn-actions,
@@ -869,25 +915,55 @@
 }
 
 /* ---- blocks ----
- * Every prompt, reply and tool run is one block: a clear edge, a gutter to click for
- * selecting it, quiet actions while hovered, focused or selected, and (tool blocks) a header
- * that sticks to the top of the scroll area while the block is in view. */
+ * Every prompt, reply and tool run is one block: a gutter to click for selecting it, quiet actions while hovered,
+ * focused or selected, and (tool blocks) a header that sticks to the top of the scroll area while the block is in
+ * view. A block has no frame of its own: a reply is prose on the canvas, a person's prompt is a tinted bubble on the
+ * right and a tool call a soft surface, so the conversation reads as a conversation rather than a stack of cards.
+ * The frame (border, outline) appears only to say something: hovered, selected, copied, failed, running. */
 
 .tr-block {
 	position: relative;
 	display: flex;
 	align-self: stretch;
 	min-width: 0;
-	background: color-mix(in srgb, var(--bg-raised) 35%, transparent);
-	border: 1px solid var(--border);
+	background: transparent;
+	border: 1px solid transparent;
 	border-radius: var(--radius-lg);
 	/* Horizontal drags are the swipe gestures'; vertical ones scroll. */
 	touch-action: pan-y pinch-zoom;
-	transition: border-color 120ms ease-out;
+	transition:
+		background-color var(--dur) var(--ease-out),
+		border-color var(--dur) var(--ease-out);
+}
+
+/* Two classes, so these beat `.tr-block` above; the selected and copied states below are later and still win. */
+.tr-block.tr-block--prompt {
+	align-self: flex-end;
+	max-width: min(85%, calc(var(--prose-w) * 0.8));
+	background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised));
+	border-color: color-mix(in srgb, var(--accent) 16%, transparent);
+	border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
+}
+
+.tr-block.tr-block--tool {
+	background: color-mix(in srgb, var(--bg-raised) 55%, transparent);
 }
 
 .tr-block:hover {
-	border-color: var(--border-strong);
+	background: color-mix(in srgb, var(--fg) 2.5%, transparent);
+}
+
+/* `:not([data-selected])`: these outrank `.tr-block[data-selected]`, so without it hovering a selected block would drop its selected look. */
+.tr-block.tr-block--prompt:hover:not([data-selected]) {
+	background: color-mix(in srgb, var(--accent) 13%, var(--bg-raised));
+}
+
+.tr-block.tr-block--tool:hover:not([data-selected]) {
+	background: var(--bg-raised);
+}
+
+.tr-block.tr-block--advisor:hover:not([data-selected]) {
+	background: color-mix(in srgb, var(--advisor-tone) 8%, var(--bg-raised));
 }
 
 .tr-block[data-selected] {
@@ -903,12 +979,8 @@
 	outline-offset: -1px;
 }
 
-.tr-block--tool {
-	background: var(--bg-raised);
-}
-
 .tr-block--tool:has(.tr-mark--err) {
-	border-color: color-mix(in oklch, var(--err) 40%, var(--border));
+	border-color: color-mix(in oklch, var(--err) 40%, transparent);
 }
 
 /* Follows the finger during a swipe, then snaps back. */
@@ -918,7 +990,7 @@
 }
 
 .tr-block[data-swipe="snap"] {
-	transition: transform 180ms var(--ease-out);
+	transition: transform var(--dur) var(--ease-out);
 }
 
 .tr-block-reveal {
@@ -966,7 +1038,7 @@
 	user-select: none;
 	-webkit-user-select: none;
 	-webkit-tap-highlight-color: transparent;
-	transition: background 120ms ease-out;
+	transition: background var(--dur-fast) var(--ease-out);
 }
 
 .tr-block-gutter:hover {
@@ -1173,7 +1245,7 @@
 	gap: 1px;
 	margin-left: auto;
 	opacity: 0;
-	transition: opacity 120ms ease-out;
+	transition: opacity var(--dur-fast) var(--ease-out);
 }
 
 .tr-block:hover .tr-block-actions,
@@ -1333,7 +1405,7 @@
 	border: 1px solid var(--border-strong);
 	border-radius: var(--radius-lg);
 	box-shadow: var(--shadow-overlay);
-	animation: rise 200ms var(--ease-out) backwards;
+	animation: rise var(--dur) var(--ease-out) backwards;
 }
 
 .tr-selbar-count {
@@ -1382,41 +1454,68 @@
 }
 
 .tr-md blockquote {
-	margin: calc(8px * var(--reading-gap)) 0;
-	padding: 2px 12px;
-	border-left: 2px solid var(--accent);
+	margin: calc(10px * var(--reading-gap)) 0;
+	padding: 2px 16px;
+	border-left: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+	border-radius: 2px;
 	color: var(--fg-muted);
 }
 
+/* Rows are told apart by hairlines and the header by a tint: there is no grid, and the table reads as part of the
+ * prose rather than as a spreadsheet pasted into it. */
 .tr-md table {
-	margin: calc(8px * var(--reading-gap)) 0;
-	border-collapse: collapse;
-	font-size: calc(12.5px * var(--reading-scale));
+	margin: calc(12px * var(--reading-gap)) 0;
+	border-collapse: separate;
+	border-spacing: 0;
+	font-size: calc(13px * var(--reading-scale));
 }
 
 /* Table cells need `anywhere` so long URLs/identifiers contribute a shrinkable
  * intrinsic width instead of expanding under the transcript's clipped overflow. */
 .tr-md th,
 .tr-md td {
-	padding: 3px 8px;
-	border: 1px solid var(--border);
+	padding: 8px 16px 8px 12px;
+	border-bottom: 1px solid var(--border);
 	overflow-wrap: anywhere;
 	text-align: left;
 	word-break: keep-all;
 }
 
-.tr-md th {
-	background: var(--bg-raised);
-	font-weight: 550;
+.tr-md tr:last-child > td {
+	border-bottom: 0;
 }
 
+.tr-md th {
+	border-bottom: 0;
+	background: color-mix(in srgb, var(--fg) 5%, transparent);
+	font-size: 0.94em;
+	font-weight: 600;
+	color: var(--fg-muted);
+}
+
+.tr-md th:first-child {
+	border-top-left-radius: var(--radius);
+	border-bottom-left-radius: var(--radius);
+}
+
+.tr-md th:last-child {
+	border-top-right-radius: var(--radius);
+	border-bottom-right-radius: var(--radius);
+}
+
+/* Links carry a faint underline that firms up under the pointer: they stay findable inside a paragraph without
+ * shouting. */
 .tr-md a {
 	color: var(--accent);
-	text-decoration: none;
+	text-decoration: underline;
+	text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 3px;
+	transition: text-decoration-color var(--dur-fast) var(--ease-out);
 }
 
 .tr-md a:hover {
-	text-decoration: underline;
+	text-decoration-color: currentColor;
 }
 
 .tr-md hr {
@@ -1490,6 +1589,30 @@
 	}
 }
 
+/* A new row fades in over a short rise. Only the row animates, once, when it mounts: the text inside it is replaced as
+ * it streams, and animating that would replay on every token. */
+@keyframes tr-enter {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+@keyframes tr-enter-sent {
+	from {
+		opacity: 0;
+		transform: translateY(8px) scale(0.97);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
 /* ---- responsive mobile styles ---- */
 @media (max-width: 640px) {
 	.tr-row {
@@ -1516,7 +1639,7 @@
 	}
 	/* Sideways scrolling inside a vertical scroller is fiddly with a thumb: wrap code. */
 	.tr-md pre {
-		padding: 10px 12px;
+		padding: 2px 12px 12px;
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}

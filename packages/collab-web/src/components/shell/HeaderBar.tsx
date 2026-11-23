@@ -258,7 +258,6 @@ export const HeaderBar = memo(function HeaderBar({
 				{!focusMode && (
 					<span className="sh-brand" aria-label="omp collab">
 						<OmpMark />
-						<span className="sh-brand-slash">/</span>
 					</span>
 				)}
 				<button
@@ -300,13 +299,14 @@ export const HeaderBar = memo(function HeaderBar({
 				</button>
 			</div>
 			<div className="sh-header-right">
+				{/* A live link is a quiet dot; anything else grows into a labelled pill, so a problem is never missed. */}
 				{(!focusMode || phase !== "live") && (
 					<span
 						className={`sh-status sh-status-${phase}`}
 						data-tip={`Connection: ${PHASE_LABEL[phase].toLowerCase()}`}
 					>
 						<span className={`sh-dot sh-dot-${phase}`} />
-						{PHASE_LABEL[phase]}
+						<span className="sh-status-label">{PHASE_LABEL[phase]}</span>
 					</span>
 				)}
 				{!focusMode && (
@@ -316,39 +316,45 @@ export const HeaderBar = memo(function HeaderBar({
 								Read-only
 							</span>
 						)}
-						{/* The composer shows model and thinking level, except where a read-only guest has none. */}
-						{readOnly && state?.model && <span className="sh-chip sh-chip-meta">{state.model.name}</span>}
-						{readOnly && state?.thinkingLevel && (
-							<span className="sh-chip sh-chip-meta">{state.thinkingLevel}</span>
-						)}
-						{pct != null && (
-							<span
-								className={pct > 80 ? "sh-gauge sh-gauge-warn" : "sh-gauge"}
-								role="img"
-								aria-label={`Context ${fmtPercent(pct)} full`}
-								data-tip={`Context ${fmtPercent(pct)} full`}
-							>
-								<span className="sh-gauge-track">
-									<span className="sh-gauge-fill" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
-								</span>
-								<span className="sh-gauge-pct">{fmtPercent(pct)}</span>
-							</span>
-						)}
-						{state && state.participants.length > 0 && (
-							<span className="sh-avatars" role="group" aria-label="People in this session">
-								{state.participants.map((p, i) => (
-									<span
-										key={`${p.name}:${i}`}
-										className={p.role === "host" ? "sh-avatar sh-avatar-host" : "sh-avatar"}
-										role="img"
-										aria-label={`${p.name}, ${p.role}${p.readOnly ? ", view-only" : ""}`}
-										data-tip={`${p.name} · ${p.role}${p.readOnly ? " · view-only" : ""}`}
-									>
-										{(p.name[0] ?? "?").toUpperCase()}
+						{/* Glanceable detail that shows while the pointer or keyboard is in the bar (a context meter past 80% always shows); the session sheet lists all of it. */}
+						<span className="sh-header-glance">
+							{/* The composer shows model and thinking level, except where a read-only guest has none. */}
+							{readOnly && state?.model && <span className="sh-chip sh-chip-meta">{state.model.name}</span>}
+							{readOnly && state?.thinkingLevel && (
+								<span className="sh-chip sh-chip-meta">{state.thinkingLevel}</span>
+							)}
+							{pct != null && (
+								<span
+									className={pct > 80 ? "sh-gauge sh-gauge-warn" : "sh-gauge"}
+									role="img"
+									aria-label={`Context ${fmtPercent(pct)} full`}
+									data-tip={`Context ${fmtPercent(pct)} full`}
+								>
+									<span className="sh-gauge-track">
+										<span
+											className="sh-gauge-fill"
+											style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+										/>
 									</span>
-								))}
-							</span>
-						)}
+									<span className="sh-gauge-pct">{fmtPercent(pct)}</span>
+								</span>
+							)}
+							{state && state.participants.length > 0 && (
+								<span className="sh-avatars" role="group" aria-label="People in this session">
+									{state.participants.map((p, i) => (
+										<span
+											key={`${p.name}:${i}`}
+											className={p.role === "host" ? "sh-avatar sh-avatar-host" : "sh-avatar"}
+											role="img"
+											aria-label={`${p.name}, ${p.role}${p.readOnly ? ", view-only" : ""}`}
+											data-tip={`${p.name} · ${p.role}${p.readOnly ? " · view-only" : ""}`}
+										>
+											{(p.name[0] ?? "?").toUpperCase()}
+										</span>
+									))}
+								</span>
+							)}
+						</span>
 						{drawn.map(id => {
 							const Icon = TOP_BAR_ICONS[id];
 							const { aria, run } = bar[id];

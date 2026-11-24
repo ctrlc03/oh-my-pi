@@ -2,10 +2,10 @@ import type { Token } from "@oh-my-pi/pi-utils/marked";
 import { Marked } from "@oh-my-pi/pi-utils/marked";
 import { listMayContinueAt } from "@oh-my-pi/pi-utils/marked-list";
 import type { MouseEvent, ReactNode } from "react";
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { type DiagramKind, diagramKindOf, isClosedFence } from "../../lib/diagrams";
-import { isRelativeLink } from "../../lib/file-viewer";
+import { isRelativeLink, linkedFilePath } from "../../lib/file-viewer";
 import { escapeHtml } from "../../lib/format";
 import { DiagramFigure } from "../diagram/DiagramFigure";
 import { mathExtension } from "./math";
@@ -47,6 +47,17 @@ function unescapeHtml(raw: string): string {
 		}
 	});
 }
+/**
+ * A link to a file on the host: a path with no scheme (`ROADMAP.md`, `docs/a.md#usage`, `/abs/b.ts`). Not an in-page
+ * anchor (`#x`), and not anything carrying control characters, which a browser strips before reading the scheme.
+ */
+function isFileLink(href: string): boolean {
+	const trimmed = href.trim();
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what is rejected
+	if (trimmed.startsWith("#") || /[\u0000-\u001f\u007f]/.test(trimmed)) return false;
+	return linkedFilePath(trimmed) !== null;
+}
+
 function safeHref(href: string): string | null {
 	const trimmed = href.trim();
 	let protocol: string;
@@ -82,9 +93,14 @@ const md = new Marked({
 		},
 		link({ href, title, tokens }) {
 			const inner = this.parser.parseInline(tokens);
+			const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
+			// A file on the host (`[ROADMAP.md](ROADMAP.md)`): the page has no such address, so a click opens it through
+			// the session instead (`MarkdownFileLinks`) of loading the app's own origin.
+			if (isFileLink(href)) {
+				return `<a href="#" class="tr-file-link" data-md-file="${escapeHtml(href)}"${titleAttr}>${inner}</a>`;
+			}
 			const url = safeHref(href);
 			if (url === null) return inner;
-			const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
 			return `<a href="${escapeHtml(url)}"${titleAttr} target="_blank" rel="noopener">${inner}</a>`;
 		},
 		// An image the document names relatively has no address the page can load; it is filled in by `MarkdownBody`
@@ -106,6 +122,12 @@ function renderMarkdown(text: string): string {
 		return escapeHtml(text);
 	}
 }
+
+/**
+ * Opens the file a Markdown link names (its `href`, as the reply wrote it). Given where replies can reach the host's
+ * files (the session transcript); elsewhere a file link does nothing rather than load the app's own origin.
+ */
+export const MarkdownFileLinks = createContext<((href: string) => void) | undefined>(undefined);
 
 /**
  * Delegated handler for the copy buttons the `code` renderer emits. Marks the
@@ -148,6 +170,16 @@ export interface MarkdownProps {
 function MarkdownBody({ html, resolveImage }: { html: string; resolveImage?: ResolveImage }): ReactNode {
 	const root = useRef<HTMLDivElement>(null);
 	const [mounts, setMounts] = useState<readonly DiagramMount[]>([]);
+	const openLink = useContext(MarkdownFileLinks);
+	const onClick = (e: MouseEvent<HTMLDivElement>): void => {
+		const link = (e.target as Element).closest<HTMLAnchorElement>("a[data-md-file]");
+		if (link) {
+			e.preventDefault();
+			openLink?.(link.dataset.mdFile ?? "");
+			return;
+		}
+		onCopyClick(e);
+	};
 	// React re-applies `innerHTML` whenever this object changes identity, which would wipe the portal hosts
 	// appended below on the re-render `setMounts` triggers.
 	const inner = useMemo(() => ({ __html: html }), [html]);
@@ -185,7 +217,7 @@ function MarkdownBody({ html, resolveImage }: { html: string; resolveImage?: Res
 	}, [html, resolveImage]);
 	return (
 		<>
-			<div ref={root} className="tr-md" onClick={onCopyClick} dangerouslySetInnerHTML={inner} />
+			<div ref={root} className="tr-md" onClick={onClick} dangerouslySetInnerHTML={inner} />
 			{mounts.map((mount, i) =>
 				createPortal(<DiagramFigure kind={mount.kind} source={mount.source} />, mount.host, String(i)),
 			)}

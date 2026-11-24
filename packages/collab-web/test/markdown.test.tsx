@@ -77,6 +77,15 @@ describe("Transcript Markdown", () => {
 		expect(html).toContain('href="#anchor"');
 	});
 
+	it("turns links to files on the host into file links instead of addresses on the app's origin", () => {
+		const html = renderMarkdown("[`ROADMAP.md`](ROADMAP.md) [plan](docs/DA_PLAN.md#costs) [abs](/Users/me/a.ts)");
+		// A relative href would resolve against the page (http://127.0.0.1:7467/ROADMAP.md) and 404.
+		expect(html).not.toContain('href="ROADMAP.md"');
+		expect(html).toContain('data-md-file="ROADMAP.md"');
+		expect(html).toContain('data-md-file="docs/DA_PLAN.md#costs"');
+		expect(html).toContain('data-md-file="/Users/me/a.ts"');
+	});
+
 	it("typesets every delimiter form and marks display math", () => {
 		const inline = renderMarkdown("energy $E=mc^2$ and \\(x^2\\) here");
 		expect(inline).toContain('encoding="application/x-tex">E=mc^2</annotation>');

@@ -75,6 +75,21 @@ export function isRelativeLink(href: string): boolean {
 }
 
 /**
+ * The file a reply's Markdown link names (`[ROADMAP.md](ROADMAP.md)`, `docs/a.md#usage`, `/abs/path.ts`), as the path
+ * the session's file opener takes: relative to the session's folder, or absolute. Query and fragment are dropped and
+ * percent-escapes decoded; null for a link with a scheme or nothing left.
+ */
+export function linkedFilePath(href: string): string | null {
+	if (!isRelativeLink(href)) return null;
+	const path = href.trim().replace(/[?#].*$/, "");
+	try {
+		return decodeURIComponent(path) || null;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * The file a Markdown link names, as a path of the same form as `from` (the Markdown file's own path): `./a.png` and
  * `a.png` are beside it, `../a.png` above it, `/a.png` at the repository root. Query and fragment are dropped and
  * percent-escapes decoded. `/`-rooted links resolve only for a root-relative `from`: an absolute `from` does not say

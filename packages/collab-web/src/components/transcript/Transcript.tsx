@@ -22,6 +22,7 @@ import { type Block, buildBlocks, buildChatBlocks, replyId, toolResults } from "
 import { type HideControl, hiddenSlots, memberIds, withoutHidden } from "../../lib/hidden-messages";
 import { fmtDuration, fmtTokens } from "../../lib/format";
 import { ASYNC_RESULT_TYPE, asyncResultJobs } from "../../lib/async-result";
+import { linkedFilePath } from "../../lib/file-viewer";
 import { replyWriteText, toolResultReplies } from "../../lib/reply-write";
 import {
 	ADVISOR_TYPE,
@@ -43,7 +44,7 @@ import { toLayout } from "../../lib/zoom";
 import type { ToolRenderHost } from "../../tool-render";
 import { type HideArgs, useBlocks } from "./use-blocks";
 import { buildChatItems, type ChatItem, type ChatToolCall } from "./chat-items";
-import { Markdown, StreamingMarkdown } from "./Markdown";
+import { Markdown, MarkdownFileLinks, StreamingMarkdown } from "./Markdown";
 import { BlockShell, BlocksContext, type HideView, HiddenRowContext, useFlash } from "./Block";
 import { HiddenMarker } from "./HiddenMarker";
 import { ToolCard } from "./ToolCard";
@@ -955,6 +956,15 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	const tailStart = Math.max(floor, entries.length - WINDOW);
 	const start = pinnedStart === null ? tailStart : Math.max(floor, Math.min(pinnedStart, tailStart));
 	const visible = useMemo(() => entries.slice(start), [entries, start]);
+	// A reply's link to a file on the host (`[ROADMAP.md](ROADMAP.md)`) opens it in the session's viewer or editor.
+	const openLinkedFile = useMemo(() => {
+		const open = host?.openFile;
+		if (open === undefined) return undefined;
+		return (href: string) => {
+			const path = linkedFilePath(href);
+			if (path !== null) open(path);
+		};
+	}, [host]);
 	const otherModels = useMemo(() => answeredByOtherModel(entries, sessionModel), [entries, sessionModel]);
 
 	// A tool result always follows its call, so visible rows only pair with visible results.
@@ -1461,152 +1471,154 @@ export function Transcript(props: TranscriptProps): ReactNode {
 			}}
 		>
 			<BlocksContext.Provider value={blockUi.context}>
-				{settled && entries.length === 0 && stream === null && !working && (
-					<div className="tr-empty">No activity yet</div>
-				)}
-				{start > floor && (
-					<button type="button" className="tr-earlier" onClick={showEarlier}>
-						Show {(start - floor).toLocaleString("en-US")} earlier {start - floor === 1 ? "entry" : "entries"}
-					</button>
-				)}
-				{start === floor && cleared !== undefined && cleared.from > (trimmed?.from ?? 0) && (
-					<div className="tr-trimmed">
-						<span>
-							{cleared.hiddenMessages.toLocaleString("en-US")} earlier message
-							{cleared.hiddenMessages === 1 ? "" : "s"}, before /clear
-						</span>
-						<button type="button" className="tr-trimmed-show" onClick={showCleared}>
-							Show
+				<MarkdownFileLinks.Provider value={openLinkedFile}>
+					{settled && entries.length === 0 && stream === null && !working && (
+						<div className="tr-empty">No activity yet</div>
+					)}
+					{start > floor && (
+						<button type="button" className="tr-earlier" onClick={showEarlier}>
+							Show {(start - floor).toLocaleString("en-US")} earlier {start - floor === 1 ? "entry" : "entries"}
 						</button>
-					</div>
-				)}
-				{start === floor &&
-					trimmed !== undefined &&
-					trimmed.hiddenTurns > 0 &&
-					trimmed.from >= (cleared?.from ?? 0) && (
+					)}
+					{start === floor && cleared !== undefined && cleared.from > (trimmed?.from ?? 0) && (
 						<div className="tr-trimmed">
 							<span>
-								{trimmed.hiddenTurns.toLocaleString("en-US")} earlier turn{trimmed.hiddenTurns === 1 ? "" : "s"}{" "}
-								hidden on this device
+								{cleared.hiddenMessages.toLocaleString("en-US")} earlier message
+								{cleared.hiddenMessages === 1 ? "" : "s"}, before /clear
 							</span>
-							<button type="button" className="tr-trimmed-show" onClick={showAll}>
-								Show all
+							<button type="button" className="tr-trimmed-show" onClick={showCleared}>
+								Show
 							</button>
 						</div>
 					)}
-				{pillActive && (
-					<div className="tr-new-dock">
-						<button type="button" className="tr-new-pill" onClick={jumpToNew}>
-							<ArrowUp size={13} /> {newSince.count} new
-						</button>
-					</div>
-				)}
-				{chatItems !== null
-					? chatItems.map((item, i) => (
-							<Fragment key={item.key}>
-								{i === dividerAt && <NewDivider />}
-								<ChatRow
-									item={item}
-									results={results}
-									active={activeTools}
-									host={host}
-									onEdit={onEdit}
-									onChanges={onChanges}
-									otherModels={otherModels}
-								/>
-								{Object.hasOwn(chatTurnEnds, i) && turnActions(chatTurnEnds[i])}
-							</Fragment>
-						))
-					: visible.map((entry, i) => (
-							<Fragment key={entry.id}>
-								{i === dividerAt && <NewDivider />}
-								<EntryRow
-									entry={entry}
-									results={results}
-									active={activeTools}
-									host={host}
-									onEdit={onEdit}
-									onChanges={onChanges}
-									answeredBy={otherModels.get(entry.id)}
-								/>
-								{Object.hasOwn(turnPlan.endOf, entry.id) && turnActions(turnPlan.endOf[entry.id])}
-							</Fragment>
-						))}
-				{chatItems === null && stream !== null && (
-					<Row kind="assistant" gutter="agent">
-						<AssistantBody
-							message={stream}
-							entryId={null}
-							results={results}
-							active={activeTools}
-							pending={!streamDone}
-							host={host}
-						/>
-					</Row>
-				)}
-				{chatItems === null && tailTools.length > 0 && (
-					<Row kind="assistant" gutter={stream === null ? "agent" : ""}>
-						{tailTools.map(tool => (
-							<BlockShell key={tool.toolCallId} id={null} kind="tool">
-								<ToolCard
-									toolCallId={tool.toolCallId}
-									name={tool.toolName}
-									intent={tool.intent}
-									args={tool.args}
-									running
-									partialResult={tool.partialResult}
-									host={host}
-									framed
-								/>
-							</BlockShell>
-						))}
-					</Row>
-				)}
-				{quietTurn && (
-					<Row kind="assistant" gutter="agent">
-						<div className="tr-shimmer">Thinking…</div>
-					</Row>
-				)}
-				{queued?.map(prompt => (
-					<Row key={prompt.id} kind="user" gutter="queued">
-						<div className="tr-queued">
-							<div className="tr-queued-text">{prompt.text}</div>
-							{prompt.images !== undefined && prompt.images.length > 0 && (
-								<span className="tr-queued-meta">
-									{prompt.images.length} image{prompt.images.length === 1 ? "" : "s"}
+					{start === floor &&
+						trimmed !== undefined &&
+						trimmed.hiddenTurns > 0 &&
+						trimmed.from >= (cleared?.from ?? 0) && (
+							<div className="tr-trimmed">
+								<span>
+									{trimmed.hiddenTurns.toLocaleString("en-US")} earlier turn
+									{trimmed.hiddenTurns === 1 ? "" : "s"} hidden on this device
 								</span>
-							)}
-							{prompt.model !== undefined && (
-								<span className="tr-queued-meta">
-									{prompt.model}
-									{prompt.thinking !== undefined && ` · ${prompt.thinking}`}
-								</span>
-							)}
-							<button
-								type="button"
-								className="tr-queued-cancel"
-								onClick={() => onCancelQueued?.(prompt.id)}
-								aria-label="Cancel queued prompt"
-								title="Cancel — not sent yet"
-							>
-								<X size={13} />
+								<button type="button" className="tr-trimmed-show" onClick={showAll}>
+									Show all
+								</button>
+							</div>
+						)}
+					{pillActive && (
+						<div className="tr-new-dock">
+							<button type="button" className="tr-new-pill" onClick={jumpToNew}>
+								<ArrowUp size={13} /> {newSince.count} new
 							</button>
 						</div>
-					</Row>
-				))}
-				{away && (
-					<div className="tr-jump-dock">
-						<button
-							type="button"
-							className="tr-jump"
-							onClick={jumpToLatest}
-							aria-label="Jump to latest"
-							title="Jump to latest"
-						>
-							<ArrowDown size={14} aria-hidden /> <span className="tr-jump-label">Latest</span>
-						</button>
-					</div>
-				)}
+					)}
+					{chatItems !== null
+						? chatItems.map((item, i) => (
+								<Fragment key={item.key}>
+									{i === dividerAt && <NewDivider />}
+									<ChatRow
+										item={item}
+										results={results}
+										active={activeTools}
+										host={host}
+										onEdit={onEdit}
+										onChanges={onChanges}
+										otherModels={otherModels}
+									/>
+									{Object.hasOwn(chatTurnEnds, i) && turnActions(chatTurnEnds[i])}
+								</Fragment>
+							))
+						: visible.map((entry, i) => (
+								<Fragment key={entry.id}>
+									{i === dividerAt && <NewDivider />}
+									<EntryRow
+										entry={entry}
+										results={results}
+										active={activeTools}
+										host={host}
+										onEdit={onEdit}
+										onChanges={onChanges}
+										answeredBy={otherModels.get(entry.id)}
+									/>
+									{Object.hasOwn(turnPlan.endOf, entry.id) && turnActions(turnPlan.endOf[entry.id])}
+								</Fragment>
+							))}
+					{chatItems === null && stream !== null && (
+						<Row kind="assistant" gutter="agent">
+							<AssistantBody
+								message={stream}
+								entryId={null}
+								results={results}
+								active={activeTools}
+								pending={!streamDone}
+								host={host}
+							/>
+						</Row>
+					)}
+					{chatItems === null && tailTools.length > 0 && (
+						<Row kind="assistant" gutter={stream === null ? "agent" : ""}>
+							{tailTools.map(tool => (
+								<BlockShell key={tool.toolCallId} id={null} kind="tool">
+									<ToolCard
+										toolCallId={tool.toolCallId}
+										name={tool.toolName}
+										intent={tool.intent}
+										args={tool.args}
+										running
+										partialResult={tool.partialResult}
+										host={host}
+										framed
+									/>
+								</BlockShell>
+							))}
+						</Row>
+					)}
+					{quietTurn && (
+						<Row kind="assistant" gutter="agent">
+							<div className="tr-shimmer">Thinking…</div>
+						</Row>
+					)}
+					{queued?.map(prompt => (
+						<Row key={prompt.id} kind="user" gutter="queued">
+							<div className="tr-queued">
+								<div className="tr-queued-text">{prompt.text}</div>
+								{prompt.images !== undefined && prompt.images.length > 0 && (
+									<span className="tr-queued-meta">
+										{prompt.images.length} image{prompt.images.length === 1 ? "" : "s"}
+									</span>
+								)}
+								{prompt.model !== undefined && (
+									<span className="tr-queued-meta">
+										{prompt.model}
+										{prompt.thinking !== undefined && ` · ${prompt.thinking}`}
+									</span>
+								)}
+								<button
+									type="button"
+									className="tr-queued-cancel"
+									onClick={() => onCancelQueued?.(prompt.id)}
+									aria-label="Cancel queued prompt"
+									title="Cancel — not sent yet"
+								>
+									<X size={13} />
+								</button>
+							</div>
+						</Row>
+					))}
+					{away && (
+						<div className="tr-jump-dock">
+							<button
+								type="button"
+								className="tr-jump"
+								onClick={jumpToLatest}
+								aria-label="Jump to latest"
+								title="Jump to latest"
+							>
+								<ArrowDown size={14} aria-hidden /> <span className="tr-jump-label">Latest</span>
+							</button>
+						</div>
+					)}
+				</MarkdownFileLinks.Provider>
 			</BlocksContext.Provider>
 			{blockUi.overlay}
 		</div>

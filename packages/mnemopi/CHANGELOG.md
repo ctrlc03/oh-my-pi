@@ -9,6 +9,24 @@
 - Added permanent retention: `workingMemoryLimit: Infinity` and `degradeEpisodic: false` keep every row, and invalidation is recorded with `invalid_by`.
 - Added provenance: `provenance`, `authorId` / `authorType` on writes, `excludeAuthorTypes` on recall (facts derived from excluded rows are excluded too), duplicate merging and consolidation per author, and `TRUSTED` / `UNTRUSTED` trust tiers.
 - Rows pinned (`metadata.pinned`) or retracted by the owner can no longer be invalidated, updated or forgotten; added `getPinned()`, and `get()` now returns `author_id`, `author_type` and `trust_tier`.
+## [19.1.0] - 2026-11-21
+
+### Fixed
+
+- Improved diagnostics when a configured embedding provider fails, making provider errors visible in logs while preserving the existing fallback behavior.
+
+## [18.22.1] - 2026-11-17
+
+### Fixed
+
+- Fixed embedding requests failing when oversized inputs were clipped in the middle of an emoji or other Unicode character.
+
+## [18.21.0] - 2026-11-16
+
+### Changed
+
+- Improved file memory bank performance by reducing unnecessary disk synchronization during checkpointing, lowering per-turn I/O overhead for banks shared across multiple processes.
+
 ## [18.20.3] - 2026-11-16
 
 ### Added

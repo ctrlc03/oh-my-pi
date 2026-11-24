@@ -6,7 +6,6 @@ import { formatCurrentTime, formatMemories } from "../hindsight/content";
 import { cfgMnemopiProvenance } from "../mnemopi/settings";
 import { fenceUntrusted, untrustedPreamble } from "../personal/fence";
 import recallDescription from "../prompts/tools/recall.md" with { type: "text" };
-import { sessionMemoryToolRefs } from "../memory-backend/tool-names";
 import type { ToolSession } from ".";
 
 import { cfgMemoryBackend } from "../memory-backend/settings";
@@ -38,10 +37,7 @@ export class MemoryRecallTool implements AgentTool<MemoryRecallSchema> {
 		);
 	}
 	get description(): string {
-		return prompt.render(recallDescription, {
-			toolRefs: sessionMemoryToolRefs(this.session),
-			externalMemory: this.#offersExternal,
-		});
+		return prompt.render(recallDescription, { externalMemory: this.#offersExternal });
 	}
 	get parameters(): MemoryRecallSchema {
 		return this.#offersExternal ? memoryRecallSchemaWithExternal : memoryRecallSchemaBase;

@@ -72,13 +72,15 @@ export type { CollabSessionState };
  * that serialize into those shapes.
  */
 export type CollabFrame =
-	// guest -> host (hello/abort/agent-cmd/fetch-transcript/ui-response are taken verbatim from the wire grammar)
+	// guest -> host (every guest frame but prompt is taken verbatim from the wire grammar)
 	| Exclude<GuestFrame, { t: "prompt" }>
+	// `followUp` is the upstream spelling of `deliver: "follow-up"`; the host honors either.
 	| {
 			t: "prompt";
 			text: string;
 			images?: ImageContent[];
 			deliver?: "follow-up";
+			followUp?: true;
 			model?: string;
 			thinking?: string;
 			mentions?: PromptMention[];

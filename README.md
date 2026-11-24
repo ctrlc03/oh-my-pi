@@ -154,7 +154,7 @@ guidelines on contributing.
 OMP is licensed under the [MIT License](LICENSE).
 
 Third-party and vendored code, including the third-party portions identified
-in `crates/pi-builtins/LICENSE`, remains under its respective upstream license.
+in `crates/builtins/LICENSE`, remains under its respective upstream license.
 Each shipped component carries its own `THIRD-PARTY-NOTICES.txt`: the CLI
 (`packages/coding-agent`), the native addon (`packages/natives`), and robomp
 (`python/robomp`). `omp --license` prints the CLI's and the addon's.

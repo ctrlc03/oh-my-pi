@@ -7,6 +7,38 @@
 - Compaction and proxy requests that bypass `streamSimple` (`compact`, remote and streaming compaction, `streamProxy`) refuse providers a private-mode process does not allow.
 - `Agent.transformContext` getter and setter: a host can wrap the transform every provider request applies to the message list.
 - `AgentLoopConfig.shouldStop` and `Agent.setShouldStop()`: a graceful stop predicate checked at the same boundaries as `deadline` (run start, after each turn's tools, before each model call) that ends the run without aborting a running tool.
+## [19.1.1] - 2026-11-23
+
+### Fixed
+
+- Prevented oversized handoffs from reaching the provider by detecting when prepared context exceeds the target model’s context window.
+- Preserved provider error status, error identifiers, retry classification, and cancellation markers on failed or cancelled assistant turns.
+- Fixed speculative tool calls hanging when discarded or aborted before execution completed.
+
+## [19.1.0] - 2026-11-21
+
+### Added
+
+- Added standby tools support through `Agent.setStandbyTools()` and `AgentContext.standbyTools`, allowing tools to remain inactive until a request explicitly enables tool use.
+
+## [19.0.0] - 2026-11-18
+
+### Added
+
+- Added support for excluding custom messages from model context and compaction or branch summaries, while allowing queued steering and follow-up messages to continue correctly after excluded messages.
+
+## [18.22.1] - 2026-11-17
+
+### Added
+
+- A model on an extension's custom api can take the Anthropic on-demand compaction lane by declaring `remoteCompaction: { api: "anthropic-messages", enabled: true }`; the request goes through its own stream like any turn ([#19580](https://github.com/can1357/oh-my-pi/pull/19580) by [@ryanskidmore](https://github.com/ryanskidmore))
+
+### Fixed
+
+- Fixed provider-error handling so failed tool calls are no longer fed back to the model as refusal explanations.
+- Fixed one-shot retries and title generation for custom Zhipu Coding Plan providers so Beijing-time quota resets are honored.
+- Fixed OpenAI remote compaction (V1 and V2) dropping configured headers of models.yml and extension-registered models, so header-authenticated gateways returned 401 ([#19579](https://github.com/can1357/oh-my-pi/pull/19579) by [@ryanskidmore](https://github.com/ryanskidmore))
+
 ## [18.20.1] - 2026-11-14
 
 ### Fixed

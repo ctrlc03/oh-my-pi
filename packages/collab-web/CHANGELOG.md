@@ -285,6 +285,28 @@
 - Fixed the app staying on a dead connection after a long stay in the background: iOS can suspend the page and leave its sockets open but dead, so on phones and tablets, after 10 s or more hidden (or on any device when the network returns), the session and companion connections are replaced at once, with a delta resume, instead of waiting out the 30 s timers. A short glance away leaves them alone
 - Opening a pinned session that the sidebar lists as a recent room made it vanish from Pinned until another session was opened: the sidebar hid the room on screen. The session on screen now stays where you put it (Pinned keeps it, in the same order) and is marked _here_, as a running session is. A room of a process the computer lists is that session's row rather than a second one (so one session is never listed twice), and a pin, snooze or settle you gave such a room carries over to the session's row.
 - Fixed an open page failing to open Sketch, Quizzes or another lazily loaded screen with the browser's raw "Failed to fetch dynamically imported module" after the app was rebuilt underneath it (a companion restarted from a checkout, a Pages deploy, an updated `omp` binary), because the chunk it asked for no longer existed. The companion built from a checkout now also serves the content-hashed files of the build kept before the current one (never its `index.html` or service worker), so such a page keeps working. Every lazy chunk load now goes through `importChunk` (`src/lib/stale-build.ts`): it retries once, and if the chunk is still gone the update bar says "The app was updated. Reload to continue." with a _Reload_ button, and the sheet says what could not be opened, instead of the browser's message. Nothing reloads by itself, so a draft is never lost. The Inbox's lazily loaded Personal rows no longer take the whole page down when their chunk is missing, and the update bar now sits above open sheets, where its button was covered by the sheet's backdrop.
+## [19.1.0] - 2026-11-21
+
+### Added
+
+- Enhanced guest collaboration APIs: `GuestClient.sendPrompt` now supports sending images, while `sendResume`, `sendDeliverQueue`, and the `followUp` option enable continuing the host’s agent, interrupting it to deliver queued messages, or queueing a follow-up prompt.
+
+### Changed
+
+- Tool commands run inside a bash call render as nested cards under the bash card
+- Tool cards in shared sessions and HTML exports show brief intent labels instead of detailed ranking instructions.
+
+## [19.0.0] - 2026-11-18
+
+### Fixed
+
+- Fixed web search cards without a synthesized answer displaying raw numbered result lists; they now show a concise excerpt for each source instead.
+
+## [18.22.0] - 2026-11-16
+
+### Fixed
+
+- Improved streaming performance in the collab viewer, preventing long replies from becoming progressively slower as they are received.
 
 ## [18.20.1] - 2026-11-14
 

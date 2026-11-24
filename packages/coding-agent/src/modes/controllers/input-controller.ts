@@ -239,6 +239,12 @@ function pythonCommandPrefixLength(trimmedText: string): 0 | 1 | 2 {
 	return next === 32 || next === 9 || next === 10 || next === 13 ? prefixLength : 0;
 }
 
+/** The question after a `?` draft's sigil (the `/btw` shortcut), or undefined when the draft is not one. */
+function parseBtwShortcutInput(text: string): string | undefined {
+	const trimmed = text.trimStart();
+	return trimmed.startsWith("?") ? trimmed.slice(1).trim() : undefined;
+}
+
 function parsePythonCommandInput(text: string): { code: string; isExcluded: boolean } | undefined {
 	const trimmed = text.trimStart();
 	const prefixLength = pythonCommandPrefixLength(trimmed);
@@ -381,6 +387,8 @@ export class InputController {
 			this.ctx.ui.addInputListener(data => {
 				if (!this.ctx.focusedAgentId) return undefined;
 				if (!matchesKey(data, "left")) return undefined;
+				// An open overlay (the model picker's thinking slider) owns ←.
+				if (this.ctx.ui.getFocused() !== this.ctx.editor) return undefined;
 				if (this.ctx.editor.getText().trim()) return undefined;
 				this.#handleFocusedLeftTap();
 				return { consume: true };
@@ -541,8 +549,7 @@ export class InputController {
 
 			// Side-channel panels own Esc for cancellation or closing before
 			// loop mode, maintenance, or the underlying main turn.
-			// Active context maintenance owns Esc: auto/manual compaction,
-			// handoff generation, and auto-retry backoff all advertise
+			// Active context maintenance owns Esc: compaction and retry backoff advertise
 			// "(esc to cancel)". Dispatch on live session state instead of
 			// swapping onEscape handlers — interleaved start/end events used
 			// to clobber the single saved-handler slot (auto-compaction start
@@ -554,8 +561,7 @@ export class InputController {
 			// accidentally killing a focused subagent's compaction on the way out
 			// was #2819. The auto-maintenance loaders relabel their hint to match
 			// (see EventController). Main-session maintenance still owns Esc and
-			// stays cancellable from the main view (focused submit gates /compact
-			// and handoff, so manual maintenance is main-only anyway).
+			// stays cancellable from the main view (manual compaction is main-only).
 			if (this.ctx.hasActiveBtw() && this.ctx.handleBtwEscape()) {
 				return;
 			}
@@ -572,12 +578,8 @@ export class InputController {
 			if (!this.ctx.focusedAgentId) {
 				const viewSession = this.ctx.viewSession;
 				let aborted = false;
-				if (viewSession.isCompacting) {
+				if (viewSession.isCompacting || this.ctx.session.isBackgroundCompacting) {
 					safeAbort("compaction", () => viewSession.abortCompaction());
-					aborted = true;
-				}
-				if (viewSession.isGeneratingHandoff) {
-					safeAbort("handoff", () => viewSession.abortHandoff());
 					aborted = true;
 				}
 				if (viewSession.isRetrying) {
@@ -652,6 +654,10 @@ export class InputController {
 				this.ctx.editor.setText("");
 				this.ctx.isPythonMode = false;
 				this.ctx.updateEditorBorderColor();
+			} else if (this.ctx.isBtwMode) {
+				this.ctx.editor.setText("");
+				this.ctx.isBtwMode = false;
+				this.ctx.updateEditorBorderColor();
 			} else if (awaitingAsyncWork) {
 				// End the wait: the run ends now. The jobs keep running; their results
 				// land in context for the next prompt instead of starting a turn.
@@ -705,6 +711,8 @@ export class InputController {
 		this.ctx.editor.onSuspend = () => this.handleCtrlZ();
 		this.ctx.editor.setActionKeys("app.thinking.cycle", this.ctx.keybindings.getKeys("app.thinking.cycle"));
 		this.ctx.editor.onCycleThinkingLevel = () => {
+			// Shift+Tab, Tab's way back: from the composer to the ask waiting above it.
+			if (this.ctx.focusAsk()) return;
 			hintUsage.record("effort");
 			this.cycleThinkingLevel();
 		};
@@ -793,12 +801,12 @@ export class InputController {
 		for (const key of this.ctx.keybindings.getKeys("app.btw.inject")) {
 			this.ctx.editor.setCustomKeyHandler(key, () => this.ctx.handleBtwInjectKey());
 		}
-		const hubKeys = new Set([
-			...this.ctx.keybindings.getKeys("app.agents.hub"),
-			...this.ctx.keybindings.getKeys("app.session.observe"),
-		]);
+		const agentsHubKeys = new Set(this.ctx.keybindings.getKeys("app.agents.hub"));
+		const hubKeys = new Set([...agentsHubKeys, ...this.ctx.keybindings.getKeys("app.session.observe")]);
 		for (const key of hubKeys) {
-			this.ctx.editor.setCustomKeyHandler(key, () => this.ctx.showAgentHub());
+			this.ctx.editor.setCustomKeyHandler(key, () =>
+				this.ctx.showAgentHub(agentsHubKeys.has(key) ? { trayFirst: true } : undefined),
+			);
 		}
 
 		// Double-tap left arrow on an empty editor: opens the agent hub from the
@@ -815,7 +823,7 @@ export class InputController {
 			}
 			if (this.#detectLeftDoubleTap()) {
 				hintUsage.record("agents");
-				this.ctx.showAgentHub({ requireContent: true, armCloseTap: true });
+				this.ctx.showAgentHub({ requireContent: true, armCloseTap: true, trayFirst: true });
 			}
 		};
 		// The native composer's viewing header: an ancestor crumb, or back to main.
@@ -832,10 +840,16 @@ export class InputController {
 			if (wasComposing !== (text.trim() !== "")) this.ctx.syncIdleMaintenanceView();
 			const wasBashMode = this.ctx.isBashMode;
 			const wasPythonMode = this.ctx.isPythonMode;
+			const wasBtwMode = this.ctx.isBtwMode;
 			const trimmed = text.trimStart();
 			this.ctx.isBashMode = trimmed.startsWith("!");
 			this.ctx.isPythonMode = parsePythonCommandInput(trimmed) !== undefined;
-			if (wasBashMode !== this.ctx.isBashMode || wasPythonMode !== this.ctx.isPythonMode) {
+			this.ctx.isBtwMode = parseBtwShortcutInput(trimmed) !== undefined;
+			if (
+				wasBashMode !== this.ctx.isBashMode ||
+				wasPythonMode !== this.ctx.isPythonMode ||
+				wasBtwMode !== this.ctx.isBtwMode
+			) {
 				this.ctx.updateEditorBorderColor();
 			}
 			// Editor input repaints through the scoped fast path (only the editor
@@ -1037,7 +1051,7 @@ export class InputController {
 			// Styled text goes where images do: the composer, or a prompt that takes them.
 			acceptsHtml: () => {
 				const focused = this.ctx.ui.getFocused();
-				return !focused || focused === this.ctx.editor || (hasPasteText(focused) && focused.acceptsImages === true);
+				return this.#composerTakesPaste(focused) || (hasPasteText(focused) && focused.acceptsImages === true);
 			},
 			pasteHtml: html => this.#pasteHtml(html),
 			showStatus: message => this.ctx.showStatus(message),
@@ -1107,6 +1121,21 @@ export class InputController {
 			text = this.#compactDraftImages(text.trim());
 			const hasPendingImages = this.ctx.editor.pendingImages.length > 0;
 			if ((!isSettingsInitialized() || cfgEmojiAutocomplete.get(settings)) && text) text = expandEmoticons(text);
+			// `? <question>` is the `/btw` shortcut: it runs as the slash command it stands for.
+			const btwQuestion = parseBtwShortcutInput(text);
+			if (btwQuestion) text = `/btw ${btwQuestion}`;
+
+			// A `/btw` note the composer talks to takes plain drafts as its follow-ups (an empty
+			// Enter does nothing); commands and shell drafts run as usual.
+			if (
+				this.ctx.isBtwFocused &&
+				!text.startsWith("/") &&
+				!text.startsWith("!") &&
+				parsePythonCommandInput(text) === undefined
+			) {
+				if (text) await this.#submitBtwFollowUp(text);
+				return;
+			}
 
 			// Focused subagent session: the editor is a plain chat box for it.
 			// Everything below (slash/bash/python, loop,
@@ -1605,6 +1634,16 @@ export class InputController {
 		return true;
 	}
 
+	/** Sends a draft (and its attachments) to the focused `/btw` note's topic; gives it back when none started. */
+	async #submitBtwFollowUp(text: string): Promise<void> {
+		const editor = this.ctx.editor;
+		const images = editor.pendingImages.length > 0 ? [...editor.pendingImages] : undefined;
+		const imageLinks = editor.pendingImageLinks.length > 0 ? [...editor.pendingImageLinks] : undefined;
+		editor.clearDraft();
+		if (await this.ctx.submitBtwFollowUp(text, images)) return;
+		restoreDetachedDraft(editor, text, images, imageLinks);
+	}
+
 	/** Put back a submission the editor reset on Enter, unless a newer draft took its place. */
 	#restoreResetSubmission(submittedText: string): void {
 		if (!this.ctx.editor.getText()) this.ctx.editor.setText(submittedText);
@@ -1830,9 +1869,9 @@ export class InputController {
 			// group keeps the shell's job-control view consistent. Long-lived
 			// children that must survive the suspend (Linux/other POSIX MCP stdio
 			// servers via the platform-specific `detached: true` spawn in
-			// `mcp/transports/stdio.ts`, every external the embedded bash engine
-			// runs via `Sessions::Detach` in `crates/pi-shell/src/host.rs`, which
-			// `setsid`s the child in `crates/pi-shell/src/sys/spawn/unix.rs`) are
+			// `mcp/host/stdio-upstream.ts`, every external the embedded bash engine
+			// runs via `Sessions::Detach` in `crates/shell/src/host.rs`, which
+			// `setsid`s the child in `crates/shell/src/sys/spawn/unix.rs`) are
 			// their own sessions, so pgid=0 does not reach them.
 			process.kill(0, "SIGSTOP");
 		} catch (err) {
@@ -2662,17 +2701,21 @@ export class InputController {
 		});
 	}
 
-	/**
-	 * Route an image paste to the focused destination. A focused prompt that did not opt into
-	 * images refuses, so the image never lands in the hidden main editor (#6057).
-	 */
+	/** Whether a paste goes to the main composer: nothing or the editor is focused, or the focused dialog is the composer owner and currently owns input. */
+	#composerTakesPaste(focused: Component | null): boolean {
+		if (!focused || focused === this.ctx.editor) return true;
+		const owner = this.ctx.composerOwner;
+		return owner?.component === focused && owner.owns();
+	}
+
+	/** Route an image paste to the focused destination; a dialog that can't take the image refuses it (#6057). */
 	async #pasteImageIntoFocus(paste: (sink: ImagePasteSink) => Promise<unknown>): Promise<void> {
 		const focused = this.ctx.ui.getFocused();
-		if (!focused || focused === this.ctx.editor || !hasPasteText(focused)) {
+		if (this.#composerTakesPaste(focused)) {
 			await paste(this.#editorImageSink);
 			return;
 		}
-		if (!focused.acceptsImages) {
+		if (!hasPasteText(focused) || !focused.acceptsImages) {
 			this.ctx.showStatus("Image paste is not supported in this prompt");
 			return;
 		}
@@ -2817,18 +2860,19 @@ export class InputController {
 		let finishPaste: ((text: string | undefined) => boolean) | undefined;
 		let promptPaste: PromptImagePaste | undefined;
 		try {
-			// When a modal paste-capable prompt (login/API-key Input) owns focus,
-			// only clipboard text may land there. Image payloads must not mutate
+			// When a modal paste-capable prompt (login/API-key Input) or a dialog without
+			// `pasteText` owns focus, only clipboard text may land there. Image payloads must not mutate
 			// the hidden main editor — mirror the enhanced-paste `pasteImage`
 			// behavior and surface the unsupported-status instead (#6057).
 			// A prompt that opted into images gets the main editor's full image flow
 			// instead, delivered through one reservation.
 			const focusedNow = this.ctx.ui.getFocused();
-			const promptTarget =
-				focusedNow && focusedNow !== this.ctx.editor && hasPasteText(focusedNow) ? focusedNow : null;
+			const modalFocus = this.#composerTakesPaste(focusedNow) ? null : focusedNow;
+			const promptTarget = modalFocus && hasPasteText(modalFocus) ? modalFocus : null;
+			const bareDialog = modalFocus && !promptTarget ? modalFocus : null;
 			if (promptTarget?.acceptsImages) promptPaste = this.#beginPromptImagePaste(promptTarget);
 			else finishPaste = promptTarget?.beginPaste?.();
-			const textOnlyPrompt = promptTarget !== null && promptPaste === undefined;
+			const textOnlyFocus = modalFocus !== null && promptPaste === undefined;
 			const sink = promptPaste?.sink ?? this.#editorImageSink;
 			// #8769: On macOS, Finder `Cmd+C` on an image file puts BOTH a
 			// `public.file-url` representation and a generated 1024x1024
@@ -2850,7 +2894,7 @@ export class InputController {
 			// `readMacFileUrls` returns an empty list off Darwin, so on every
 			// other platform this is a no-op and the bitmap read below still
 			// runs first.
-			const fileUrls = textOnlyPrompt ? [] : ((await this.clipboard.readMacFileUrls?.()) ?? []);
+			const fileUrls = textOnlyFocus ? [] : ((await this.clipboard.readMacFileUrls?.()) ?? []);
 			let attachedFromFileUrls = false;
 			for (const url of fileUrls) {
 				const candidate = extractImagePathFromText(url);
@@ -2875,7 +2919,7 @@ export class InputController {
 			);
 			const image = await this.clipboard.readImage();
 			if (image) {
-				if (textOnlyPrompt) {
+				if (textOnlyFocus) {
 					this.ctx.showStatus("Image paste is not supported in this prompt");
 					return false;
 				}
@@ -2904,13 +2948,17 @@ export class InputController {
 			// text. Covers terminals that paste the Finder file path as
 			// plain text rather than as a `public.file-url` (most macOS
 			// terminals do this for image clipboards).
-			const imagePath = textOnlyPrompt ? null : extractImagePathFromText(text);
+			const imagePath = textOnlyFocus ? null : extractImagePathFromText(text);
 			if (imagePath) {
 				await this.#pasteImagePath(imagePath, sink);
 				return true;
 			}
 			// Keep the initiating prompt as the only possible modal destination.
-			if (promptTarget && this.ctx.ui.getFocused() !== promptTarget) return false;
+			if (modalFocus && this.ctx.ui.getFocused() !== modalFocus) return false;
+			if (bareDialog) {
+				this.#pasteTextIntoFocus(text);
+				return true;
+			}
 			if (finishPaste) {
 				const accepted = finishPaste(text);
 				finishPaste = undefined;

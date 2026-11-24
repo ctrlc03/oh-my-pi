@@ -32,6 +32,7 @@ import {
 	formatPathRelativeToCwd,
 	relativeSearchResultPath,
 	resolveSearchResultPath,
+	resolveTargetResultPath,
 	resolveToolSearchScope,
 } from "./path-utils";
 import { createPathRuleFilter, pathRuleApproval, searchRootCandidates } from "./path-rules";
@@ -81,7 +82,7 @@ interface AstEditAggregatedResult {
 }
 
 async function runAstEditTargets(
-	targets: Array<{ basePath: string; glob?: string }>,
+	targets: Array<{ basePath: string; glob?: string; isDirectory: boolean }>,
 	commonBasePath: string,
 	options: AstEditCallOptions,
 ): Promise<AstEditAggregatedResult> {
@@ -93,6 +94,22 @@ async function runAstEditTargets(
 	let filesSearched = 0;
 	let limitReached = false;
 	let applied = !options.dryRun;
+	// Stage every target before writing any: a target whose rewrite fails
+	// (an ambiguous overlap) must not leave the targets before it written.
+	if (!options.dryRun && targets.length > 1) {
+		for (const target of targets) {
+			await astEdit({
+				rewrites: options.rewrites,
+				path: target.basePath,
+				glob: target.glob,
+				dryRun: true,
+				maxFiles: options.maxFiles,
+				failOnParseError: options.failOnParseError,
+				signal: options.signal,
+				filesystem: options.filesystem,
+			});
+		}
+	}
 	for (const target of targets) {
 		const targetResult = await astEdit({
 			rewrites: options.rewrites,
@@ -111,11 +128,11 @@ async function runAstEditTargets(
 		if (targetResult.parseErrors) parseErrors.push(...targetResult.parseErrors);
 		for (const language of targetResult.missingGrammars ?? []) missingGrammars.add(language);
 		for (const change of targetResult.changes) {
-			const absolute = resolveSearchResultPath(target.basePath, change.path);
+			const absolute = resolveTargetResultPath(target, change.path);
 			aggregatedChanges.push({ ...change, path: relativeSearchResultPath(commonBasePath, absolute) });
 		}
 		for (const fileChange of targetResult.fileChanges) {
-			const absolute = resolveSearchResultPath(target.basePath, fileChange.path);
+			const absolute = resolveTargetResultPath(target, fileChange.path);
 			const rebased = relativeSearchResultPath(commonBasePath, absolute);
 			fileCounts.set(rebased, (fileCounts.get(rebased) ?? 0) + fileChange.count);
 		}
@@ -138,7 +155,7 @@ async function runAstEditTargets(
 }
 
 function runAstEditOnce(
-	targets: Array<{ basePath: string; glob?: string }> | undefined,
+	targets: Array<{ basePath: string; glob?: string; isDirectory: boolean }> | undefined,
 	resolvedSearchPath: string,
 	globFilter: string | undefined,
 	options: AstEditCallOptions,
@@ -496,7 +513,6 @@ export class AstEditTool implements AgentTool<typeof astEditSchema, AstEditToolD
 								tool: "ast_edit",
 								before: before.text,
 								after: after.text,
-								beforeMtimeMs: before.mtimeMs,
 							});
 						}
 						const { errors: cappedApplyParseErrors, total: applyParseErrorsTotal } = capParseErrors(

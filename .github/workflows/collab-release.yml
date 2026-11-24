@@ -56,6 +56,11 @@ on:
         required: false
         default: true
         type: boolean
+      skip_darwin_arm64:
+        description: "Build no darwin-arm64 assets (no macOS arm64 runner to be had): the release keeps the ones already uploaded for this tag, which SHA256SUMS.txt then lists by their GitHub digests. Needs 'replace'"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -77,6 +82,10 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
       latest: ${{ steps.release.outputs.latest }}
       publish: ${{ steps.publish.outputs.publish }}
+      build_matrix: ${{ steps.targets.outputs.build }}
+      desktop_matrix: ${{ steps.targets.outputs.desktop }}
+      sign_targets: ${{ steps.targets.outputs.sign }}
+      smoke_matrix: ${{ steps.targets.outputs.smoke }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -126,6 +135,28 @@ jobs:
           if [ "$highest" = "$mine" ]; then latest=true; else latest=false; fi
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
           echo "$TAG is the highest collab release: $latest"
+      # The per-job target lists; `skip_darwin_arm64` drops the macOS arm64 entries, so no job waits on that runner.
+      - id: targets
+        env:
+          SKIP: ${{ inputs.skip_darwin_arm64 && 'true' || 'false' }}
+          REPLACE: ${{ inputs.replace && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          if [ "$SKIP" = true ] && [ "$REPLACE" != true ]; then
+            echo "::error::skip_darwin_arm64 keeps the darwin-arm64 assets of an existing release; dispatch it with 'replace'"
+            exit 1
+          fi
+          keep() { if [ "$SKIP" = true ]; then jq -c "map(select($1 | not))"; else jq -c .; fi; }
+          build='[{"target":"darwin-arm64","runner":"macos-26","x64_variants":""},{"target":"darwin-x64","runner":"macos-15-intel","x64_variants":"baseline"},{"target":"linux-x64","runner":"ubuntu-22.04","x64_variants":"baseline modern"},{"target":"linux-arm64","runner":"ubuntu-22.04-arm","x64_variants":""}]'
+          desktop='[{"os":"darwin","arch":"arm64","runner":"macos-26"},{"os":"darwin","arch":"x64","runner":"macos-15-intel"},{"os":"linux","arch":"arm64","runner":"ubuntu-22.04-arm"},{"os":"linux","arch":"x64","runner":"ubuntu-22.04"}]'
+          sign='["darwin-arm64","darwin-x64"]'
+          smoke='[{"target":"darwin-arm64","runner":"macos-26","artifact":"collab-signed-darwin-arm64"},{"target":"darwin-x64","runner":"macos-15-intel","artifact":"collab-signed-darwin-x64"},{"target":"linux-x64","runner":"ubuntu-22.04","artifact":"collab-binary-linux-x64"},{"target":"linux-arm64","runner":"ubuntu-22.04-arm","artifact":"collab-binary-linux-arm64"}]'
+          {
+            echo "build=$(keep '.target == "darwin-arm64"' <<< "$build")"
+            echo "desktop=$(keep '.os == "darwin" and .arch == "arm64"' <<< "$desktop")"
+            echo "sign=$(keep '. == "darwin-arm64"' <<< "$sign")"
+            echo "smoke=$(keep '.target == "darwin-arm64"' <<< "$smoke")"
+          } >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.target }}
@@ -135,11 +166,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { target: darwin-arm64, runner: macos-26, x64_variants: "" }
-          - { target: darwin-x64, runner: macos-15-intel, x64_variants: "baseline" }
-          - { target: linux-x64, runner: ubuntu-22.04, x64_variants: "baseline modern" }
-          - { target: linux-arm64, runner: ubuntu-22.04-arm, x64_variants: "" }
+        include: ${{ fromJSON(needs.meta.outputs.build_matrix) }}
     permissions:
       contents: read
       # The collab-natives action lists and downloads earlier runs' artifacts.
@@ -204,11 +231,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: darwin, arch: arm64, runner: macos-26 }
-          - { os: darwin, arch: x64, runner: macos-15-intel }
-          - { os: linux, arch: arm64, runner: ubuntu-22.04-arm }
-          - { os: linux, arch: x64, runner: ubuntu-22.04 }
+        include: ${{ fromJSON(needs.meta.outputs.desktop_matrix) }}
     permissions:
       contents: read
     env:
@@ -303,12 +326,12 @@ jobs:
   # notarization with them.
   sign:
     name: Sign ${{ matrix.target }}
-    needs: build
+    needs: [meta, build]
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        target: [darwin-arm64, darwin-x64]
+        target: ${{ fromJSON(needs.meta.outputs.sign_targets) }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -340,11 +363,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { target: darwin-arm64, runner: macos-26, artifact: collab-signed-darwin-arm64 }
-          - { target: darwin-x64, runner: macos-15-intel, artifact: collab-signed-darwin-x64 }
-          - { target: linux-x64, runner: ubuntu-22.04, artifact: collab-binary-linux-x64 }
-          - { target: linux-arm64, runner: ubuntu-22.04-arm, artifact: collab-binary-linux-arm64 }
+        include: ${{ fromJSON(needs.meta.outputs.smoke_matrix) }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -450,15 +469,27 @@ jobs:
           merge-multiple: true
       # SHA256SUMS.txt covers exactly the four binaries and the desktop app's assets: the macOS zips and disk images
       # and the Linux tarballs, which the installer and the macOS app's updater download and verify. `omp-*` is
-      # still exactly the four binaries.
+      # still exactly the four binaries. With `skip_darwin_arm64` the darwin-arm64 ones are the release's own,
+      # listed by the sha256 digest GitHub keeps for each uploaded asset.
       - name: Generate checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          SKIP: ${{ inputs.skip_darwin_arm64 && 'true' || 'false' }}
         run: |
           set -euo pipefail
           ls -l assets
-          test "$(find assets -type f -name 'omp-*' | wc -l)" -eq 4
-          test "$(find assets -type f -name 'collab-desktop-darwin-*' | wc -l)" -eq 4
+          if [ "$SKIP" = true ]; then binaries=3 darwin_desktop=2; else binaries=4 darwin_desktop=4; fi
+          test "$(find assets -type f -name 'omp-*' | wc -l)" -eq "$binaries"
+          test "$(find assets -type f -name 'collab-desktop-darwin-*' | wc -l)" -eq "$darwin_desktop"
           test "$(find assets -type f -name 'collab-desktop-linux-*' | wc -l)" -eq 2
           bun scripts/ci-release-checksums.ts assets/SHA256SUMS.txt assets/omp-* assets/collab-desktop-darwin-* assets/collab-desktop-linux-*
+          if [ "$SKIP" = true ]; then
+            kept="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.assets[] | select(.name == "omp-darwin-arm64" or .name == "collab-desktop-darwin-arm64.zip" or .name == "collab-desktop-darwin-arm64.dmg") | "\(.digest | sub("^sha256:"; ""))  \(.name)"')"
+            test "$(grep -c . <<< "$kept")" -eq 3
+            { cat assets/SHA256SUMS.txt; echo "$kept"; } | sort -k2 > assets/SHA256SUMS.sorted
+            mv assets/SHA256SUMS.sorted assets/SHA256SUMS.txt
+          fi
           cat assets/SHA256SUMS.txt
       # make_latest only for the highest collab-v* tag (the installer's default URL is
       # releases/latest); rebuilding an older tag never moves it. Existing assets of a tag

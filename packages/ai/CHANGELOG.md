@@ -6,6 +6,11 @@
 
 - Added private mode (`@oh-my-pi/pi-ai/private-mode`: `enterPrivateMode`, `PrivateModeError`, `assertProviderAllowedInPrivateMode`): once a process enters it, every dispatch (`stream`, `streamSimple`, each transport HTTP attempt, credential resolution, image, speech, transcription, embeddings, rerank, video and judge calls) throws before any I/O for a provider outside the allowlist; it is one-way and a repeat call can only narrow the list.
 - Auth-gateway client entries accept `budget: { dailyTokens?, dailyCostUsd?, maxConcurrent? }`: once a scoped client's usage for the current UTC day reaches a limit, its inference requests answer `429` (`daily_budget_exhausted`, with the next UTC midnight as the reset) before any credential lookup, in each route's own error format. Usage is totalled per client name in an `AuthGatewayUsageLedger` (`usageLedger` option of `createAuthGatewayRouter` / `startAuthGateway`, in-memory by default; `createMemoryUsageLedger`, `utcDay` exported); gateway-token traffic is never limited. `POST /v1/videos` is checked like the other inference routes, and a completed video's cost counts once, when its job is first polled completed. A budget is checked when a request starts and usage is added when it ends, so a budgeted client's in-flight inference requests are capped at `budget.maxConcurrent` (positive integer, default 16): one over the cap answers `429` `too_many_concurrent_requests` with `retry-after: 1`, which bounds the overshoot to the requests in flight. `validateAuthGatewayClient` checks one client entry as the clients table would, without side effects.
+
+### Fixed
+
+- A session continued on Claude after turns from another model (for example local models) no longer has every request refused with `Refusal (reasoning_extraction)`: for readers whose classifier refuses replayed reasoning (the `classifier-cot-extraction` catalog axis), `transformMessages` drops the other model's reasoning instead of demoting it to text. Their visible replies and tool calls are kept.
+
 ## [18.20.3] - 2026-11-16
 
 ### Breaking Changes

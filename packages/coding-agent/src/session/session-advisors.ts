@@ -92,6 +92,7 @@ import { bridgeToolMap } from "../cursor-bridge-tools";
 import { estimateContextToolSchemaTokens } from "./context-usage";
 import type { PlanModeState } from "../plan-mode/state";
 import advisorBoundaryGuidance from "../prompts/advisor/boundary-guidance.md" with { type: "text" };
+import advisorBoundaryAnswer from "../prompts/advisor/boundary-answer.md" with { type: "text" };
 import advisorSystemPrompt from "../prompts/advisor/system.md" with { type: "text" };
 import type { SecretObfuscator } from "../secrets/obfuscator";
 import {
@@ -250,6 +251,14 @@ export function planAdvisorUsageLimitWait(args: {
  * per-delivery noise.
  */
 const ADVISOR_BOUNDARY_GUIDANCE = advisorBoundaryGuidance.trim();
+/**
+ * Closing line of a boundary batch that starts a continuation, sourced from
+ * `prompts/advisor/boundary-answer.md`: the user already read the answer the
+ * review is about, so a revision restates it whole instead of leaving a delta
+ * below the advisor card. Every such batch carries it (unlike the guidance header):
+ * it decides what the continuation writes.
+ */
+const ADVISOR_BOUNDARY_ANSWER = advisorBoundaryAnswer.trim();
 const ADVISOR_BOUNDARY_GUIDANCE_TURNS = 50;
 
 /**
@@ -1833,10 +1842,12 @@ export class SessionAdvisors {
 		// would have granted it. The loop may still report streaming here, and an
 		// aside would be drained into an extra turn that skips the continuation latch.
 		if (this.#terminalUnwindActive && terminalAnswerNoQueuedWork) {
+			const continues = this.#continuesFinishedRun(severity);
+			const batch = formatAdvisorBatchContent(notes);
 			this.#deliverAdvisorBatch(
 				notes,
-				formatAdvisorBatchContent(notes),
-				this.#continuesFinishedRun(severity),
+				continues ? `${batch}\n${ADVISOR_BOUNDARY_ANSWER}` : batch,
+				continues,
 				advisor,
 			);
 			return;
@@ -1890,12 +1901,10 @@ export class SessionAdvisors {
 			this.#advisorPrimaryTurnsCompleted - this.#advisorBoundaryGuidanceLastTurn >= ADVISOR_BOUNDARY_GUIDANCE_TURNS;
 		if (showGuidance) this.#advisorBoundaryGuidanceLastTurn = this.#advisorPrimaryTurnsCompleted;
 		const batch = formatAdvisorBatchContent(notes, { currentTurn: this.#advisorPrimaryTurnsCompleted });
-		const content = showGuidance ? `${ADVISOR_BOUNDARY_GUIDANCE}\n${batch}` : batch;
-		this.#deliverAdvisorBatch(
-			notes,
-			content,
-			notes.some(n => this.#continuesFinishedRun(n.severity)),
-		);
+		const continues = notes.some(n => this.#continuesFinishedRun(n.severity));
+		const headed = showGuidance ? `${ADVISOR_BOUNDARY_GUIDANCE}\n${batch}` : batch;
+		const content = continues ? `${headed}\n${ADVISOR_BOUNDARY_ANSWER}` : headed;
+		this.#deliverAdvisorBatch(notes, content, continues);
 	}
 
 	/**

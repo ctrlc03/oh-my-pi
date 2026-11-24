@@ -11,6 +11,9 @@ import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manage
 import { convertToLlm, USER_INTERRUPT_LABEL } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
+/** Opening words of `prompts/advisor/boundary-answer.md`: a review that continues the run asks for the whole answer again. */
+const RESTATE_ANSWER = "Your last answer is already in front of the user";
+
 const boundaryToolSchema = type({});
 type BoundaryTool = AgentTool<typeof boundaryToolSchema, undefined>;
 
@@ -250,6 +253,8 @@ it.each([
 				advisor.state.messages.some(message => message.role === "toolResult" && message.toolCallId === "advice-1"),
 			).toBe(true);
 			expect(primaryContexts[2] ?? "").not.toContain(continuationMarker);
+			// The continuation is told to restate its answer whole; a preserved card carries no such instruction.
+			if (continues) expect(primaryContexts[2] ?? "").toContain(RESTATE_ANSWER);
 			if (continuation && !stop) {
 				expect(primaryContexts[3]?.split(continuationMarker).length).toBe(2);
 				expect(primaryContexts.filter(context => context.includes(continuationMarker))).toHaveLength(1);
@@ -263,7 +268,10 @@ it.each([
 				expect(cards).toHaveLength(1);
 				const card = cards[0];
 				expect(card?.role).toBe("custom");
-				if (card?.role === "custom") expect(contentText(card.content)).toContain("late terminal advice");
+				if (card?.role === "custom") {
+					expect(contentText(card.content)).toContain("late terminal advice");
+					expect(contentText(card.content)).not.toContain(RESTATE_ANSWER);
+				}
 			}
 
 			const nextRun = session.prompt(nextUserMarker);

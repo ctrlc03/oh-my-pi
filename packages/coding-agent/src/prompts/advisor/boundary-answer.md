@@ -1,0 +1,1 @@
+Your last answer is already in front of the user. If this review changes anything in it, finish this turn with the complete answer again, corrected, so it stands on its own: never only the changes, a reply to the review, or a note about which findings you rejected. If nothing in your answer changes, end the turn without writing anything.

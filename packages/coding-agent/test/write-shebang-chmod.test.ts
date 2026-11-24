@@ -74,7 +74,7 @@ describe("write tool shebang chmod", () => {
 		["has no server for the file", {}],
 		["neither formats nor diagnoses writes", { "lsp.formatOnWrite": false, "lsp.diagnosticsOnWrite": false }],
 	] as const)("marks a shebang file executable when LSP %s", async (_condition, lsp) => {
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
 		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([]);
 		const filePath = path.join(tmpDir, "run.sh");
 		const tool = new WriteTool(createSession(tmpDir, lsp));

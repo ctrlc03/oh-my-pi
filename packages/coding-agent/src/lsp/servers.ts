@@ -15,7 +15,7 @@ import {
 	syncContent,
 	WARMUP_TIMEOUT_MS,
 } from "./client";
-import { getServersForFile, type LspConfig, loadConfig } from "./config";
+import { getServersForFile, type LspConfig, loadConfig, resolveServerForFileByPath } from "./config";
 import type { LspClient, ServerConfig } from "./types";
 
 /**
@@ -53,11 +53,11 @@ export interface LspWarmupOptions {
 	onConnecting?: (serverNames: string[]) => void;
 }
 
-export function discoverStartupLspServers(
+export async function discoverStartupLspServers(
 	cwd: string,
 	status: LspStartupServerInfo["status"] = "connecting",
-): LspStartupServerInfo[] {
-	const config = loadConfig(cwd);
+): Promise<LspStartupServerInfo[]> {
+	const config = await loadConfig(cwd);
 	return getLspServers(config).map(([name, serverConfig]) => ({
 		name,
 		status,
@@ -74,7 +74,7 @@ export function discoverStartupLspServers(
  * @returns Status of each server that was started
  */
 export async function warmupLspServers(cwd: string, options?: LspWarmupOptions): Promise<LspWarmupResult> {
-	const config = loadConfig(cwd);
+	const config = await loadConfig(cwd);
 	const servers: LspWarmupResult["servers"] = [];
 	const lspServers = getLspServers(config);
 
@@ -223,6 +223,11 @@ export function getLspServersForFile(config: LspConfig, filePath: string): Array
 export function getLspServerForFile(config: LspConfig, filePath: string): [string, ServerConfig] | null {
 	const servers = getLspServersForFile(config, filePath);
 	return servers.length > 0 ? servers[0] : null;
+}
+
+/** The primary server for a file by path; see `resolveServerForFileByPath` for why resolution runs through a promise. */
+export function getLspServerForFileByPath(cwd: string, filePath: string): Promise<[string, ServerConfig] | null> {
+	return resolveServerForFileByPath(cwd, filePath);
 }
 
 export function isProjectAwareLspServer(serverConfig: ServerConfig): boolean {

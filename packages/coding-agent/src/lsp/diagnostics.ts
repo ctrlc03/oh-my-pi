@@ -1,5 +1,6 @@
 import { type FileDiagnosticsResult } from "@oh-my-pi/pi-tui/tools/lsp";
 import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 import path from "node:path";
 import { isRecord, logger, untilAborted, toError } from "@oh-my-pi/pi-utils";
 import { formatPathRelativeToCwd } from "../tools/path-utils";
@@ -105,13 +106,16 @@ export const PROJECT_INDEXED_ACTIONS: ReadonlySet<string> = new Set([
 
 const RUST_WORKSPACE_MARKERS = ["Cargo.toml", "rust-analyzer.toml"] as const;
 
-export function hasRustWorkspaceAncestor(filePath: string): boolean {
+export async function hasRustWorkspaceAncestor(filePath: string): Promise<boolean> {
 	let dir = path.dirname(filePath);
 	while (true) {
 		for (const marker of RUST_WORKSPACE_MARKERS) {
-			if (fs.existsSync(path.join(dir, marker))) {
+			// Asynchronous: the walk climbs out of the project into folders a privacy prompt may hold; a synchronous
+			// probe would block the whole companion process behind one unanswered alert.
+			try {
+				await fsp.access(path.join(dir, marker));
 				return true;
-			}
+			} catch {}
 		}
 		const parent = path.dirname(dir);
 		if (parent === dir) {
@@ -151,13 +155,13 @@ function isTypeScriptProjectDiagnostic(serverName: string, diagnostic: Diagnosti
 	return code !== null && ORPHAN_TYPESCRIPT_PROJECT_DIAGNOSTIC_CODES[code] === true;
 }
 
-function filterOrphanProjectDiagnostics(
+async function filterOrphanProjectDiagnostics(
 	absolutePath: string,
 	serverName: string,
 	serverConfig: ServerConfig,
 	diagnostics: Diagnostic[],
-): Diagnostic[] {
-	if (!serverConfig.rootMarkers.length || hasRootMarkerAncestor(absolutePath, serverConfig.rootMarkers)) {
+): Promise<Diagnostic[]> {
+	if (!serverConfig.rootMarkers.length || (await hasRootMarkerAncestor(absolutePath, serverConfig.rootMarkers))) {
 		return diagnostics;
 	}
 	return diagnostics.filter(diagnostic => !isTypeScriptProjectDiagnostic(serverName, diagnostic));
@@ -677,12 +681,12 @@ export async function getDiagnosticsForFile(
 		}
 		serverNames.push(result.value.serverName);
 		allDiagnostics.push(
-			...filterOrphanProjectDiagnostics(
+			...(await filterOrphanProjectDiagnostics(
 				absolutePath,
 				result.value.serverName,
 				result.value.serverConfig,
 				result.value.diagnostics,
-			),
+			)),
 		);
 	}
 

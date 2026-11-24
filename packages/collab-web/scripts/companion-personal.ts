@@ -14,9 +14,9 @@
  * which calls {@link Personal.tick}).
  */
 
-import { realpathSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { skipWhileRunning } from "./companion-tick";
 import { openMemoryAdmin } from "@oh-my-pi/pi-mnemopi/admin";
 import type { MemoryAdmin } from "@oh-my-pi/pi-mnemopi/admin-types";
 import type {
@@ -323,13 +323,17 @@ export interface Personal {
 	tick(hosts: readonly CompanionHost[]): Promise<void>;
 	/** The hosts with the Personal session marked `personal: true`. */
 	markHosts(hosts: CompanionHost[]): CompanionHost[];
+	/** The resolved spelling of a session folder, or undefined while it is not known yet; never waits. */
+	resolvedFolder(cwd: string): string | undefined;
 	/** `canPersonal` / `canPersonalChatTree` / `personalRev` for the hosts frame. */
 	hostsFields(canServe: boolean): { canPersonal?: true; canPersonalChatTree?: true; personalRev?: number };
 	/** Personal is on: the companion keeps polling even with no device connected. */
 	enabled(): boolean;
 	/** The session is the Personal agent's: session organisation leaves it alone. */
 	exempt(sessionId: string): boolean;
-	isPersonalHost(host: Pick<CompanionHost, "cwd" | "instanceId">): boolean;
+	isPersonalHost(host: Pick<CompanionHost, "cwd" | "instanceId">): Promise<boolean>;
+	/** What `markHosts` compares resolved folders against; read-only for callers that fold host frames. */
+	workspaceReal: string;
 	/** Folders to look for session files in: the default profile's, and the Personal profile's once it exists. */
 	sessionDirs(): string[];
 	/** A schedule with `deliverTo: "personal"` fired. */
@@ -456,6 +460,40 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 	// ── the live session ────────────────────────────────────────────────────
 
 	let workspaceReal = paths.workspace;
+	/** What the last listing's folders looked like (sorted, comma-joined); unchanged listings skip every lookup. */
+	let lastFolderNames = "";
+	/** What `workspaceReal` was resolved against when `lastFolderNames` was computed. */
+	let workspaceWasReal = "";
+	/** Each listed folder resolved once while it stays listed: the hosts frame reads the cached answer. */
+	const resolvedFolders = new Map<string, string>();
+
+	/** A host's folder as its process sees it: `/var/...` for `/private/var/...` on macOS, `/_documents/...` for the Documents alias. */
+	const resolveFolder = async (cwd: string): Promise<string> => {
+		const hit = resolvedFolders.get(cwd);
+		if (hit !== undefined) return hit;
+		const real = await fs.realpath(cwd).catch(() => cwd);
+		resolvedFolders.set(cwd, real);
+		return real;
+	};
+
+	/**
+	 * Resolve the folders a listing shows, once each while the listing is unchanged. The sort makes the join invariant to
+	 * ordering, so the Personal folder settling in the same moment another folder disappears still re-runs the lookups;
+	 * the workspace is watched explicitly because only after it resolves can `inWorkspace` name the Personal host.
+	 */
+	const resolveFolders = async (hosts: readonly Pick<CompanionHost, "cwd">[]): Promise<void> => {
+		const names = hosts
+			.map(host => host.cwd)
+			.sort()
+			.join(",");
+		if (names === lastFolderNames && workspaceReal === workspaceWasReal) return;
+		lastFolderNames = names;
+		workspaceWasReal = workspaceReal;
+		// A folder that left the listing is forgotten, so the cache holds only folders the app is currently being shown.
+		const listed = new Set(hosts.map(host => host.cwd));
+		for (const cwd of [...resolvedFolders.keys()]) if (!listed.has(cwd)) resolvedFolders.delete(cwd);
+		await Promise.all(hosts.map(host => resolveFolder(host.cwd)));
+	};
 	let live: CompanionHost | null = null;
 	let lifecycle: "starting" | "rollover" | "stopping" | null = null;
 	let failures = 0;
@@ -481,18 +519,12 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 	};
 
 	/** A host registers the folder as its process sees it (`/var/...` for `/private/var/...` on macOS), so compare resolved paths too. */
-	const inWorkspace = (cwd: string): boolean => {
-		if (cwd === workspaceReal || cwd === paths.workspace) return true;
-		try {
-			return realpathSync(cwd) === workspaceReal;
-		} catch {
-			return false;
-		}
-	};
+	const inWorkspace = (cwd: string): boolean => cwd === workspaceReal || cwd === paths.workspace;
 
-	const isPersonalHost = (host: Pick<CompanionHost, "cwd" | "instanceId">): boolean => {
+	/** Whether the host's folder is the Personal workspace; the folder must have been resolved first (`resolveFolders`). */
+	const isPersonalHost = async (host: Pick<CompanionHost, "cwd" | "instanceId">): Promise<boolean> => {
 		if (!enabled()) return false;
-		if (!inWorkspace(host.cwd)) return false;
+		if (!inWorkspace(await resolveFolder(host.cwd))) return false;
 		const recorded = state.read().session?.instanceId ?? null;
 		return recorded === null || host.instanceId === recorded;
 	};
@@ -579,8 +611,10 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 		}
 	};
 
-	const hostNow = async (sessionId: string): Promise<CompanionHost | null> =>
-		(await env.listHosts()).find(host => host.sessionId === sessionId && isPersonalHost(host)) ?? null;
+	const hostNow = async (sessionId: string): Promise<CompanionHost | null> => {
+		const host = (await env.listHosts()).find(candidate => candidate.sessionId === sessionId);
+		return host === undefined || !(await isPersonalHost(host)) ? null : host;
+	};
 
 	const recordFailure = async (message: string): Promise<void> => {
 		failures += 1;
@@ -1057,7 +1091,11 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 		if (!enabled()) return;
 		try {
 			workspaceReal = await fs.realpath(paths.workspace).catch(() => paths.workspace);
-			live = hosts.find(isPersonalHost) ?? null;
+			await resolveFolders(hosts);
+			live =
+				(await Promise.all(hosts.map(async host => ((await isPersonalHost(host)) ? host : undefined)))).find(
+					host => host !== undefined,
+				) ?? null;
 			if (live !== null) {
 				// A start or rollover in progress records its own session (and counts the generation) when its host appears.
 				if (lifecycle === null) await adopt(live);
@@ -1143,12 +1181,18 @@ export async function createPersonal(env: PersonalEnv): Promise<Personal> {
 		isRequest: (frame): frame is PersonalRequest => typeof frame.t === "string" && frame.t.startsWith("personal-"),
 		handleRequest,
 		tick,
-		markHosts: hosts => hosts.map(host => (isPersonalHost(host) ? { ...host, personal: true as const } : host)),
+		markHosts: hosts =>
+			hosts.map(host =>
+				resolvedFolders.get(host.cwd) === workspaceReal ? { ...host, personal: true as const } : host,
+			),
+		resolvedFolder: cwd => resolvedFolders.get(cwd),
 		hostsFields: canServe => ({
 			...(canServe ? { canPersonal: true as const, canPersonalChatTree: true as const } : {}),
 			...(enabled() ? { personalRev: state.read().rev } : {}),
 		}),
 		enabled,
+		/** What `markHosts` compares the resolved host folders against; read-only for callers that fold host frames. */
+		workspaceReal,
 		exempt: sessionId => enabled() && state.read().session?.sessionId === sessionId,
 		isPersonalHost,
 		sessionDirs: () => (state.read().setUp ? [env.defaultSessionsDir, paths.sessionsDir] : [env.defaultSessionsDir]),

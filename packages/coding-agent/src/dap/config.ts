@@ -1,4 +1,5 @@
-import * as fs from "node:fs";
+import * as fs from "node:fs/promises";
+import { existsSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { isRecord, logger, WhichCachePolicy } from "@oh-my-pi/pi-utils";
@@ -97,18 +98,18 @@ function mergeAdapters(
 	return merged;
 }
 
-function loadAdapterConfigs(cwd: string): Record<string, DapAdapterConfig> {
+async function loadAdapterConfigs(cwd: string): Promise<Record<string, DapAdapterConfig>> {
 	let adapters = { ...DEFAULT_ADAPTERS };
 	for (const source of configFileSources("dap", cwd, adaptConfig).reverse()) {
-		const parsed = source.read();
+		const parsed = await source.read();
 		if (!parsed) continue;
 		adapters = mergeAdapters(adapters, parsed.adapters);
 	}
 	return adapters;
 }
 
-export function getAdapterConfigs(cwd?: string): Record<string, DapAdapterConfig> {
-	return cwd ? loadAdapterConfigs(cwd) : { ...DEFAULT_ADAPTERS };
+export async function getAdapterConfigs(cwd?: string): Promise<Record<string, DapAdapterConfig>> {
+	return cwd ? await loadAdapterConfigs(cwd) : { ...DEFAULT_ADAPTERS };
 }
 
 function normalizeCommandForCwd(command: string, cwd: string): string {
@@ -124,7 +125,7 @@ function normalizeCommandForCwd(command: string, cwd: string): string {
 	return command;
 }
 
-function resolveJsDebugServerPath(cwd: string): string | null {
+async function resolveJsDebugServerPath(cwd: string): Promise<string | null> {
 	const configured = process.env[JS_DEBUG_SERVER_ENV];
 	const dataHome = process.env.XDG_DATA_HOME ?? path.join(os.homedir(), ".local", "share");
 	const candidates = [
@@ -133,23 +134,28 @@ function resolveJsDebugServerPath(cwd: string): string | null {
 		path.join(os.homedir(), ".local", "opt", "js-debug", "src", "dapDebugServer.js"),
 	];
 	for (const candidate of candidates) {
-		if (fs.existsSync(candidate)) return candidate;
+		// Asynchronous: the folders this scans can sit in a protected home directory, where a first read waits on a
+		// macOS privacy prompt and a synchronous probe would hold the whole process.
+		try {
+			await fs.access(candidate);
+			return candidate;
+		} catch {}
 	}
 	return null;
 }
 
-function resolveDefaultJsDebugAdapter(
+async function resolveDefaultJsDebugAdapter(
 	adapterName: string,
 	config: DapAdapterConfig,
 	cwd: string,
 	localRoots?: readonly string[],
-): DapResolvedAdapter | null | undefined {
+): Promise<DapResolvedAdapter | null | undefined> {
 	if (adapterName !== "js-debug-adapter" || config.command !== "js-debug-adapter") {
 		return undefined;
 	}
-	const serverPath = resolveJsDebugServerPath(cwd);
+	const serverPath = await resolveJsDebugServerPath(cwd);
 	if (!serverPath) return null;
-	const nodeCommand = resolveCommand("node", cwd, {
+	const nodeCommand = await resolveCommand("node", cwd, {
 		cache: WhichCachePolicy.Fresh,
 		PATH: process.env.PATH,
 		localRoots,
@@ -170,20 +176,20 @@ function resolveDefaultJsDebugAdapter(
 	};
 }
 
-function resolveAdapterFromConfig(
+async function resolveAdapterFromConfig(
 	adapterName: string,
 	configs: Record<string, DapAdapterConfig>,
 	cwd: string,
 	localRoots?: readonly string[],
-): DapResolvedAdapter | null {
+): Promise<DapResolvedAdapter | null> {
 	const config = configs[adapterName];
 	if (!config) return null;
-	const jsDebugAdapter = resolveDefaultJsDebugAdapter(adapterName, config, cwd, localRoots);
+	const jsDebugAdapter = await resolveDefaultJsDebugAdapter(adapterName, config, cwd, localRoots);
 	if (jsDebugAdapter !== undefined) return jsDebugAdapter;
 	const normalizedCommand = normalizeCommandForCwd(config.command, cwd);
 	const commandIsBare =
 		!path.isAbsolute(config.command) && !config.command.includes("/") && !config.command.includes("\\");
-	const resolvedCommand = resolveCommand(normalizedCommand, cwd, {
+	const resolvedCommand = await resolveCommand(normalizedCommand, cwd, {
 		cache: WhichCachePolicy.Fresh,
 		PATH: process.env.PATH,
 		localRoots: commandIsBare ? localRoots : undefined,
@@ -204,15 +210,14 @@ function resolveAdapterFromConfig(
 	};
 }
 
-export function resolveAdapter(adapterName: string, cwd: string): DapResolvedAdapter | null {
-	return resolveAdapterFromConfig(adapterName, getAdapterConfigs(cwd), cwd);
+export async function resolveAdapter(adapterName: string, cwd: string): Promise<DapResolvedAdapter | null> {
+	return resolveAdapterFromConfig(adapterName, await getAdapterConfigs(cwd), cwd);
 }
 
-export function getAvailableAdapters(cwd: string): DapResolvedAdapter[] {
-	const configs = getAdapterConfigs(cwd);
-	return Object.keys(configs)
-		.map(name => resolveAdapterFromConfig(name, configs, cwd))
-		.filter((adapter): adapter is DapResolvedAdapter => adapter !== null);
+export async function getAvailableAdapters(cwd: string): Promise<DapResolvedAdapter[]> {
+	const configs = await getAdapterConfigs(cwd);
+	const resolved = await Promise.all(Object.keys(configs).map(name => resolveAdapterFromConfig(name, configs, cwd)));
+	return resolved.filter((adapter): adapter is DapResolvedAdapter => adapter !== null);
 }
 
 /** Launch adapter selection, including a configured adapter whose command is unavailable. */
@@ -226,28 +231,28 @@ interface LaunchAdapterCandidate {
 	rootDir: string | null;
 }
 
-function findRootMarkerInLaunchAncestry(
+async function findRootMarkerInLaunchAncestry(
 	program: string,
 	cwd: string,
 	markers: string[],
 	programKind: LaunchProgramKind,
-): string | null {
+): Promise<string | null> {
 	if (markers.length === 0) return null;
 	let dir = programKind === "directory" ? path.resolve(cwd, program) : path.dirname(path.resolve(cwd, program));
 	while (true) {
-		if (hasRootMarkers(dir, markers)) return dir;
+		if (await hasRootMarkers(dir, markers)) return dir;
 		const parent = path.dirname(dir);
 		if (parent === dir) return null;
 		dir = parent;
 	}
 }
 
-function resolveAdapterForLaunch(
+async function resolveAdapterForLaunch(
 	adapterName: string,
 	configs: Record<string, DapAdapterConfig>,
 	cwd: string,
 	rootDir: string | null,
-): DapResolvedAdapter | null {
+): Promise<DapResolvedAdapter | null> {
 	const localRoots = rootDir && rootDir !== cwd ? [rootDir, cwd] : undefined;
 	return resolveAdapterFromConfig(adapterName, configs, cwd, localRoots);
 }
@@ -261,12 +266,12 @@ function unavailableAdapter(
 	return { kind: "unavailable", adapterName: candidate.name, command: config.command };
 }
 
-function selectAutomaticLaunchAdapter(
+async function selectAutomaticLaunchAdapter(
 	program: string,
 	cwd: string,
 	programKind: LaunchProgramKind,
 	configs: Record<string, DapAdapterConfig>,
-): LaunchAdapterSelection {
+): Promise<LaunchAdapterSelection> {
 	const extension = path.extname(program).toLowerCase();
 	if (extension) {
 		const configured: LaunchAdapterCandidate[] = [];
@@ -274,9 +279,9 @@ function selectAutomaticLaunchAdapter(
 		for (const name in configs) {
 			const config = configs[name];
 			if (!config || !(config.fileTypes ?? []).includes(extension)) continue;
-			const rootDir = findRootMarkerInLaunchAncestry(program, cwd, config.rootMarkers ?? [], programKind);
+			const rootDir = await findRootMarkerInLaunchAncestry(program, cwd, config.rootMarkers ?? [], programKind);
 			configured.push({ name, rootDir });
-			const adapter = resolveAdapterForLaunch(name, configs, cwd, rootDir);
+			const adapter = await resolveAdapterForLaunch(name, configs, cwd, rootDir);
 			if (adapter) available.push(adapter);
 		}
 		const selected = sortAdaptersForLaunch(program, cwd, programKind, available)[0];
@@ -292,14 +297,14 @@ function selectAutomaticLaunchAdapter(
 	for (const name in configs) {
 		const config = configs[name];
 		if (!config) continue;
-		const rootDir = findRootMarkerInLaunchAncestry(program, cwd, config.rootMarkers ?? [], programKind);
+		const rootDir = await findRootMarkerInLaunchAncestry(program, cwd, config.rootMarkers ?? [], programKind);
 		const candidate = { name, rootDir };
 		if (rootDir) {
 			rootMatches.push(candidate);
 			if (config.acceptsDirectoryProgram === true) directoryMatches.push(candidate);
 		}
 		if (!EXTENSIONLESS_DEBUGGER_ORDER.includes(name) && !rootDir) continue;
-		const adapter = resolveAdapterForLaunch(name, configs, cwd, rootDir);
+		const adapter = await resolveAdapterForLaunch(name, configs, cwd, rootDir);
 		if (adapter) available.push(adapter);
 	}
 
@@ -354,28 +359,32 @@ function sortAdaptersForLaunch(
 }
 
 /** Selects a launch adapter or reports why matching configuration cannot run. */
-export function selectLaunchAdapter(
+export async function selectLaunchAdapter(
 	program: string,
 	cwd: string,
 	adapterName?: string,
 	programKind: LaunchProgramKind = "file",
-): LaunchAdapterSelection {
-	const configs = getAdapterConfigs(cwd);
+): Promise<LaunchAdapterSelection> {
+	const configs = await getAdapterConfigs(cwd);
 	if (adapterName) {
 		const config = configs[adapterName];
 		if (!config) return { kind: "none" };
-		const rootDir = findRootMarkerInLaunchAncestry(program, cwd, config.rootMarkers ?? [], programKind);
-		const adapter = resolveAdapterForLaunch(adapterName, configs, cwd, rootDir);
+		const rootDir = await findRootMarkerInLaunchAncestry(program, cwd, config.rootMarkers ?? [], programKind);
+		const adapter = await resolveAdapterForLaunch(adapterName, configs, cwd, rootDir);
 		return adapter ? { kind: "adapter", adapter } : { kind: "unavailable", adapterName, command: config.command };
 	}
 	return selectAutomaticLaunchAdapter(program, cwd, programKind, configs);
 }
 
-export function selectAttachAdapter(cwd: string, adapterName?: string, port?: number): DapResolvedAdapter | null {
+export async function selectAttachAdapter(
+	cwd: string,
+	adapterName?: string,
+	port?: number,
+): Promise<DapResolvedAdapter | null> {
 	if (adapterName) {
 		return resolveAdapter(adapterName, cwd);
 	}
-	const available = getAvailableAdapters(cwd);
+	const available = await getAvailableAdapters(cwd);
 	if (port !== undefined) {
 		const debugpy = available.find(adapter => adapter.name === "debugpy");
 		if (debugpy) return debugpy;

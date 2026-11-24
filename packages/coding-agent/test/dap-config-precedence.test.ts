@@ -22,7 +22,7 @@ describe("DAP config layering", () => {
 		);
 		await Bun.write(path.join(tempDir, "dap.json"), JSON.stringify({ [ADAPTER]: { command: "cwd-cmd" } }));
 
-		const adapter = getAdapterConfigs(tempDir)[ADAPTER];
+		const adapter = (await getAdapterConfigs(tempDir))[ADAPTER];
 
 		expect(adapter?.command).toBe("cwd-cmd");
 		expect(adapter?.args).toEqual(["from-project"]);

@@ -5893,7 +5893,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		// `lsp.enabled: false` skips discovery and warmup entirely; `lspServers` stays undefined.
 		let lspServers: CreateAgentSessionResult["lspServers"];
 		if (enableLsp && cfgLspEnabled.get(settings) && options.hasUI) {
-			const startupLspServers = discoverStartupLspServers(
+			const startupLspServers = await discoverStartupLspServers(
 				cwd,
 				cfgLspLazy.get(settings) ? "available" : "connecting",
 			);

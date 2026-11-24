@@ -100,7 +100,7 @@ describe("DAP adapter configuration", () => {
 			}),
 		);
 
-		const adapter = resolveAdapter("custom-jvm", cwd);
+		const adapter = await resolveAdapter("custom-jvm", cwd);
 		expect(adapter?.name).toBe("custom-jvm");
 		expect(adapter?.command).toBe("bun");
 		expect(adapter?.args).toEqual(["run", "debug-adapter"]);
@@ -109,7 +109,7 @@ describe("DAP adapter configuration", () => {
 		expect(adapter?.launchDefaults).toEqual({ request: "launch", mainClass: "" });
 		expect(adapter?.attachDefaults).toEqual({ request: "attach", host: "127.0.0.1" });
 
-		const selected = requireSelectedAdapter(selectLaunchAdapter(path.join("src", "Main.java"), cwd));
+		const selected = requireSelectedAdapter(await selectLaunchAdapter(path.join("src", "Main.java"), cwd));
 		expect(selected.name).toBe("custom-jvm");
 	});
 
@@ -128,7 +128,7 @@ describe("DAP adapter configuration", () => {
 			}),
 		);
 
-		const config = getAdapterConfigs(cwd).debugpy;
+		const config = (await getAdapterConfigs(cwd)).debugpy;
 		expect(config.command).toBe("python");
 		expect(config.args).toEqual(["-m", "debugpy.adapter", "--log-dir", ".debugpy-logs"]);
 		expect(config.fileTypes).toContain(".py");
@@ -162,7 +162,7 @@ describe("DAP adapter configuration", () => {
 			].join("\n"),
 		);
 
-		const selected = requireSelectedAdapter(selectLaunchAdapter("Main.kt", cwd));
+		const selected = requireSelectedAdapter(await selectLaunchAdapter("Main.kt", cwd));
 		expect(selected.name).toBe("yaml-kotlin");
 		expect(selected.launchDefaults).toEqual({ request: "launch", projectRoot: "." });
 	});
@@ -185,7 +185,7 @@ describe("DAP adapter configuration", () => {
 			}),
 		);
 
-		const adapter = resolveAdapter("relative", cwd);
+		const adapter = await resolveAdapter("relative", cwd);
 		expect(adapter?.command).toBe(
 			process.platform === "win32" ? ".\\tools\\debug-adapter.cmd" : "./tools/debug-adapter",
 		);
@@ -216,7 +216,7 @@ describe("DAP adapter configuration", () => {
 		process.env.OMP_MARKETPLACE_DIR = path.join(cwd, "marketplaces");
 		await injectPluginDirRoots(cwd, [pluginRoot], cwd);
 
-		expect(getAdapterConfigs(cwd)["acme-ruby"]?.command).toBe("ruby-debug-adapter");
+		expect((await getAdapterConfigs(cwd))["acme-ruby"]?.command).toBe("ruby-debug-adapter");
 	});
 
 	it("ignores invalid custom adapters without discarding valid configs", async () => {
@@ -237,7 +237,7 @@ describe("DAP adapter configuration", () => {
 			}),
 		);
 
-		const config = getAdapterConfigs(cwd);
+		const config = await getAdapterConfigs(cwd);
 		expect(config["missing-command"]).toBeUndefined();
 		expect(config.valid?.command).toBe("bun");
 	});
@@ -248,7 +248,7 @@ describe("DAP adapter configuration", () => {
 		const program = path.join(cwd, "main.go");
 		await fs.writeFile(program, "package main\n\nfunc main() {}\n");
 
-		const selection = selectLaunchAdapter(program, cwd);
+		const selection = await selectLaunchAdapter(program, cwd);
 
 		expect(selection).toEqual({ kind: "unavailable", adapterName: "dlv", command: missingCommand });
 	});
@@ -259,7 +259,7 @@ describe("DAP adapter configuration", () => {
 		const program = path.join(cwd, "cmd", "server");
 		await fs.mkdir(program, { recursive: true });
 
-		const selection = selectLaunchAdapter(program, cwd, undefined, "directory");
+		const selection = await selectLaunchAdapter(program, cwd, undefined, "directory");
 
 		expect(selection).toEqual({ kind: "unavailable", adapterName: "dlv", command: missingCommand });
 	});
@@ -273,7 +273,7 @@ describe("DAP adapter configuration", () => {
 		await writeExecutable(path.join(cwd, "bin", "dlv"));
 		const whichSpy = vi.spyOn(piUtils, "$which").mockReturnValue(path.join(cwd, "global", "dlv"));
 
-		const selected = requireSelectedAdapter(selectLaunchAdapter(program, cwd));
+		const selected = requireSelectedAdapter(await selectLaunchAdapter(program, cwd));
 
 		expect(selected.resolvedCommand).toBe(nestedDlv);
 		expect(whichSpy).not.toHaveBeenCalled();
@@ -286,7 +286,7 @@ describe("DAP adapter configuration", () => {
 		await writeExecutable(nestedDlv);
 		const whichSpy = vi.spyOn(piUtils, "$which").mockReturnValue(path.join(cwd, "global", "dlv"));
 
-		const selected = requireSelectedAdapter(selectLaunchAdapter(program, cwd, "dlv"));
+		const selected = requireSelectedAdapter(await selectLaunchAdapter(program, cwd, "dlv"));
 
 		expect(selected.resolvedCommand).toBe(nestedDlv);
 		expect(whichSpy).not.toHaveBeenCalled();
@@ -300,7 +300,7 @@ describe("DAP adapter configuration", () => {
 		await writeExecutable(cwdDlv);
 		const whichSpy = vi.spyOn(piUtils, "$which").mockReturnValue(path.join(cwd, "global", "dlv"));
 
-		const selected = requireSelectedAdapter(selectLaunchAdapter(program, cwd));
+		const selected = requireSelectedAdapter(await selectLaunchAdapter(program, cwd));
 
 		expect(selected.resolvedCommand).toBe(cwdDlv);
 		expect(whichSpy).not.toHaveBeenCalled();
@@ -314,7 +314,7 @@ describe("DAP adapter configuration", () => {
 		await fs.mkdir(program, { recursive: true });
 		await writeExecutable(localDlv);
 
-		const selected = requireSelectedAdapter(selectLaunchAdapter(program, cwd, undefined, "directory"));
+		const selected = requireSelectedAdapter(await selectLaunchAdapter(program, cwd, undefined, "directory"));
 
 		expect(selected.resolvedCommand).toBe(localDlv);
 	});
@@ -327,14 +327,14 @@ describe("DAP adapter configuration", () => {
 		await fs.writeFile(program, "package main\n\nfunc main() {}\n");
 		await writeDlvOverride(cwd, command);
 
-		expect(selectLaunchAdapter(program, cwd)).toEqual({
+		expect(await selectLaunchAdapter(program, cwd)).toEqual({
 			kind: "unavailable",
 			adapterName: "dlv",
 			command,
 		});
 
 		await writeExecutable(command);
-		const selected = requireSelectedAdapter(selectLaunchAdapter(program, cwd));
+		const selected = requireSelectedAdapter(await selectLaunchAdapter(program, cwd));
 		expect(selected.resolvedCommand).toBe(command);
 	});
 });

@@ -406,10 +406,13 @@ describe("setup, start and the live session", () => {
 		await personal.tick([]);
 		await personal.idle();
 		const other: CompanionHost = { ...hosts[0]!, instanceId: "other", sessionId: "other-s", cwd: "/work/app" };
+		// The companion polls a listing before it marks it: the poll resolves the folders `markHosts` compares, without waiting.
+		await personal.tick([hosts[0]!, other]);
+		await personal.idle();
 		const marked = personal.markHosts([hosts[0]!, other]);
 		expect(marked.map(host => host.personal)).toEqual([true, undefined]);
-		expect(personal.isPersonalHost(hosts[0]!)).toBe(true);
-		expect(personal.isPersonalHost(other)).toBe(false);
+		await expect(personal.isPersonalHost(hosts[0]!)).resolves.toBe(true);
+		await expect(personal.isPersonalHost(other)).resolves.toBe(false);
 		expect(personal.exempt("sess-1")).toBe(true);
 		expect(personal.exempt("other-s")).toBe(false);
 		await personal.tick([hosts[0]!]);

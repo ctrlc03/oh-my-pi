@@ -56,11 +56,13 @@ export class Codemap {
 	 * @throws when the index database cannot be opened or the walk is aborted.
 	 */
 	static async open(root: string, options: CodemapOpenOptions): Promise<Codemap> {
-		const real = fs.realpathSync(root);
+		const real = await fs.promises.realpath(root);
 		const index = openIndex(real);
 		try {
 			const stats = await refreshIndex(index, options.signal);
-			return new Codemap(index, stats, options.cwd, options.scope);
+			const codemap = new Codemap(index, stats, options.cwd, options.scope);
+			await codemap.query.load();
+			return codemap;
 		} catch (error) {
 			index.db.close();
 			throw error;

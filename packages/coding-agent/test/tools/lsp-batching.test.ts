@@ -43,7 +43,7 @@ describe("createLspWritethrough batching", () => {
 	it("defers LSP work until the batch flush", async () => {
 		const loadConfigSpy = vi
 			.spyOn(lspConfig, "loadConfig")
-			.mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
+			.mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
 		const getServersSpy = vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([]);
 		const writethrough = createLspWritethrough(tempDir.path(), { enableFormat: true, enableDiagnostics: true });
 
@@ -74,7 +74,7 @@ describe("createLspWritethrough batching", () => {
 	});
 
 	it("preserves a newer external change made before the batch flush", async () => {
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
 		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([]);
 		const writethrough = createLspWritethrough(tempDir.path(), { enableFormat: true, enableDiagnostics: true });
 
@@ -97,7 +97,7 @@ describe("createLspWritethrough batching", () => {
 	});
 
 	it("does not recreate a file deleted before the batch flush", async () => {
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
 		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([]);
 		const writethrough = createLspWritethrough(tempDir.path(), { enableFormat: true, enableDiagnostics: true });
 
@@ -121,7 +121,7 @@ describe("createLspWritethrough batching", () => {
 
 	it("preserves a UTF-8 BOM when batch formatting changes content", async () => {
 		const formatter = createFormatter(async (_filePath, content) => content.replace("=1", " = 1;"));
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
 		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["formatter", formatter]]);
 		const writethrough = createLspWritethrough(tempDir.path(), {
 			enableFormat: true,
@@ -149,7 +149,7 @@ describe("createLspWritethrough batching", () => {
 		const formatter = createFormatter(async () => {
 			throw new Error("formatter crashed");
 		});
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
 		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["broken-formatter", formatter]]);
 		const writethrough = createLspWritethrough(tempDir.path(), {
 			enableFormat: true,
@@ -172,7 +172,7 @@ describe("createLspWritethrough batching", () => {
 	it("flushes earlier entries when the final batch write fails", async () => {
 		const loadConfigSpy = vi
 			.spyOn(lspConfig, "loadConfig")
-			.mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
+			.mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
 		const getServersSpy = vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([]);
 		const writethrough = createLspWritethrough(tempDir.path(), { enableFormat: true, enableDiagnostics: true });
 
@@ -201,7 +201,7 @@ describe("createLspWritethrough batching", () => {
 	it("runs LSP immediately when no batch is provided", async () => {
 		const loadConfigSpy = vi
 			.spyOn(lspConfig, "loadConfig")
-			.mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
+			.mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
 		const getServersSpy = vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([]);
 		const writethrough = createLspWritethrough(tempDir.path(), { enableFormat: true, enableDiagnostics: true });
 
@@ -239,7 +239,7 @@ describe.skipIf(process.getuid?.() === 0)("createLspWritethrough batching with a
 	});
 
 	it("flushes a batch whose brokered destination cannot be read back", async () => {
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
 		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([]);
 		const writethrough = createLspWritethrough(root, { enableFormat: true, enableDiagnostics: true });
 
@@ -294,7 +294,7 @@ describe.skipIf(process.platform === "win32")("write tool shebang execute bits u
 		sessionManager = SessionManager.inMemory(tempDir.path());
 		authStorage = await AuthStorage.create(":memory:");
 		linted = [];
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
 	});
 
 	afterEach(async () => {

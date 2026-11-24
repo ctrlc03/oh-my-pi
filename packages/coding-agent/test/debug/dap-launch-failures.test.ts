@@ -738,7 +738,7 @@ await Bun.sleep(60_000);
 
 describe("DebugTool launch validation", () => {
 	it("rejects directory programs when the selected adapter cannot debug a directory", async () => {
-		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockReturnValue({
+		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockResolvedValue({
 			kind: "adapter",
 			adapter: TEST_ADAPTER,
 		});
@@ -775,7 +775,7 @@ describe("DebugTool launch validation", () => {
 			launchDefaults: { request: "launch", mode: "debug", stopOnEntry: true },
 			acceptsDirectoryProgram: true,
 		};
-		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockReturnValue({
+		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockResolvedValue({
 			kind: "adapter",
 			adapter: dlvAdapter,
 		});
@@ -858,7 +858,7 @@ describe("DebugTool launch validation", () => {
 			launchDefaults: { request: "launch", mode: "debug", stopOnEntry: true },
 			acceptsDirectoryProgram: true,
 		};
-		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockReturnValue({
+		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockResolvedValue({
 			kind: "adapter",
 			adapter: dlvAdapter,
 		});
@@ -893,7 +893,7 @@ describe("DebugTool launch validation", () => {
 	});
 
 	it("throws targeted 'python not found in PATH' when adapter:'debugpy' is unresolvable for launch", async () => {
-		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockReturnValue({
+		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockResolvedValue({
 			kind: "unavailable",
 			adapterName: "debugpy",
 			command: "python",
@@ -923,7 +923,7 @@ describe("DebugTool launch validation", () => {
 	});
 
 	it("validates missing attach targets before adapter discovery", async () => {
-		const selectAttachSpy = spyOn(dapModule, "selectAttachAdapter").mockReturnValue(null);
+		const selectAttachSpy = spyOn(dapModule, "selectAttachAdapter").mockResolvedValue(null);
 		const session: ToolSession = {
 			cwd: process.cwd(),
 			hasUI: false,
@@ -943,7 +943,7 @@ describe("DebugTool launch validation", () => {
 			name: "pico-openocd",
 			attachDefaults: { target: ":3334" },
 		};
-		const selectAttachSpy = spyOn(dapModule, "selectAttachAdapter").mockReturnValue(adapter);
+		const selectAttachSpy = spyOn(dapModule, "selectAttachAdapter").mockResolvedValue(adapter);
 		const sessionAttachSpy = spyOn(dapModule.dapSessionManager, "attach").mockImplementation(async opts => {
 			throw Object.assign(new Error("captured attach"), { capturedOptions: opts });
 		});
@@ -974,7 +974,7 @@ describe("DebugTool launch validation", () => {
 	});
 
 	it("throws targeted 'python not found in PATH' when adapter:'debugpy' is unresolvable for attach", async () => {
-		const attachSpy = spyOn(dapModule, "selectAttachAdapter").mockReturnValue(null);
+		const attachSpy = spyOn(dapModule, "selectAttachAdapter").mockResolvedValue(null);
 		try {
 			const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "omp-debug-debugpy-attach-"));
 			try {
@@ -999,7 +999,7 @@ describe("DebugTool launch validation", () => {
 	});
 
 	it("shows the Delve install command when the canonical dlv adapter is unavailable", async () => {
-		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockReturnValue({
+		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockResolvedValue({
 			kind: "unavailable",
 			adapterName: "dlv",
 			command: "dlv",
@@ -1029,7 +1029,7 @@ describe("DebugTool launch validation", () => {
 	});
 
 	it("points to DAP configuration when a custom adapter command is unavailable", async () => {
-		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockReturnValue({
+		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockResolvedValue({
 			kind: "unavailable",
 			adapterName: "dlv",
 			command: "./bin/missing-dlv",
@@ -1059,7 +1059,7 @@ describe("DebugTool launch validation", () => {
 	});
 
 	it("falls back to the generic 'No debugger adapter' error when adapter is unspecified", async () => {
-		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockReturnValue({ kind: "none" });
+		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockResolvedValue({ kind: "none" });
 		try {
 			const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "omp-debug-noadapter-"));
 			try {

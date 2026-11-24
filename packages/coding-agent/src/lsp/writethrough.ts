@@ -461,7 +461,7 @@ async function runLspWritethrough(
 		return { finalContent, diagnostics: undefined };
 	}
 
-	const config = getConfig(cwd);
+	const config = await getConfig(cwd);
 	const servers = getServersForFile(config, dst);
 
 	if (servers.length === 0) {

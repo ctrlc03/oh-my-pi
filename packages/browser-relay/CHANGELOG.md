@@ -5,6 +5,8 @@
 ### Fixed
 
 - Closing relay tabs no longer leaves a saved "omp" tab group in Chrome's bookmarks bar after every session ([#20211](https://github.com/can1357/oh-my-pi/issues/20211))
+- `bun install` builds the extension again in the fork: the side panel no longer tries to bundle collab-web's Inter font files, which the extension does not ship, and draws in the system font instead
+- Sending a follow-up from the side panel to a collab session queues it as a follow-up instead of passing the option where collab-web expects its delivery mode
 
 ## [19.1.1] - 2026-11-23
 

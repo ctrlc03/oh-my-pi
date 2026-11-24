@@ -237,6 +237,11 @@ function makeHost(options: HostOptions = {}): Harness {
 				notices.push(message);
 				wake();
 			},
+			// The real session loads the SKILL.md body and renders it with the invocation args.
+			buildUserSkillPrompt: async (skill: { filePath: string }, input: { args: string }) => {
+				const body = (await Bun.file(skill.filePath).text()).trim();
+				return { message: input.args ? `${body}\n\n${input.args}` : body, details: {} };
+			},
 			abort: () => Promise.resolve(),
 		},
 		eventBus: undefined,

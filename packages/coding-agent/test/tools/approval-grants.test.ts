@@ -498,7 +498,6 @@ describe("the tool wrapper", () => {
 					hasQueuedMessages: () => false,
 					abort: () => {},
 					settings: yolo,
-					xdevPolicyKey: "bash",
 				},
 			);
 		await expect(call(forced)).rejects.toThrow();

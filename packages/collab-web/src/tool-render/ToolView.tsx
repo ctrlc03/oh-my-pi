@@ -80,6 +80,24 @@ function toolCommandRecords(result: ToolResultLike | undefined): ToolCommandReco
 	return records;
 }
 
+export interface XdevDispatch {
+	tool: string;
+	args: Record<string, unknown>;
+	inner: unknown;
+}
+
+/**
+ * The device tool a successful `write xd://<tool>` call ran, with its own args and details.
+ * Legacy spelling: hosts before the tool-command records embedded the dispatch in the write
+ * result; the transcript lib still replays those sessions.
+ */
+export function executeXdevDispatch(name: string, result: ToolResultLike | undefined): XdevDispatch | null {
+	if (name !== "write" || result?.isError === true || !isRecord(result?.details)) return null;
+	const xdev = result.details.xdev;
+	if (!isRecord(xdev) || xdev.mode !== "execute" || typeof xdev.tool !== "string") return null;
+	return { tool: xdev.tool, args: isRecord(xdev.args) ? xdev.args : {}, inner: xdev.inner };
+}
+
 /** Lines of live output shown under a running tool. */
 const PARTIAL_LINES = 10;
 /** Character cap on those lines, for output without line breaks. */

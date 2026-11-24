@@ -12,11 +12,19 @@
  */
 import type { AgentTool } from "@oh-my-pi/pi-agent-core";
 import * as path from "node:path";
-import { parseXdUrl } from "@oh-my-pi/pi-tui/tools/xd-url";
+import type { Tool } from "@oh-my-pi/pi-ai";
+import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import { getBaseConfigRoot, logger } from "@oh-my-pi/pi-utils";
 import { PERSONAL_RUN_DIR, type PersonalTurnOrigin } from "@oh-my-pi/pi-wire/personal-ipc";
+import { parseToolArgs } from "../exec/tool-cli";
 import type { Settings } from "../config/settings";
+import { isShellEnvironmentAssignment, tokenizeShellSegments } from "../tools/shell-tokenize";
 import { resolveToolTier } from "../tools/approval";
+
+/** What the caller hands the guard to judge: its name and approval declaration. */
+type GuardedTool = Pick<AgentTool, "name" | "approval">;
+/** The same surface widened to a mounted tool, whose parameter schema the command parser needs. */
+type GuardedDevice = GuardedTool & Partial<Tool>;
 import { PersonalBeatWriter } from "./beat";
 import { type PersonalEventDelivery, type PersonalEventMessage, PersonalEventReceiver } from "./events";
 import { PersonalTurnGuard, type TurnMessage } from "./external-turns";
@@ -168,22 +176,55 @@ export class PersonalRuntime {
 	}
 
 	/**
-	 * Why a tool call is refused in the turn in progress, or undefined. A `write` to `xd://<device>` is judged as the
-	 * device it runs (`device` finds it by name): the transport's own tier says nothing about `memory_edit` or `schedule`.
+	 * Why a tool call is refused in the turn in progress, or undefined. A `bash` line whose first command names a mounted
+	 * tool (`memory_edit …`, `schedule …`) runs that tool through the command transport without the loop ever seeing its
+	 * name: the transport's own tier says nothing about the device behind it, so the first simple command is judged as the
+	 * device it dispatches.
 	 */
-	refuseToolCall(
-		tool: Pick<AgentTool, "name" | "approval">,
+	async refuseToolCall(
+		tool: GuardedTool,
 		args: unknown,
-		device: (name: string) => Pick<AgentTool, "name" | "approval"> | undefined,
-	): string | undefined {
+		device: (name: string) => GuardedDevice | undefined,
+	): Promise<string | undefined> {
 		if (!this.guard.tainted) return undefined;
-		const target = tool.name === "write" ? xdDeviceCall(args) : undefined;
-		const inner = target && device(target.name);
+		const inner = tool.name === "bash" ? await this.#bashDeviceCall(args, device) : undefined;
 		if (inner) {
-			const refusal = this.guard.refusal(inner.name, resolveToolTier(inner, target.args));
+			const refusal = this.guard.refusal(inner.tool.name, resolveToolTier(inner.tool, inner.args));
 			if (refusal !== undefined) return refusal;
 		}
 		return this.guard.refusal(tool.name, resolveToolTier(tool, args));
+	}
+
+	/**
+	 * The device a tainted `bash` call's first simple command dispatches, with the arguments the real dispatch would hand
+	 * it: the first word names a mounted tool, and the rest parses with the transport's own argument parser. A line that
+	 * will not parse is judged with `{}` — under a taint guard, matching-or-stricter is the safe direction.
+	 */
+	async #bashDeviceCall(
+		args: unknown,
+		device: (name: string) => GuardedDevice | undefined,
+	): Promise<{ tool: GuardedDevice; args: Record<string, unknown> } | undefined> {
+		const command = (args as { command?: unknown } | null)?.command;
+		if (typeof command !== "string") return undefined;
+		const words = tokenizeShellSegments(command)[0];
+		if (words === undefined) return undefined;
+		let index = 0;
+		while (index < words.length && isShellEnvironmentAssignment(words[index]!)) index++;
+		const name = words[index];
+		if (name === undefined) return undefined;
+		const full = device(name);
+		if (full === undefined) return undefined;
+		try {
+			const parsed = await parseToolArgs(toolWireSchema(full as Tool), words.slice(index + 1), {
+				cwd: process.cwd(),
+				stdin: "",
+				// The guard judges without executing: `@file` arguments have no source to read here.
+				readSource: () => Promise.reject(new Error("the taint guard does not read sources")),
+			});
+			return { tool: full, args: parsed };
+		} catch {
+			return { tool: full, args: {} };
+		}
 	}
 
 	/** Refresh the heartbeat now (state changed). */
@@ -223,15 +264,3 @@ export class PersonalRuntime {
 	}
 }
 
-/** The device and JSON arguments of a `write` to `xd://<device>`; undefined for any other write. Unparseable content gives no arguments. */
-function xdDeviceCall(args: unknown): { name: string; args: unknown } | undefined {
-	const target = parseXdUrl(String((args as { path?: unknown } | null)?.path ?? ""));
-	if (!target?.name) return undefined;
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(String((args as { content?: unknown }).content ?? ""));
-	} catch {
-		parsed = {};
-	}
-	return { name: target.name, args: parsed };
-}

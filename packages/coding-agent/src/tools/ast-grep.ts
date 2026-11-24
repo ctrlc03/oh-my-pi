@@ -33,6 +33,7 @@ import { createPathRuleFilter, searchRootApproval, searchRootCandidates } from "
 import {
 	parseSearchPath,
 	relativeSearchResultPath,
+	resolveSearchResultPath,
 	resolveTargetResultPath,
 	resolveToolSearchScope,
 	searchPathTier,

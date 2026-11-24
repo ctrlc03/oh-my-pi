@@ -177,7 +177,7 @@ describe("/collab in a Personal session", () => {
 			present,
 			settings: Settings.isolated({ "collab.relayUrl": "wss://relay.example.com", ...overrides }),
 			session: { registerSessionChangeCallback: () => () => {} },
-			sessionManager: { getSessionId: () => "sess-personal" },
+			sessionManager: { getSessionId: () => "sess-personal", onPersistenceNotice: () => () => {} },
 			statusLine: { setCollabStatus: () => {}, invalidate: () => {} },
 			ui: { requestRender: () => {} },
 			collabHost: undefined,

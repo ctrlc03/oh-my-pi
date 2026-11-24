@@ -1169,7 +1169,6 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		sandboxNote: sandboxNote ?? "",
 		// The guidance pastes it into shell commands: always single-quoted, so no path character splits or expands it.
 		ovnfs: ovnfs && quotePosixArgument(ovnfs),
-		writeTransportOnly,
 		subagent,
 	};
 	let rendered: prompt.TrackedRender;

@@ -544,12 +544,14 @@ export type GuestFrame =
 	 * on that model without switching the session's; the session model and
 	 * thinking level are unchanged once the run settles. Sent only to hosts
 	 * that advertise `prompt-model`; others run the prompt on the session model.
+	 * `followUp` is the upstream spelling of `deliver: "follow-up"`; the host honors either.
 	 */
 	| {
 			t: "prompt";
 			text: string;
 			images?: ImageContent[];
 			deliver?: "follow-up";
+			followUp?: true;
 			model?: string;
 			thinking?: string;
 			/** References in `text` (feature `mentions`); hosts without the feature ignore them. */

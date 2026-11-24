@@ -344,5 +344,5 @@ export const StreamingMarkdown = memo(function StreamingMarkdown({ text }: { tex
 		// `rendered.html` always starts with the frozen prefix's markup.
 		root.insertAdjacentHTML("beforeend", rendered.html.slice(prefix.html.length));
 	}, [text]);
-	return <MarkdownBody html={html} />;
+	return <div ref={rootRef} className="tr-md" dangerouslySetInnerHTML={initialHtml} />;
 });

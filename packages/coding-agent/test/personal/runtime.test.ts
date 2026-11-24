@@ -195,7 +195,7 @@ describe("review runtime", () => {
 const noDevice = () => undefined;
 
 describe("turn origin and refusals through the runtime", () => {
-	it("judges a write to an xd:// device as the device, not as write", async () => {
+	it("judges a bash line that dispatches a mounted device as the device, not as bash", async () => {
 		const r = rig();
 		const runtime = PersonalRuntime.createIf(r.host);
 		runtime?.onAgentEvent({ type: "agent_start" });
@@ -212,15 +212,19 @@ describe("turn origin and refusals through the runtime", () => {
 			schedule: { name: "schedule", approval: "exec" },
 		};
 		const lookup = (name: string) => devices[name];
-		const write = { name: "write", approval: "write" as const };
-		for (const device of ["memory_edit", "schedule", "XD://schedule"]) {
-			const args = { path: device.startsWith("XD") ? device : `xd://${device}`, content: '{"op":"forget"}' };
-			expect(runtime?.refuseToolCall(write, args, lookup)).toContain("Refused");
+		const bash = { name: "bash", approval: "exec" as const };
+		// The first word names a mounted device: refused as the device whatever the rest parses to.
+		for (const command of ["memory_edit --op forget", "schedule add 10m ping", "FOO=1 memory_edit", `memory_edit --op "unclosed`]) {
+			expect(await runtime?.refuseToolCall(bash, { command }, lookup)).toContain("Refused");
 		}
-		expect(runtime?.refuseToolCall(write, { path: "xd://recall", content: "{}" }, lookup)).toBeUndefined();
-		expect(runtime?.refuseToolCall(write, { path: "xd://memory_edit", content: "not json" }, lookup)).toContain(
-			"Refused",
-		);
+		// A plain shell line names no device: the guard's own tier rules apply (always-ask allows bash).
+		expect(await runtime?.refuseToolCall(bash, { command: "ls -la" }, lookup)).toBeUndefined();
+		expect(await runtime?.refuseToolCall(bash, { command: "not_a_device --forget" }, lookup)).toBeUndefined();
+		// A `write` is no longer a device transport; reads stay allowed.
+		expect(
+			await runtime?.refuseToolCall({ name: "write", approval: "write" }, { path: "notes.md", content: "x" }, lookup),
+		).toBeUndefined();
+		expect(await runtime?.refuseToolCall({ name: "read", approval: "read" }, {}, lookup)).toBeUndefined();
 		await runtime?.dispose();
 	});
 
@@ -240,12 +244,12 @@ describe("turn origin and refusals through the runtime", () => {
 		});
 		expect(runtime?.currentOrigin()).toBe("external");
 		expect(cfgToolsApprovalMode.get(r.settings)).toBe("always-ask");
-		expect(runtime?.refuseToolCall({ name: "memory_edit", approval: "write" }, {}, noDevice)).toContain("Refused");
-		expect(runtime?.refuseToolCall({ name: "read", approval: "read" }, {}, noDevice)).toBeUndefined();
+		expect(await runtime?.refuseToolCall({ name: "memory_edit", approval: "write" }, {}, noDevice)).toContain("Refused");
+		expect(await runtime?.refuseToolCall({ name: "read", approval: "read" }, {}, noDevice)).toBeUndefined();
 		for (const listener of r.runListeners) listener("idle");
 		expect(runtime?.currentOrigin()).toBe("agent");
 		expect(cfgToolsApprovalMode.get(r.settings)).toBe("yolo");
-		expect(runtime?.refuseToolCall({ name: "memory_edit", approval: "write" }, {}, noDevice)).toBeUndefined();
+		expect(await runtime?.refuseToolCall({ name: "memory_edit", approval: "write" }, {}, noDevice)).toBeUndefined();
 		await runtime?.dispose();
 	});
 
@@ -255,7 +259,7 @@ describe("turn origin and refusals through the runtime", () => {
 		runtime?.onAgentEvent({ type: "agent_start" });
 		runtime?.onAgentEvent({ type: "message_start", message: { role: "user", content: "hi" } });
 		expect(runtime?.currentOrigin()).toBe("owner");
-		expect(runtime?.refuseToolCall({ name: "schedule", approval: "exec" }, {}, noDevice)).toBeUndefined();
+		expect(await runtime?.refuseToolCall({ name: "schedule", approval: "exec" }, {}, noDevice)).toBeUndefined();
 		await runtime?.dispose();
 	});
 });

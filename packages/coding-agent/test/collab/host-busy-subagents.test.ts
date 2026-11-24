@@ -35,11 +35,12 @@ afterEach(() => {
 const FLOOD = 2_000;
 const SUBAGENTS = 37;
 
-function note(id: string): SessionEntry {
+/** A note appended to the active leaf: like a real journal entry, it extends the path the host replicates. */
+function note(id: string, parent: string | null): SessionEntry {
 	return {
 		type: "custom_message",
 		id,
-		parentId: null,
+		parentId: parent,
 		timestamp: "2026-11-01T00:00:00Z",
 		customType: "note",
 		content: id,
@@ -61,14 +62,15 @@ async function busyHost() {
 	const relay = installInMemoryRelay();
 	const probe = instrumentRelay(relay, { throttle: true });
 	const seen: HostObservations = { notices: [], participantCounts: [] };
-	const ctx = makeHostContext(makeSnapshot(), seen);
+	const snapshot = makeSnapshot();
+	const ctx = makeHostContext(snapshot, seen);
 	const bus = new EventBus();
 	ctx.eventBus = bus;
 	const host = new CollabHost(ctx);
 	cleanups.push(() => void host.stop("test done"));
 	await host.start("ws://localhost:8788");
 	const append = (entry: SessionEntry) => ctx.sessionManager.onEntryAppended?.(entry);
-	return { host, seen, bus, append, hostWs: probe.hostSocket() };
+	return { host, seen, bus, append, leaf: snapshot.entries.at(-1)?.id ?? null, hostWs: probe.hostSocket() };
 }
 
 async function joinGuest(link: string): Promise<CollabFrame[]> {
@@ -104,15 +106,19 @@ const busFrames = (received: CollabFrame[], channel: string) =>
 	received.flatMap(frame => (frame.t === "bus" && frame.channel === channel ? [frame.data as Progress] : []));
 
 it("keeps a slow guest joined through a flood of subagent progress, with each subagent's newest progress", async () => {
-	const { host, seen, bus, append, hostWs } = await busyHost();
+	const { host, seen, bus, append, leaf, hostWs } = await busyHost();
 	const received = await joinGuest(host.link);
 	// The welcome and the first chunk leave; the uplink is then full.
 	await waitFor(() => received.some(frame => frame.t === "snapshot-chunk"), "first chunk never arrived");
 	expect(received.some(frame => frame.t === "snapshot-chunk" && frame.final)).toBe(false);
 
+	let parent = leaf;
 	for (let i = 0; i < FLOOD; i++) {
 		bus.emit(TASK_SUBAGENT_PROGRESS_CHANNEL, progress(i));
-		if (i % 500 === 0) append(note(`during-${i}`));
+		if (i % 500 === 0) {
+			append(note(`during-${i}`, parent));
+			parent = `during-${i}`;
+		}
 	}
 	expect(ended(seen)).toEqual([]);
 	expect(host.stopped).toBe(false);

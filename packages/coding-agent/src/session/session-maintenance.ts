@@ -1134,7 +1134,7 @@ export class SessionMaintenance {
 		let artifactId: string | undefined;
 		if (sections.length > 0) {
 			try {
-				artifactId = await this.#host.sessionManager.saveArtifact(sections.join("\n"), "shake");
+				artifactId = await this.#host.sessionManager.saveArtifact(sections.join("\n"));
 			} catch {
 				artifactId = undefined;
 			}

@@ -6371,7 +6371,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	 */
 	async #beforeToolCall(ctx: BeforeToolCallContext, signal?: AbortSignal): Promise<BeforeToolCallResult | undefined> {
 		// A turn started by outside content may not use some tools at all (`personal.externalTurns.policy`).
-		const personalRefusal = this.#personalInstance?.refuseToolCall(ctx.tool, ctx.args, name =>
+		const personalRefusal = await this.#personalInstance?.refuseToolCall(ctx.tool, ctx.args, name =>
 			this.#tools.registry.get(name),
 		);
 		if (personalRefusal !== undefined) return { block: true, reason: personalRefusal };

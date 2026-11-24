@@ -718,7 +718,10 @@ export class CollabHost {
 						// supersedes any still queued for the same subagent (as message_update does):
 						// a busy host's subagents can't fill the queue behind a slow welcome.
 						const key = channel === TASK_SUBAGENT_PROGRESS_CHANNEL ? progressKey(data) : undefined;
-						if (key) this.#supersede(key, () => ({ t: "bus", channel, data }));
+						// Queue-level supersession, not the gather timer: only the newest frame per
+						// subagent may ever wait in or leave the queue, so a slow guest never sees a
+						// stale progress wave behind the welcome.
+						if (key) this.#socket?.sendLatest(key, { t: "bus", channel, data });
 						else this.#send({ t: "bus", channel, data });
 					}),
 				);
@@ -2442,7 +2445,8 @@ export class CollabHost {
 						return;
 					}
 					// Session-only, like the TUI picker: not persisted as the default model.
-					await session.setModelTemporary(model, session.resolveTemporaryModelThinkingLevel(model));
+					// No level argument: the session's thinking level carries over, clamped to the target's ladder.
+					await session.setModelTemporary(model);
 					this.#ctx.statusLine.invalidate();
 					this.#ctx.updateEditorBorderColor();
 					announce(`switched model to ${model.provider}/${model.id}`);

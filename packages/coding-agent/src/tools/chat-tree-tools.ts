@@ -75,7 +75,10 @@ export class ZoomTool implements AgentTool<typeof zoomSchema, undefined> {
 					`history://${name}`,
 					sessionResolveContext(this.session, { signal }),
 				);
-				return textResult(pageOfTranscript(name, resource.content, params.page ?? 1));
+				// history:// resources are text; the router now types resolved content as string | Buffer.
+				const transcript =
+					typeof resource.content === "string" ? resource.content : resource.content.toString("utf-8");
+				return textResult(pageOfTranscript(name, transcript, params.page ?? 1));
 			}
 			return textResult(await chat.zoom(params.id, params.n ?? 1, params.page));
 		} catch (error) {

@@ -174,7 +174,7 @@ describe("turn origin from session entries", () => {
 		const { sessionManager } = start();
 		ownerTurn(sessionManager, "first", "one");
 		eventTurn(sessionManager, "external", "github", "second", "two");
-		const tagged = extractTurnMessages(sessionManager);
+		const tagged = extractTurnMessages(sessionManager.getEntries());
 		expect(tagged.map(message => [message.role, message.turn, message.turnOrigin.origin])).toEqual([
 			["user", 1, "owner"],
 			["assistant", 1, "owner"],
@@ -182,7 +182,7 @@ describe("turn origin from session entries", () => {
 			["assistant", 2, "external"],
 		]);
 		// Without provenance the hidden event is not a turn: extraction is what it always was.
-		expect(extractMessages(sessionManager).map(message => message.content)).toEqual(["first", "one", "two"]);
+		expect(extractMessages(sessionManager.getEntries()).map(message => message.content)).toEqual(["first", "one", "two"]);
 	});
 });
 

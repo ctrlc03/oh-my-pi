@@ -1046,9 +1046,8 @@ export class MnemopiSessionState implements MnemopiSessionStateApi {
 		const userTurns = withLoopPhase("mnemopi.retain", () => {
 			this.#restoreRetainedTurnCursor();
 			// Cheap gate first: most agent_end events are not retain turns, so skip text extraction.
-			return this.config.provenance
-				? countTurnStarts(this.session.sessionManager)
-				: countUserTurns(this.session.sessionManager);
+			const entries = this.session.sessionManager.getEntries();
+			return this.config.provenance ? countTurnStarts(entries) : countUserTurns(entries);
 		});
 		if (userTurns - this.lastRetainedTurn < this.config.retainEveryNTurns) return;
 		const messages = withLoopPhase("mnemopi.retain", () =>
@@ -1081,9 +1080,8 @@ export class MnemopiSessionState implements MnemopiSessionStateApi {
 	 * collab prompts and events), which plain extraction skips.
 	 */
 	#history(): Array<{ role: string; content: string } & Partial<Pick<TurnMessage, "turn" | "turnOrigin">>> {
-		return this.config.provenance
-			? extractTurnMessages(this.session.sessionManager)
-			: extractMessages(this.session.sessionManager);
+		const entries = this.session.sessionManager.getEntries();
+		return this.config.provenance ? extractTurnMessages(entries) : extractMessages(entries);
 	}
 
 	async retainMessages(

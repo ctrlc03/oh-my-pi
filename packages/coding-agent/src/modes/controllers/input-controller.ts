@@ -30,6 +30,7 @@ import { AssistantMessageComponent } from "@oh-my-pi/pi-tui/chat/assistant-messa
 import { extractImagePathFromText } from "@oh-my-pi/pi-tui/prompt/custom-editor";
 import { HistorySearchComponent } from "@oh-my-pi/pi-tui/overlays/history-search";
 import { HookEditorComponent } from "@oh-my-pi/pi-tui/overlays/hook-editor";
+import { HtmlFormDialog } from "@oh-my-pi/pi-tui/html-form/dialog";
 import { ReadToolGroupComponent } from "@oh-my-pi/pi-tui/chat/read-tool-group";
 import { ToolExecutionComponent } from "@oh-my-pi/pi-tui/chat/tool-execution";
 import { TreeSelectorComponent } from "@oh-my-pi/pi-tui/overlays/tree-selector";
@@ -239,10 +240,10 @@ function pythonCommandPrefixLength(trimmedText: string): 0 | 1 | 2 {
 	return next === 32 || next === 9 || next === 10 || next === 13 ? prefixLength : 0;
 }
 
-/** The question after a `?` draft's sigil (the `/btw` shortcut), or undefined when the draft is not one. */
+/** The side question after a single leading `?`, or undefined when the draft has no such sigil. */
 function parseBtwShortcutInput(text: string): string | undefined {
 	const trimmed = text.trimStart();
-	return trimmed.startsWith("?") ? trimmed.slice(1).trim() : undefined;
+	return trimmed[0] === "?" && trimmed[1] !== "?" ? trimmed.slice(1).trim() : undefined;
 }
 
 function parsePythonCommandInput(text: string): { code: string; isExcluded: boolean } | undefined {
@@ -443,6 +444,17 @@ export class InputController {
 					if (this.ctx.ui.hasOverlay() || this.ctx.ui.getFocused() instanceof HistorySearchComponent) {
 						return undefined;
 					}
+					// Vim Normal mode owns Ctrl-R as redo, in the composer and in a dialog's text box alike;
+					// history search stays on it in Insert mode. Only literal Ctrl-R is the editor's, so a
+					// remapped `app.history.search` key still opens the search from Normal mode.
+					const focused = this.ctx.ui.getFocused();
+					const editor =
+						focused === this.ctx.editor
+							? this.ctx.editor
+							: focused instanceof HookEditorComponent || focused instanceof HtmlFormDialog
+								? focused.activeEditor()
+								: undefined;
+					if (matchesKey(data, "ctrl+r") && editor?.vimEnabled && editor.vimMode === "normal") return undefined;
 					this.ctx.showHistorySearch();
 					return { consume: true };
 				}

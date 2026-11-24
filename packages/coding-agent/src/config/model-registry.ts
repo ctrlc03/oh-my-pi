@@ -3464,7 +3464,7 @@ export class ModelRegistry {
 		const providers = new Map(this.#discoverableProviders.map(config => [config.provider, config.discovery.type]));
 		return models.map(model => {
 			const providerType = providers.get(model.provider);
-			if (providerType === "litellm" && model.providerType !== providerType) {
+			if ((providerType === "litellm" || providerType === "openrouter") && model.providerType !== providerType) {
 				return buildDiscoveredModel(toModelSpec(model), providerType);
 			}
 			if (providerType !== "llama.cpp") return model;
@@ -4093,15 +4093,15 @@ export class ModelRegistry {
 	}
 
 	/**
-	 * Discovery states of extension providers (`fetchDynamicModels`) whose last
-	 * discovery attempt failed. `omp models` reports them so a failed fetch is
-	 * distinguishable from a provider with no models (issue #17925).
+	 * Failed discovery attempts. Regular model listings report extension provider
+	 * errors; an explicit refresh also reports built-in and configured providers.
 	 */
-	getRuntimeDiscoveryFailures(): ProviderDiscoveryState[] {
+	getDiscoveryFailures({ runtimeOnly }: { runtimeOnly: boolean }): ProviderDiscoveryState[] {
 		const failures: ProviderDiscoveryState[] = [];
-		for (const provider of this.#runtimeModelManagers.keys()) {
-			const state = this.#providerDiscoveryStates.get(provider);
-			if (state?.error !== undefined) failures.push(state);
+		for (const state of this.#providerDiscoveryStates.values()) {
+			if (state.error !== undefined && (!runtimeOnly || this.#runtimeModelManagers.has(state.provider))) {
+				failures.push(state);
+			}
 		}
 		return failures;
 	}
@@ -4958,6 +4958,8 @@ export interface ProviderConfigInput {
 		snapcompactShape?: Model<Api>["snapcompactShape"];
 		cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
 		contextWindow: number;
+		/** Optional larger window selected by the extended-context policy. */
+		maxContextWindow?: number;
 		maxTokens: number;
 		promptCache?: Model<Api>["promptCache"];
 		/** WebSocket preference within catalog policy; explicit false disables transport selection. */

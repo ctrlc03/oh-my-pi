@@ -1546,6 +1546,8 @@ export class SessionMaintenance {
 			: undefined;
 		let methods: CompactionMethod[] = [];
 		let selectedMethodIndex = -1;
+		// Next method in `methods` this pass can run if the selected one fails; -1 when none remains.
+		let fallbackMethodIndex = -1;
 		let compactionCommitted = false;
 		const markCommitted = (): void => {
 			compactionCommitted = true;
@@ -1642,11 +1644,13 @@ export class SessionMaintenance {
 			// A reader that cannot replay the active model's native payload rules out the remote method; its
 			// native lanes run before a configured endpoint, so an endpoint does not make it portable.
 			const readerModel = options?.readerModel;
-			methods = resolveCompactionMethodOrder(
-				compactMode?.overrides.methodOrder ?? compactionSettings.methodOrder,
-			).filter(
+			const modeOrder = compactMode?.overrides.methodOrder;
+			const order = resolveCompactionMethodOrder(modeOrder ?? compactionSettings.methodOrder).filter(
 				method => method !== "remote" || !readerModel || canReplayRemoteCompactionFrom(activeModel, readerModel),
 			);
+			// A manual pass always compacts: soft summarization runs on any model, so it ends a configured
+			// order that omits it. `/compact <mode>` keeps its pinned chain.
+			methods = modeOrder || order.includes("soft") ? order : [...order, "soft"];
 			const explicitSnapcompact = compactMode?.name === "snapcompact";
 			const runsManually = (method: CompactionMethod): boolean => {
 				switch (method) {
@@ -1665,11 +1669,13 @@ export class SessionMaintenance {
 						return false;
 				}
 			};
+			// Every chain starts runnable (soft, or a mode's pinned method) and nested passes start at a
+			// runnable fallback, so selection always finds a method.
 			selectedMethodIndex = methods.findIndex((method, index) => index >= methodOffset && runsManually(method));
+			fallbackMethodIndex = methods.findIndex(
+				(method, index) => index > selectedMethodIndex && runsManually(method),
+			);
 			const selectedMethod = methods[selectedMethodIndex];
-			if (!selectedMethod) {
-				throw new Error("No configured compaction method can run manually.");
-			}
 			// `/compact snapcompact` pins the order to snapcompact alone, so its
 			// blockers name the `/compact` mode of the next manual method (remote or
 			// soft): plain `/compact` can run an experimental rollover instead.
@@ -1698,6 +1704,10 @@ export class SessionMaintenance {
 								: undefined,
 						);
 			if ((requireProviderRemote || remoteReader) && compactionCandidates.length === 0) {
+				// Reached only after an earlier soft pass failed; its warning already named the cause.
+				if (fallbackMethodIndex === -1) {
+					throw new Error(`remote compaction is unavailable for ${activeModel.id}`);
+				}
 				this.#host.emitNotice(
 					"warning",
 					`remote compaction is unavailable for ${activeModel.id}; trying the next preferred method`,
@@ -1709,7 +1719,7 @@ export class SessionMaintenance {
 					await this.compact(
 						customInstructions,
 						options,
-						selectedMethodIndex + 1,
+						fallbackMethodIndex,
 						compactionAbortController,
 						markCommitted,
 					),
@@ -2016,8 +2026,7 @@ export class SessionMaintenance {
 				!compactionCommitted &&
 				!compactionSignal.aborted &&
 				!(error instanceof CompactionCancelledError) &&
-				selectedMethodIndex >= 0 &&
-				selectedMethodIndex + 1 < methods.length
+				fallbackMethodIndex !== -1
 			) {
 				this.#host.emitNotice(
 					"warning",
@@ -2029,7 +2038,7 @@ export class SessionMaintenance {
 						await this.compact(
 							customInstructions,
 							options,
-							selectedMethodIndex + 1,
+							fallbackMethodIndex,
 							compactionAbortController,
 							markCommitted,
 						),

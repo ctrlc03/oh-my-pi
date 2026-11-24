@@ -2290,6 +2290,7 @@ export function filterAvailableModelsByEnabledPatterns(
 	available: Model<Api>[],
 	patterns: readonly string[],
 	settings?: Settings,
+	roleLookup?: ModelRoleLookup,
 ): Model<Api>[] {
 	if (patterns.length === 0) return available;
 
@@ -2308,8 +2309,8 @@ export function filterAvailableModelsByEnabledPatterns(
 		}
 
 		// Mirror resolveModelScope: role aliases resolve to the role's model.
-		if (settings && modelRoleAliasPrefixLength(pattern) !== undefined) {
-			const { model } = resolveModelRoleValue(pattern, available, { settings });
+		if ((roleLookup || settings) && modelRoleAliasPrefixLength(pattern) !== undefined) {
+			const { model } = resolveModelRoleValue(pattern, available, { settings, roleLookup });
 			if (model) addAllowed(model);
 			continue;
 		}

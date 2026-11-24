@@ -11,12 +11,19 @@
  */
 
 import type { AssistantMessage } from "@oh-my-pi/pi-ai";
-import type { SessionEntry } from "../session/session-entries";
+import { type SessionEntry, type SessionHeader, TAN_FORK_BOUNDARY_CUSTOM_TYPE } from "../session/session-entries";
 import { entryTurnOrigin, type TurnOrigin } from "../mnemopi/origin";
 import { type HindsightMessage, hasSubstantiveContent } from "./content";
 
-export interface ReadonlySessionManagerLike {
-	getEntries(): SessionEntry[];
+/** Finds the first retainable entry, skipping the transcript copied into this `/tan` fork. */
+export function retentionStart(entries: readonly SessionEntry[], header?: SessionHeader | null): number {
+	if (!header?.parentSession) return 0;
+	return (
+		entries.findLastIndex(
+			entry =>
+				entry.type === "custom" && entry.customType === TAN_FORK_BOUNDARY_CUSTOM_TYPE && entry.data === header.id,
+		) + 1
+	);
 }
 
 /**
@@ -33,10 +40,11 @@ export interface ReadonlySessionManagerLike {
  *   toolCall blocks are intentionally dropped: the user never saw them, so
  *   retaining them would prime recall on internal monologue.
  */
-export function extractMessages(sessionManager: ReadonlySessionManagerLike): HindsightMessage[] {
+export function extractMessages(entries: readonly SessionEntry[], start = 0): HindsightMessage[] {
 	const messages: HindsightMessage[] = [];
 
-	for (const entry of sessionManager.getEntries()) {
+	for (let i = start; i < entries.length; i++) {
+		const entry = entries[i]!;
 		if (entry.type !== "message") continue;
 		const msg = entry.message;
 		const role = msg.role;
@@ -51,13 +59,14 @@ export function extractMessages(sessionManager: ReadonlySessionManagerLike): Hin
 }
 
 /**
- * Count user turns exactly as `extractMessages(sessionManager).filter(m => m.role === "user").length`,
+ * Count user turns exactly as `extractMessages(entries, start).filter(m => m.role === "user").length`,
  * without extracting assistant text or allocating the message list. Not memoized: messages may be
  * rewritten in place (e.g. image stripping), so each call re-inspects current content.
  */
-export function countUserTurns(sessionManager: ReadonlySessionManagerLike): number {
+export function countUserTurns(entries: readonly SessionEntry[], start = 0): number {
 	let count = 0;
-	for (const entry of sessionManager.getEntries()) {
+	for (let i = start; i < entries.length; i++) {
+		const entry = entries[i]!;
 		if (entry.type !== "message" || entry.message.role !== "user") continue;
 		if (hasSubstantiveContent(extractUserText(entry.message))) count++;
 	}
@@ -90,11 +99,11 @@ function turnStartText(entry: SessionEntry): { text: string; origin: TurnOrigin 
  * An assistant message belongs to the turn started by the nearest earlier turn-starting entry (the owner's, before
  * any), so a retained transcript can be split per turn and stored under the right author.
  */
-export function extractTurnMessages(sessionManager: ReadonlySessionManagerLike): TurnMessage[] {
+export function extractTurnMessages(entries: readonly SessionEntry[]): TurnMessage[] {
 	const messages: TurnMessage[] = [];
 	let turn = 0;
 	let turnOrigin: TurnOrigin = { origin: "owner" };
-	for (const entry of sessionManager.getEntries()) {
+	for (const entry of entries) {
 		const start = turnStartText(entry);
 		if (start) {
 			turn++;
@@ -114,9 +123,9 @@ export function extractTurnMessages(sessionManager: ReadonlySessionManagerLike):
 }
 
 /** {@link countUserTurns} over the entries {@link extractTurnMessages} sees. */
-export function countTurnStarts(sessionManager: ReadonlySessionManagerLike): number {
+export function countTurnStarts(entries: readonly SessionEntry[]): number {
 	let count = 0;
-	for (const entry of sessionManager.getEntries()) {
+	for (const entry of entries) {
 		const start = turnStartText(entry);
 		if (start && hasSubstantiveContent(start.text)) count++;
 	}

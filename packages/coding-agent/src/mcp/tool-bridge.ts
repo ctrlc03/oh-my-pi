@@ -1,9 +1,5 @@
-import {
-	formatMCPProgress,
-	MCP_TOOL_NAME_PREFIX,
-	type MCPProgress,
-	type MCPToolDetails,
-} from "@oh-my-pi/pi-tui/tools/mcp";
+import { formatMCPProgress, MCP_TOOL_NAME_PREFIX, type MCPToolDetails } from "@oh-my-pi/pi-tui/tools/mcp";
+import type { MCPProgress } from "@oh-my-pi/pi-tui/tools/mcp-progress";
 /**
  * MCP to CustomTool bridge.
  *
@@ -28,6 +24,7 @@ import { ToolAbortError, throwIfAborted } from "../tools/tool-errors";
 import { schemaDeclaresIntentField } from "../utils/tool-schema";
 import { callTool } from "./client";
 import { formatMCPToolFailure, MCPTransportError } from "./errors";
+import { insufficientScopeOf } from "./oauth-discovery";
 import { describeMCPCall, describeMCPResult, renderMCPCall, renderMCPResult } from "@oh-my-pi/pi-tui/tools/mcp";
 import type {
 	MCPAuthChallenge,
@@ -477,6 +474,19 @@ function getMcpAuthChallenge(result: MCPToolCallResult): MCPAuthChallenge | unde
 	return wwwAuthenticate.length > 0 ? { wwwAuthenticate } : undefined;
 }
 
+/**
+ * The challenge of an HTTP refusal for want of scope (RFC 6750 §3.1), read
+ * from the `[WWW-Authenticate: …]` suffix the HTTP upstream appends to its
+ * status error. Any other refusal (an expired or revoked token) is the link's
+ * to refresh, not a reason to ask the user for more consent.
+ */
+function getStepUpChallenge(error: unknown): MCPAuthChallenge | undefined {
+	if (!(error instanceof MCPTransportError) || error.failure !== "http_status") return undefined;
+	const challenge = error.message.match(/\[WWW-Authenticate: (.*?)(?:; Mcp-Auth-Server: [^\]]*)?\]$/)?.[1];
+	if (challenge === undefined || insufficientScopeOf([challenge]) === undefined) return undefined;
+	return { wwwAuthenticate: [challenge] };
+}
+
 async function callToolWithAuthRetry(
 	connection: MCPServerConnection,
 	toolName: string,
@@ -485,9 +495,20 @@ async function callToolWithAuthRetry(
 	signal?: AbortSignal,
 	onProgress?: MCPRequestOptions["onProgress"],
 ): Promise<MCPToolCallAttempt> {
-	const result = await callTool(connection, toolName, args, { signal, onProgress });
-	const authChallenge = getMcpAuthChallenge(result);
-	if (!authChallenge || !reconnect) return { connection, result };
+	let refused: MCPToolCallAttempt;
+	let authChallenge: MCPAuthChallenge | undefined;
+	try {
+		const result = await callTool(connection, toolName, args, { signal, onProgress });
+		refused = { connection, result };
+		authChallenge = getMcpAuthChallenge(result);
+	} catch (error) {
+		// The server refused the call before running it for want of scope:
+		// step up exactly like a tool-result challenge, and retry once.
+		authChallenge = getStepUpChallenge(error);
+		if (!authChallenge || !reconnect) throw error;
+		refused = { connection, error };
+	}
+	if (!authChallenge || !reconnect) return refused;
 
 	let newConnection: MCPServerConnection | null;
 	try {
@@ -496,7 +517,8 @@ async function callToolWithAuthRetry(
 		rethrowIfAborted(error, signal);
 		return { connection, error };
 	}
-	if (!newConnection) return { connection, result };
+	// Authorization declined or failed: the refusal stands.
+	if (!newConnection) return refused;
 
 	try {
 		return {

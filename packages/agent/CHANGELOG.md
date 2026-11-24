@@ -7,6 +7,11 @@
 - Compaction and proxy requests that bypass `streamSimple` (`compact`, remote and streaming compaction, `streamProxy`) refuse providers a private-mode process does not allow.
 - `Agent.transformContext` getter and setter: a host can wrap the transform every provider request applies to the message list.
 - `AgentLoopConfig.shouldStop` and `Agent.setShouldStop()`: a graceful stop predicate checked at the same boundaries as `deadline` (run start, after each turn's tools, before each model call) that ends the run without aborting a running tool.
+### Fixed
+
+- Fixed DeepSeek DSML markup leaking into tool-call arguments (e.g. a `</｜DSML｜ parameter>` tail on an edit or bash command) being executed and replayed; the leaked tail is now cut before the call runs
+- Fixed DSML markup removed from a DeepSeek turn's text and reasoning still being sent back to the model on OpenRouter's Responses route, which replays the turn's original output items
+
 ## [19.1.1] - 2026-11-23
 
 ### Fixed

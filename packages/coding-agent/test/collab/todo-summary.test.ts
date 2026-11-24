@@ -35,7 +35,9 @@ describe("summarizeTodoPhases", () => {
 	});
 
 	it("makes each task text one bounded line", () => {
-		const summary = summarizeTodoPhases([phase(["first\nsecond  line", "in_progress"], ["x".repeat(500), "completed"])]);
+		const summary = summarizeTodoPhases([
+			phase(["first\nsecond  line", "in_progress"], ["x".repeat(500), "completed"]),
+		]);
 		expect(summary?.current).toBe("first second line");
 		expect(summary?.lastDone?.length).toBe(MAX_TODO_TEXT_CHARS);
 		expect(summary?.lastDone?.endsWith("…")).toBe(true);

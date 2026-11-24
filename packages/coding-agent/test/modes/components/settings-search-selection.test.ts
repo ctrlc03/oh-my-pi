@@ -50,10 +50,11 @@ describe("settings search selection", () => {
 		term.type("comp");
 		expect(selectedRow(term)).toContain("Omit Thinking summaries");
 		// `Omit Thinking summaries` leaves the `compo` results; the released rule
-		// falls to its previous (last) index instead of restarting at the top.
+		// falls to its previous (last) index instead of restarting at the top. In this
+		// build the last `compo` match is the Providers tab's cache-bridge token floor.
 		term.type("o");
-		expect(selectedRow(term)).toContain("Experimental Speculative Execution");
-		expect(highlightedTab(term)).toContain("Tools");
+		expect(selectedRow(term)).toContain("Cache Bridge Compaction Tokens");
+		expect(highlightedTab(term)).toContain("Providers");
 		term.dispose();
 	});
 

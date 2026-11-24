@@ -63,8 +63,8 @@ function makeCtx(settings: Settings): InteractiveModeContext {
 		skillCommands: new Map(),
 		statusLine: {
 			setCollabStatus: () => {},
-			invalidate: () => {},
-			getCachedContextBreakdown: () => ({ usedTokens: 0, contextWindow: 0 }),
+			refresh: () => {},
+			facts: () => ({ context: { tokens: 0, window: 0, percent: null } }),
 		},
 		ui: { requestRender: () => {} },
 		updatePendingMessagesDisplay: () => {},
@@ -171,15 +171,14 @@ describe("/collab in a Personal session", () => {
 		const showError = vi.fn();
 		const present = vi.fn();
 		const ctx = {
-			editor: { setText: vi.fn() },
+			composer: { setText: vi.fn() },
 			showStatus,
 			showError,
 			present,
 			settings: Settings.isolated({ "collab.relayUrl": "wss://relay.example.com", ...overrides }),
 			session: { registerSessionChangeCallback: () => () => {} },
 			sessionManager: { getSessionId: () => "sess-personal", onPersistenceNotice: () => () => {} },
-			statusLine: { setCollabStatus: () => {}, invalidate: () => {} },
-			ui: { requestRender: () => {} },
+			statusLine: { setCollabStatus: () => {}, refresh: () => {} },
 			collabHost: undefined,
 		} as unknown as InteractiveModeContext;
 		ctx.collabController = new CollabController(ctx);

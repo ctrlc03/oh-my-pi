@@ -88,8 +88,8 @@ function makeHost(calls: Calls): InteractiveModeContext {
 		eventBus: undefined,
 		statusLine: {
 			setCollabStatus: () => {},
-			invalidate: () => {},
-			getCachedContextBreakdown: () => ({ usedTokens: 0, contextWindow: 0 }),
+			refresh: () => {},
+			facts: () => ({ context: { tokens: 0, window: 0, percent: null } }),
 		},
 		ui: { requestRender: () => {} },
 		showStatus: () => {},

@@ -102,8 +102,8 @@ function makeHost(supported: boolean): HostHarness {
 		eventBus: undefined,
 		statusLine: {
 			setCollabStatus: () => {},
-			invalidate: () => {},
-			getCachedContextBreakdown: () => ({ usedTokens: 1, contextWindow: 10_000 }),
+			refresh: () => {},
+			facts: () => ({ context: { tokens: 1, window: 10_000, percent: null } }),
 		},
 		ui: { requestRender: () => {} },
 		showStatus: () => {},

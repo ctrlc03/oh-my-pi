@@ -299,7 +299,7 @@ describe("private session surfaces", () => {
 		const toggleAdvisorEnabled = vi.fn(() => true);
 		const showStatus = vi.fn();
 		const runtime = {
-			ctx: { session: { toggleAdvisorEnabled }, showStatus, editor: { setText: vi.fn() } },
+			ctx: { session: { toggleAdvisorEnabled }, showStatus, composer: { setText: vi.fn() } },
 		} as unknown as BuiltinSlashCommandRuntime;
 
 		await executeBuiltinSlashCommand("/advisor on", runtime);

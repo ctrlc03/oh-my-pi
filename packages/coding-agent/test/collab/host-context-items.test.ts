@@ -87,8 +87,8 @@ function makeHost(): HostHarness {
 		eventBus: undefined,
 		statusLine: {
 			setCollabStatus: () => {},
-			invalidate: () => {},
-			getCachedContextBreakdown: () => ({ usedTokens: state.used, contextWindow: 10_000 }),
+			refresh: () => {},
+			facts: () => ({ context: { tokens: state.used, window: 10_000, percent: null } }),
 		},
 		ui: { requestRender: () => {} },
 		rebuildChatFromMessages: () => {

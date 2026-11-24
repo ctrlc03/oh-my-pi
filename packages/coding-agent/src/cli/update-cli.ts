@@ -44,6 +44,7 @@ import {
 	type UpdateChannel,
 } from "./build-service";
 import { compareForkTags, type ForkBuild, fetchLatestForkBuild, forkInstallerHint } from "./fork-release";
+import { refreshCompanionAgent } from "./companion-agent";
 import { managedInstallName } from "./managed-install";
 import {
 	DEFAULT_NPM_REGISTRY,
@@ -1141,11 +1142,26 @@ export async function syncRelayAfterVerifiedUpdate(launcher: string | undefined)
 	}
 }
 
+/** Re-register the companion's LaunchAgent when it runs the replaced binary, and say so (see {@link refreshCompanionAgent}). */
+async function refreshCompanionAfterVerifiedUpdate(launcher: string | undefined): Promise<void> {
+	if (!launcher) return;
+	const refresh = await refreshCompanionAgent(launcher);
+	if (refresh.kind === "restarted") console.log(chalk.dim("Restarted the companion so it runs the new version"));
+	else if (refresh.kind === "scheduled") {
+		console.log(chalk.dim("The companion restarts in a few seconds to run the new version"));
+	} else if (refresh.kind === "failed") {
+		console.log(
+			chalk.yellow(`Could not restart the companion (${refresh.error}); run: ${APP_NAME} companion --install`),
+		);
+	}
+}
+
 /** Report verification and publish assets only when the requested installed version was confirmed. */
 async function finishVerifiedUpdate(result: InstalledVersionVerification, expectedVersion: string): Promise<void> {
 	if (result.ok) {
 		printVerifiedVersion(expectedVersion, result.path);
 		await syncRelayAfterVerifiedUpdate(result.path);
+		await refreshCompanionAfterVerifiedUpdate(result.path);
 		return;
 	}
 	console.log(chalk.yellow(`\nWarning: ${formatVerificationFailure(result, expectedVersion)}`));

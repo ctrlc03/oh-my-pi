@@ -51,6 +51,7 @@
 - The bash tool's visualization keeps a one-line awk, jq, regex or other embedded program highlighted where it appears in the command; only multi-line programs move below it behind a `⟦awk ↓⟧`-style chip.
 
 ### Fixed
+- On macOS, an update that replaces the binary the collab companion's LaunchAgent runs now re-registers the agent (`launchctl bootout` + `bootstrap`, as `omp companion --install` does) and says the companion was restarted. launchd records the ad-hoc signed binary's code hash, so after a swap it refused to start the companion again ("spawn failed", exit 78, "Unable to get updated LWCR") until the agent was reinstalled. Run from the companion itself (the app's update), the restart is scheduled a few seconds later in a detached shell so the reply gets out first (`src/cli/companion-agent.ts`).
 - `--no-extensions` no longer imports custom tool modules from `.omp/tools`, `.claude/tools`, `.codex/tools`, or installed plugins; tools from explicitly passed `-e`/`--hook` packages still load
 - Fixed `/fast off` and bare `/fast` claiming "Fast mode disabled." on a model with no service-tier control; they now report that fast mode is unavailable for the current model ([#20284](https://github.com/can1357/oh-my-pi/pull/20284) by [@adammekki](https://github.com/adammekki))
 

@@ -140,7 +140,7 @@ describe("AgentSession context items and pruning", () => {
 		if (pruned?.role !== "toolResult") throw new Error("Expected the pruned tool result to stay in context");
 		expect(pruned.prunedAt).toBeGreaterThan(0);
 		expect(pruned.content.map(block => (block.type === "text" ? block.text : "")).join("")).toContain(
-			`artifact://${result.artifactId}`,
+			`local://${result.artifactId}`,
 		);
 
 		// The ranking now sees the placeholder, and it is not offered for pruning again.

@@ -50,7 +50,14 @@ describe("linked find candidates", () => {
 		for (const rootPath of [scope, path.join(dir, "linked-root")]) {
 			const root = await resolveSearchRoot(filesystem, rootPath, dir);
 			const entries = await listFiles(root, { filesystem: filesystem.shellFilesystem(), includeHidden: false });
-			expect(entries).toEqual([{ path: path.join(rootPath, "source.ts"), rel: "source.ts", size: source.length }]);
+			expect(entries).toEqual([
+				{
+					path: path.join(rootPath, "source.ts"),
+					rel: "source.ts",
+					size: source.length,
+					mtimeMs: expect.any(Number),
+				},
+			]);
 			expect((await readText(filesystem, entries[0]!.path, 1000)).text).toBe(source);
 		}
 	});

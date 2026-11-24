@@ -54,7 +54,7 @@ export interface ContextPruneResult {
 	artifactId?: string;
 }
 
-/** Placeholder prefix shake/prune leaves behind (`[shaken ~N tokens — recover: artifact://…]`). */
+/** Placeholder prefix shake/prune leaves behind (`[shaken ~N tokens — recover: local://….log]`). */
 export const PRUNED_PREFIX = "[shaken ";
 
 const LABEL_MAX = 72;

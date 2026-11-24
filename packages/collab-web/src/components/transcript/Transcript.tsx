@@ -22,6 +22,7 @@ import { type Block, buildBlocks, buildChatBlocks, replyId, toolResults } from "
 import { type HideControl, hiddenSlots, memberIds, withoutHidden } from "../../lib/hidden-messages";
 import { fmtDuration, fmtTokens } from "../../lib/format";
 import { ASYNC_RESULT_TYPE, asyncResultJobs } from "../../lib/async-result";
+import { replyWriteText, toolResultReplies } from "../../lib/reply-write";
 import {
 	ADVISOR_TYPE,
 	type AdvisorNote,
@@ -396,20 +397,39 @@ function AssistantBody({
 				const act = active.get(block.id);
 				const result = results.get(block.id);
 				const args = act?.args ?? block.arguments;
+				// A mid-turn reply (`out://`) is the agent talking to the user: prose, not a tool card.
+				const reply = replyWriteText(block.name, args);
+				if (reply !== undefined) {
+					if (!reply.trim()) return null;
+					const streaming = pending || (!result && act !== undefined);
+					return (
+						<BlockShell key={block.id} id={entryId === null ? null : block.id} kind="reply">
+							{streaming ? <StreamingMarkdown text={reply} /> : <Markdown text={reply} />}
+						</BlockShell>
+					);
+				}
+				const replies = toolResultReplies(result?.details);
 				return (
-					<BlockShell key={block.id} id={entryId === null ? null : block.id} kind="tool">
-						<ToolCard
-							toolCallId={block.id}
-							name={block.name}
-							intent={block.intent ?? act?.intent}
-							args={args}
-							result={result}
-							host={host}
-							running={!result && (act !== undefined || pending)}
-							partialResult={act?.partialResult}
-							framed
-						/>
-					</BlockShell>
+					<Fragment key={block.id}>
+						<BlockShell id={entryId === null ? null : block.id} kind="tool">
+							<ToolCard
+								toolCallId={block.id}
+								name={block.name}
+								intent={block.intent ?? act?.intent}
+								args={args}
+								result={result}
+								host={host}
+								running={!result && (act !== undefined || pending)}
+								partialResult={act?.partialResult}
+								framed
+							/>
+						</BlockShell>
+						{replies.map((text, n) => (
+							<BlockShell key={n} id={null} kind="reply">
+								<Markdown text={text} />
+							</BlockShell>
+						))}
+					</Fragment>
 				);
 			}
 			default:

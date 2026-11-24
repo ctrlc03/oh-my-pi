@@ -14,6 +14,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { RecentFolder } from "../src/lib/companion";
+import { replyWriteText } from "../src/lib/reply-write";
 import { isRecord } from "../src/tool-render/util";
 
 /** Session ids, instance ids and pids: no leading dash, so they are never read as CLI flags. */
@@ -149,10 +150,7 @@ export function lastAssistantTurn(entries: Entry[]): { summary: string; at: numb
 		if (!message) continue;
 		if (message.role === "user") return null;
 		if (message.role !== "assistant") continue;
-		const text = blocksOf(message)
-			.filter(b => b.type === "text" && typeof b.text === "string")
-			.map(b => b.text as string)
-			.join("\n");
+		const text = proseOf(message);
 		if (text.trim()) return { summary: truncate(text, SUMMARY_CHARS), at: timeOf(entries[i]!) };
 	}
 	return null;
@@ -161,6 +159,19 @@ export function lastAssistantTurn(entries: Entry[]): { summary: string; at: numb
 /** First ~140 characters of the latest assistant text after the last user message, or null. */
 export function lastAssistantSummary(entries: Entry[]): string | null {
 	return lastAssistantTurn(entries)?.summary ?? null;
+}
+
+/** An assistant message's prose: its text blocks and its mid-turn replies (`write` to `out://`), in order. */
+function proseOf(message: Entry): string {
+	const parts: string[] = [];
+	for (const block of blocksOf(message)) {
+		if (block.type === "text" && typeof block.text === "string") parts.push(block.text);
+		else if (block.type === "toolCall" && typeof block.name === "string") {
+			const reply = replyWriteText(block.name, block.arguments);
+			if (reply !== undefined) parts.push(reply);
+		}
+	}
+	return parts.join("\n");
 }
 
 /** Longest handoff note read back from a session. */
@@ -176,11 +187,7 @@ export function assistantReplySince(entries: Entry[], since: number): string | n
 		if (message?.role !== "assistant") continue;
 		const at = timeOf(entries[i]!);
 		if (at === null || at < since) return null;
-		const text = blocksOf(message)
-			.filter(b => b.type === "text" && typeof b.text === "string")
-			.map(b => b.text as string)
-			.join("\n")
-			.trim();
+		const text = proseOf(message).trim();
 		if (text !== "") return text.slice(0, MAX_REPLY_CHARS);
 	}
 	return null;

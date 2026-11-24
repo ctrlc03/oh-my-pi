@@ -12,6 +12,7 @@ import type { SessionEntry, ToolResultMessage } from "@oh-my-pi/pi-wire";
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
 import { executeXdevDispatch } from "../tool-render/ToolView";
 import type { ToolResultLike } from "../tool-render/types";
+import { replyWriteText } from "./reply-write";
 import {
 	argsDigest,
 	detailsRecord,
@@ -172,7 +173,12 @@ export function buildBlocks(
 				if (block.text.trim())
 					blocks.push({ kind: "reply", id: replyId(entry.id, i), entryId: entry.id, text: block.text.trim() });
 			} else if (block.type === "toolCall") {
-				blocks.push(toolOf({ id: block.id, name: block.name, args: block.arguments }, entry.id, results));
+				const reply = replyWriteText(block.name, block.arguments)?.trim();
+				if (reply !== undefined) {
+					if (reply) blocks.push({ kind: "reply", id: block.id, entryId: entry.id, text: reply });
+				} else {
+					blocks.push(toolOf({ id: block.id, name: block.name, args: block.arguments }, entry.id, results));
+				}
 			}
 		});
 	}

@@ -97,6 +97,43 @@ describe("buildChatItems", () => {
 		const entries = [prompt("p1"), custom("j1", "async-result"), custom("n1", "note")];
 		expect(shape(buildChatItems(entries, null, true, []))).toEqual(["p1", "n1"]);
 	});
+
+	it("shows mid-turn out:// replies as reply text instead of folding them into the tool run", () => {
+		const reply = {
+			type: "toolCall" as const,
+			id: "w1",
+			name: "write",
+			arguments: { path: "out://", content: "`output_upload.rs` copies the round's result." },
+		};
+		const bashWithReply: SessionEntry = {
+			type: "message",
+			id: "r-c2",
+			parentId: null,
+			timestamp: AT,
+			message: {
+				role: "toolResult",
+				toolCallId: "c2",
+				toolName: "bash",
+				content: [],
+				details: { replies: ["status: 3 of 4 done"] },
+				isError: false,
+				timestamp: 1,
+			},
+		};
+		const entries = [
+			prompt("p1"),
+			assistant("a1", [call("c1"), reply, { type: "toolCall", id: "ask1", name: "ask", arguments: {} }]),
+			result("c1"),
+			assistant("a2", [call("c2")]),
+			bashWithReply,
+		];
+		const items = buildChatItems(entries, null, true, []);
+		expect(shape(items)).toEqual(["p1", "tools(c1)*", "text", "tools(ask1,c2)", "text"]);
+		expect(items.filter(item => item.kind === "text").map(item => item.kind === "text" && item.text)).toEqual([
+			"`output_upload.rs` copies the round's result.",
+			"status: 3 of 4 done",
+		]);
+	});
 });
 
 describe("asyncResultJobs", () => {

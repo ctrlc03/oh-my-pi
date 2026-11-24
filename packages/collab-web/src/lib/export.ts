@@ -7,6 +7,7 @@
 
 import type { ImageContent, SessionEntry, TextContent } from "@oh-my-pi/pi-wire";
 import { argsDigest, normalizeWs } from "../tool-render/util";
+import { replyWriteText, toolResultReplies } from "./reply-write";
 import { isPrompt } from "./trim";
 
 /** A turn's slice of the entries: the prompt at `from` through the entry before `to`. */
@@ -78,10 +79,17 @@ function blocksOf(entries: readonly SessionEntry[]): Block[] {
 						if (block.type === "text") {
 							add(block.text.trim());
 						} else if (block.type === "toolCall") {
+							const reply = replyWriteText(block.name, block.arguments);
+							if (reply !== undefined) {
+								add(reply.trim());
+								continue;
+							}
 							const summary = normalizeWs(block.intent ?? "") || argsDigest(block.arguments);
 							add(summary ? `- ⚙ ${block.name} · ${summary}` : `- ⚙ ${block.name}`, true);
 						}
 					}
+				} else if (message.role === "toolResult") {
+					for (const reply of toolResultReplies(message.details)) add(reply.trim());
 				}
 				break;
 			}
@@ -118,14 +126,26 @@ export function turnMarkdown(entries: readonly SessionEntry[]): string {
 	return out;
 }
 
-/** The assistant's prose across `entries` — what a reader means by "the reply" — without tool calls or thinking. */
+/**
+ * The assistant's prose across `entries` — what a reader means by "the reply" — without tool calls or thinking.
+ * Mid-turn replies (`out://`) are prose too: often the only answer a turn gives.
+ */
 export function replyText(entries: readonly SessionEntry[]): string {
 	const parts: string[] = [];
+	const push = (text: string | undefined): void => {
+		const trimmed = text?.trim();
+		if (trimmed) parts.push(trimmed);
+	};
 	for (const entry of entries) {
-		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+		if (entry.type !== "message") continue;
+		if (entry.message.role === "toolResult") {
+			for (const reply of toolResultReplies(entry.message.details)) push(reply);
+			continue;
+		}
+		if (entry.message.role !== "assistant") continue;
 		for (const block of entry.message.content) {
-			const text = block.type === "text" ? block.text.trim() : "";
-			if (text) parts.push(text);
+			if (block.type === "text") push(block.text);
+			else if (block.type === "toolCall") push(replyWriteText(block.name, block.arguments));
 		}
 	}
 	return parts.join("\n\n");

@@ -2,11 +2,13 @@
  * Chat view: the transcript reduced to prompts and replies. Thinking and
  * setting markers are dropped, and every run of tool calls between two pieces
  * of reply text (across assistant messages) folds into one `tools` item.
+ * Mid-turn replies (`out://`, see lib/reply-write) are reply text, not tool calls.
  */
 
 import type { AssistantMessage, SessionEntry } from "@oh-my-pi/pi-wire";
 import type { ActiveTool } from "../../lib/client";
 import { ASYNC_RESULT_TYPE } from "../../lib/async-result";
+import { replyWriteText, toolResultReplies } from "../../lib/reply-write";
 
 export interface ChatToolCall {
 	id: string;
@@ -65,21 +67,23 @@ export function buildChatItems(
 		inAgentTurn = false;
 		items.push({ kind: "entry", key: entry.id, entry });
 	};
+	const text = (key: string, entryId: string | null, body: string, pending: boolean): void => {
+		flush();
+		items.push({ kind: "text", key, entryId, text: body, pending, lead: !inAgentTurn });
+		inAgentTurn = true;
+	};
 	const assistant = (message: AssistantMessage, entryId: string | null, pending: boolean): void => {
 		message.content.forEach((block, i) => {
 			if (block.type === "text") {
 				if (!block.text.trim()) return;
-				flush();
-				items.push({
-					kind: "text",
-					key: `${entryId ?? "stream"}:${i}`,
-					entryId,
-					text: block.text,
-					pending,
-					lead: !inAgentTurn,
-				});
-				inAgentTurn = true;
+				text(`${entryId ?? "stream"}:${i}`, entryId, block.text, pending);
 			} else if (block.type === "toolCall") {
+				const reply = replyWriteText(block.name, block.arguments);
+				// The block id names it in both views (see `assistantBlockIds`).
+				if (reply !== undefined) {
+					if (reply.trim()) text(block.id, entryId, reply, pending);
+					return;
+				}
 				addCall({ id: block.id, name: block.name, intent: block.intent, args: block.arguments, pending }, entryId);
 			}
 		});
@@ -101,6 +105,11 @@ export function buildChatItems(
 			case "message":
 				if (entry.message.role === "user") human(entry);
 				else if (entry.message.role === "assistant") assistant(entry.message, entry.id, false);
+				else if (entry.message.role === "toolResult") {
+					toolResultReplies(entry.message.details).forEach((reply, n) => {
+						text(`${entry.id}:reply:${n}`, entry.id, reply, false);
+					});
+				}
 				break;
 			case "custom_message":
 				// Background job reports are model input; the chat view keeps prompts and replies only.
@@ -119,6 +128,11 @@ export function buildChatItems(
 	}
 	if (stream !== null) assistant(stream, null, !streamDone);
 	for (const tool of tailTools) {
+		const reply = replyWriteText(tool.toolName, tool.args);
+		if (reply !== undefined) {
+			if (reply.trim()) text(tool.toolCallId, null, reply, true);
+			continue;
+		}
 		addCall({ id: tool.toolCallId, name: tool.toolName, intent: tool.intent, args: tool.args, pending: true }, null);
 	}
 	flush();

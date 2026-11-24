@@ -6,6 +6,7 @@
 
 import type { ImageContent, SessionEntry, TextContent } from "@oh-my-pi/pi-wire";
 import { ADVISOR_TYPE, advisorNotes } from "../../lib/advisor";
+import { replyWriteText, toolResultReplies } from "../../lib/reply-write";
 
 function contentText(content: string | readonly (TextContent | ImageContent)[]): string {
 	if (typeof content === "string") return content;
@@ -24,9 +25,16 @@ export function entryText(entry: SessionEntry): string {
 	if (entry.type !== "message") return "";
 	const message = entry.message;
 	if (message.role === "user") return contentText(message.content);
+	if (message.role === "toolResult") return toolResultReplies(message.details).join("\n");
 	if (message.role !== "assistant") return "";
 	let text = "";
-	for (const block of message.content) if (block.type === "text") text += `${block.text}\n`;
+	for (const block of message.content) {
+		if (block.type === "text") text += `${block.text}\n`;
+		else if (block.type === "toolCall") {
+			const reply = replyWriteText(block.name, block.arguments);
+			if (reply !== undefined) text += `${reply}\n`;
+		}
+	}
 	return text;
 }
 

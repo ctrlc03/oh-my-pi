@@ -32,10 +32,10 @@
 
 import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import { isServiceTierOpenAISettingValue, SERVICE_TIER_OPENAI_VALUES } from "../config/service-tier";
-import { parseMaxFps } from "@oh-my-pi/pi-tui/frame-rate";
+import { parseMaxFps } from "../config/frame-rate";
 import { parseMotionMode } from "../config/motion-presets";
-import { parseSpinnerInterval } from "@oh-my-pi/pi-tui/spinner-clock";
-import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
+import { parseSpinnerInterval } from "../config/spinner-interval";
+import type { ConfiguredThinkingLevel } from "../utils/render-utils";
 import type { Args } from "./args";
 import { parseTokenCount, parseUsdAmount } from "../session/spend-cap-input";
 import { CliUsageError } from "./usage-error";

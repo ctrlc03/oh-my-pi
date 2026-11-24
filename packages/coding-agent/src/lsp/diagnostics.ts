@@ -1,5 +1,4 @@
-import { type FileDiagnosticsResult } from "@oh-my-pi/pi-tui/tools/lsp";
-import * as fs from "node:fs";
+import { type FileDiagnosticsResult } from "../tools/details/lsp";
 import * as fsp from "node:fs/promises";
 import path from "node:path";
 import { isRecord, logger, untilAborted, toError } from "@oh-my-pi/pi-utils";

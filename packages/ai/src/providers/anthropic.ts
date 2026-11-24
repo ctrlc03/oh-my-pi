@@ -905,6 +905,8 @@ export type AnthropicClientOptionsArgs = {
 	fetch?: FetchImpl;
 	maxRetryDelayMs?: number;
 	sessionId?: string;
+	/** Parent conversation of a side request; routes OpenCode's `x-opencode-session` (see `applyInferenceHeaders`). */
+	parentSessionId?: string;
 	/** Working-identity cache key for this credential+host; undefined off the Copilot path. */
 	copilotCacheKey?: string;
 	/**
@@ -2312,6 +2314,7 @@ const streamAnthropicOnce = (
 						options?.sessionId ??
 						extractClaudeMetadataSessionId(options?.metadata?.user_id) ??
 						options?.promptCacheKey,
+					parentSessionId: options?.parentSessionId,
 					disableStrictTools,
 					dropPromptCacheBetas: dropCacheControl || dropCacheControlOptions,
 				};
@@ -4142,6 +4145,7 @@ export function buildAnthropicClientOptions(args: AnthropicClientOptionsArgs): A
 		omitClaudeCodeAppHeaders,
 		maxRetryDelayMs,
 		sessionId,
+		parentSessionId,
 		disableStrictTools: disableStrictToolsOverride,
 		dropPromptCacheBetas = false,
 		copilotCacheKey,
@@ -4222,6 +4226,7 @@ export function buildAnthropicClientOptions(args: AnthropicClientOptionsArgs): A
 			providerType: model.providerType,
 			protocol: "anthropic",
 			sessionId,
+			parentSessionId,
 		});
 
 		return {
@@ -4295,6 +4300,7 @@ export function buildAnthropicClientOptions(args: AnthropicClientOptionsArgs): A
 		providerType: model.providerType,
 		protocol: "anthropic",
 		sessionId,
+		parentSessionId,
 	});
 
 	if (model.provider === "cloudflare-ai-gateway") {

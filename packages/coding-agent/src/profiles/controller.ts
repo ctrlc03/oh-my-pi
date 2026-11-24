@@ -9,7 +9,7 @@
  * resumed or branched session comes back in the profile it left in.
  */
 import type { Model } from "@oh-my-pi/pi-ai";
-import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
+import type { ConfiguredThinkingLevel } from "../utils/render-utils";
 import { isRecord, logger } from "@oh-my-pi/pi-utils";
 import type { Setting } from "../config/registry";
 import type { Settings } from "../config/settings";

@@ -1,5 +1,4 @@
-import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
-import type { StatusLineHost, StatusLineSession } from "@oh-my-pi/pi-tui/status-line/host";
+import type { StatusLineHost, StatusLineSession } from "./view-model/status-line/host";
 import { Settings, settings } from "../config/settings";
 import type { AgentSession } from "../session/agent-session";
 import { getSessionCompactionBoundaries } from "../session/context-usage-runtime";
@@ -84,7 +83,6 @@ export const statusLineHost: StatusLineHost<StatusLineHostSession> = {
 			? claimResetExpiryNotice(reports, nowMs, (key, expiresAtMs) => storage.claimNotice(key, expiresAtMs))
 			: undefined;
 	},
-	isPrivateSession: () => isPrivateModeActive(),
 	computeCompactionBoundaries: (session, contextWindow, model) =>
 		getSessionCompactionBoundaries(session.settings ?? settings, contextWindow, model),
 };

@@ -5,7 +5,8 @@
  * A definition comes from a `profiles.<name>` settings entry or from a markdown file (frontmatter
  * fields below, body = the extra prompt); both parse through {@link parseProfile}.
  */
-import { type ConfiguredThinkingLevel, parseConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
+import { parseConfiguredThinkingLevel } from "../thinking/levels";
+import type { ConfiguredThinkingLevel } from "../utils/render-utils";
 import { parseArrayOrCSV } from "../discovery/helpers";
 import { normalizeToolNames } from "../tools/builtin-names";
 import { type PathRule, parsePathRules } from "../tools/path-rules";

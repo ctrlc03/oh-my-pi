@@ -17,7 +17,8 @@
 import type { AgentTelemetryConfig } from "@oh-my-pi/pi-agent-core";
 import { Effort, type Model } from "@oh-my-pi/pi-ai";
 import { THINKING_EFFORTS } from "@oh-my-pi/pi-catalog/effort";
-import { type ConfiguredThinkingLevel, clampAutoThinkingEffort } from "@oh-my-pi/pi-tui/thinking";
+import { clampAutoThinkingEffort } from "../thinking/levels";
+import type { ConfiguredThinkingLevel } from "../utils/render-utils";
 import { logger } from "@oh-my-pi/pi-utils";
 import type { ModelRegistry } from "../config/model-registry";
 import { formatModelString } from "../config/model-resolver";

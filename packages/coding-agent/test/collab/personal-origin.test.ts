@@ -17,7 +17,7 @@ import {
 	type BuiltinSlashCommandRuntime,
 	executeBuiltinSlashCommand,
 } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
-import { initTheme } from "@oh-my-pi/pi-tui/theme";
+import { initTheme } from "../../src/ui/theme/service";
 import { installInMemoryRelay, uninstallInMemoryRelay } from "./helpers/in-memory-relay";
 
 interface PromptCall {
@@ -158,7 +158,7 @@ describe("/collab in a Personal session", () => {
 	beforeEach(async () => {
 		resetSettingsForTest();
 		await Settings.init({ inMemory: true });
-		await initTheme(false);
+		initTheme();
 	});
 
 	afterEach(() => {

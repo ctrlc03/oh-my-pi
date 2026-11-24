@@ -100,7 +100,7 @@ import {
 } from "./rewind-files";
 import { runGuestTurnUndo } from "./turn-undo";
 import { replyReceipts, replyTurnDiff } from "./turn-diff";
-import { replyContextItems, runGuestContextPrune } from "./context-items";
+import { type ContextMeter, replyContextItems, runGuestContextPrune } from "./context-items";
 import { replyInspect, replyRequestPreview } from "./inspect";
 import { HostUsageLimits, RESUME_AUTHOR, RESUME_PROMPT } from "./usage-limits";
 import {
@@ -860,7 +860,6 @@ export class CollabHost {
 		this.#socket?.close();
 		this.#socket = null;
 		this.#ctx.statusLine.setCollabStatus(null);
-		this.#ctx.ui.requestRender();
 		// A publication still being created when the room ended is withdrawn
 		// before stop() resolves: a successor room reuses this instance
 		// endpoint, and this room's late cleanup must never unlink the winner.
@@ -1783,7 +1782,6 @@ export class CollabHost {
 			announce("sent a queued follow-up into the running turn");
 		}
 		this.#ctx.updatePendingMessagesDisplay();
-		this.#ctx.ui.requestRender();
 	}
 
 	/** Hand a guest prompt to the session as a collab-prompt message authored by `name`. */
@@ -1798,7 +1796,6 @@ export class CollabHost {
 		const details: CollabPromptDetails = this.#personalSession ? { from: name, origin: "owner" } : { from: name };
 		if (this.#ctx.session.isStreaming) {
 			this.#ctx.updatePendingMessagesDisplay();
-			this.#ctx.ui.requestRender();
 			this.#scheduleStateBroadcast();
 		}
 		this.#ctx.session
@@ -1886,7 +1883,6 @@ export class CollabHost {
 			.then(() => {
 				if (!this.#guestTrafficAllowed()) return;
 				this.#ctx.updatePendingMessagesDisplay();
-				this.#ctx.ui.requestRender();
 				session.emitNotice("info", `${name} interrupted`, "collab");
 			})
 			.catch(err => logger.warn("collab guest interrupt failed", { error: String(err) }));
@@ -1996,13 +1992,17 @@ export class CollabHost {
 		}, RESYNC_RETRY_MS);
 	}
 
+	/** The context meter guests see: the same count the host's status line shows. */
+	#contextMeter(): ContextMeter {
+		const context = this.#ctx.statusLine.facts().context;
+		return { usedTokens: context.tokens, contextWindow: context.window };
+	}
+
 	#buildState(): CollabSessionState {
 		const session = this.#ctx.session;
-		// Context numbers come from the status line's memoized breakdown so guests
-		// render exactly the same anchored, provider-real count the host's own
-		// status line shows.
-		const breakdown = this.#ctx.statusLine.getCachedContextBreakdown();
-		const tokens = breakdown.usedTokens ?? 0;
+		// Context numbers come from the status line's facts so guests render exactly
+		// the same anchored, provider-real count the host's own status line shows.
+		const context = this.#ctx.statusLine.facts().context;
 		return {
 			isStreaming: session.isStreaming,
 			isAborting: session.isAborting,
@@ -2025,9 +2025,9 @@ export class CollabHost {
 			thinkingLevel: session.thinkingLevel,
 			thinkingLevels: session.getAvailableEffortSelectors(),
 			contextUsage: {
-				tokens,
-				contextWindow: breakdown.contextWindow,
-				percent: breakdown.contextWindow > 0 ? (tokens / breakdown.contextWindow) * 100 : 0,
+				tokens: context.tokens,
+				contextWindow: context.window,
+				percent: context.window > 0 ? (context.tokens / context.window) * 100 : 0,
 			},
 			participants: this.participants,
 		};
@@ -2447,7 +2447,7 @@ export class CollabHost {
 					// Session-only, like the TUI picker: not persisted as the default model.
 					// No level argument: the session's thinking level carries over, clamped to the target's ladder.
 					await session.setModelTemporary(model);
-					this.#ctx.statusLine.invalidate();
+					this.#ctx.statusLine.refresh();
 					this.#ctx.updateEditorBorderColor();
 					announce(`switched model to ${model.provider}/${model.id}`);
 					return;
@@ -2520,7 +2520,6 @@ export class CollabHost {
 						return;
 					}
 					this.#ctx.updatePendingMessagesDisplay();
-					this.#ctx.ui.requestRender();
 					announce("removed a queued follow-up");
 					return;
 				}
@@ -2605,7 +2604,7 @@ export class CollabHost {
 					return;
 				}
 				case "context-items":
-					replyContextItems(session, this.#ctx.statusLine.getCachedContextBreakdown(), files.reply);
+					replyContextItems(session, this.#contextMeter(), files.reply);
 					return;
 				case "inspect":
 					replyInspect(session, files.reply);
@@ -2622,9 +2621,8 @@ export class CollabHost {
 					// the reply reads the meter.
 					const refreshMeter = () => {
 						this.#ctx.rebuildChatFromMessages();
-						this.#ctx.statusLine.invalidate();
-						this.#ctx.ui.requestRender();
-						return this.#ctx.statusLine.getCachedContextBreakdown();
+						this.#ctx.statusLine.refresh();
+						return this.#contextMeter();
 					};
 					const pruned = await runGuestContextPrune(session, arg, refreshMeter, files.reply, fail);
 					if (pruned !== undefined) announce(pruned);
@@ -2719,7 +2717,5 @@ export class CollabHost {
 
 	#updateStatusSegment(): void {
 		this.#ctx.statusLine.setCollabStatus({ role: "host", participantCount: this.#peers.size + 1 });
-		this.#ctx.statusLine.invalidate();
-		this.#ctx.ui.requestRender();
 	}
 }

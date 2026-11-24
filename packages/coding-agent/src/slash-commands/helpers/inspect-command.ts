@@ -3,8 +3,7 @@
  * requests whose pick opens the request's detail, and a report of the request the next turn
  * would send.
  */
-import { Markdown, Text } from "@oh-my-pi/pi-tui";
-import { getMarkdownTheme } from "@oh-my-pi/pi-tui/theme";
+import { markdownView, reportTextView } from "../../modes/controllers/command-views";
 import type { InteractiveModeContext } from "../../modes/types";
 import { markdownFenceFor } from "../../utils/markdown-fence";
 import { inspectRowDetail, inspectRowLine, inspectSummary, previewHeader } from "./inspect-report";
@@ -30,7 +29,7 @@ export async function runInspectCommand(ctx: InteractiveModeContext): Promise<vo
 	if (!picked) return;
 	const detail = inspectRowDetail(picked);
 	const hidden = total > rows.length ? `\n\n${total - rows.length} older requests are not listed.` : "";
-	ctx.showCommandReport({ title: `Request #${picked.seq}`, body: new Text(detail + hidden, 0, 0) });
+	ctx.showCommandReport({ title: `Request #${picked.seq}`, body: () => reportTextView(detail + hidden) });
 }
 
 /** `/preview-request`: the provider request the next turn would send, built without sending it. */
@@ -39,7 +38,7 @@ export async function runPreviewRequestCommand(ctx: InteractiveModeContext): Pro
 		const preview = await ctx.session.previewNextRequest({ maxChars: TUI_PREVIEW_MAX_CHARS });
 		const fence = markdownFenceFor(preview.text);
 		const markdown = `${previewHeader(preview)}\n\n${fence}json\n${preview.text}\n${fence}`;
-		ctx.showCommandReport({ title: "Next request", body: new Markdown(markdown, 0, 0, getMarkdownTheme()) });
+		ctx.showCommandReport({ title: "Next request", body: () => markdownView(markdown) });
 	} catch (error) {
 		ctx.showError(error instanceof Error ? error.message : String(error));
 	}

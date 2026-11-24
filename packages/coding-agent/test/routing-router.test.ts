@@ -12,7 +12,7 @@ import {
 import { cfgRoutingMode } from "@oh-my-pi/pi-coding-agent/routing/settings";
 import { labelTiers, validateRoutingTiers } from "@oh-my-pi/pi-coding-agent/routing/tiers";
 import { tinyModelClient } from "@oh-my-pi/pi-coding-agent/tiny/title-client";
-import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
+import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-coding-agent/utils/render-utils";
 import type { SpendCapLevel } from "@oh-my-pi/pi-coding-agent/session/spend-cap";
 import { createInMemoryAuthStorage } from "./helpers/agent-session-setup";
 

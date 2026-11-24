@@ -1,4 +1,5 @@
-import { theme } from "@oh-my-pi/pi-tui/theme";
+import { currentTheme } from "@oh-my-pi/pi-tui/theme/runtime";
+import { bold } from "@oh-my-pi/pi-tui/theme/theme";
 import { showCommandMessage } from "../modes/controllers/command-controller-shared";
 import { buildReceipts, formatReceipts } from "../session/receipts";
 import { clearSubmittedText } from "./helpers/draft";
@@ -7,13 +8,14 @@ import { DIFF_USAGE, type DiffPaint, formatTurnDiff, parseDiffArgs, runDiffComma
 import type { SlashCommandSpec } from "./types";
 
 const PAINT: DiffPaint = (kind, text) => {
+	const theme = currentTheme();
 	switch (kind) {
 		case "add":
 			return theme.fg("toolDiffAdded", text);
 		case "del":
 			return theme.fg("toolDiffRemoved", text);
 		case "head":
-			return theme.fg("accent", theme.bold(text));
+			return theme.fg("accent", bold(text));
 		default:
 			return theme.fg("toolDiffContext", text);
 	}

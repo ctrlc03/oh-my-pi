@@ -3,7 +3,6 @@ import type { ToolConversationState } from "./tool-state";
 import type { FetchImpl, ImageContent, Message, Model, ServiceTierByFamily, ToolChoice } from "@oh-my-pi/pi-ai";
 import { isPrivateModeActive } from "@oh-my-pi/pi-ai/private-mode";
 import { logger } from "@oh-my-pi/pi-utils";
-import type { RawSseDebugBuffer } from "@oh-my-pi/pi-tui/apps/debug/raw-sse-buffer";
 import type { AsyncJobManagerApi } from "../async/job-manager";
 import type { NotifyBatch } from "../async/notify";
 import type { Rule } from "../capability/rule";
@@ -46,7 +45,6 @@ import { TaskTool } from "../task";
 import type { PerCallModelAdvertisement } from "../task/model-approval";
 import type { AgentOutputManager } from "../task/output-manager";
 import { type AgentDefinition, canSpawnAtDepth } from "../task/types";
-import { type StructuredSubagentSchemaMode } from "@oh-my-pi/pi-tui/tools/task";
 import type { WorkPoolYieldItem } from "../task/workpool-yield";
 import type { EventBus } from "../utils/event-bus";
 import { WebSearchTool } from "../web/search";
@@ -86,7 +84,6 @@ import { ReadTool } from "./read";
 import { type PlanProposalHandler, specialToolCommands } from "./resolve";
 import { SecurityScanTool } from "./security-scan";
 import { supportsExternalThinking, ThinkTool } from "./think";
-import { type TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
 import { TodoTool } from "./todo";
 import { FlowTool } from "./flow";
 import { TraceTool } from "./trace";
@@ -97,9 +94,8 @@ import type { PrWatchManager } from "../pr-watch/manager";
 import { cfgPrWatchEnabled } from "../pr-watch/settings";
 import { isMountableAsToolCommand, resolveToolCommand, type ToolCommandState } from "./tool-commands";
 import { YieldTool } from "./yield";
-import { PROPOSE_COMMAND_NAME, REJECT_COMMAND_NAME, RESOLVE_COMMAND_NAME } from "@oh-my-pi/pi-tui/tools/resolve";
-import { REPORT_ISSUE_COMMAND_NAME } from "@oh-my-pi/pi-tui/tools/report-tool-issue";
-
+import { PROPOSE_COMMAND_NAME, REJECT_COMMAND_NAME, RESOLVE_COMMAND_NAME } from "./details/resolve";
+import { REPORT_ISSUE_COMMAND_NAME } from "./report-issue-command";
 import {
 	cfgAskEnabled,
 	cfgAstEditEnabled,
@@ -127,23 +123,22 @@ import { cfgGoalEnabled } from "../goals/settings";
 import { cfgLspEnabled } from "../lsp/settings";
 import { cfgMemoryBackend } from "../memory-backend/settings";
 import { cfgTaskMaxRecursionDepth } from "../task/settings";
+import type { RawSseDebugBuffer } from "../debug/raw-sse-buffer";
+import type { StructuredSubagentSchemaMode } from "../task/task-details";
+import type { TodoPhase } from "./details/todo";
 
 export * from "../edit";
 export * from "../goals";
 export * from "../lsp";
-export * from "@oh-my-pi/pi-tui/tools/streaming-output";
+export * from "./streaming-output";
 export * from "../task";
 export * from "../web/search";
 export * from "./ask";
 export * from "./ast-edit";
 export * from "./ast-grep";
 export * from "./bash";
-export type {
-	BashToolDetails,
-	BashRenderArgs,
-	BashRenderContext,
-	ShellRendererConfig,
-} from "@oh-my-pi/pi-tui/tools/bash";
+export type { BashRenderContext } from "../ui/tools/bash";
+export type { BashToolDetails, BashRenderArgs, ShellRendererConfig } from "./details/bash";
 export * from "./browser";
 export * from "./checkpoint";
 export * from "./computer";
@@ -160,7 +155,7 @@ export * from "./gh";
 export * from "./glob";
 export * from "./grep";
 export * from "./jfind";
-export type { AgentActivitySnapshot, CoordinationDetails, JobSnapshot } from "@oh-my-pi/pi-tui/tools/wait";
+export type { AgentActivitySnapshot, CoordinationDetails, JobSnapshot } from "./details/wait";
 export * from "./image-gen";
 export * from "./learn";
 export * from "./manage-skill";
@@ -172,12 +167,7 @@ export * from "./notify-owner";
 export * from "./read";
 export * from "./report-tool-issue";
 export * from "./resolve";
-export type {
-	FindingPriority,
-	FindingPriorityInfo,
-	FindingDetails,
-	SubmitReviewDetails,
-} from "@oh-my-pi/pi-tui/tools/task";
+export type { FindingPriority, FindingDetails, SubmitReviewDetails } from "../task/task-details";
 export * from "./security-scan";
 export * from "./think";
 export * from "./todo";
@@ -188,7 +178,7 @@ export * from "./tts";
 export * from "./vibe";
 export * from "./wait";
 export * from "./watch-pr";
-export type { VibeToolDetails } from "@oh-my-pi/pi-tui/tools/vibe";
+export type { VibeToolDetails } from "./details/vibe";
 export * from "./write";
 export * from "./tool-commands";
 export * from "./yield";
@@ -301,6 +291,14 @@ export interface ToolSession {
 	 * rebuilds (mid-session `/skillful` toggles ride the prompt, not the prefix).
 	 */
 	skillHintVisible?: boolean;
+	/**
+	 * Frozen `find` availability for the `grep`/`glob`/`bash` hints: snapshot
+	 * taken at the last system-prompt rebuild, so withdrawing `find` mid-session
+	 * (a judge rejection under `find.enabled: auto`) leaves the tool prefix
+	 * byte-stable. Undefined outside a managed session; tools then read
+	 * {@link isToolActive}.
+	 */
+	findHintVisible?: boolean;
 	/** Rediscover live session skills after a tool mutates their backing files. */
 	refreshSkills?: () => Promise<void>;
 	/** The session as the holder `skill://` rediscovers through when a skill's files are gone. */
@@ -1042,11 +1040,10 @@ export function specialToolApplies(
 	}
 }
 
-export type { AskToolDetails } from "@oh-my-pi/pi-tui/tools/ask";
-// Issue #12680: extensions that shadow the built-in ask tool reach the native
-// renderer through the injected pi.pi namespace (the root barrel of this
-// package). Re-export it so the pi-tui renderer migration doesn't drop it.
-export { askToolRenderer } from "@oh-my-pi/pi-tui/tools/ask";
+export type { AskToolDetails } from "./details/ask";
+// Issue #12680: extensions that shadow the built-in ask tool reach its
+// presenter through the injected pi.pi namespace (the root barrel of this package).
+export { askPresenter } from "../ui/tools/ask";
 export type {
 	TodoStatus,
 	TodoOperation,
@@ -1055,9 +1052,9 @@ export type {
 	TodoCompletionTransition,
 	TodoToolDetails,
 	CollapsedTodoSelection,
-} from "@oh-my-pi/pi-tui/tools/todo";
-export type { ThinkRenderArgs } from "@oh-my-pi/pi-tui/tools/think";
-export type { ResolutionCommandName, ResolveDetails } from "@oh-my-pi/pi-tui/tools/resolve";
+} from "./details/todo";
+export type { ThinkRenderArgs } from "./details/think";
+export type { ResolutionCommandName, ResolveDetails } from "./details/resolve";
 export type {
 	GhToolDetails,
 	GhPrCheckoutSummary,
@@ -1065,4 +1062,4 @@ export type {
 	GhRunWatchRunDetails,
 	GhRunWatchFailedLogDetails,
 	GhRunWatchViewDetails,
-} from "@oh-my-pi/pi-tui/tools/github";
+} from "./details/github";

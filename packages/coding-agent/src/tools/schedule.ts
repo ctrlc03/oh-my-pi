@@ -6,8 +6,8 @@ import type {
 	AgentToolUpdateCallback,
 	ToolApprovalDecision,
 } from "@oh-my-pi/pi-agent-core";
-import type { OutputMeta } from "@oh-my-pi/pi-tui/tools/output-meta";
-import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
+import type { OutputMeta } from "./output-meta-format";
+import { ToolError } from "./tool-errors";
 import { prompt } from "@oh-my-pi/pi-utils";
 import {
 	describeWhen,

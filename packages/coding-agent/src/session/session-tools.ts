@@ -24,22 +24,21 @@ import {
 	type SkillWarning,
 	setActiveSkills,
 } from "../extensibility/skills";
-import { type LocalProtocolOptions } from "../internal-urls";
 import { isEvalNamespaceTool } from "../mcp/eval-namespaces";
 import { deduplicateMCPToolsByName, resolveMCPToolAlias } from "../mcp/tool-bridge";
 import { resolveMemoryBackend } from "../memory-backend/resolve";
 import { MEMORY_BACKEND_TOOL_NAMES } from "../memory-backend/tool-names";
-import { invalidateToolSchemaMetadata, type SystemPromptSources } from "@oh-my-pi/pi-tui/status-line/context-usage";
+import { invalidateToolSchemaMetadata, type SystemPromptSources } from "./context-usage";
 import type { MemoryBackendStartOptions, MemoryPromptPreparation } from "../memory-backend/types";
 import { getPerCallModelAdvertisement, type PerCallModelAdvertisement } from "../task/model-approval";
 import type { AgentDefinition } from "../task/types";
 import evalPreludeNoticePrompt from "../prompts/system/eval-prelude-notice.md" with { type: "text" };
-import evalPreludeGuidePrompt from "../prompts/tools/eval-prelude-first-call.md" with { type: "text" };
 import sessionAgentNoticePrompt from "../prompts/system/session-agent-notice.md" with { type: "text" };
 import skillNoticePrompt from "../prompts/system/skill-notice.md" with { type: "text" };
-import toolRosterNoticePrompt from "../prompts/system/tool-roster-notice.md" with { type: "text" };
 import toolCommandMountNoticePrompt from "../prompts/system/tool-command-mount-notice.md" with { type: "text" };
-import { SPECIAL_TOOL_NAMES, specialToolApplies } from "../tools";
+import toolRosterNoticePrompt from "../prompts/system/tool-roster-notice.md" with { type: "text" };
+import evalPreludeGuidePrompt from "../prompts/tools/eval-prelude-first-call.md" with { type: "text" };
+import { type BuildSystemPromptResult, toolReadsSkillUris } from "../system-prompt";
 import { isMCPToolName, normalizeToolNames, presentationOrder } from "../tools/builtin-names";
 import {
 	approvalRestrictions,
@@ -52,8 +51,7 @@ import { getApprovalGrants } from "../tools/approval-cache";
 import { wrapToolWithMetaNotice } from "../tools/output-meta";
 import { isFilesystemSourcePath } from "../tools/path-utils";
 import { supportsExternalThinking } from "../tools/think";
-import { ToolAbortError } from "../tools/tool-errors";
-import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
+import { ToolAbortError, ToolError } from "../tools/tool-errors";
 import {
 	isMountableAsToolCommand,
 	listToolCommands,
@@ -73,15 +71,12 @@ import {
 	PERMISSION_REQUIRED_TOOLS,
 } from "./acp-permission-gate";
 import type { ClientBridge, ClientBridgePermissionOutcome } from "./client-bridge";
-import { type BuildSystemPromptResult, toolReadsSkillUris } from "../system-prompt";
 import { matchModelPattern } from "../utils/model-patterns";
 import { resolveToolWireName } from "../utils/tool-wire-name";
-
 import type { CustomMessage } from "./messages";
 import { SESSION_AGENT_NOTICE_TYPE } from "./queued-messages";
 import type { SessionEntry } from "./session-entries";
 import type { SessionManager } from "./session-manager";
-
 import { cfgDisabledExtensions, cfgSkills, type SkillsSettings } from "../extensibility/settings";
 import {
 	cfgExternalThinking,
@@ -98,6 +93,8 @@ import {
 	cfgToolsCommandInline,
 	cfgToolsCommandNotices,
 } from "../tools/settings";
+import type { LocalProtocolOptions } from "../internal-urls";
+import { SPECIAL_TOOL_NAMES, specialToolApplies } from "../tools";
 
 /**
  * Registered tools a mode may activate mid-session that `active` leaves out, for {@link Agent.setStandbyTools}:
@@ -394,6 +391,8 @@ interface SessionAgentNoticeDetails {
 interface PromptSurface {
 	/** Skill-URI hints in `bash`/`read` (mid-session `/skillful` toggles). */
 	skillHintVisible: boolean;
+	/** `find` hints in `grep`/`glob`/`bash` (mid-session `find.enabled: auto` withdrawals after a judge rejection). */
+	findHintVisible: boolean;
 	/** Eval preludes in the system prompt and eval description. */
 	evalPreludes: readonly EvalPreludeDefinition[];
 	/** User-tagged model agents listed in the task description. */
@@ -825,6 +824,16 @@ export class SessionTools {
 	}
 
 	/**
+	 * Whether `grep`/`glob`/`bash` descriptions point at `find` (see
+	 * {@link #promptSurface}); the candidate inside a rebuild frame. Withdrawing
+	 * `find` from a prefix-bound transcript leaves these descriptions as the
+	 * bound prefix rendered them until a rebuild absorbs the change.
+	 */
+	get findHintVisible(): boolean {
+		return (this.#promptSurfaceScope.getStore() ?? this.#promptSurface).findHintVisible;
+	}
+
+	/**
 	 * Eval preludes the system prompt and eval description advertise (see
 	 * {@link #promptSurface}); the candidate inside a rebuild frame.
 	 */
@@ -860,6 +869,7 @@ export class SessionTools {
 	#derivePromptSurface(): PromptSurface {
 		return {
 			skillHintVisible: cfgSkillful.get(this.#host.settings) === true && this.#promptSkills.length > 0,
+			findHintVisible: this.getEnabledToolNames().includes("find"),
 			evalPreludes: this.#host.evalPreludes(),
 			sessionAgents: this.#host.sessionAgents(),
 			// Eval-bound tools stay callable by name; their namespaces advertise them.
@@ -2425,11 +2435,7 @@ export class SessionTools {
 			this.#toolFilter = filter;
 			// Force a prompt rebuild: the filter changed which tools the model sees,
 			// not just their names.
-			await this.#applyToolPresentation(
-				candidates,
-				this.#toolCommands?.mountedNames ?? new Set(),
-				true,
-			);
+			await this.#applyToolPresentation(candidates, this.#toolCommands?.mountedNames ?? new Set(), true);
 			return true;
 		});
 	}
@@ -2576,10 +2582,12 @@ export class SessionTools {
 	/**
 	 * Re-resolves settings-gated tools (built-in factories, image/speech generation,
 	 * tool command mounting) against live settings: registers newly allowed tools,
-	 * unregisters disallowed ones, and reapplies the enabled set with one forced
-	 * prompt rebuild — unconditionally unless `refreshPrompt` is false, then only
-	 * when the tool set changed. Unrelated selections and MCP/extension tools are
-	 * preserved.
+	 * unregisters disallowed ones, and reapplies the enabled set. By default the
+	 * prompt is rebuilt unconditionally (an explicit settings change). With
+	 * `refreshPrompt: false` (judge rejections, role edits) the change is applied
+	 * as an implicit one: a no-op delta returns early, and a prefix-bound
+	 * transcript keeps its prompt while the roster change rides its notices.
+	 * Unrelated selections and MCP/extension tools are preserved.
 	 */
 	reconcileBuiltinTools({ refreshPrompt = true }: { refreshPrompt?: boolean } = {}): Promise<void> {
 		return this.runToolRegistryMutation(async () => {
@@ -2603,7 +2611,7 @@ export class SessionTools {
 				if (delta.toolCommands) delta.toolCommands.decorateExecution = tool => this.#wrapToolForAcpPermission(tool);
 			}
 			if (!refreshPrompt && !toolCommandChanged && delta.added.length === 0 && delta.removed.length === 0) return;
-			await this.#applyActiveToolsByName([...enabled], true);
+			await this.#applyActiveToolsByName([...enabled], refreshPrompt);
 		});
 	}
 
@@ -2705,6 +2713,7 @@ export class SessionTools {
 		const previousBaseSystemPrompt = this.#baseSystemPrompt;
 		const candidate: PromptSurface = {
 			...this.#derivePromptSurface(),
+			findHintVisible: roster.toolNames.includes("find"),
 			evalToolNames: this.#promptSurface.evalToolNames,
 			perCallModelAdvertisement: this.#promptSurface.perCallModelAdvertisement,
 		};

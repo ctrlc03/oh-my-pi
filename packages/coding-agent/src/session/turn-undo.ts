@@ -11,7 +11,7 @@
  * prompt, navigating elsewhere or switching sessions moves the leaf and drops them.
  */
 import type { ImageContent } from "@oh-my-pi/pi-ai";
-import { isUserRequestEntry } from "@oh-my-pi/pi-tui/chat/transcript-entry";
+import { isUserRequestEntry } from "./transcript/transcript-entry";
 import type { AgentSession } from "./agent-session";
 import type { FileRestorePoint, FileRestoreResult } from "./file-snapshots";
 import { isTranscriptEntry } from "./session-context";

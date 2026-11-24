@@ -9,7 +9,7 @@
 import * as fs from "node:fs";
 import type { ToolApprovalDecision } from "@oh-my-pi/pi-agent-core";
 import { isPosixShell } from "@oh-my-pi/pi-utils/procmgr";
-import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
+import { ToolError } from "../tools/tool-errors";
 import type { Settings } from "../config/settings";
 import { quotePosixArgv } from "../utils/shell-quote";
 import { bwrapCleanupScript, planBwrap } from "./bubblewrap";

@@ -1,6 +1,6 @@
 import { type } from "@oh-my-pi/omptype";
 import type { AgentTool, AgentToolResult } from "@oh-my-pi/pi-agent-core";
-import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
+import { ToolError } from "./tool-errors";
 import type { WirePrWatch } from "@oh-my-pi/pi-wire/pr-watch";
 import watchPrDescription from "../prompts/tools/watch-pr.md" with { type: "text" };
 import { cfgPrWatchEnabled } from "../pr-watch/settings";

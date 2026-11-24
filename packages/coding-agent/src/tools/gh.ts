@@ -1,4 +1,4 @@
-import type { GhToolDetails } from "@oh-my-pi/pi-tui/tools/github";
+import type { GhToolDetails } from "./details/github";
 import { type } from "@oh-my-pi/omptype";
 import type {
 	AgentTool,
@@ -20,7 +20,7 @@ import { highStakesDecision } from "../high-stakes/gate";
 import githubDescription from "../prompts/tools/github.md" with { type: "text" };
 import { github } from "../utils/github";
 import { loadImageAttachmentInput } from "../utils/image-loading";
-import { webpExclusionForModel } from "@oh-my-pi/pi-tui/chat/image-loading";
+import { webpExclusionForModel } from "../utils/image-input";
 import type { ToolSession } from ".";
 import {
 	buildTextResult,
@@ -42,7 +42,7 @@ import {
 } from "./gh-search";
 import { executeRepoView } from "./gh-view";
 
-import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
+import { ToolError } from "./tool-errors";
 import { toolResult } from "./tool-result";
 
 import { cfgImagesAutoResize } from "../modes/settings";

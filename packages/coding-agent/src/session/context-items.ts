@@ -16,7 +16,7 @@ import type { Tokenizer } from "@oh-my-pi/pi-agent-core";
 import { base64ImageSize, estimateImageTokens } from "@oh-my-pi/pi-agent-core/image-tokens";
 import { collectToolCallsById } from "@oh-my-pi/pi-agent-core/compaction/tool-protection";
 import type { ImageContent, Tool, ToolResultMessage } from "@oh-my-pi/pi-ai";
-import { estimateToolSchemaTokens } from "@oh-my-pi/pi-tui/status-line/context-usage";
+import { estimateToolSchemaTokens } from "./context-usage";
 import * as path from "node:path";
 import type { SessionEntry } from "./session-entries";
 

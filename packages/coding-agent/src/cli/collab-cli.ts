@@ -17,8 +17,8 @@ import {
 	resolveCollabHostLink,
 	startCollabSession,
 } from "../collab/registry";
-import { sanitizeDisplayLine } from "@oh-my-pi/pi-tui/overlays/extensions/display-text";
-import { shortenPath } from "@oh-my-pi/pi-tui/render/render-utils";
+import { sanitizeDisplayLine } from "../extensibility/inventory/display-text";
+import { shortenPath } from "../utils/render-utils";
 
 export interface CollabListCommandArgs {
 	/** Emit deterministic machine-readable JSON. */

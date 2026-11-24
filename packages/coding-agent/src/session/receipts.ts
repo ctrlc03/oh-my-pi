@@ -8,7 +8,7 @@
  * are not listed here (they show in the turn diff, which reads the working tree).
  */
 import { isRecord } from "@oh-my-pi/pi-utils";
-import { isUserRequestEntry } from "@oh-my-pi/pi-tui/chat/transcript-entry";
+import { isUserRequestEntry } from "./transcript/transcript-entry";
 import type { ReceiptApproval, ReceiptCommand, ReceiptFile, ReceiptSubagent, SessionReceipts } from "@oh-my-pi/pi-wire";
 import { isTranscriptEntry } from "./session-context";
 import type { SessionEntry } from "./session-entries";

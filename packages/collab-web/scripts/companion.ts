@@ -84,7 +84,7 @@ import { foreignHostLauncher, isCompiled, selfCommand } from "./build-identity";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { QrCode, renderQrHalfBlocks } from "@oh-my-pi/pi-tui/chrome/qrcode";
+import { encodeQr, qrHalfBlocks } from "@oh-my-pi/pi-coding-agent/ui/transcript/figures/qr";
 import { SCHEDULE_IPC_FILE } from "@oh-my-pi/pi-wire/schedule";
 import { STAKES_IPC_FILE } from "@oh-my-pi/pi-wire/stakes";
 import { generateRoomKey, importRoomKey } from "../src/lib/codec";
@@ -632,7 +632,8 @@ if (managedBy() === null) {
 	console.log(
 		`the code works once and expires in ${Math.round((invite.expiresAt - Date.now()) / 60_000)} minutes; the app's Devices screen makes new ones`,
 	);
-	for (const row of renderQrHalfBlocks(QrCode.encodeText(pairUrl, "M"))) console.log(` ${row}`);
+	// Black on white, so a phone camera reads it whatever the terminal's own colors.
+	for (const row of qrHalfBlocks(encodeQr(pairUrl, "M"), "dark")) console.log(` \x1b[47m\x1b[30m${row}\x1b[0m`);
 } else {
 	console.log(`pair a device: run \`${pairCommand()}\` in a terminal on this computer`);
 }

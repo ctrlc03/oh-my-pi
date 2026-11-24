@@ -2,7 +2,7 @@ import type { AgentSession } from "../../session/agent-session";
 import { type ContextPruneResult, selectContextItems } from "../../session/context-items";
 import { CONTEXT_ITEM_ROWS, computeSessionContextBreakdown } from "../../session/context-usage-runtime";
 import type { SlashCommandRuntime } from "../types";
-import { renderAsciiBar } from "@oh-my-pi/pi-tui/chrome/format";
+import { renderAsciiBar } from "../../modes/view-model/chrome/format";
 
 export const CONTEXT_USAGE = "Usage: /context [prune [<rank>[,<rank>…]]]";
 

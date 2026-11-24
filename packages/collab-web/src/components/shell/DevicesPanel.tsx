@@ -1,4 +1,4 @@
-import { QrCode } from "@oh-my-pi/pi-tui/chrome/qrcode";
+import { encodeQr } from "@oh-my-pi/pi-coding-agent/ui/transcript/figures/qr";
 import { Check, Copy, LoaderCircle, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -277,11 +277,11 @@ function InvitePanel({ invite, busy, onRenew, onDone }: InvitePanelProps): React
 /** The text as a QR code: dark modules as one path over a light square, scalable to any width. */
 function QrSvg({ text }: { text: string }): ReactNode {
 	const { size, path } = useMemo(() => {
-		const qr = QrCode.encodeText(text, "M");
+		const qr = encodeQr(text, "M");
 		let d = "";
 		for (let y = 0; y < qr.size; y++) {
 			for (let x = 0; x < qr.size; x++) {
-				if (qr.module(x, y)) d += `M${x + QR_QUIET_MODULES} ${y + QR_QUIET_MODULES}h1v1h-1z`;
+				if (qr.modules[y]![x]) d += `M${x + QR_QUIET_MODULES} ${y + QR_QUIET_MODULES}h1v1h-1z`;
 			}
 		}
 		return { size: qr.size + QR_QUIET_MODULES * 2, path: d };

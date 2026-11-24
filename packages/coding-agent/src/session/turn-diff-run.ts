@@ -3,7 +3,7 @@
  * host's `turn-diff` / `session-diff` commands share. The diffing itself is
  * {@link FileSnapshotStore.turnDiff} / {@link FileSnapshotStore.sessionDiff}.
  */
-import { isUserRequestEntry } from "@oh-my-pi/pi-tui/chat/transcript-entry";
+import { isUserRequestEntry } from "./transcript/transcript-entry";
 import type { AgentSession } from "./agent-session";
 import { isTranscriptEntry } from "./session-context";
 import type { SessionEntry } from "./session-entries";

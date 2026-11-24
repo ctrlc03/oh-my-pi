@@ -14,8 +14,8 @@ import {
 	parsePrRef,
 } from "@oh-my-pi/pi-wire/pr-watch";
 import { github } from "../utils/github";
-import type { GhRunSnapshot } from "@oh-my-pi/pi-tui/tools/github";
-import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
+import type { GhRunSnapshot } from "../tools/details/github";
+import { ToolError } from "../tools/tool-errors";
 import { tryResolveCurrentRepo } from "../tools/gh-common";
 import { fetchFailedJobLogs, fetchRunsForCommit, isFailedJob } from "../tools/gh-run-watch";
 

@@ -25,7 +25,7 @@ import {
 import { $env, isBunTestRuntime, isCompiledBinary, setInteractiveHost } from "@oh-my-pi/pi-utils/env";
 import * as logger from "@oh-my-pi/pi-utils/logger";
 import * as postmortem from "@oh-my-pi/pi-utils/postmortem";
-import { fuzzyFilter } from "@oh-my-pi/pi-tui/fuzzy";
+import { fuzzyFilter } from "./utils/fuzzy";
 import chalk from "@oh-my-pi/pi-utils/chalk";
 import { reset as resetCapabilities } from "./capability";
 import {
@@ -41,8 +41,9 @@ import {
 import { applyExtensionFlags, type ExtensionFlagSink } from "./cli/extension-flags";
 import { processFileArguments } from "./cli/file-processor";
 import { buildInitialMessage } from "./cli/initial-message";
-import { formatKeyHint, KeybindingsManager } from "@oh-my-pi/pi-tui/app-keybindings";
-import type { SessionPickerOptions } from "@oh-my-pi/pi-tui/apps/session-picker";
+import { KeybindingsManager } from "./config/keybindings/keybindings";
+import { formatKeyHint } from "./ui/keys/hints";
+import type { SessionPickerOptions } from "./modes/view-model/apps/session-picker";
 import { currentBuildHost, fetchBuild, OMP_BUILD } from "./cli/build-service";
 import { applyStartupCwd } from "./cli/startup-cwd";
 import { BUILD_TAG, IS_FORK_BUILD, RELEASE_REPO } from "./build-identity";
@@ -60,7 +61,7 @@ import {
 import { activatePrivateMode } from "./config/private-mode";
 import { PrivateSessionError, withPrivateSessionAdoption } from "./session/private-session";
 import { ModelRegistry } from "./config/model-registry";
-import { formatModelSelectorValue } from "@oh-my-pi/pi-tui/overlays/model-selector";
+import { formatModelSelectorValue } from "./config/model-selector";
 import {
 	disabledProviderIds,
 	expandRoleAlias,
@@ -99,9 +100,8 @@ import { formatSessionContinuationNotice } from "./modes/persistence-failure";
 import type { PrintModeOptions } from "./modes/print-mode";
 import type { RpcModeOptions } from "./modes/rpc/rpc-mode";
 import { claimRpcInput } from "./modes/rpc/rpc-input";
-import { CURRENT_SETUP_VERSION } from "@oh-my-pi/pi-tui/setup/setup-version";
+import { CURRENT_SETUP_VERSION } from "./config/setup-version";
 import type * as SetupWizardModule from "./modes/setup";
-import type { SetupScene } from "@oh-my-pi/pi-tui/setup/scenes/types";
 import { invokeSkillCommandFromText, isKnownSkillCommand } from "./modes/skill-command";
 import {
 	applyStartupComposerPreferences,
@@ -109,7 +109,6 @@ import {
 	stopPendingStartupComposer,
 	takeStartupComposerLease,
 } from "./modes/startup-composer";
-import { ensureTheme, initTheme, stopThemeWatcher } from "@oh-my-pi/pi-tui/theme";
 import type { SubmittedUserInput } from "./modes/types";
 import { createWarpEventBridgeExtension } from "./modes/warp-events";
 import { AgentLifecycleManager } from "./registry/agent-lifecycle";
@@ -156,9 +155,9 @@ import { type RestoreOutcome, restoreSession } from "./task/restore";
 import { createTelemetryExportConfig, initTelemetryExport, isTelemetryExportEnabled } from "./telemetry-export";
 import { cfgTelemetryOtlpExportEnabled } from "./telemetry-settings";
 import { registerLocalInferenceApi } from "./tiny/local-inference-api";
-import { automaticThinkingLevel, concreteThinkingLevel, parseConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
+import { automaticThinkingLevel, concreteThinkingLevel, parseConfiguredThinkingLevel } from "./thinking/levels";
 import type { LspStartupServerInfo } from "./tools";
-import { sanitizeDisplayWarnings } from "@oh-my-pi/pi-tui/render/render-utils";
+import { sanitizeDisplayWarnings } from "./utils/render-utils";
 import { getChangelogPath, readLastChangelogVersion, resolveStartupChangelogForDisplay } from "./utils/changelog";
 import { EventBus } from "./utils/event-bus";
 import { resolveFirstLaunchPythonEvalWarning } from "./eval/startup-warning";
@@ -180,10 +179,6 @@ import {
 	cfgImagesAutoResize,
 	cfgMarketplaceAutoUpdate,
 	cfgSetupVersion,
-	cfgShowHardwareCursor,
-	cfgSpellingAutocomplete,
-	cfgSpellingAutocorrect,
-	cfgSpellingTypoDetection,
 	cfgStartupChangelogMode,
 	cfgStartupCheckUpdate,
 	cfgStartupQuiet,
@@ -192,10 +187,9 @@ import {
 	cfgSymbolPreset,
 	cfgThemeDark,
 	cfgThemeLight,
-	cfgTuiImeSafeCursor,
-	cfgTuiMaxInlineImages,
 	cfgTuiResizeScrollback,
 	cfgTuiSpinnerInterval,
+	cfgTuiVimMode,
 	cfgTuiMaxFps,
 	cfgTuiMotion,
 	cfgUpdateAuto,
@@ -218,6 +212,7 @@ import { cfgDisabledProviders, cfgEnabledModels, cfgModelProviderOrder, cfgModel
 import { cfgTaskAgentIdleTtlMs } from "./task/settings";
 import { cfgSkillsIncludeSkills } from "./extensibility/settings";
 import { cfgWorkspaceAdditionalDirectories } from "./session/context-settings";
+import { ensureTheme, getTerminalAppearance, initTheme, stopThemeWatcher } from "./ui/theme/service";
 
 type RunAcpMode = (createSession: AcpSessionFactory) => Promise<never>;
 type RunPrintMode = (session: AgentSession, options: PrintModeOptions) => Promise<number>;
@@ -237,7 +232,7 @@ type SessionPicker = (
 async function loadSessionPicker(init?: { foreign?: boolean }): Promise<SessionPicker> {
 	const [{ selectSession }, { HistoryStorage }, { loadPinnedSessionIds, setSessionPinned }, { FileSessionStorage }] =
 		await Promise.all([
-			import("@oh-my-pi/pi-tui/apps/session-picker"),
+			import("./cli/session-picker"),
 			import("./session/history-storage"),
 			import("./session/session-pins"),
 			import("./session/session-storage"),
@@ -792,6 +787,8 @@ async function runInteractiveMode(
 	const InteractiveModeConstructor = await loadInteractiveModeConstructor();
 	let mode: InteractiveMode;
 	try {
+		// The interactive mode adopts a started frame; a frame still starting would be started twice.
+		await startupLease?.ready;
 		mode = new InteractiveModeConstructor(
 			session,
 			version,
@@ -799,7 +796,7 @@ async function runInteractiveMode(
 			lspServers,
 			mcpManager,
 			eventBus,
-			startupLease?.composer,
+			startupLease?.frame,
 			subagentEventBus,
 		);
 		startupLease?.adopt();
@@ -809,7 +806,7 @@ async function runInteractiveMode(
 	}
 
 	let setupWizard: typeof SetupWizardModule | undefined;
-	let setupScenes: SetupScene[] = [];
+	let setupScenes: SetupWizardModule.SetupScene[] = [];
 	let playStartupSplash = false;
 	try {
 		// Cold-launch gate: the full setup wizard (every scene + the overlay and
@@ -1781,7 +1778,6 @@ export async function buildSessionOptions(
 			cliProvider: parsed.provider,
 			cliModel: parsed.model,
 			modelRegistry,
-			availableModels: modelRegistry.getAvailable(),
 			settings: activeSettings,
 			preferences: modelMatchPreferences,
 		});
@@ -2019,7 +2015,7 @@ export async function runRootCommand(
 	try {
 		// Non-prepaint commands still need a default theme; an existing Composer
 		// already initialized its cached theme synchronously for the first frame.
-		await logger.time("initTheme:initial", ensureTheme);
+		logger.time("initTheme:initial", ensureTheme);
 
 		const parsedArgs = parsed;
 		try {
@@ -2300,27 +2296,22 @@ export async function runRootCommand(
 			cfgTuiMotion.override(settingsInstance, parsedArgs.motion);
 		}
 
-		await logger.time(
-			"initTheme:final",
-			initTheme,
-			isInteractive,
-			cfgSymbolPreset.get(settingsInstance),
-			cfgColorBlindMode.get(settingsInstance),
-			cfgThemeDark.get(settingsInstance),
-			cfgThemeLight.get(settingsInstance),
-		);
+		logger.time("initTheme:final", initTheme, {
+			watch: isInteractive,
+			// Keep the startup frame's appearance (the last launch's report) until the terminal answers.
+			appearance: getTerminalAppearance(),
+			symbolPreset: cfgSymbolPreset.get(settingsInstance),
+			colorBlindMode: cfgColorBlindMode.get(settingsInstance),
+			dark: cfgThemeDark.get(settingsInstance),
+			light: cfgThemeLight.get(settingsInstance),
+		});
 
 		applyStartupComposerPreferences({
 			quiet: cfgStartupQuiet.get(settingsInstance),
 			composerShape: cfgComposerShape.get(settingsInstance),
-			showHardwareCursor: cfgShowHardwareCursor.get(settingsInstance),
-			maxInlineImages: cfgTuiMaxInlineImages.get(settingsInstance),
 			resizeScrollback: cfgTuiResizeScrollback.get(settingsInstance),
-			imeSafeCursor: cfgTuiImeSafeCursor.get(settingsInstance),
 			autocompleteMaxVisible: cfgAutocompleteMaxVisible.get(settingsInstance),
-			spellingTypoDetection: cfgSpellingTypoDetection.get(settingsInstance),
-			spellingAutocomplete: cfgSpellingAutocomplete.get(settingsInstance),
-			spellingAutocorrect: cfgSpellingAutocorrect.get(settingsInstance),
+			vim: cfgTuiVimMode.get(settingsInstance),
 			theme: {
 				symbolPreset: cfgSymbolPreset.get(settingsInstance),
 				colorBlindMode: cfgColorBlindMode.get(settingsInstance),
@@ -2511,7 +2502,7 @@ export async function runRootCommand(
 			if (!picked) {
 				writeStartupNotice(parsedArgs, `${chalk.dim("No session selected")}\n`);
 				// Quit instead of returning: startup already armed long-lived handles
-				// (theme watcher + SIGWINCH/macOS appearance listeners via initTheme,
+				// (the theme file watcher started by initTheme,
 				// settings save timer, model registry) that keep the event loop alive,
 				// so a bare return hangs the process after the picker leaves the alt
 				// screen. No session was built here, so there is nothing to flush. The

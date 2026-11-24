@@ -7,7 +7,7 @@ import {
 	type ContextBreakdown,
 	type ContextRankedItem,
 	type ContextSavingsEstimate,
-} from "@oh-my-pi/pi-tui/status-line/context-usage";
+} from "./context-usage";
 import type { ScopeLike } from "../config/registry";
 import type { AgentSession } from "./agent-session";
 import type { ContextItem } from "./context-items";

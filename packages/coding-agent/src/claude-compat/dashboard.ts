@@ -2,7 +2,7 @@
 import { isProviderEnabled } from "../capability";
 import type { Settings } from "../config/settings";
 import { cfgClaudeHooks } from "../extensibility/settings";
-import type { Extension } from "@oh-my-pi/pi-tui/overlays/extensions/types";
+import type { Extension } from "../extensibility/inventory/types";
 import { loadClaudeCompatConfig } from "./config";
 import { resolveClaudeCompatMode } from "./mode";
 

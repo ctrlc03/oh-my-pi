@@ -1,5 +1,5 @@
 import type { Model } from "@oh-my-pi/pi-ai";
-import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
+import type { ConfiguredThinkingLevel } from "../utils/render-utils";
 import type { PromptModelOverride } from "../session/agent-session-types";
 
 /** What a guest's `prompt` frame asked for: `model` is `provider/id`, `thinking` one of that model's selectors. */

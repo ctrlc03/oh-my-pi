@@ -11,7 +11,7 @@ export async function runUndoCommand(ctx: InteractiveModeContext): Promise<void>
 		const result = await ctx.session.turnUndo.undo();
 		await ctx.renderInitialMessages({ clearTerminalHistory: true });
 		await ctx.reloadTodos();
-		if (result.editorText) ctx.editor.setDraft(result.editorText, result.editorImages);
+		if (result.editorText) ctx.composer.setDraft(result.editorText, result.editorImages);
 		const caveat = result.filesUnavailable
 			? "; no file snapshot was recorded for that prompt, so the files are unchanged"
 			: "";
@@ -28,7 +28,7 @@ export async function runRedoCommand(ctx: InteractiveModeContext): Promise<void>
 		await ctx.renderInitialMessages({ clearTerminalHistory: true });
 		await ctx.reloadTodos();
 		// The prompt the undo handed back is part of the conversation again; drop it unless it was edited.
-		if (result.staleDraft !== undefined && ctx.editor.getText() === result.staleDraft) ctx.editor.setText("");
+		if (result.staleDraft !== undefined && ctx.composer.text() === result.staleDraft) ctx.composer.setText("");
 		const more = result.redoDepth > 0 ? `; ${result.redoDepth} more can be redone` : "";
 		ctx.showStatus(`Redid the turn${filesNote(result.files)}${more}`);
 	} catch (error) {

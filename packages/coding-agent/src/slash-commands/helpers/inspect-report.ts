@@ -4,7 +4,7 @@
  * row and detail block the TUI selector shows.
  */
 import { formatDuration, formatNumber } from "@oh-my-pi/pi-utils";
-import { cacheHitPct } from "@oh-my-pi/pi-tui/chat/cache-invalidation-marker";
+import { cacheHitPct } from "../../session/transcript/cache-invalidation-marker";
 import type { InspectInjected, InspectRow, RequestPreview } from "@oh-my-pi/pi-wire";
 import type { InspectResult } from "../../session/request-inspector";
 

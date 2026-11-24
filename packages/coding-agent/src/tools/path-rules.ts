@@ -23,7 +23,7 @@ import { logger } from "@oh-my-pi/pi-utils";
 import type { Settings } from "../config/settings";
 import { normalizeToolName } from "./builtin-names";
 import { expandPath, normalizePathLikeInput } from "./path-utils";
-import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
+import { ToolError } from "./tool-errors";
 import { cfgToolsOutsideProject, cfgToolsPathRules } from "./settings";
 
 export type PathRuleAction = "allow" | "deny" | "prompt";

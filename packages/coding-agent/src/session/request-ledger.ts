@@ -1,6 +1,6 @@
 import type { AgentTool } from "@oh-my-pi/pi-agent-core";
 import type { AssistantMessage, ServiceTier, Usage } from "@oh-my-pi/pi-ai";
-import { cacheHitPct, detectCacheInvalidation } from "@oh-my-pi/pi-tui/chat/cache-invalidation-marker";
+import { cacheHitPct, detectCacheInvalidation } from "./transcript/cache-invalidation-marker";
 import type { CacheMiss, CacheMissReason, CacheRequestStat, SessionCacheStats } from "@oh-my-pi/pi-wire";
 import { observedPromptCacheTier } from "./cache-warmer";
 

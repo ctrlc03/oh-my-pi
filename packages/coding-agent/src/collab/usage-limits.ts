@@ -8,7 +8,7 @@
 import { type AssistantMessage, resolveUsedFraction, type UsageReport } from "@oh-my-pi/pi-ai";
 import * as AIError from "@oh-my-pi/pi-ai/error";
 import { extractProviderRetryHint } from "@oh-my-pi/pi-ai/utils/retry-after";
-import { collapseSharedUsageReports } from "@oh-my-pi/pi-tui/overlays/usage-display";
+import { collapseSharedUsageReports } from "../session/usage-display";
 import type { LimitWindowStatus, SessionLimited, WireLimitWindow } from "@oh-my-pi/pi-wire";
 import type { UsageLimitState } from "../session/usage-limit";
 

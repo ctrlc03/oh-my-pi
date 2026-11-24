@@ -463,8 +463,8 @@ async function runLspWritethrough(
 		return { finalContent, diagnostics: undefined };
 	}
 
-	const config = getConfig(cwd);
-	const servers = getServersForFile(config, dst);
+	const config = await getConfig(cwd);
+	const servers = await getServersForFile(config, dst);
 
 	if (servers.length === 0) {
 		await commitFinalWrite();

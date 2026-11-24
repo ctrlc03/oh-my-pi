@@ -141,8 +141,8 @@ describe("LSP diagnostics freshness", () => {
 
 	it("announces watched-file creates even when no server owns the file type", async () => {
 		const filePath = path.join(tempDir.path(), "probe.module.scss");
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([]);
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([]);
 		const notify = vi.spyOn(lspClient, "notifyWorkspaceWatchedFiles").mockResolvedValue();
 
 		const writethrough = createLspWritethrough(tempDir.path(), {
@@ -158,8 +158,8 @@ describe("LSP diagnostics freshness", () => {
 
 	it("does not start an LSP server just to notify existing clients when write-time features are disabled", async () => {
 		const filePath = path.join(tempDir.path(), "plain.ts");
-		const loadConfig = vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		const getServers = vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["test-lsp", TEST_SERVER]]);
+		const loadConfig = vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		const getServers = vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["test-lsp", TEST_SERVER]]);
 		const getOrCreate = vi
 			.spyOn(lspClient, "getOrCreateClient")
 			.mockRejectedValue(new Error("disabled write-time LSP features must not start a server"));
@@ -182,8 +182,8 @@ describe("LSP diagnostics freshness", () => {
 	it("does not cold-start an LSP server for custom formatting when diagnostics are disabled", async () => {
 		const filePath = path.join(tempDir.path(), "formatted.ts");
 		const formatter = createFormatter(async () => "export const value = 1;\n");
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([
 			["test-lsp", TEST_SERVER],
 			["formatter", formatter],
 		]);
@@ -212,8 +212,8 @@ describe("LSP diagnostics freshness", () => {
 		const formatter = createFormatter(async () => {
 			throw new Error("formatter crashed");
 		});
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["broken-formatter", formatter]]);
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["broken-formatter", formatter]]);
 		vi.spyOn(lspClient, "notifyWorkspaceWatchedFiles").mockResolvedValue();
 
 		const writethrough = createLspWritethrough(tempDir.path(), {
@@ -295,8 +295,8 @@ describe("LSP diagnostics freshness", () => {
 		const filePath = path.join(tempDir.path(), "formatted.ts");
 		const client = createClient(tempDir.path(), TEST_SERVER);
 		const formatter = createFormatter(async () => "export const value = 1;\n");
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([
 			["test-lsp", TEST_SERVER],
 			["formatter", formatter],
 		]);
@@ -322,8 +322,8 @@ describe("LSP diagnostics freshness", () => {
 		const client = createClient(tempDir.path(), TEST_SERVER);
 		const pendingClient = Promise.withResolvers<LspClient | undefined>();
 		const formatter = createFormatter(async () => "export const value = 1;\n");
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([
 			["test-lsp", TEST_SERVER],
 			["formatter", formatter],
 		]);
@@ -365,8 +365,8 @@ describe("LSP diagnostics freshness", () => {
 		});
 		const clock = new VirtualClock(Date.now());
 		installVirtualTime(clock);
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([
 			["test-lsp", TEST_SERVER],
 			["formatter", formatter],
 		]);
@@ -399,8 +399,8 @@ describe("LSP diagnostics freshness", () => {
 		const client = createClient(tempDir.path(), TEST_SERVER);
 		client.serverCapabilities = { documentFormattingProvider: true };
 		installVirtualTime(new VirtualClock(Date.now()));
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["test-lsp", TEST_SERVER]]);
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["test-lsp", TEST_SERVER]]);
 		vi.spyOn(lspClient, "getOrCreateClient").mockResolvedValue(client);
 		vi.spyOn(lspClient, "sendRequest").mockResolvedValue([
 			{
@@ -433,8 +433,8 @@ describe("LSP diagnostics freshness", () => {
 		const events: string[] = [];
 		const notifySignals: Array<AbortSignal | undefined> = [];
 
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockImplementation((_config, filePath) =>
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockImplementation(async (_config, filePath) =>
 			filePath.endsWith(".module.scss") ? [] : [["test-lsp", TEST_SERVER]],
 		);
 		vi.spyOn(lspClient, "getOrCreateClient").mockResolvedValue(client);
@@ -477,8 +477,8 @@ describe("LSP diagnostics freshness", () => {
 		const clock = new VirtualClock(Date.now());
 		installVirtualTime(clock);
 
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["test-lsp", TEST_SERVER]]);
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["test-lsp", TEST_SERVER]]);
 		vi.spyOn(lspClient, "getOrCreateClient").mockResolvedValue(client);
 		vi.spyOn(lspClient, "syncContent").mockImplementation(async (mockClient, syncedFilePath) => {
 			const syncedUri = fileToUri(syncedFilePath);
@@ -521,8 +521,8 @@ describe("LSP diagnostics freshness", () => {
 		const clock = new VirtualClock(Date.now());
 		installVirtualTime(clock);
 
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["test-lsp", TEST_SERVER]]);
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["test-lsp", TEST_SERVER]]);
 		vi.spyOn(lspClient, "getOrCreateClient").mockResolvedValue(client);
 		vi.spyOn(lspClient, "syncContent").mockImplementation(async (mockClient, syncedFilePath) => {
 			const syncedUri = fileToUri(syncedFilePath);
@@ -574,8 +574,8 @@ describe("LSP diagnostics freshness", () => {
 		}) as typeof Bun.sleep);
 		const client = createClient(tempDir.path(), TEST_SERVER);
 
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["test-lsp", TEST_SERVER]]);
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["test-lsp", TEST_SERVER]]);
 		vi.spyOn(lspClient, "getOrCreateClient").mockResolvedValue(client);
 		vi.spyOn(lspClient, "syncContent").mockImplementation(async mockClient => {
 			mockClient.openFiles.set(uri, { version: 1, languageId: "typescript", lastUsedAt: Date.now() });
@@ -619,8 +619,8 @@ describe("LSP diagnostics freshness", () => {
 		const clock = new VirtualClock(Date.now());
 		installVirtualTime(clock);
 
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["test-lsp", TEST_SERVER]]);
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["test-lsp", TEST_SERVER]]);
 		vi.spyOn(lspClient, "getOrCreateClient").mockResolvedValue(client);
 		vi.spyOn(lspClient, "syncContent").mockImplementation(async (mockClient, syncedFilePath) => {
 			const syncedUri = fileToUri(syncedFilePath);
@@ -663,8 +663,8 @@ describe("LSP diagnostics freshness", () => {
 		client.openFiles.set(uri, { version: 1, languageId: "typescript", lastUsedAt: Date.now() });
 		client.serverCapabilities = { diagnosticProvider: true };
 
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["test-lsp", TEST_SERVER]]);
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["test-lsp", TEST_SERVER]]);
 		vi.spyOn(lspClient, "getOrCreateClient").mockResolvedValue(client);
 		vi.spyOn(lspClient, "syncContent").mockImplementation(async (mockClient, syncedFilePath) => {
 			const syncedUri = fileToUri(syncedFilePath);
@@ -713,8 +713,8 @@ describe("LSP diagnostics freshness", () => {
 		const clock = new VirtualClock(Date.now());
 		installVirtualTime(clock);
 
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["test-lsp", TEST_SERVER]]);
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["test-lsp", TEST_SERVER]]);
 		vi.spyOn(lspClient, "getOrCreateClient").mockResolvedValue(client);
 		vi.spyOn(lspClient, "syncContent").mockImplementation(async (mockClient, syncedFilePath) => {
 			const syncedUri = fileToUri(syncedFilePath);
@@ -771,8 +771,8 @@ describe("LSP diagnostics freshness", () => {
 		const clock = new VirtualClock(Date.now());
 		installVirtualTime(clock);
 
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["test-lsp", TEST_SERVER]]);
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["test-lsp", TEST_SERVER]]);
 		vi.spyOn(lspClient, "getOrCreateClient").mockResolvedValue(client);
 		vi.spyOn(lspClient, "syncContent").mockImplementation(async (mockClient, syncedFilePath) => {
 			const syncedUri = fileToUri(syncedFilePath);
@@ -827,8 +827,8 @@ describe("LSP diagnostics freshness", () => {
 		const clock = new VirtualClock(Date.now());
 		installVirtualTime(clock);
 
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["test-lsp", TEST_SERVER]]);
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["test-lsp", TEST_SERVER]]);
 		vi.spyOn(lspClient, "getOrCreateClient").mockResolvedValue(client);
 		vi.spyOn(lspClient, "syncContent").mockImplementation(async (mockClient, syncedFilePath) => {
 			mockClient.openFiles.set(fileToUri(syncedFilePath), {
@@ -892,11 +892,11 @@ describe("LSP diagnostics freshness", () => {
 			const client = createClient(tempDir.path(), server);
 			client.openFiles.set(uri, { version: 1, languageId: "typescript", lastUsedAt: Date.now() });
 
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "typescript-language-server": server },
 				idleTimeoutMs: undefined,
 			});
-			vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["typescript-language-server", server]]);
+			vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["typescript-language-server", server]]);
 			vi.spyOn(lspClient, "getOrCreateClient").mockResolvedValue(client);
 			vi.spyOn(lspClient, "syncContent").mockImplementation(async (mockClient, syncedFilePath) => {
 				const syncedUri = fileToUri(syncedFilePath);

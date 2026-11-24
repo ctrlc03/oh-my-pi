@@ -530,8 +530,8 @@ describe("lsp regressions", () => {
 					srv.exit(0);
 				}
 			});
-			const config = loadConfig(tempDir.path());
-			const serverConfig = getServersForFile(config, filePath)[0]?.[1];
+			const config = await loadConfig(tempDir.path());
+			const serverConfig = (await getServersForFile(config, filePath))[0]?.[1];
 			if (!serverConfig) throw new Error("Custom GDScript server was not loaded");
 
 			const client = await lspClient.getOrCreateClient(serverConfig, tempDir.path(), 1_000);
@@ -557,7 +557,7 @@ describe("lsp regressions", () => {
 			await Bun.write(filePath, "<h1><%= title %></h1>\n");
 			const server = installHandshakeLsp();
 			const config = { servers: DEFAULTS as unknown as Record<string, ServerConfig> };
-			const rubyLsp = getServersForFile(config, filePath).find(([name]) => name === "ruby-lsp")?.[1];
+			const rubyLsp = (await getServersForFile(config, filePath)).find(([name]) => name === "ruby-lsp")?.[1];
 			if (!rubyLsp) throw new Error("The bundled ruby-lsp does not claim .erb");
 
 			const client = await lspClient.getOrCreateClient(rubyLsp, tempDir.path(), 1_000);
@@ -900,7 +900,7 @@ describe("lsp regressions", () => {
 					srv.exit(0);
 				}
 			});
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: { "fake-lsp": serverConfig } });
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: { "fake-lsp": serverConfig } });
 			const client = await lspClient.getOrCreateClient(serverConfig, tempDir.path(), 1_000);
 			const targetPath = await openDocument(client, "target.ts");
 			client.diagnostics.set(fileToUri(targetPath), { diagnostics: [error], version: 1 });
@@ -965,7 +965,7 @@ describe("lsp regressions", () => {
 					srv.exit(0);
 				}
 			});
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: { "fake-lsp": serverConfig } });
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: { "fake-lsp": serverConfig } });
 			const client = await lspClient.getOrCreateClient(serverConfig, tempDir.path(), 1_000);
 			const targetPath = await openDocument(client, "target.ts");
 			const tool = new LspTool(makeLspSession(tempDir.path()));
@@ -1612,11 +1612,11 @@ describe("lsp regressions", () => {
 				rootMarkers: [],
 			};
 
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "rust-analyzer": server },
 				idleTimeoutMs: undefined,
 			});
-			vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["rust-analyzer", server]]);
+			vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["rust-analyzer", server]]);
 
 			const tool = new LspTool(makeLspSession(tempDir.path()));
 			const result = await tool.execute("rust-standalone-test", {
@@ -1772,7 +1772,7 @@ describe("lsp regressions", () => {
 					server.exit(0);
 				}
 			});
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "fake-jdtls": serverConfig },
 				idleTimeoutMs: undefined,
 			});
@@ -2408,11 +2408,11 @@ describe("lsp regressions", () => {
 					fileTypes: ["ts"],
 					rootMarkers: [],
 				};
-				vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+				vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 					servers: { "fake-lsp": serverConfig },
 					idleTimeoutMs: undefined,
 				});
-				vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["fake-lsp", serverConfig]]);
+				vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["fake-lsp", serverConfig]]);
 
 				const tool = new LspTool(makeLspSession(tempDir.path()));
 				const result = await tool.execute(`pull-diagnostics-${dynamicRegistration}`, {
@@ -2845,8 +2845,8 @@ describe("lsp regressions", () => {
 				resolveProjectLoaded: () => {},
 			};
 
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-			vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["test-lsp", server]]);
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+			vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["test-lsp", server]]);
 			vi.spyOn(lspClient, "getOrCreateClient").mockResolvedValue(client);
 
 			let poll = 0;
@@ -2900,11 +2900,11 @@ describe("lsp regressions", () => {
 				fileTypes: ["ts"],
 				rootMarkers: [],
 			};
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { broken: serverConfig },
 				idleTimeoutMs: undefined,
 			});
-			vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["broken", serverConfig]]);
+			vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["broken", serverConfig]]);
 			vi.spyOn(lspClient, "getOrCreateClient").mockRejectedValue(new Error("server exited with code 7"));
 
 			const tool = new LspTool(makeLspSession(tempDir.path()));
@@ -2931,7 +2931,7 @@ describe("lsp regressions", () => {
 		try {
 			const firstConfig: ServerConfig = { command: "broken-first", fileTypes: ["ts"], rootMarkers: [] };
 			const secondConfig: ServerConfig = { command: "broken-second", fileTypes: ["ts"], rootMarkers: [] };
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { first: firstConfig, second: secondConfig },
 				idleTimeoutMs: undefined,
 			});
@@ -2961,7 +2961,7 @@ describe("lsp regressions", () => {
 		const tempDir = TempDir.createSync("@omp-lsp-workspace-symbol-empty-");
 		try {
 			const serverConfig: ServerConfig = { command: "empty-lsp", fileTypes: ["ts"], rootMarkers: [] };
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { empty: serverConfig },
 				idleTimeoutMs: undefined,
 			});
@@ -2988,7 +2988,7 @@ describe("lsp regressions", () => {
 		try {
 			const brokenConfig: ServerConfig = { command: "broken-lsp", fileTypes: ["ts"], rootMarkers: [] };
 			const healthyConfig: ServerConfig = { command: "healthy-lsp", fileTypes: ["ts"], rootMarkers: [] };
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { broken: brokenConfig, healthy: healthyConfig },
 				idleTimeoutMs: undefined,
 			});
@@ -3123,7 +3123,7 @@ describe("lsp regressions", () => {
 			const localTsServer = path.join(binDir, "typescript-language-server.exe");
 			await Bun.write(localTsServer, "");
 
-			const config = loadConfig(tempDir.path());
+			const config = await loadConfig(tempDir.path());
 			expect(config.servers["typescript-language-server"]?.resolvedCommand).toBe(localTsServer);
 			expect(whichSpy).not.toHaveBeenCalledWith("typescript-language-server");
 		} finally {
@@ -3158,7 +3158,7 @@ describe("lsp regressions", () => {
 			vi.spyOn(Bun, "which").mockReturnValue(null);
 			try {
 				await writeTypescriptWorkspace(tempDir.path(), { tsserver: false, symlinkTsc: true });
-				const config = loadConfig(tempDir.path());
+				const config = await loadConfig(tempDir.path());
 				expect(Object.keys(config.servers)).toEqual(["typescript-native"]);
 				expect(config.servers["typescript-native"]?.resolvedCommand).toBe(
 					path.join(tempDir.path(), "node_modules", ".bin", "tsc"),
@@ -3175,7 +3175,7 @@ describe("lsp regressions", () => {
 			vi.spyOn(Bun, "which").mockReturnValue(null);
 			try {
 				await writeTypescriptWorkspace(tempDir.path(), { tsserver: true, symlinkTsc: false });
-				const config = loadConfig(tempDir.path());
+				const config = await loadConfig(tempDir.path());
 				expect(Object.keys(config.servers)).toEqual(["typescript-language-server"]);
 			} finally {
 				vi.restoreAllMocks();
@@ -3205,7 +3205,7 @@ describe("lsp regressions", () => {
 				await fs.promises.symlink(path.join("..", "@typescript", "old", "bin", "tsc"), path.join(binDir, "tsc"));
 				await Bun.write(path.join(binDir, "typescript-language-server"), "");
 
-				const config = loadConfig(root);
+				const config = await loadConfig(root);
 				expect(Object.keys(config.servers)).toEqual(["typescript-language-server"]);
 				expect(config.servers["typescript-language-server"]?.initOptions?.tsserver).toEqual({
 					fallbackPath: path.join(fs.realpathSync(oldDir), "lib", "tsserver.js"),
@@ -3225,7 +3225,7 @@ describe("lsp regressions", () => {
 				await fs.promises.mkdir(binDir, { recursive: true });
 				await Bun.write(path.join(binDir, "tsc"), "");
 				await Bun.write(path.join(binDir, "typescript-language-server"), "");
-				const config = loadConfig(tempDir.path());
+				const config = await loadConfig(tempDir.path());
 				expect(Object.keys(config.servers)).toEqual(["typescript-language-server"]);
 			} finally {
 				vi.restoreAllMocks();
@@ -3245,7 +3245,7 @@ describe("lsp regressions", () => {
 			const originalPath = process.env.PATH;
 			process.env.PATH = `${path.dirname(tsc)}${path.delimiter}${originalPath ?? ""}`;
 			try {
-				const config = loadConfig(project);
+				const config = await loadConfig(project);
 				expect(Object.keys(config.servers)).toEqual(["typescript-native"]);
 				expect(config.servers["typescript-native"]?.resolvedCommand).toBe(tsc);
 			} finally {
@@ -3270,7 +3270,7 @@ describe("lsp regressions", () => {
 			const localRuff = path.join(scriptsDir, "ruff.exe");
 			await Bun.write(localRuff, "");
 
-			const config = loadConfig(tempDir.path());
+			const config = await loadConfig(tempDir.path());
 			expect(config.servers.ruff?.resolvedCommand).toBe(localRuff);
 			expect(whichSpy).not.toHaveBeenCalledWith("ruff");
 		} finally {
@@ -3295,7 +3295,7 @@ describe("lsp regressions", () => {
 					const localRuff = path.join(scriptsDir, "ruff.exe");
 					await Bun.write(localRuff, "");
 
-					const config = loadConfig(tempDir.path());
+					const config = await loadConfig(tempDir.path());
 					expect(config.servers.ruff?.resolvedCommand).toBe(localRuff);
 				} finally {
 					tempDir.removeSync();
@@ -3327,7 +3327,7 @@ describe("lsp regressions", () => {
 					const localBin = path.join(scriptsDir, binary);
 					await Bun.write(localBin, "");
 
-					const config = loadConfig(tempDir.path());
+					const config = await loadConfig(tempDir.path());
 					expect(config.servers[server]?.resolvedCommand).toBe(localBin);
 				} finally {
 					tempDir.removeSync();
@@ -3352,15 +3352,11 @@ describe("lsp regressions", () => {
 		const whichSpy = vi
 			.spyOn(piUtils, "$which")
 			.mockImplementation(command => (command === "tlapm_lsp" ? resolvedTlapmLsp : null));
-		const existsSpy = vi
-			.spyOn(fs, "existsSync")
-			.mockImplementation(candidate => typeof candidate === "string" && candidate === specPath);
 
 		try {
-			const config = loadConfig(tempDir.path());
-			expect(getServersForFile(config, specPath).map(([name]) => name)).toEqual(["tlaplus"]);
+			const config = await loadConfig(tempDir.path());
+			expect((await getServersForFile(config, specPath)).map(([name]) => name)).toEqual(["tlaplus"]);
 			expect(whichSpy).toHaveBeenCalledWith("tlapm_lsp");
-			expect(existsSpy).toHaveBeenCalled();
 			expect(detectLanguageId(specPath)).toBe("tlaplus");
 			expect(detectLanguageId(aliasPath)).toBe("tlaplus");
 		} finally {
@@ -3451,10 +3447,12 @@ describe("lsp regressions", () => {
 		try {
 			await preloadPluginRoots(home, cwd);
 
-			const config = loadConfig(cwd);
+			const config = await loadConfig(cwd);
 
 			expect(config.servers["csharp-ls"]?.resolvedCommand).toBe(resolvedCsharpLs);
-			expect(getServersForFile(config, path.join(cwd, "Program.cs")).map(([name]) => name)).toEqual(["csharp-ls"]);
+			expect((await getServersForFile(config, path.join(cwd, "Program.cs"))).map(([name]) => name)).toEqual([
+				"csharp-ls",
+			]);
 			expect(config.servers["csharp-ls"]?.rootMarkers).toEqual(["."]);
 			expect(whichSpy).toHaveBeenCalledWith("csharp-ls");
 		} finally {
@@ -3503,7 +3501,7 @@ describe("lsp regressions", () => {
 				resolveProjectLoaded: () => {},
 			};
 
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "test-lsp": server },
 				idleTimeoutMs: undefined,
 			});
@@ -3613,7 +3611,7 @@ describe("lsp regressions", () => {
 				resolveProjectLoaded: () => {},
 			};
 
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "test-lsp": server },
 				idleTimeoutMs: undefined,
 			});
@@ -3697,7 +3695,7 @@ describe("lsp regressions", () => {
 				resolveProjectLoaded: () => {},
 			};
 
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "test-lsp": server },
 				idleTimeoutMs: undefined,
 			});
@@ -3771,7 +3769,7 @@ describe("lsp regressions", () => {
 				resolveProjectLoaded: () => {},
 			};
 
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "test-lsp": server },
 				idleTimeoutMs: undefined,
 			});
@@ -3833,7 +3831,7 @@ describe("lsp regressions", () => {
 				resolveProjectLoaded: () => {},
 			};
 
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "test-lsp": server },
 				idleTimeoutMs: undefined,
 			});
@@ -3895,7 +3893,7 @@ describe("lsp regressions", () => {
 				resolveProjectLoaded: () => {},
 			};
 
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "test-lsp": server },
 				idleTimeoutMs: undefined,
 			});
@@ -3966,11 +3964,11 @@ describe("lsp regressions", () => {
 				resolveProjectLoaded: () => {},
 			};
 
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "test-rs": server },
 				idleTimeoutMs: undefined,
 			});
-			vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["test-rs", server]]);
+			vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["test-rs", server]]);
 			vi.spyOn(lspClient, "getOrCreateClient").mockResolvedValue(client);
 			vi.spyOn(lspClient, "ensureFileOpen").mockResolvedValue();
 			vi.spyOn(lspClient, "sendNotification").mockResolvedValue();
@@ -4052,7 +4050,7 @@ describe("lsp regressions", () => {
 				resolveProjectLoaded: () => {},
 			};
 
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "test-lsp": server },
 				idleTimeoutMs: undefined,
 			});
@@ -4117,7 +4115,7 @@ describe("lsp regressions", () => {
 				},
 			};
 
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "test-lsp": server },
 				idleTimeoutMs: undefined,
 			});
@@ -4223,7 +4221,7 @@ describe("lsp regressions", () => {
 					srv.exit(0);
 				}
 			});
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "fake-gopls": serverConfig },
 				idleTimeoutMs: undefined,
 			});
@@ -4331,7 +4329,7 @@ describe("lsp regressions", () => {
 					srv.exit(0);
 				}
 			});
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "fake-pyls": serverConfig },
 				idleTimeoutMs: undefined,
 			});
@@ -4415,7 +4413,7 @@ describe("lsp regressions", () => {
 					srv.exit(0);
 				}
 			});
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "fake-pyls": serverConfig },
 				idleTimeoutMs: undefined,
 			});
@@ -4497,7 +4495,7 @@ describe("lsp regressions", () => {
 				isLinter: true,
 				...config,
 			};
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { [serverConfig.command]: serverConfig },
 				idleTimeoutMs: undefined,
 			});
@@ -5441,7 +5439,7 @@ describe("lsp regressions", () => {
 					srv.exit(0);
 				}
 			});
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "fake-pyls": serverConfig },
 				idleTimeoutMs: undefined,
 			});
@@ -6182,7 +6180,7 @@ describe("lsp regressions", () => {
 			await Bun.write(sourceFile, "# heading\n");
 
 			// Only a TS server is configured; .md should not trigger any willRenameFiles.
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "test-ts": { command: "test-ts", fileTypes: [".ts"], rootMarkers: [] } },
 				idleTimeoutMs: undefined,
 			});
@@ -6377,7 +6375,7 @@ describe("lsp regressions", () => {
 				initOptions: { generation: 2 },
 				settings: { diagnostics: true },
 			};
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "fake-lsp": newConfig },
 				idleTimeoutMs: undefined,
 			});
@@ -6426,7 +6424,7 @@ describe("lsp regressions", () => {
 
 			const newServer = installHandshakeLsp();
 			const newConfig: ServerConfig = { ...oldConfig, args: ["--mode", "new"] };
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "fake-lsp": newConfig },
 				idleTimeoutMs: undefined,
 			});
@@ -6476,7 +6474,7 @@ describe("lsp regressions", () => {
 
 			const newServer = installHandshakeLsp();
 			const newConfig: ServerConfig = { ...oldConfig, args: ["--mode", "new"] };
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "fake-lsp": newConfig },
 				idleTimeoutMs: undefined,
 			});
@@ -6552,7 +6550,7 @@ describe("lsp regressions", () => {
 			];
 			const loadConfigSpy = vi
 				.spyOn(lspConfig, "loadConfig")
-				.mockImplementation(() => configs.shift() ?? configs[0]);
+				.mockImplementation(async () => configs.shift() ?? configs[0]);
 			const client = { proc: { kill: vi.fn() }, config: server, openFiles: new Map() } as unknown as LspClient;
 			vi.spyOn(lspClient, "getOrCreateClient").mockResolvedValue(client);
 			vi.spyOn(lspClient, "sendNotification").mockResolvedValue(undefined);
@@ -6592,7 +6590,7 @@ describe("lsp regressions", () => {
 		// tsls has actually been spawned. Status must reflect that — claiming
 		// rust-analyzer is 'active' when the process never started was the
 		// original bug.
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 			servers: {
 				"rust-analyzer": { command: "rust-analyzer", fileTypes: [".rs"], rootMarkers: ["Cargo.toml"] },
 				"typescript-language-server": {
@@ -6632,7 +6630,7 @@ describe("lsp regressions", () => {
 					{ mode: 0o755 },
 				);
 				process.env.CARGO_HOME = cargoHome.path();
-				vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+				vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 					servers: {
 						"rust-analyzer": {
 							command: "rust-analyzer",
@@ -6706,13 +6704,13 @@ describe("lsp regressions", () => {
 			const tool = new LspTool(makeLspSession(tempDir.path()));
 			const references = { action: "references", file, line: 1, symbol: "target" } as const;
 
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: { ruff, pyright }, idleTimeoutMs: undefined });
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: { ruff, pyright }, idleTimeoutMs: undefined });
 			configCache.delete(tempDir.path());
 			await tool.execute("routed", references);
 			expect(requests).toContain("pyright textDocument/references");
 			expect(requests).not.toContain("ruff textDocument/references");
 
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: { ruff }, idleTimeoutMs: undefined });
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: { ruff }, idleTimeoutMs: undefined });
 			configCache.delete(tempDir.path());
 			const text = textResult(await tool.execute("unsupported", references));
 			expect(text).toContain("No configured language server for .py supports references");
@@ -6747,7 +6745,7 @@ describe("lsp regressions", () => {
 			};
 			const loadConfigSpy = vi
 				.spyOn(lspConfig, "loadConfig")
-				.mockImplementation(() => (loadConfigSpy.mock.calls.length === 1 ? empty : withServer));
+				.mockImplementation(async () => (loadConfigSpy.mock.calls.length === 1 ? empty : withServer));
 			// Prevent any real LSP subprocess from spawning when reload iterates
 			// the refreshed server list — the spawn path would race with the
 			// test's teardown.
@@ -6832,7 +6830,7 @@ describe("lsp regressions", () => {
 					}
 				});
 				const config: ServerConfig = { command: "fake-lsp", fileTypes: [".ts"], rootMarkers: [] };
-				vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+				vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 					servers: { "fake-lsp": config },
 					idleTimeoutMs: undefined,
 				});
@@ -6869,7 +6867,7 @@ describe("lsp regressions", () => {
 					}
 				});
 				const config: ServerConfig = { command: "rust-analyzer", fileTypes: [".rs"], rootMarkers: [] };
-				vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+				vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 					servers: { "rust-analyzer": config },
 					idleTimeoutMs: undefined,
 				});
@@ -6971,11 +6969,11 @@ describe("lsp regressions", () => {
 			});
 
 			const config: ServerConfig = { command: "fake-lsp", fileTypes: [".rs"], rootMarkers: [] };
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "fake-lsp": config },
 				idleTimeoutMs: undefined,
 			});
-			vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["fake-lsp", config]]);
+			vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["fake-lsp", config]]);
 
 			try {
 				const tool = new LspTool(makeLspSession(tempDir.path()));
@@ -7073,11 +7071,11 @@ describe("lsp regressions", () => {
 			});
 
 			const config: ServerConfig = { command: "dual-lsp", fileTypes: [".rs"], rootMarkers: [] };
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "dual-lsp": config },
 				idleTimeoutMs: undefined,
 			});
-			vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["dual-lsp", config]]);
+			vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["dual-lsp", config]]);
 
 			try {
 				const client = await lspClient.getOrCreateClient(config, tempDir.path());
@@ -7127,11 +7125,11 @@ describe("lsp regressions", () => {
 			});
 
 			const config: ServerConfig = { command: "push-lsp", fileTypes: [".ts"], rootMarkers: [] };
-			vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+			vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 				servers: { "push-lsp": config },
 				idleTimeoutMs: undefined,
 			});
-			vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([["push-lsp", config]]);
+			vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([["push-lsp", config]]);
 
 			try {
 				const client = await lspClient.getOrCreateClient(config, tempDir.path());
@@ -7187,7 +7185,7 @@ describe("lsp regressions", () => {
 					rootMarkers: [],
 					settings,
 				};
-				vi.spyOn(lspConfig, "loadConfig").mockReturnValue({
+				vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({
 					servers: { csharp: config },
 					idleTimeoutMs: undefined,
 				});
@@ -7577,19 +7575,19 @@ describe("lsp regressions", () => {
 });
 
 describe("clangd CUDA defaults", () => {
-	it("registers CUDA sources and headers", () => {
+	it("registers CUDA sources and headers", async () => {
 		const config = { servers: DEFAULTS as unknown as Record<string, ServerConfig> };
 		for (const file of ["kernel.cu", "kernel.cuh"]) {
-			const names = getServersForFile(config, file).map(([name]) => name);
+			const names = (await getServersForFile(config, file)).map(([name]) => name);
 			expect(names).toContain("clangd");
 		}
 	});
 });
 
 describe("expert elixir lsp", () => {
-	it("registers expert for .ex while keeping elixirls primary", () => {
+	it("registers expert for .ex while keeping elixirls primary", async () => {
 		const config = { servers: DEFAULTS as unknown as Record<string, ServerConfig> };
-		const names = getServersForFile(config, "lib/app.ex").map(([name]) => name);
+		const names = (await getServersForFile(config, "lib/app.ex")).map(([name]) => name);
 		expect(names).toContain("expert");
 		expect(names).toContain("elixirls");
 		expect(names.indexOf("elixirls")).toBeLessThan(names.indexOf("expert"));
@@ -7601,9 +7599,9 @@ describe("ty python lsp", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("registers ty for .py behind existing Python primaries and before ruff", () => {
+	it("registers ty for .py behind existing Python primaries and before ruff", async () => {
 		const config = { servers: DEFAULTS as unknown as Record<string, ServerConfig> };
-		const names = getServersForFile(config, "app.py").map(([name]) => name);
+		const names = (await getServersForFile(config, "app.py")).map(([name]) => name);
 		expect(names).toContain("ty");
 		expect(names).toContain("ruff");
 		// ty is behind all existing Python primaries
@@ -7614,9 +7612,9 @@ describe("ty python lsp", () => {
 		expect(names.indexOf("ty")).toBeLessThan(names.indexOf("ruff"));
 	});
 
-	it("registers ty for .pyi stub files", () => {
+	it("registers ty for .pyi stub files", async () => {
 		const config = { servers: DEFAULTS as unknown as Record<string, ServerConfig> };
-		const names = getServersForFile(config, "app.pyi").map(([name]) => name);
+		const names = (await getServersForFile(config, "app.pyi")).map(([name]) => name);
 		expect(names).toContain("ty");
 	});
 
@@ -7629,12 +7627,12 @@ describe("ty python lsp", () => {
 		);
 		try {
 			await Bun.write(path.join(tempDir.path(), "pyproject.toml"), '[project]\nname = "demo"\n');
-			const config = loadConfig(tempDir.path());
+			const config = await loadConfig(tempDir.path());
 			expect(config.servers.ty?.resolvedCommand).toBe(resolvedTy);
 			expect(config.servers.ruff?.resolvedCommand).toBe(resolvedRuff);
 			expect(config.servers.ruff?.isLinter).toBe(true);
 			expect(config.servers.ty?.isLinter).toBeFalsy();
-			const names = getServersForFile(config, path.join(tempDir.path(), "app.py")).map(([name]) => name);
+			const names = (await getServersForFile(config, path.join(tempDir.path(), "app.py"))).map(([name]) => name);
 			expect(names.indexOf("ty")).toBeLessThan(names.indexOf("ruff"));
 		} finally {
 			tempDir.removeSync();
@@ -7653,7 +7651,7 @@ describe("ty python lsp", () => {
 		try {
 			await Bun.write(path.join(tempDir.path(), "ty.toml"), "[configuration]\n");
 			await Bun.write(resolvedTy, '#!/bin/sh\nexec ty "$@"\n');
-			const config = loadConfig(tempDir.path());
+			const config = await loadConfig(tempDir.path());
 			expect(config.servers.ty?.resolvedCommand).toBe(resolvedTy);
 			expect(config.servers.ty?.command).toBe("ty");
 			expect(config.servers.ty?.args).toEqual(["server"]);

@@ -359,6 +359,11 @@ export class CodemapQuery {
 		});
 	}
 
+	/** Reads the repository files the synchronous queries depend on; {@link Codemap.open} awaits it before handing the query out. */
+	async load(): Promise<void> {
+		await this.#bridges.loadCircuits();
+	}
+
 	#rows<T>(sql: string, params: Array<string | number> = []): T[] {
 		return this.#db.db.query<T, Array<string | number>>(sql).all(...params);
 	}

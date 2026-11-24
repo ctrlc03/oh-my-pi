@@ -82,6 +82,8 @@
 ### Breaking Changes
 
 - The native shell Rust API now stores indexed variables as `IndexedArray` instead of `Vec`; construct `VarValue::Indexed` values with `items.into()`.
+- SDK: `AgentSession` emits `agent_end` once per run (when nothing can resume it) and the new `agent_pause` event for a loop that stops mid-run; `hasPendingAsyncWork()`, `settleAsyncWork()` and `suppressAutoResumeUntilPrompt()` are replaced by `isRunActive`, `wakeSources` and `waitForRunEnd()`, and a user-interrupt `abort()` also ends a run paused on background work. The RPC and JSON print streams, the collab wire and extension `agent_end` keep their per-loop flagged shape
+- SDK: `loadConfig`, `getConfig`, `hasRootMarkers`, `hasRootMarkerAncestor`, `resolveCommand`, `getAdapterConfigs`, `getAvailableAdapters`, `resolveAdapter`, `selectLaunchAdapter`, `discoverStartupLspServers` and `hasRustWorkspaceAncestor` now return promises (they no longer read the file system synchronously); `getLspServerForFileByPath` resolves one file's server without loading the whole configuration first.
 
 ### Added
 
@@ -104,6 +106,7 @@
 
 ### Fixed
 
+- LSP and DAP configuration, root-marker detection, local binary lookup and the code map's `Nargo.toml` reads are now asynchronous, so a project folder waiting on a macOS privacy prompt (or a slow file system) stalls only the operation that needs it instead of the whole process.
 - The agent no longer reports itself idle (program status, terminal title, registry status) while a subagent or background job it is waiting on can still resume it; the run ends only once nothing can wake it, including a child agent that finishes without replying
 - Subagents and security scans no longer finish while a child agent they started is still running or a peer message is queued for them: a subagent's `yield` waits until nothing can wake its run, as it already did for its background jobs
 - A compact approval prompt for a long compound bash command no longer drops the sandbox escalation and justification rows when it elides segments.

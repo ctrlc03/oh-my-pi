@@ -24,7 +24,7 @@
  * Linking is by name only: wrappers, variables, and renamed re-exports are
  * invisible, so these are leads to read, not proof.
  */
-import * as fs from "node:fs";
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import {
 	groupByScope,
@@ -499,9 +499,12 @@ export class Bridges {
 
 	// proves-with
 
-	/** Noir binary packages (`<pkg>/src/main.nr`), named by `Nargo.toml` and directory. */
-	circuits(): Circuit[] {
-		if (this.#circuits) return this.#circuits;
+	/**
+	 * Noir binary packages (`<pkg>/src/main.nr`), named by `Nargo.toml` and directory. Read once, asynchronously:
+	 * a manifest in a folder the user has not answered a privacy prompt for stalls its open, and the synchronous
+	 * lookups below would otherwise hold the whole process behind it.
+	 */
+	async loadCircuits(): Promise<void> {
 		const files = this.#rows<{ path: string }>(
 			"SELECT path FROM files WHERE path LIKE '%.nr' AND (path LIKE '%/src/main.nr' OR path = 'src/main.nr') ORDER BY path",
 		);
@@ -510,7 +513,7 @@ export class Bridges {
 			const dir = path.posix.dirname(path.posix.dirname(file.path));
 			const names = new Set<string>([path.posix.basename(dir === "." ? this.#src.root : dir)]);
 			try {
-				const manifest = fs.readFileSync(path.join(this.#src.root, dir, "Nargo.toml"), "utf8");
+				const manifest = await fs.readFile(path.join(this.#src.root, dir, "Nargo.toml"), "utf8");
 				const section = manifest.split(/^\s*\[package\]\s*$/m)[1]?.split(/^\s*\[/m)[0] ?? "";
 				const declared = /^\s*name\s*=\s*"([^"]+)"/m.exec(section)?.[1];
 				if (declared) names.add(declared);
@@ -524,7 +527,12 @@ export class Bridges {
 			circuits.push({ dir, names: [...names], main });
 		}
 		this.#circuits = circuits;
-		return circuits;
+	}
+
+	/** The circuits {@link loadCircuits} read. */
+	circuits(): Circuit[] {
+		if (this.#circuits === undefined) throw new Error("circuits read before loadCircuits");
+		return this.#circuits;
 	}
 
 	/** Circuits Rust may call `name` (package name, directory name, or the `Nargo.toml` name). */

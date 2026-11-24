@@ -7,7 +7,7 @@ import { encodeMessageFrame, MessageFramer } from "../jsonrpc/message-framing";
 import { ToolAbortError, throwIfAborted } from "../tools/tool-errors";
 import { resolveSyscallTarget } from "../tools/path-utils";
 import { findRepoRoot } from "../capability/fs";
-import { getConfig } from "./config";
+import { getConfig, peekConfig } from "./config";
 import { applyWorkspaceEdit, type ExecutedWorkspaceChange } from "./edits";
 import { getLspmuxCommand, isLspmuxSupported } from "./lspmux";
 import { daemonClient } from "../daemon/client";
@@ -333,12 +333,14 @@ export function isIdleClient(client: LspClient, now: number, timeoutMs: number):
 
 function hasConfiguredIdleTimeout(client?: LspClient): boolean {
 	if (idleTimeoutMs && idleTimeoutMs > 0) return true;
+	// The idle checker is a background path: it reads only already-loaded configuration, so a folder whose privacy
+	// prompt is still unanswered can never be touched from here.
 	if (client) {
-		const timeoutMs = getConfig(client.cwd).idleTimeoutMs;
+		const timeoutMs = peekConfig(client.cwd)?.idleTimeoutMs;
 		if (timeoutMs && timeoutMs > 0) return true;
 	}
 	for (const c of clients.values()) {
-		const timeoutMs = getConfig(c.cwd).idleTimeoutMs;
+		const timeoutMs = peekConfig(c.cwd)?.idleTimeoutMs;
 		if (timeoutMs && timeoutMs > 0) return true;
 	}
 	return false;
@@ -384,7 +386,7 @@ function maybeStopIdleChecker(): void {
 export async function checkIdleClients(): Promise<void> {
 	const now = Date.now();
 	for (const [key, client] of Array.from(clients.entries())) {
-		const timeoutMs = idleTimeoutMs ?? getConfig(client.cwd).idleTimeoutMs;
+		const timeoutMs = idleTimeoutMs ?? peekConfig(client.cwd)?.idleTimeoutMs;
 		if (timeoutMs && timeoutMs > 0 && isIdleClient(client, now, timeoutMs)) {
 			await shutdownClient(key);
 		}

@@ -1123,7 +1123,10 @@ const hibernation = createHibernation({
 		const target = await companionTmuxSession(host.instanceId);
 		return {
 			startedHere: target !== null,
-			personal: personal.isPersonalHost(host) || personal.exempt(host.sessionId),
+			personal:
+				personal.resolvedFolder(host.cwd) === undefined
+					? personal.exempt(host.sessionId)
+					: (await personal.isPersonalHost(host)) || personal.exempt(host.sessionId),
 			watchingPr: await watchesPullRequest(path.join(configDir, "run", "pr-watch"), host.sessionId, Date.now()),
 			// Unknown counts as attached: a terminal someone looks at is never pulled out from under them.
 			attached: target === null ? true : ((await tmuxAttached(target.tmux, target.name)) ?? true),
@@ -1131,7 +1134,12 @@ const hibernation = createHibernation({
 	},
 	touchedAt: async sessionId => {
 		const file = await findSessionFile(personal.sessionDirs(), sessionId);
-		return file === null ? null : await fs.stat(file).then(stat => stat.mtimeMs, () => null);
+		return file === null
+			? null
+			: await fs.stat(file).then(
+					stat => stat.mtimeMs,
+					() => null,
+				);
 	},
 	exists: async sessionId => (await findSessionFile(personal.sessionDirs(), sessionId)) !== null,
 	folderExists: folder =>
@@ -1153,7 +1161,15 @@ const hibernation = createHibernation({
 		return true;
 	},
 	resume: async session =>
-		startSession(session.cwd, session.sessionId, session.sandboxed, undefined, undefined, undefined, session.maxCostUsd),
+		startSession(
+			session.cwd,
+			session.sessionId,
+			session.sandboxed,
+			undefined,
+			undefined,
+			undefined,
+			session.maxCostUsd,
+		),
 	lock: sessionLock,
 	onChange: () => void refresh(),
 	onError: err => console.error(`companion: hibernating sessions failed: ${errorText(err)}`),
@@ -1603,7 +1619,8 @@ async function startSession(
 					plan ? host.sessionId === resume : host.sessionId.startsWith(resume),
 				);
 				if (live) {
-					if (prompt !== undefined) throw new Error("that session is already open; the scheduled prompt was not sent");
+					if (prompt !== undefined)
+						throw new Error("that session is already open; the scheduled prompt was not sent");
 					return live.instanceId;
 				}
 				// A vendor session has no omp process another terminal could hold.
@@ -1794,7 +1811,7 @@ async function companionTmuxSession(instanceId: string): Promise<{ tmux: string;
 /** End a session the companion started: its tmux session is killed. */
 async function stopSession(instanceId: string): Promise<void> {
 	const host = knownHosts.find(h => h.instanceId === instanceId);
-	if (host !== undefined && personal.isPersonalHost(host))
+	if (host !== undefined && (await personal.isPersonalHost(host)))
 		throw new Error("The Personal agent is stopped from Settings → Personal agent");
 	const target = await companionTmuxSession(instanceId);
 	if (target === null) throw new Error("only sessions the companion started can be ended from here");
@@ -1812,9 +1829,13 @@ const sessionDelete = createSessionDelete({
 	protectedDirs: () => personal.sessionDirs().slice(1),
 	now: Date.now,
 	lock: sessionLock,
+	// The Personal supervisor resolves every listed folder each poll; the delete check reads that cache rather than
+	// waiting on a folder lookup, and a folder not resolved yet is simply not the Personal session's.
 	isPersonal: sessionId =>
 		personal.exempt(sessionId) ||
-		knownHosts.some(host => host.sessionId === sessionId && personal.isPersonalHost(host)),
+		knownHosts.some(
+			host => host.sessionId === sessionId && personal.resolvedFolder(host.cwd) === personal.workspaceReal,
+		),
 	live: async () => {
 		const { hosts, idle } = await loadSessions();
 		return [...hosts, ...idle].map(session => ({ instanceId: session.instanceId, sessionId: session.sessionId }));
@@ -2106,7 +2127,8 @@ async function fanoutKeep(input: unknown): Promise<FanoutKeepResult> {
 		// A hibernated loser would resume into the folder just removed, and fail every time it is opened.
 		removed: run => {
 			for (const session of hibernation.list())
-				if (session.cwd === run.path || session.instanceId === run.instanceId) hibernation.forget(session.sessionId);
+				if (session.cwd === run.path || session.instanceId === run.instanceId)
+					hibernation.forget(session.sessionId);
 		},
 	});
 	await saveGroups(fanoutPath, fanoutGroups);
@@ -2483,8 +2505,15 @@ room.onFrame = (frame, fromPeer) => {
 				// A fresh list: a session may have asked or finished since the last poll.
 				const { hosts } = await loadSessions();
 				// A hibernated session's last turn stays news; one already running again is listed as a host.
-				const asleep = hibernation.list().filter(session => !hosts.some(host => host.sessionId === session.sessionId));
-				const items = await buildInbox(hosts, asleep, id => readSessionTail(personal.sessionDirs(), id), Date.now());
+				const asleep = hibernation
+					.list()
+					.filter(session => !hosts.some(host => host.sessionId === session.sessionId));
+				const items = await buildInbox(
+					hosts,
+					asleep,
+					id => readSessionTail(personal.sessionDirs(), id),
+					Date.now(),
+				);
 				return { t: "inbox", reqId: frame.reqId, items };
 			});
 			return;

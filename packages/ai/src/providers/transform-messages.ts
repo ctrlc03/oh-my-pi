@@ -1211,6 +1211,13 @@ export function transformMessages<TApi extends Api>(
 					if (carriesSameModelReasoning && sanitized.summary === false) {
 						return { type: "thinking" as const, thinking: sanitized.thinking, [kCarriedReasoning]: true };
 					}
+					// A reader whose input classifier refuses replayed reasoning (the
+					// `classifier-cot-extraction` catalog axis: Anthropic's reasoning_extraction)
+					// gets none. Bare prose only lowers each block's signal and the heat is
+					// cumulative: a long run of another model's turns (observed live: 37 local
+					// Qwen turns continued on Claude) refuses every request until it leaves the
+					// context. The visible replies and tool calls still carry what was done.
+					if (resolveCatalogPolicy(model).classifierCotExtraction === true) return [];
 					// Other cross-API targets (openai-responses encrypted blobs, google
 					// thought parts, anthropic-target from a non-Anthropic source, or any
 					// reasoning-disabled target) can't replay an unsigned thinking block:

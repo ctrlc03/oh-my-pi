@@ -30,20 +30,20 @@ describe("nested project roots", () => {
 
 	test("enables a server for files under a marker below the cwd", async () => {
 		const root = await project();
-		const config = loadConfig(root);
+		const config = await loadConfig(root);
 		expect(config.servers["xyz-ls"]).toBeUndefined();
 
-		const servers = getServersForFile(config, path.join(root, "apps", "web", "src", "main.xyz"));
+		const servers = await getServersForFile(config, path.join(root, "apps", "web", "src", "main.xyz"));
 		expect(servers.map(([name]) => name)).toEqual(["xyz-ls"]);
 		expect(config.servers["xyz-ls"]?.resolvedCommand).toBe(process.execPath);
 	});
 
 	test("names the missing marker when no ancestor has one", async () => {
 		const root = await project();
-		const config = loadConfig(root);
+		const config = await loadConfig(root);
 		const loose = path.join(root, "scripts", "loose.xyz");
 
-		expect(getServersForFile(config, loose)).toEqual([]);
+		expect(await getServersForFile(config, loose)).toEqual([]);
 		expect(describeMissingServers(config, loose)).toContain("xyz-ls: no xyz.project");
 	});
 });

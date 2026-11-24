@@ -65,10 +65,9 @@ export function shutdownClientInstance(client: LspClient): Promise<boolean>;
 
 // config
 export const configCache: Map<string, LspConfig>;
-export function getConfig(cwd: string): LspConfig;
 
 // servers
-export function getLspServerForFile(config: LspConfig, filePath: string): [string, ServerConfig] | null;
+export function getLspServerForFileByPath(cwd: string, filePath: string): Promise<[string, ServerConfig] | null>;
 export function isProjectAwareLspServer(config: ServerConfig): boolean;
 
 // utils

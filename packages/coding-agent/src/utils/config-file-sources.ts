@@ -1,4 +1,4 @@
-import * as fs from "node:fs";
+import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { getConfigDirPaths } from "../config";
@@ -9,7 +9,7 @@ export type ConfigFileAdapter<T> = (content: string, filePath: string) => T | nu
 
 /** One entry of a config stack; `read` yields `null` for unreadable or rejected files. */
 export interface ConfigFileSource<T> {
-	read(): T | null;
+	read(): Promise<T | null>;
 }
 
 /**
@@ -18,9 +18,10 @@ export interface ConfigFileSource<T> {
  * skipped instead of thrown. `adapt` receives the raw content because the YAML/JSON
  * split lives with the config files that consume this walk, not here.
  */
-export function readConfigFile<T>(filePath: string, adapt: ConfigFileAdapter<T>): T | null {
+export async function readConfigFile<T>(filePath: string, adapt: ConfigFileAdapter<T>): Promise<T | null> {
 	try {
-		const content = fs.readFileSync(filePath, "utf-8");
+		// Asynchronous so a macOS privacy prompt on a protected folder holds only this read, not the companion's thread.
+		const content = await fs.readFile(filePath, "utf-8");
 		return adapt(content, filePath);
 	} catch {
 		return null;

@@ -85,8 +85,8 @@ describe("EditTool patch post-write verification", () => {
 		const absolutePath = path.join(tempDir, relPath);
 		await fs.writeFile(absolutePath, original);
 
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([
 			["formatter", createFormatter(["py"], async () => original)],
 		]);
 		vi.spyOn(lspClient, "notifyWorkspaceWatchedFiles").mockResolvedValue();
@@ -117,8 +117,8 @@ describe("EditTool patch post-write verification", () => {
 		const budget = new AbortController();
 		const realTimeout = AbortSignal.timeout.bind(AbortSignal);
 		vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => (ms === 5_000 ? budget.signal : realTimeout(ms)));
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([
 			["formatter", createFormatter(["py"], async () => original)],
 		]);
 		vi.spyOn(lspClient, "notifyWorkspaceWatchedFiles").mockImplementation(async (_cwd, _changes, notifySignal) => {
@@ -154,8 +154,8 @@ describe("EditTool patch post-write verification", () => {
 		await fs.writeFile(secondPath, "export const b = 1;\n");
 		await fs.writeFile(thirdPath, "export const c = 1;\n");
 
-		vi.spyOn(lspConfig, "loadConfig").mockReturnValue({ servers: {}, idleTimeoutMs: undefined });
-		vi.spyOn(lspConfig, "getServersForFile").mockReturnValue([
+		vi.spyOn(lspConfig, "loadConfig").mockResolvedValue({ servers: {}, idleTimeoutMs: undefined });
+		vi.spyOn(lspConfig, "getServersForFile").mockResolvedValue([
 			["formatter", createFormatter(["ts"], async (_filePath, content) => content.replace(/  +/g, " "))],
 		]);
 		vi.spyOn(lspClient, "notifyWorkspaceWatchedFiles").mockResolvedValue();

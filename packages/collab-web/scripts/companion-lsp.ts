@@ -215,7 +215,7 @@ async function withTarget<T>(
 	const scope = await repoScope(cwd);
 	const abs = await resolveInScope(cwd, scope, file);
 	if (abs === null) throw new Error("file not found");
-	const found = mod.servers.getLspServerForFile(mod.config.getConfig(scope.base), abs);
+	const found = await mod.servers.getLspServerForFileByPath(scope.base, abs);
 	if (found === null) {
 		const ext = path.extname(abs) || path.basename(abs);
 		return { kind: "unavailable", reason: `no language server is configured or installed for ${ext} files` };

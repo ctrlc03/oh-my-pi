@@ -162,6 +162,10 @@
 
 - Added automatic detection of thinking capabilities for previously unknown models, with persistent results and support for alternate effort and token-budget request formats.
 
+### Fixed
+
+- A session continued on Claude after turns from another model (for example local models) no longer has every request refused with `Refusal (reasoning_extraction)`: for readers whose classifier refuses replayed reasoning (the `classifier-cot-extraction` catalog axis), `transformMessages` drops the other model's reasoning instead of demoting it to text. Their visible replies and tool calls are kept.
+
 ## [18.20.3] - 2026-11-16
 
 ### Breaking Changes

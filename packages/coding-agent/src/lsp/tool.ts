@@ -42,7 +42,7 @@ import {
 } from "./client";
 import { getLinterClient } from "./clients";
 import { locationsNotMentioning, missingOccurrencesNote } from "./completeness";
-import { configCache, describeMissingServers, getConfig, getServersForFile } from "./config";
+import { configCache, describeMissingServers, getConfig, getServersForFile, type LspConfig } from "./config";
 import {
 	BATCH_DIAGNOSTICS_WAIT_TIMEOUT_MS,
 	formatLocationWithContext,
@@ -68,7 +68,7 @@ import {
 } from "./edits";
 import { detectLspmux } from "./lspmux";
 import {
-	getLspServerForFile,
+	getLspServerForFileByPath,
 	getLspServers,
 	getLspServersForFile,
 	isMethodNotFoundError,
@@ -383,10 +383,20 @@ export class LspTool implements AgentTool<typeof lspSchema, LspToolDetails, Them
 			throw new ToolAbortError();
 		};
 
-		const config = getConfig(this.session.cwd);
+		// Configuration is cached per cwd; actions that route over the whole map load it once here, so they are bound
+		// by the call's own deadline as one budget. Actions about a single file resolve their server per file against
+		// the same cache; their probe reads at most the folders that question needs, so a folder whose privacy prompt
+		// is still unanswered can delay them but never a map-wide walk.
+		const config = await Promise.race([
+			getConfig(this.session.cwd),
+			// `untilAborted` cannot drop an in-flight read, so an unanswered prompt delays this row no longer than its
+			// own timeout; the promise result is still discarded and the cache finishes populating on its own.
+			untilAborted(signal, () => new Promise<LspConfig>(() => {})),
+		]);
 
 		// Status action doesn't need a file
 		if (action === "status") {
+			const config = await getConfig(this.session.cwd);
 			const configuredNames = Object.keys(config.servers);
 			const lspmuxState = await detectLspmux();
 			const lspmuxStatus = lspmuxState.available
@@ -495,7 +505,9 @@ export class LspTool implements AgentTool<typeof lspSchema, LspToolDetails, Them
 			for (const target of targets) {
 				throwIfAborted(signal);
 				const resolved = resolveToCwd(target, this.session.cwd);
-				const servers = getServersForFile(config, resolved);
+				// Diagnostics run whether or not the primary server matches, so consult every server for the file.
+				const config = await getConfig(this.session.cwd);
+				const servers = await getServersForFile(config, resolved);
 				if (servers.length === 0) {
 					results.push(`${statusSymbol("error")} ${target}: ${describeMissingServers(config, resolved)}`);
 					continue;
@@ -761,18 +773,20 @@ export class LspTool implements AgentTool<typeof lspSchema, LspToolDetails, Them
 			// language servers and hit the wall-clock timeout. A server only has
 			// something useful to say about a rename if it understands one of the
 			// affected file extensions.
+			// The config cache is warm for this cwd; reading it adds no file-system work to the rename.
+			const config = await getConfig(this.session.cwd);
 			const allLspServers = getLspServers(config);
 			const relevantNames = new Set<string>();
-			const collectRelevant = (filePath: string) => {
-				for (const [name] of getLspServersForFile(config, filePath)) {
+			const collectRelevant = async (filePath: string) => {
+				for (const [name] of await getLspServersForFile(config, filePath)) {
 					relevantNames.add(name);
 				}
 			};
-			collectRelevant(source);
-			collectRelevant(dest);
+			await collectRelevant(source);
+			await collectRelevant(dest);
 			for (const pair of pairs) {
-				collectRelevant(uriToFile(pair.oldUri));
-				collectRelevant(uriToFile(pair.newUri));
+				await collectRelevant(uriToFile(pair.oldUri));
+				await collectRelevant(uriToFile(pair.newUri));
 			}
 			const servers = allLspServers.filter(([name]) => relevantNames.has(name));
 			const respondingServers = new Set<string>();
@@ -1057,7 +1071,10 @@ export class LspTool implements AgentTool<typeof lspSchema, LspToolDetails, Them
 			let serverList: Array<[string, ServerConfig]>;
 			if (file && file !== "*") {
 				const resolved = resolveToCwd(file, this.session.cwd);
-				serverList = getLspServersForFile(config, resolved);
+				// Per-file resolution: a single file's capabilities must not wait on a privacy prompt blocking the
+				// sibling-project walk a full-map load would perform.
+				const one = await getLspServerForFileByPath(this.session.cwd, resolved);
+				serverList = one ? [one] : [];
 				if (serverList.length === 0) {
 					return {
 						content: [{ type: "text", text: "No language server found for this file" }],
@@ -1065,6 +1082,7 @@ export class LspTool implements AgentTool<typeof lspSchema, LspToolDetails, Them
 					};
 				}
 			} else {
+				const config = await getConfig(this.session.cwd);
 				serverList = getLspServers(config);
 			}
 
@@ -1123,7 +1141,9 @@ export class LspTool implements AgentTool<typeof lspSchema, LspToolDetails, Them
 			let resolvedTarget: string | null = null;
 			if (file && file !== "*") {
 				resolvedTarget = resolveToCwd(file, this.session.cwd);
-				chosenServer = getLspServerForFile(config, resolvedTarget);
+				// Resolve the server for this one file instead of holding the whole workspace config: the probe
+				// stops early at the first root marker hit.
+				chosenServer = await getLspServerForFileByPath(this.session.cwd, resolvedTarget);
 				if (!chosenServer) {
 					return {
 						content: [{ type: "text", text: "No language server found for this file" }],
@@ -1131,7 +1151,8 @@ export class LspTool implements AgentTool<typeof lspSchema, LspToolDetails, Them
 					};
 				}
 			} else {
-				const all = getLspServers(config);
+				// A raw request with no file targets the session root, so resolve over the workspace config there.
+				const all = getLspServers(await getConfig(this.session.cwd));
 				if (all.length === 0) {
 					return {
 						content: [{ type: "text", text: "No language servers configured" }],
@@ -1225,7 +1246,7 @@ export class LspTool implements AgentTool<typeof lspSchema, LspToolDetails, Them
 					details: { action, success: false, request: params },
 				};
 			}
-			const servers = getLspServers(config);
+			const servers = getLspServers(await getConfig(this.session.cwd));
 			if (servers.length === 0) {
 				return {
 					content: [{ type: "text", text: "No language server found for this action" }],
@@ -1339,9 +1360,11 @@ export class LspTool implements AgentTool<typeof lspSchema, LspToolDetails, Them
 			// disk. Drop the per-cwd cache entry so `.omp/lsp.json`, root markers,
 			// and plugin configs added after the first LSP call become visible —
 			// otherwise `getConfig` returns the first observation for the rest of
-			// the process lifetime (#3546).
+			// the process lifetime (#3546). The walk stays cached beyond this row: it is a request, not a channel,
+			// and a folder still holding an unanswered privacy prompt gives up at the row deadline like any other
+			// slow step instead of blocking the companion indefinitely.
 			configCache.delete(this.session.cwd);
-			const refreshedConfig = getConfig(this.session.cwd);
+			const refreshedConfig = await getConfig(this.session.cwd);
 			reconcileIdleChecker();
 			const servers = getLspServers(refreshedConfig);
 			// Identity-aware client keys make a changed server resolve to a fresh
@@ -1388,7 +1411,7 @@ export class LspTool implements AgentTool<typeof lspSchema, LspToolDetails, Them
 			};
 		}
 
-		const candidates = resolvedFile ? getLspServersForFile(config, resolvedFile) : [];
+		const candidates = resolvedFile ? await getLspServersForFile(config, resolvedFile) : [];
 		if (candidates.length === 0) {
 			return {
 				content: [
@@ -1434,7 +1457,10 @@ export class LspTool implements AgentTool<typeof lspSchema, LspToolDetails, Them
 			const needsProjectIndex =
 				targetFile !== null && PROJECT_INDEXED_ACTIONS.has(action) && isProjectAwareLspServer(serverConfig);
 			const rustWorkspaceWait =
-				needsProjectIndex && isRustAnalyzerServer && targetFile !== null && hasRustWorkspaceAncestor(targetFile);
+				needsProjectIndex &&
+				isRustAnalyzerServer &&
+				targetFile !== null &&
+				(await hasRustWorkspaceAncestor(targetFile));
 
 			let reconciledFromDisk = false;
 			if (targetFile) {

@@ -1,4 +1,5 @@
-import * as fs from "node:fs";
+import * as fs from "node:fs/promises";
+import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { $which, isRecord, logger, pathIsWithin, type WhichOptions } from "@oh-my-pi/pi-utils";
 import { YAML } from "bun";
@@ -180,7 +181,7 @@ function applyRuntimeDefaults(servers: Record<string, ServerConfig>): Record<str
 /**
  * Check if any root marker file exists in the directory
  */
-export function hasRootMarkers(cwd: string, markers: string[]): boolean {
+export async function hasRootMarkers(cwd: string, markers: string[]): Promise<boolean> {
 	let entries: string[] | null = null;
 	for (const marker of markers) {
 		// Handle glob-like patterns (e.g., "*.cabal"). Root markers live at the
@@ -189,7 +190,9 @@ export function hasRootMarkers(cwd: string, markers: string[]): boolean {
 		if (marker.includes("*")) {
 			if (entries === null) {
 				try {
-					entries = fs.readdirSync(cwd);
+					// Asynchronous: a folder the user has not answered a privacy prompt for stalls its open, and a
+					// synchronous list here would hold the whole process behind it.
+					entries = await fs.readdir(cwd);
 				} catch {
 					entries = [];
 					logger.warn("Failed to list directory for glob root marker.", { marker, cwd });
@@ -204,7 +207,7 @@ export function hasRootMarkers(cwd: string, markers: string[]): boolean {
 			continue;
 		}
 		const filePath = path.join(cwd, marker);
-		if (fs.existsSync(filePath)) {
+		if (await pathExists(filePath)) {
 			return true;
 		}
 	}
@@ -214,12 +217,12 @@ export function hasRootMarkers(cwd: string, markers: string[]): boolean {
 /**
  * Check whether any ancestor directory of a file is an LSP project root.
  */
-export function hasRootMarkerAncestor(filePath: string, markers: string[]): boolean {
+export async function hasRootMarkerAncestor(filePath: string, markers: string[]): Promise<boolean> {
 	if (markers.length === 0) return false;
 
 	let dir = path.dirname(path.resolve(filePath));
 	while (true) {
-		if (hasRootMarkers(dir, markers)) return true;
+		if (await hasRootMarkers(dir, markers)) return true;
 		const parent = path.dirname(dir);
 		if (parent === dir) return false;
 		dir = parent;
@@ -265,23 +268,33 @@ const LOCAL_BIN_PATHS: Array<{ markers: string[]; binDir: string }> = [
 
 const WINDOWS_LOCAL_EXECUTABLE_EXTENSIONS = [".exe", ".cmd", ".bat"] as const;
 
-function resolveLocalCommand(basePath: string): string | null {
-	if (fs.existsSync(basePath)) return basePath;
+/** Whether `filePath` exists; asynchronous so a prompting or slow file system never blocks the event loop. */
+async function pathExists(filePath: string): Promise<boolean> {
+	try {
+		await fs.access(filePath);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function resolveLocalCommand(basePath: string): Promise<string | null> {
+	if (await pathExists(basePath)) return basePath;
 	if (process.platform !== "win32") return null;
 
 	// Package managers write Windows launchers with executable suffixes in node_modules/.bin.
 	for (const extension of WINDOWS_LOCAL_EXECUTABLE_EXTENSIONS) {
 		const candidate = `${basePath}${extension}`;
-		if (fs.existsSync(candidate)) return candidate;
+		if (await pathExists(candidate)) return candidate;
 	}
 
 	return null;
 }
 
-function resolveCommandFromLocalRoot(command: string, cwd: string): string | null {
+async function resolveCommandFromLocalRoot(command: string, cwd: string): Promise<string | null> {
 	for (const { markers, binDir } of LOCAL_BIN_PATHS) {
-		if (!hasRootMarkers(cwd, markers)) continue;
-		const resolved = resolveLocalCommand(path.join(cwd, binDir, command));
+		if (!(await hasRootMarkers(cwd, markers))) continue;
+		const resolved = await resolveLocalCommand(path.join(cwd, binDir, command));
 		if (resolved) return resolved;
 	}
 	return null;
@@ -301,14 +314,18 @@ export interface ResolveCommandOptions extends Pick<WhichOptions, "cache" | "PAT
  * @param cwd - Working directory to search from
  * @returns Absolute path to the executable, or null if not found
  */
-export function resolveCommand(command: string, cwd: string, options?: ResolveCommandOptions): string | null {
+export async function resolveCommand(
+	command: string,
+	cwd: string,
+	options?: ResolveCommandOptions,
+): Promise<string | null> {
 	if (options?.localRoots) {
 		for (const root of options.localRoots) {
-			const resolved = resolveCommandFromLocalRoot(command, root);
+			const resolved = await resolveCommandFromLocalRoot(command, root);
 			if (resolved) return resolved;
 		}
 	} else {
-		const resolved = resolveCommandFromLocalRoot(command, cwd);
+		const resolved = await resolveCommandFromLocalRoot(command, cwd);
 		if (resolved) return resolved;
 	}
 
@@ -324,10 +341,10 @@ export function resolveCommand(command: string, cwd: string, options?: ResolveCo
  * Directory of the package that owns a resolved `tsc`/`tsgo` launcher, or null
  * when the layout is not a recognizable npm install.
  */
-function typescriptPackageDir(tscPath: string): string | null {
+async function typescriptPackageDir(tscPath: string): Promise<string | null> {
 	let realPath = tscPath;
 	try {
-		realPath = fs.realpathSync(tscPath);
+		realPath = await fs.realpath(tscPath);
 	} catch {}
 	const binDir = path.dirname(tscPath);
 	const candidates = [
@@ -339,7 +356,7 @@ function typescriptPackageDir(tscPath: string): string | null {
 		path.join(binDir, "node_modules", "typescript"),
 	];
 	for (const dir of candidates) {
-		if (fs.existsSync(path.join(dir, "package.json"))) return dir;
+		if (await pathExists(path.join(dir, "package.json"))) return dir;
 	}
 	return null;
 }
@@ -351,9 +368,10 @@ function typescriptPackageDir(tscPath: string): string | null {
  * Outside an npm layout (e.g. nixpkgs) ask the compiler for its version, run in
  * `cwd` so version-manager shims resolve the project's pinned TypeScript.
  */
-function typescriptSpeaksLsp(tscPath: string, cwd: string): boolean {
-	const packageDir = typescriptPackageDir(tscPath);
-	if (packageDir !== null) return !fs.existsSync(path.join(packageDir, "lib", "tsserver.js"));
+async function typescriptSpeaksLsp(tscPath: string, cwd: string): Promise<boolean> {
+	const packageDir = await typescriptPackageDir(tscPath);
+	if (packageDir !== null) return !(await pathExists(path.join(packageDir, "lib", "tsserver.js")));
+	if (!existsSync(tscPath)) return false; // A process spawn cannot be aborted mid-syscall; prove the path first.
 	try {
 		const { stdout } = Bun.spawnSync([tscPath, "--version"], { cwd, stderr: "ignore", timeout: 3_000 });
 		const major = /^Version (\d+)\./.exec(stdout.toString())?.[1];
@@ -368,16 +386,16 @@ function typescriptSpeaksLsp(tscPath: string, cwd: string): boolean {
  * `lib/tsserver.js`, which a TypeScript 7 workspace no longer ships, so it fails
  * at initialize there; `tsc --lsp` exits on older TypeScript.
  */
-function selectTypescriptServer(servers: Record<string, ServerConfig>, cwd: string): void {
+async function selectTypescriptServer(servers: Record<string, ServerConfig>, cwd: string): Promise<void> {
 	const native = servers["typescript-native"];
 	if (!native?.resolvedCommand) return;
-	if (typescriptSpeaksLsp(native.resolvedCommand, cwd)) {
+	if (await typescriptSpeaksLsp(native.resolvedCommand, cwd)) {
 		delete servers["typescript-language-server"];
 		return;
 	}
 	delete servers["typescript-native"];
 	const server = servers["typescript-language-server"];
-	const packageDir = typescriptPackageDir(native.resolvedCommand);
+	const packageDir = await typescriptPackageDir(native.resolvedCommand);
 	if (!server || packageDir === null) return;
 	// The choice above inspected the package behind `tsc`, but typescript-language-server
 	// loads `node_modules/typescript`. Alias layouts split the two (`typescript` →
@@ -396,7 +414,7 @@ function selectTypescriptServer(servers: Record<string, ServerConfig>, cwd: stri
 	};
 }
 
-function readMarketplaceLspConfig(root: ClaudePluginRoot): NormalizedConfig | null {
+async function readMarketplaceLspConfig(root: ClaudePluginRoot): Promise<NormalizedConfig | null> {
 	const catalogPaths = [
 		path.resolve(root.path, "..", "..", "marketplace.json"),
 		path.resolve(root.path, "..", "..", ".claude-plugin", "marketplace.json"),
@@ -404,7 +422,7 @@ function readMarketplaceLspConfig(root: ClaudePluginRoot): NormalizedConfig | nu
 
 	for (const catalogPath of catalogPaths) {
 		try {
-			const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf-8")) as unknown;
+			const catalog = JSON.parse(await fs.readFile(catalogPath, "utf-8")) as unknown;
 			if (!isRecord(catalog) || !Array.isArray(catalog.plugins)) continue;
 
 			for (const plugin of catalog.plugins) {
@@ -414,7 +432,7 @@ function readMarketplaceLspConfig(root: ClaudePluginRoot): NormalizedConfig | nu
 				if (typeof lspServers === "string") {
 					const configPath = path.resolve(root.path, lspServers);
 					if (!pathIsWithin(root.path, configPath)) return null;
-					return readConfigFile(configPath, adaptConfig);
+					return await readConfigFile(configPath, adaptConfig);
 				}
 				if (isRecord(lspServers)) {
 					return normalizeConfig({ servers: lspServers });
@@ -428,6 +446,8 @@ function readMarketplaceLspConfig(root: ClaudePluginRoot): NormalizedConfig | nu
 }
 
 function marketplaceConfigSource(root: ClaudePluginRoot): ConfigFileSource<NormalizedConfig> {
+	// `ConfigFileSource.read` is async: every config read in the chain yields instead of holding the thread behind a
+	// prompting file system.
 	return {
 		read: () => readMarketplaceLspConfig(root),
 	};
@@ -465,7 +485,7 @@ function marketplaceConfigSource(root: ClaudePluginRoot): ConfigFileSource<Norma
  * }
  * ```
  */
-export function loadConfig(cwd: string): LspConfig {
+export async function loadConfig(cwd: string): Promise<LspConfig> {
 	let mergedServers = coerceServerConfigs(DEFAULTS);
 
 	const configSources = configFileSources("lsp", cwd, adaptConfig, {
@@ -474,7 +494,7 @@ export function loadConfig(cwd: string): LspConfig {
 
 	let idleTimeoutMs: number | undefined;
 	for (const source of configSources) {
-		const parsed = source.read();
+		const parsed = await source.read();
 		if (!parsed) continue;
 		mergedServers = mergeServers(mergedServers, parsed.servers);
 		if (parsed.idleTimeoutMs !== undefined) {
@@ -490,18 +510,18 @@ export function loadConfig(cwd: string): LspConfig {
 	for (const name in candidates) {
 		const config = candidates[name];
 		if (config.disabled) continue;
-		if (!hasRootMarkers(cwd, config.rootMarkers)) {
+		if (!(await hasRootMarkers(cwd, config.rootMarkers))) {
 			if (config.rootMarkers.length > 0) nested[name] = config;
 			continue;
 		}
-		const resolved = resolveCommand(config.command, cwd);
+		const resolved = await resolveCommand(config.command, cwd);
 		if (!resolved) {
 			unresolved[name] = config;
 			continue;
 		}
 		servers[name] = { ...config, resolvedCommand: resolved };
 	}
-	selectTypescriptServer(servers, cwd);
+	await selectTypescriptServer(servers, cwd);
 
 	return { servers, idleTimeoutMs, nested: { cwd, servers: nested }, unresolved };
 }
@@ -510,11 +530,11 @@ export function loadConfig(cwd: string): LspConfig {
  * The nearest directory from `filePath` up to (not including) `cwd` that holds
  * one of `markers`, or null when the file is outside `cwd` or none does.
  */
-function nestedRootMarkerDir(filePath: string, cwd: string, markers: string[]): string | null {
+async function nestedRootMarkerDir(filePath: string, cwd: string, markers: string[]): Promise<string | null> {
 	const root = path.resolve(cwd);
 	let dir = path.dirname(path.resolve(filePath));
 	while (dir !== root && dir.startsWith(root + path.sep)) {
-		if (hasRootMarkers(dir, markers)) return dir;
+		if (await hasRootMarkers(dir, markers)) return dir;
 		dir = path.dirname(dir);
 	}
 	return null;
@@ -524,17 +544,17 @@ function nestedRootMarkerDir(filePath: string, cwd: string, markers: string[]): 
  * Enable the nested servers that claim `filePath` and have a root marker between
  * it and the session cwd, resolving their binary from that project first.
  */
-function activateNestedServers(config: LspConfig, filePath: string): void {
+async function activateNestedServers(config: LspConfig, filePath: string): Promise<void> {
 	const nested = config.nested;
 	if (!nested) return;
 	const activated: Record<string, ServerConfig> = {};
 	let projectDir: string | undefined;
 	for (const [name, serverConfig] of Object.entries(nested.servers)) {
 		if (!serverHandlesFile(serverConfig, filePath)) continue;
-		const markerDir = nestedRootMarkerDir(filePath, nested.cwd, serverConfig.rootMarkers);
+		const markerDir = await nestedRootMarkerDir(filePath, nested.cwd, serverConfig.rootMarkers);
 		if (!markerDir) continue;
 		delete nested.servers[name];
-		const resolved = resolveCommand(serverConfig.command, nested.cwd, { localRoots: [markerDir, nested.cwd] });
+		const resolved = await resolveCommand(serverConfig.command, nested.cwd, { localRoots: [markerDir, nested.cwd] });
 		if (!resolved) {
 			(config.unresolved ??= {})[name] = serverConfig;
 			continue;
@@ -543,7 +563,7 @@ function activateNestedServers(config: LspConfig, filePath: string): void {
 		projectDir ??= markerDir;
 	}
 	if (projectDir === undefined) return;
-	selectTypescriptServer(activated, projectDir);
+	await selectTypescriptServer(activated, projectDir);
 	Object.assign(config.servers, activated);
 }
 
@@ -566,13 +586,32 @@ function serverHandlesFile(serverConfig: ServerConfig, filePath: string): boolea
 // Cache config per cwd to avoid repeated file I/O
 export const configCache = new Map<string, LspConfig>();
 
-export function getConfig(cwd: string): LspConfig {
-	let config = configCache.get(cwd);
-	if (!config) {
-		config = loadConfig(cwd);
-		configCache.set(cwd, config);
-	}
-	return config;
+/** Loads in flight per cwd, so concurrent first callers share one directory walk instead of stacking synchronous reads. */
+const pendingConfigLoads = new Map<string, Promise<LspConfig>>();
+
+/** Reads only what `getConfig` has already loaded; never touches the file system, for background paths like the idle sweep. */
+export function peekConfig(cwd: string): LspConfig | undefined {
+	return configCache.get(cwd);
+}
+
+export function getConfig(cwd: string): Promise<LspConfig> {
+	const cached = configCache.get(cwd);
+	if (cached) return Promise.resolve(cached);
+	const pending = pendingConfigLoads.get(cwd);
+	if (pending) return pending;
+	const load = loadConfig(cwd).then(
+		config => {
+			pendingConfigLoads.delete(cwd);
+			configCache.set(cwd, config);
+			return config;
+		},
+		err => {
+			pendingConfigLoads.delete(cwd);
+			throw err;
+		},
+	);
+	pendingConfigLoads.set(cwd, load);
+	return load;
 }
 
 // =============================================================================
@@ -583,8 +622,8 @@ export function getConfig(cwd: string): LspConfig {
  * Find all servers that can handle a file based on extension.
  * Returns servers sorted with primary (non-linter) servers first.
  */
-export function getServersForFile(config: LspConfig, filePath: string): Array<[string, ServerConfig]> {
-	activateNestedServers(config, filePath);
+export async function getServersForFile(config: LspConfig, filePath: string): Promise<Array<[string, ServerConfig]>> {
+	await activateNestedServers(config, filePath);
 	const matches: Array<[string, ServerConfig]> = [];
 
 	for (const [name, serverConfig] of Object.entries(config.servers)) {
@@ -627,9 +666,27 @@ export function describeMissingServers(config: LspConfig, filePath: string): str
  * Find the primary server for a file (prefers type-checkers over linters).
  * Used for operations like definition, hover, references that need type intelligence.
  */
-export function getServerForFile(config: LspConfig, filePath: string): [string, ServerConfig] | null {
-	const servers = getServersForFile(config, filePath);
+export async function getServerForFile(config: LspConfig, filePath: string): Promise<[string, ServerConfig] | null> {
+	const servers = await getServersForFile(config, filePath);
 	return servers.length > 0 ? servers[0] : null;
+}
+
+/**
+ * The primary server for a file, resolved from the cached configuration for `cwd`. The probe reads the file system and
+ * must run somewhere — a caller's signal would only abandon a read that is already under way — so it uses a short
+ * wall-clock ceiling: a folder the user has not answered a privacy prompt for holds at most this long, and the answer
+ * is simply that no server matched.
+ */
+export async function resolveServerForFileByPath(
+	cwd: string,
+	filePath: string,
+	timeoutMs = 2_000,
+): Promise<[string, ServerConfig] | null> {
+	const config = await Promise.race([
+		getConfig(cwd),
+		new Promise<LspConfig>(resolve => setTimeout(() => resolve({ servers: {} }), timeoutMs)),
+	]);
+	return getServerForFile(config, filePath);
 }
 
 /**

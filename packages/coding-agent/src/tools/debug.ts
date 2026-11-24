@@ -456,8 +456,8 @@ function buildOutcomeText(outcome: DapContinueOutcome, timeoutSec: number, verb:
 	return lines.join("\n");
 }
 
-function getConfiguredAdapters(cwd: string): string {
-	const adapters = getAvailableAdapters(cwd).map(adapter => adapter.name);
+async function getConfiguredAdapters(cwd: string): Promise<string> {
+	const adapters = (await getAvailableAdapters(cwd)).map(adapter => adapter.name);
 	const names = adapters.length > 0 ? adapters.join(", ") : "none";
 	return truncateToWidth(replaceTabs(names), TRUNCATE_LENGTHS.LONG);
 }
@@ -621,13 +621,13 @@ export class DebugTool implements AgentTool<typeof debugSchema, DebugExecutionDe
 				const commandCwd = params.cwd ? resolveToCwd(params.cwd, this.session.cwd) : this.session.cwd;
 				const program = resolveToCwd(params.program, commandCwd);
 				const programKind = await classifyLaunchProgram(program);
-				const selection = selectLaunchAdapter(program, commandCwd, params.adapter, programKind);
+				const selection = await selectLaunchAdapter(program, commandCwd, params.adapter, programKind);
 				if (selection.kind === "unavailable") {
 					throw new ToolError(formatAdapterUnavailable(selection.adapterName, selection.command, commandCwd));
 				}
 				if (selection.kind === "none") {
 					throw new ToolError(
-						`No debugger adapter available. Installed adapters: ${getConfiguredAdapters(commandCwd)}`,
+						`No debugger adapter available. Installed adapters: ${await getConfiguredAdapters(commandCwd)}`,
 					);
 				}
 				const { adapter } = selection;
@@ -654,11 +654,11 @@ export class DebugTool implements AgentTool<typeof debugSchema, DebugExecutionDe
 				});
 				if (!adapter) {
 					if (params.adapter) {
-						const command = getAdapterConfigs(commandCwd)[params.adapter]?.command ?? params.adapter;
+						const command = (await getAdapterConfigs(commandCwd))[params.adapter]?.command ?? params.adapter;
 						throw new ToolError(formatAdapterUnavailable(params.adapter, command, commandCwd));
 					}
 					throw new ToolError(
-						`No debugger adapter available. Installed adapters: ${getConfiguredAdapters(commandCwd)}`,
+						`No debugger adapter available. Installed adapters: ${await getConfiguredAdapters(commandCwd)}`,
 					);
 				}
 				const snapshot = await dapSessionManager.attach(

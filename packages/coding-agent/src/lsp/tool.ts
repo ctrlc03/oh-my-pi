@@ -272,9 +272,16 @@ async function offTargetNote(
 		.slice(0, 3)
 		.map(location => formatLocation(location, cwd))
 		.join(", ");
-	const hasCompileDb = ["compile_commands.json", path.join("build", "compile_commands.json")].some(file =>
-		fs.existsSync(path.join(cwd, file)),
-	);
+	// Asynchronous, and only for clangd: a folder awaiting a privacy prompt must not hold the event loop.
+	const hasCompileDb =
+		serverName === "clangd" &&
+		(
+			await Promise.all(
+				["compile_commands.json", path.join("build", "compile_commands.json")].map(file =>
+					Bun.file(path.join(cwd, file)).exists(),
+				),
+			)
+		).some(Boolean);
 	const clangdHint =
 		serverName === "clangd" && !hasCompileDb
 			? "; clangd has no compile_commands.json and is parsing with fallback flags"

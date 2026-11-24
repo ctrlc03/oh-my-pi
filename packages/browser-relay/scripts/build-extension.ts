@@ -128,6 +128,9 @@ async function bundle(outDir: string, entry: string, name: string, format: "iife
 		naming: { entry: `${name}.[ext]` },
 		minify: name === "panel",
 		define: { "process.env.NODE_ENV": JSON.stringify("production") },
+		// collab-web's tokens.css loads Inter from a `fonts/` folder its app build copies beside the page; the
+		// extension ships no such folder, so the panel draws in the system font (as build-architecture-standalone does).
+		external: ["./fonts/inter-*"],
 	});
 	if (!result.success) throw new AggregateError(result.logs, `Failed to bundle ${entry}`);
 	if (!(await Bun.file(path.join(outDir, `${name}.js`)).exists())) {

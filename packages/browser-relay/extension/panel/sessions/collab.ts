@@ -41,7 +41,7 @@ export class CollabPanelSession implements PanelSession {
 	}
 
 	prompt(text: string, images: readonly ImageContent[], options?: { followUp?: boolean }): void {
-		this.#client.sendPrompt(text, images, options);
+		this.#client.sendPrompt(text, [...images], options?.followUp ? "follow-up" : undefined);
 	}
 
 	resume(): void {

@@ -1,6 +1,6 @@
 {
 	"extends": "../tsconfig.workspace.json",
-	"include": ["extension", "scripts", "test", "../stats/src/client/react-css.d.ts"],
+	"include": ["extension", "scripts", "test", "../stats/src/client/react-css.d.ts", "../collab-web/src/env.d.ts"],
 	"compilerOptions": {
 		"jsx": "react-jsx",
 		"lib": ["ES2024", "DOM", "DOM.Iterable"],

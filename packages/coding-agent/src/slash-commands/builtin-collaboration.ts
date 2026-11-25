@@ -218,6 +218,7 @@ export const BUILTIN_COLLABORATION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpe
 			}
 		},
 		handleTui: async (command, runtime) => {
+			runtime.ctx.collabGuest?.warnIfPartial("The export");
 			await runtime.ctx.handleExportCommand(command.text);
 			clearSubmittedText(runtime);
 		},
@@ -304,6 +305,7 @@ export const BUILTIN_COLLABORATION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpe
 		},
 		handleTui: async (command, runtime) => {
 			const { verb } = parseSubcommand(command.args);
+			runtime.ctx.collabGuest?.warnIfPartial("The dump");
 			if (verb === "all") await runtime.ctx.handleDumpAllCommand();
 			else if (verb === "anon") await runtime.ctx.handleDumpAnonCommand();
 			else if (verb) runtime.ctx.showStatus("Usage: /dump [all|anon]");
@@ -536,6 +538,41 @@ export const BUILTIN_COLLABORATION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpe
 				return;
 			}
 			ctx.showStatus("Not in a collab session");
+		},
+	},
+	{
+		name: "earlier",
+		icon: "history",
+		description: "Load earlier history of a long collab session",
+		inlineHint: "[all]",
+		subcommands: [{ name: "all", description: "Load the whole session (a long one takes a while)" }],
+		allowArgs: true,
+		getTuiAutocompleteDescription: runtime => {
+			const omitted = runtime.ctx.collabGuest?.earlierEntries ?? 0;
+			return omitted > 0 ? `Earlier history: ${omitted} entries not loaded` : "Earlier history: all loaded";
+		},
+		handleTui: async (command, runtime) => {
+			const ctx = runtime.ctx;
+			clearSubmittedText(runtime);
+			const guest = ctx.collabGuest;
+			if (!guest) {
+				ctx.showStatus("Not in a collab session");
+				return;
+			}
+			const { verb } = parseSubcommand(command.args);
+			if (verb && verb !== "all") {
+				ctx.showStatus("Usage: /earlier [all]");
+				return;
+			}
+			if (guest.earlierEntries === 0) {
+				ctx.showStatus("The whole session is already loaded");
+				return;
+			}
+			try {
+				await guest.loadEarlier({ all: verb === "all" });
+			} catch (err) {
+				ctx.showError(`Could not load earlier history: ${errorMessage(err)}`);
+			}
 		},
 	},
 	{

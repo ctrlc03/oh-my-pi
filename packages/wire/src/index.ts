@@ -533,6 +533,16 @@ export type GuestFrame =
 			 * never compress.
 			 */
 			zip?: boolean;
+			/**
+			 * The guest can start from the end of a very long session: it accepts a `welcome`
+			 * with `truncated` (only the newest turns) and fetches earlier entries with
+			 * `fetch-history`. Hosts that advertise `history-paging` may then cut the full
+			 * snapshot; hosts that predate the field, and hellos without it, always get every
+			 * entry. A delta resume that fits the host's budget is sent whole; a larger one
+			 * (a stale replica of a session that has since grown) is answered as a truncated
+			 * snapshot, `resumed` absent, which replaces the replica.
+			 */
+			pagedHistory?: true;
 	  }
 	/**
 	 * `deliver` absent = steer into the running turn. `follow-up`: when the
@@ -565,6 +575,12 @@ export type GuestFrame =
 	| { t: "deliver-queue" }
 	| { t: "agent-cmd"; cmd: "chat" | "kill" | "revive"; agentId: string; text?: string }
 	| { t: "fetch-transcript"; reqId: number; agentId: string; fromByte: number }
+	/**
+	 * Page in earlier entries of the active path (feature `history-paging`): the host answers
+	 * with one `history` frame holding the entries just before `beforeEntryId`, the first entry
+	 * the guest holds. Served to read-only peers too.
+	 */
+	| { t: "fetch-history"; reqId: number; beforeEntryId: string }
 	/**
 	 * Run a host session control. `compact`: `arg` is optional custom
 	 * instructions. `model`: `arg` is `provider/id` of one of `welcome.models`.
@@ -614,6 +630,7 @@ export type CollabFeature =
 	| "approval-grants"
 	| "pr-watch"
 	| "permission-mode"
+	| "history-paging"
 	| "private";
 
 /** A slash command a writer may run by sending it as a `prompt` (`/name args`). */
@@ -938,6 +955,14 @@ export type HostFrame =
 			 * snapshot and replace the replica.
 			 */
 			resumed?: boolean;
+			/**
+			 * Set when the host cut the snapshot to the newest turns because the session is
+			 * too large to send whole (only toward a guest whose `hello.pagedHistory` allows it).
+			 * `omitted` is how many active-path entries precede the first delivered entry;
+			 * `firstOmittedId` is the oldest of them (the session's first entry). The guest
+			 * pages them in with `fetch-history`.
+			 */
+			truncated?: { omitted: number; firstOmittedId: string };
 			/** Optional host capabilities; absent on hosts that predate the field (none). */
 			features?: CollabFeature[];
 			/**
@@ -1053,6 +1078,15 @@ export type HostFrame =
 	| { t: "ui-request-end"; reqId: number }
 	/** Targeted reply to fetch-transcript; `text` is decoded JSONL from `fromByte`, `newSize` the next offset base. */
 	| { t: "transcript"; reqId: number; text: string; newSize: number; error?: string }
+	/**
+	 * Targeted reply to `fetch-history`: `entries` are the active-path entries that precede
+	 * `beforeEntryId`, oldest first, bounded in bytes and cut at a turn boundary where one
+	 * lies in range. `remaining` is how many active-path entries still precede `entries[0]`
+	 * (0 once the session's first entry is delivered: the terminator). `error` means the
+	 * request failed (`beforeEntryId` is no longer on the active path); `entries` is then
+	 * empty and the guest should rejoin for a fresh snapshot.
+	 */
+	| { t: "history"; reqId: number; entries: SessionEntry[]; remaining: number; error?: string }
 	| { t: "bye"; reason: string }
 	/** `resync`: the host no longer counts this guest as joined; the guest should send `hello` again. */
 	| { t: "error"; message: string; resync?: true };

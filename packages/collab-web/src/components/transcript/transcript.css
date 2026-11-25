@@ -441,6 +441,11 @@
 	color: var(--fg);
 }
 
+.tr-trimmed-show:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
 .tr-shimmer {
 	color: var(--fg-muted);
 	font-size: 12.5px;

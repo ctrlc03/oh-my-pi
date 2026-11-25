@@ -4,6 +4,7 @@
 
 ### Added
 
+- The `history-paging` feature for long sessions: `hello.pagedHistory` (the guest accepts a truncated snapshot), `welcome.truncated` (`{ omitted, firstOmittedId }`: the host sent only the newest turns), the guest frame `fetch-history` (`{ reqId, beforeEntryId }`) and its reply `history` (`{ reqId, entries, remaining, error? }`, `remaining: 0` ends the session's start). An older host or guest ignores every new field (protocol version unchanged).
 - `PersonalSettings.private` (default `PERSONAL_DEFAULTS.private`, false) and `PersonalSettingsPatch.private`: the Personal agent's _Private (local models only)_ setting, and `PersonalReviewStatus.skipped` gains `"private-unavailable"`. An older companion sends no `private`; the app then hides the choice.
 - `CollabFeature` gains `"private"`, advertised in `welcome.features` by a private session's host.
 - `@oh-my-pi/pi-wire/accounts`: the provider accounts contract: the companion request `accounts` (`AccountsRequest`: list, or `use` an `AccountChoice` first, `identityKey: null` for automatic), its reply (`AccountRow`: `provider`, `identityKey`, `orgName?`, `email?`, `accountId?`, `preferred`), the `canAccounts` field of the `hosts` frame, and `parseAccountChoice` for the companion to check a choice before it runs `omp`. An older companion or app ignores every new field (protocol version unchanged).

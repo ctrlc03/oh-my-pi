@@ -23,6 +23,8 @@ import * as path from "node:path";
 import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { AssistantMessage, AssistantMessageEvent, ImageContent } from "@oh-my-pi/pi-ai";
 import { getConfigRootDir, logger, toError } from "@oh-my-pi/pi-utils";
+import { jsx } from "@oh-my-pi/pi-tui";
+import { currentTheme } from "@oh-my-pi/pi-tui/theme/runtime";
 import { takeAutoRejoin } from "@oh-my-pi/pi-wire";
 import type { AgentHubRemote, AgentHubRemoteTranscript } from "../modes/view-model/overlays/agent-hub";
 import type { InteractiveModeContext } from "../modes/types";
@@ -33,6 +35,8 @@ import type { SessionEntry } from "../session/session-entries";
 import { mintSessionId, SessionManager } from "../session/session-manager";
 import { FileSessionStorage } from "../session/session-storage";
 import { shouldDisableReasoning, toReasoningEffort } from "../thinking/levels";
+import type { TranscriptBlock } from "../ui/shell";
+import { AnsiText } from "../ui/transcript/ansi-text";
 import { emitSubagentFrame } from "../utils/event-bus";
 import { GuestLifecycleEmitter } from "../extensibility/extensions/lifecycle-mirror";
 import { setSessionTerminalTitle } from "../utils/title-generator";
@@ -60,6 +64,8 @@ export const COLLAB_GUEST_ALLOWED_COMMANDS: Record<string, true> = {
 	theme: true,
 	settings: true,
 	leave: true,
+	// Pages earlier history of a long session from the host into the guest's own replica.
+	earlier: true,
 	collab: true,
 	exit: true,
 	quit: true,
@@ -79,7 +85,12 @@ const WELCOME_TIMEOUT_MS = 30_000;
  */
 const SNAPSHOT_PROGRESS_TIMEOUT_MS = 30_000;
 const TRANSCRIPT_TIMEOUT_MS = 20_000;
+/** How long the guest waits for the host to answer one `fetch-history` page. */
+const HISTORY_TIMEOUT_MS = 30_000;
+/** Entries one `/earlier` brings in (whole pages, so it may overshoot); `/earlier all` loads every page. */
+const EARLIER_STEP_ENTRIES = 300;
 
+type HistoryFrame = Extract<CollabFrame, { t: "history" }>;
 type WelcomeFrame = Extract<CollabFrame, { t: "welcome" }>;
 type SnapshotChunkFrame = Extract<CollabFrame, { t: "snapshot-chunk" }>;
 
@@ -91,6 +102,8 @@ interface PendingSnapshot {
 	readOnly: boolean;
 	entryCount: number;
 	entries: SessionEntry[];
+	/** Set when the host sent only the newest turns; see the wire grammar. */
+	truncated: WelcomeFrame["truncated"];
 	isResync: boolean;
 }
 
@@ -239,6 +252,23 @@ export class CollabGuestLink {
 	/** Per-agent `hasSessionFile` from the last snapshot; gates remote transcript fetches. */
 	#agentHasTranscript = new Map<string, boolean>();
 	#pendingTranscripts = new Map<number, (r: AgentHubRemoteTranscript | null) => void>();
+	/** In-flight `fetch-history` requests, keyed by reqId; each resolves with the reply, or null on timeout or disconnect. */
+	#pendingHistory = new Map<number, (reply: HistoryFrame | null) => void>();
+	/**
+	 * Host-session entries before the replica's first one that this guest never loaded, or
+	 * null when the replica holds the whole session. Set by a truncated welcome, shrunk by
+	 * `/earlier`.
+	 */
+	#earlier: { omitted: number } | null = null;
+	/** The host advertised `history-paging` in its latest welcome. */
+	#historyPaging = false;
+	#loadingEarlier = false;
+	/** The header of the replica file as last written; `loadEarlier` rewrites the file under it. */
+	#replicaHeader: object | null = null;
+	/** The "N earlier entries not loaded" row at the top of the transcript. */
+	#earlierBanner: TranscriptBlock | undefined;
+	/** Says hello again within the auto-rejoin budget; set while {@link join} runs. */
+	#rejoin: ((message: string) => void) | null = null;
 	/** Host `ui-request`s presented (or queued) locally, keyed by reqId; aborting dismisses. */
 	#pendingUiRequests = new Map<number, AbortController>();
 	#nextReqId = 1;
@@ -340,6 +370,7 @@ export class CollabGuestLink {
 				proto: COLLAB_PROTO,
 				name: collabDisplayName(this.#ctx),
 				writeToken: this.#writeToken,
+				pagedHistory: true,
 			});
 		};
 		// The host dropped us (or never answered) while the relay link stayed up: say
@@ -355,6 +386,7 @@ export class CollabGuestLink {
 			this.#clearUiRequests();
 			introduce();
 		};
+		this.#rejoin = rejoin;
 		this.#onSnapshotTimeout = () => {
 			const message = "timed out waiting for the host's session snapshot";
 			if (joined) rejoin(message);
@@ -420,6 +452,7 @@ export class CollabGuestLink {
 			this.#clearWelcomeTimer();
 			this.#clearSnapshotProgressTimer();
 			this.#flushPendingTranscripts();
+			this.#flushPendingHistory();
 			if (this.#left) return;
 			if (!joined) {
 				firstWelcome.reject(new Error(reason));
@@ -476,6 +509,7 @@ export class CollabGuestLink {
 	 */
 	#beginWelcome(frame: WelcomeFrame, isResync: boolean): void {
 		if (this.#left) return;
+		this.#historyPaging = frame.features?.includes("history-paging") === true;
 		this.#pendingSnapshot = {
 			header: frame.header,
 			state: frame.state,
@@ -484,6 +518,7 @@ export class CollabGuestLink {
 			entryCount: frame.entryCount,
 			entries: [],
 			isResync,
+			truncated: frame.truncated,
 		};
 		this.#armSnapshotProgressTimer();
 	}
@@ -516,7 +551,6 @@ export class CollabGuestLink {
 		this.#pendingSnapshot = null;
 		this.#clearSnapshotProgressTimer();
 		if (!pending || this.#left) return;
-		const replicaPath = path.join(getConfigRootDir(), "collab", `${this.#roomId}-${this.#replicaId}.jsonl`);
 		// A child of the host's session, as a sibling move is.
 		const header = {
 			...pending.header,
@@ -524,19 +558,8 @@ export class CollabGuestLink {
 			parentSession: pending.header.id,
 			providerPromptCacheKey: SessionManager.getInheritedProviderPromptCacheKey(pending.header),
 		};
-		const lines = [header, ...pending.entries].map(entry => JSON.stringify(entry)).join("\n");
-		const storage = new FileSessionStorage();
-		this.#replicaLease ??= storage.claimSession(this.#replicaId, replicaPath) ?? undefined;
-		// Published atomically: `omp gc` reads the replica's header to find its
-		// lease, so a resync must never expose a truncated, headerless file.
-		const tempPath = `${replicaPath}.${mintSessionId()}.tmp`;
-		try {
-			await Bun.write(tempPath, `${lines}\n`);
-			await fs.rename(tempPath, replicaPath);
-		} catch (err) {
-			await fs.unlink(tempPath).catch(() => {});
-			throw err;
-		}
+		const replicaPath = await this.#writeReplica(header, pending.entries);
+		this.#replicaHeader = header;
 		if (this.#left) return;
 
 		// Resume through AgentSession without adopting the host's cwd. The replica
@@ -545,6 +568,7 @@ export class CollabGuestLink {
 		if (switched === false) {
 			throw new Error("Collab replica activation was cancelled");
 		}
+		this.#earlier = pending.truncated ? { omitted: pending.truncated.omitted } : null;
 		this.#replicaActivated = true;
 		if (this.#left) return;
 		const orphanedLiveBlocks = [
@@ -596,14 +620,188 @@ export class CollabGuestLink {
 			throw err;
 		}
 		if (this.#left) return;
+		this.#syncEarlierBanner();
 		await this.#ctx.reloadTodos();
 		if (this.#left) return;
 		this.#updateStatusSegment();
 		this.#readOnly = pending.readOnly;
 		this.#welcomed = true;
 		const suffix = this.#readOnly ? " (read-only)" : "";
+		const earlierHint =
+			this.#earlier === null ? "" : `; ${this.#earlier.omitted} earlier entries not loaded (/earlier loads them)`;
 		this.#ctx.showStatus(
-			pending.isResync ? `Reconnected to collab session${suffix}` : `Joined collab session${suffix}`,
+			pending.isResync
+				? `Reconnected to collab session${suffix}${earlierHint}`
+				: `Joined collab session${suffix}${earlierHint}`,
+		);
+	}
+
+	/** Writes the replica file atomically (`omp gc` must never see a headerless one) and returns its path. */
+	async #writeReplica(header: object, entries: readonly SessionEntry[]): Promise<string> {
+		const replicaPath = path.join(getConfigRootDir(), "collab", `${this.#roomId}-${this.#replicaId}.jsonl`);
+		const lines = [header, ...entries].map(entry => JSON.stringify(entry)).join("\n");
+		const storage = new FileSessionStorage();
+		this.#replicaLease ??= storage.claimSession(this.#replicaId, replicaPath) ?? undefined;
+		const tempPath = `${replicaPath}.${mintSessionId()}.tmp`;
+		try {
+			await Bun.write(tempPath, `${lines}\n`);
+			await fs.rename(tempPath, replicaPath);
+		} catch (err) {
+			await fs.unlink(tempPath).catch(() => {});
+			throw err;
+		}
+		return replicaPath;
+	}
+
+	/** Host-session entries before the replica's first one that are not loaded; 0 when the replica holds the whole session. */
+	get earlierEntries(): number {
+		return this.#earlier?.omitted ?? 0;
+	}
+
+	/** Warns that a local export or dump of this replica leaves out the earlier history that is not loaded. */
+	warnIfPartial(what: string): void {
+		const omitted = this.#earlier?.omitted;
+		if (!omitted) return;
+		this.#ctx.showWarning(
+			`${what} covers only the loaded part of the session: ${omitted} earlier entries are not loaded (/earlier all loads them first)`,
+		);
+	}
+
+	/**
+	 * Page in earlier history (host feature `history-paging`) and rebuild the replica with it in
+	 * front: about {@link EARLIER_STEP_ENTRIES} entries, or everything with `all`.
+	 * @returns how many entries were loaded.
+	 * @throws Error with a user-facing message when nothing could be loaded.
+	 */
+	async loadEarlier(options: { all?: boolean } = {}): Promise<number> {
+		const earlier = this.#earlier;
+		if (earlier === null) return 0;
+		if (this.#left || !this.#welcomed || !this.#socket) throw new Error("Not connected to the collab host");
+		if (!this.#historyPaging) throw new Error("This host cannot page in earlier history");
+		if (this.#loadingEarlier) throw new Error("Earlier history is already loading");
+		if (this.state?.isStreaming) throw new Error("The host is mid-turn; load earlier history when it settles");
+		const firstId = this.#ctx.sessionManager.getBranch()[0]?.id;
+		if (firstId === undefined) throw new Error("The replica holds no entries to page before");
+		this.#loadingEarlier = true;
+		try {
+			const pages: SessionEntry[][] = [];
+			let loaded = 0;
+			let remaining = earlier.omitted;
+			let anchor = firstId;
+			while (remaining > 0 && (options.all === true || loaded < EARLIER_STEP_ENTRIES)) {
+				const reply = await this.#requestHistory(anchor);
+				if (reply === null) throw new Error("The host did not answer the history request");
+				if (reply.error !== undefined) {
+					// Our first entry left the host's active path: the replica is stale. Start over.
+					this.#rejoin?.(reply.error);
+					throw new Error(`The host's history changed (${reply.error}); resyncing`);
+				}
+				const first = reply.entries[0];
+				if (first === undefined) {
+					remaining = 0;
+					break;
+				}
+				pages.unshift(reply.entries);
+				loaded += reply.entries.length;
+				anchor = first.id;
+				remaining = reply.remaining;
+				if (remaining > 0 && options.all === true) {
+					this.#ctx.showStatus(`Loading earlier history… ${remaining} entries to go`, { dim: true });
+				}
+			}
+			if (loaded === 0 && remaining === earlier.omitted) return 0;
+			await this.#inApplyOrder(() => this.#applyEarlier(pages.flat(), remaining, firstId));
+			return loaded;
+		} finally {
+			this.#loadingEarlier = false;
+		}
+	}
+
+	/** Runs `work` once every frame received so far has been applied, and before any later one. */
+	#inApplyOrder(work: () => Promise<void>): Promise<void> {
+		const { promise, resolve, reject } = Promise.withResolvers<void>();
+		this.#applyChain = this.#applyChain.then(async () => {
+			try {
+				await work();
+				resolve();
+			} catch (err) {
+				reject(err);
+			}
+		});
+		return promise;
+	}
+
+	#requestHistory(beforeEntryId: string): Promise<HistoryFrame | null> {
+		const socket = this.#socket;
+		if (!socket) return Promise.resolve(null);
+		const reqId = this.#nextReqId++;
+		const { promise, resolve } = Promise.withResolvers<HistoryFrame | null>();
+		const timer = setTimeout(() => {
+			this.#pendingHistory.delete(reqId);
+			resolve(null);
+		}, HISTORY_TIMEOUT_MS);
+		this.#pendingHistory.set(reqId, reply => {
+			clearTimeout(timer);
+			resolve(reply);
+		});
+		socket.send({ t: "fetch-history", reqId, beforeEntryId });
+		return promise;
+	}
+
+	/** Resolve every in-flight history request with null (resolvers clear their own timers). */
+	#flushPendingHistory(): void {
+		for (const resolve of this.#pendingHistory.values()) resolve(null);
+		this.#pendingHistory.clear();
+	}
+
+	/** Reload the replica with `entries` in front of what it holds. `anchor` is the first entry the pages were requested before. */
+	async #applyEarlier(entries: SessionEntry[], remaining: number, anchor: string): Promise<void> {
+		const header = this.#replicaHeader;
+		if (this.#left || this.#earlier === null || header === null) return;
+		const manager = this.#ctx.sessionManager;
+		if (manager.getBranch()[0]?.id !== anchor) {
+			throw new Error("The session changed while earlier history loaded; run /earlier again");
+		}
+		const held = manager.getEntries();
+		const heldIds = new Set(held.map(entry => entry.id));
+		const replicaPath = await this.#writeReplica(header, [...entries.filter(e => !heldIds.has(e.id)), ...held]);
+		if (this.#left) return;
+		const switched = await this.#ctx.session.switchSession(replicaPath, { preserveLocalCwd: true, keepModel: true });
+		if (switched === false) throw new Error("Collab replica activation was cancelled");
+		if (this.#left) return;
+		this.#ctx.eventController.resetTranscriptAnchors();
+		if (this.state) this.#applyHostState(this.state);
+		this.#assistantStreamSynced = false;
+		this.#streamedSnapshot = undefined;
+		this.#earlier = remaining > 0 ? { omitted: remaining } : null;
+		await this.#ctx.renderInitialMessages({ clearTerminalHistory: true });
+		if (this.#left) return;
+		await this.#ctx.reloadTodos();
+		this.#syncEarlierBanner();
+		this.#ctx.showStatus(
+			remaining > 0
+				? `Loaded ${entries.length} earlier entries; ${remaining} still not loaded (/earlier loads more)`
+				: `Loaded the whole session (${entries.length} earlier entries)`,
+		);
+	}
+
+	/** Keep the "N earlier entries not loaded" row at the top of the transcript in step with {@link #earlier}. */
+	#syncEarlierBanner(): void {
+		if (this.#earlier === null && this.#earlierBanner === undefined) return;
+		const transcript = this.#ctx.shell.transcript;
+		if (this.#earlierBanner !== undefined) {
+			transcript.remove(this.#earlierBanner);
+			this.#earlierBanner = undefined;
+		}
+		if (this.#earlier === null) return;
+		const text = currentTheme().fg(
+			"dim",
+			`⋯ ${this.#earlier.omitted} earlier entries not loaded — /earlier loads more, /earlier all loads everything`,
+		);
+		const before = transcript.blocks().find(block => !block.head);
+		this.#earlierBanner = this.#ctx.present(
+			() => jsx(AnsiText, { text, padX: 1 }),
+			before === undefined ? { head: true } : { head: true, before },
 		);
 	}
 
@@ -676,11 +874,17 @@ export class CollabGuestLink {
 				// what the new path shares with the old one and replay the rest.
 				const manager = this.#ctx.sessionManager;
 				if (frame.keep !== null && !manager.getEntry(frame.keep)) {
+					if (this.#earlier !== null) {
+						// The kept entry lies in the earlier history this replica never loaded: start over from a fresh snapshot.
+						this.#rejoin?.("the host's history changed beyond what is loaded");
+						break;
+					}
 					// The kept entry never reached this replica: it cannot be repaired by deltas.
 					this.#ctx.showStatus("Collab replica out of sync with the host; leaving");
 					this.#restoreAfterDisconnect();
 					break;
 				}
+				if (frame.keep === null) this.#earlier = null;
 				if (frame.keep === null) manager.resetLeaf();
 				else manager.branch(frame.keep);
 				for (const entry of frame.entries) manager.ingestReplicatedEntry(entry);
@@ -692,6 +896,7 @@ export class CollabGuestLink {
 						if (this.#left) return;
 						await this.#ctx.renderInitialMessages({ clearTerminalHistory: true });
 						await this.#ctx.reloadTodos();
+						this.#syncEarlierBanner();
 					})
 					.catch(err => logger.warn("collab guest branch render failed", { error: String(err) }));
 				break;
@@ -707,6 +912,14 @@ export class CollabGuestLink {
 				this.#updateStatusSegment();
 				reconcileGuestSnapshotHostState(this.#ctx, frame.state.isStreaming);
 				this.#reconcileLifecycle(frame.state.isStreaming);
+				break;
+			}
+			case "history": {
+				const resolve = this.#pendingHistory.get(frame.reqId);
+				if (resolve) {
+					this.#pendingHistory.delete(frame.reqId);
+					resolve(frame);
+				}
 				break;
 			}
 			case "bus":
@@ -1022,6 +1235,9 @@ export class CollabGuestLink {
 	async #resumeLocalSession(): Promise<void> {
 		this.#ctx.statusLine.setCollabStatus(null);
 		this.#flushPendingTranscripts();
+		this.#flushPendingHistory();
+		this.#earlier = null;
+		this.#syncEarlierBanner();
 		// A pending coalesced mirror message_update must not flush after leave.
 		this.#ctx.eventController.resetTranscriptAnchors();
 		this.#clearAgentMirror();

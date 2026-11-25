@@ -969,6 +969,15 @@ function Session({
 				: { from: clear.from, hiddenMessages: clear.hiddenMessages, onShow: showCleared },
 		[clear, openedClear, showCleared],
 	);
+	// Entries the host kept back when this guest joined a long session load from the transcript's top.
+	const loadEarlier = useCallback(() => client.loadEarlier(), [client]);
+	const earlier = useMemo(
+		() =>
+			snap.earlier === null
+				? undefined
+				: { omitted: snap.earlier, loading: snap.loadingEarlier, onLoad: loadEarlier },
+		[snap.earlier, snap.loadingEarlier, loadEarlier],
+	);
 	const shownEntries = useMemo(() => {
 		const from = Math.max(trimmed?.from ?? 0, cleared?.from ?? 0);
 		return from === 0 ? snap.entries : snap.entries.slice(from);
@@ -1243,6 +1252,8 @@ function Session({
 	// Built on click from every entry, not the trimmed view; the ref keeps the callback stable for the memoized header.
 	const entriesRef = useRef(snap.entries);
 	entriesRef.current = snap.entries;
+	const earlierRef = useRef(snap.earlier);
+	earlierRef.current = snap.earlier;
 	// Copy, Export and Share of the conversation leave out the messages hidden from the chat, unless they are being shown.
 	const hiddenRef = useRef(hidden.control);
 	hiddenRef.current = hidden.control;
@@ -1250,7 +1261,7 @@ function Session({
 		const hide = hiddenRef.current;
 		const entries =
 			hide === undefined || hide.showing ? entriesRef.current : withoutHidden(entriesRef.current, hide.hidden);
-		return sessionMarkdown(entries, { title });
+		return sessionMarkdown(entries, { title, omitted: earlierRef.current ?? 0 });
 	}, []);
 
 	// Desktop shortcuts (the keymap lives in lib/shortcuts.ts, which the help sheet lists too). Typing in a
@@ -1617,6 +1628,7 @@ function Session({
 								onCancelQueued={cancelQueued}
 								trimmed={trimmed}
 								cleared={cleared}
+								earlier={earlier}
 								onEditPrompt={editPrompt.onEditPrompt}
 								onTurnChanges={turnChanges.onTurnChanges}
 								onSendToAgent={snap.readOnly ? undefined : sendToAgent}

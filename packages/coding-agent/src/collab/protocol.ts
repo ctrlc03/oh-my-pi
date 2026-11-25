@@ -109,6 +109,8 @@ export type CollabFrame =
 			commands?: CollabCommand[];
 			/** True when the host honoured `hello.resume`: the snapshot chunks carry only the entries after `resume.entryId`. */
 			resumed?: boolean;
+			/** Set when the snapshot is only the newest turns of a session too large to send whole; see the wire grammar. */
+			truncated?: { omitted: number; firstOmittedId: string };
 			/** Optional host capabilities; absent on hosts that predate the field (none). */
 			features?: CollabFeature[];
 	  }
@@ -175,6 +177,8 @@ export type CollabFrame =
 	| { t: "ui-request-end"; reqId: number }
 	/** Targeted reply to fetch-transcript; `error` marks a terminal read failure that guests must surface without hot retrying. */
 	| { t: "transcript"; reqId: number; text: string; newSize: number; error?: string }
+	/** Targeted reply to `fetch-history`: earlier active-path entries, oldest first; see the wire grammar. */
+	| { t: "history"; reqId: number; entries: SessionEntry[]; remaining: number; error?: string }
 	| { t: "bye"; reason: string }
 	/** `resync`: the host no longer counts this guest as joined; the guest should send `hello` again. */
 	| { t: "error"; message: string; resync?: true };
@@ -244,6 +248,21 @@ export function encodeSnapshotChunk(entryJsons: readonly string[], final: boolea
 export function encodeBranchFrame(keep: string | null, entryJsons: readonly string[]): EncodedFrame {
 	return encodedFrame(
 		`${BRANCH_FRAME_HEAD}${JSON.stringify(keep)},"${BRANCH_FIELDS.entries}":[${entryJsons.join(",")}]}`,
+	);
+}
+
+const HISTORY_FIELDS: FrameFields<"history"> = {
+	t: "history",
+	reqId: "reqId",
+	entries: "entries",
+	remaining: "remaining",
+	error: "error",
+};
+
+/** A successful `{ t: "history", reqId, entries, remaining }` from each entry's JSON. */
+export function encodeHistoryFrame(reqId: number, entryJsons: readonly string[], remaining: number): EncodedFrame {
+	return encodedFrame(
+		`{"t":"${HISTORY_FIELDS.t}","${HISTORY_FIELDS.reqId}":${reqId},"${HISTORY_FIELDS.entries}":[${entryJsons.join(",")}],"${HISTORY_FIELDS.remaining}":${remaining}}`,
 	);
 }
 

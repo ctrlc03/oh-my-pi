@@ -89,6 +89,12 @@ export interface TranscriptProps {
 	 * one-line expander; `onShow` unfolds them. Folds with `trimmed`: the later cut wins.
 	 */
 	cleared?: { from: number; hiddenMessages: number; onShow(): void };
+	/**
+	 * Entries before the first one held, which the host kept back when this guest joined a long session:
+	 * the top of the transcript offers *Load earlier*, and `onLoad` fetches the next page of them and
+	 * resolves how many arrived (they are prepended to `entries`).
+	 */
+	earlier?: { omitted: number; loading: boolean; onLoad(): Promise<number> };
 	/** Id of the session's model: replies from any other model since its last change carry a note. */
 	sessionModel?: string;
 	/** Blocks offer *Send to agent*: this puts the quoted excerpt into the message box. */
@@ -942,6 +948,7 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		onTurnChanges,
 		trimmed,
 		cleared,
+		earlier,
 		sessionModel,
 		onSendToAgent,
 		hide,
@@ -951,6 +958,17 @@ export function Transcript(props: TranscriptProps): ReactNode {
 	// reader is scrolled away from the bottom, so appended entries never
 	// unmount rows above the reader and shift the page under them.
 	const [pinnedStart, setPinnedStart] = useState<number | null>(null);
+	// Entries the host held back for the start of a long session land in front of the first one held: a
+	// pinned window moves past them so the same rows stay mounted (a window that follows the tail needs no
+	// move), and one whose entries were replaced (another session) falls back to the tail.
+	const [firstId, setFirstId] = useState(entries[0]?.id);
+	if (entries[0]?.id !== firstId) {
+		setFirstId(entries[0]?.id);
+		if (pinnedStart !== null) {
+			const moved = firstId === undefined ? -1 : entries.findIndex(entry => entry.id === firstId);
+			setPinnedStart(moved > 0 ? pinnedStart + moved : null);
+		}
+	}
 	/** First entry that may mount: past the hidden turns when the transcript is trimmed, and past a folded `/clear`. */
 	const floor = Math.max(trimmed?.from ?? 0, cleared?.from ?? 0);
 	const tailStart = Math.max(floor, entries.length - WINDOW);
@@ -1072,6 +1090,17 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		// restored position lands within the lock distance of it.
 		lockRef.current = false;
 		setPinnedStart(Math.max(floor, start - WINDOW));
+	};
+
+	const showEarlierRef = useRef(showEarlier);
+	showEarlierRef.current = showEarlier;
+	// Fetches the next page of history the host held back, then mounts its newest rows above the reader.
+	const loadRemote = async (): Promise<void> => {
+		if (earlier === undefined || earlier.loading) return;
+		lockRef.current = false;
+		setPinnedStart(start);
+		const loaded = await earlier.onLoad();
+		if (loaded > 0) setTimeout(() => showEarlierRef.current(), 0);
 	};
 
 	// Revealing hidden turns keeps the mounted rows: *show earlier* then takes over.
@@ -1479,6 +1508,22 @@ export function Transcript(props: TranscriptProps): ReactNode {
 						<button type="button" className="tr-earlier" onClick={showEarlier}>
 							Show {(start - floor).toLocaleString("en-US")} earlier {start - floor === 1 ? "entry" : "entries"}
 						</button>
+					)}
+					{start === floor && floor === 0 && earlier !== undefined && (
+						<div className="tr-trimmed">
+							<span>
+								{earlier.omitted.toLocaleString("en-US")} earlier {earlier.omitted === 1 ? "entry" : "entries"}{" "}
+								not loaded
+							</span>
+							<button
+								type="button"
+								className="tr-trimmed-show"
+								disabled={earlier.loading}
+								onClick={() => void loadRemote()}
+							>
+								{earlier.loading ? "Loading…" : "Load earlier"}
+							</button>
+						</div>
 					)}
 					{start === floor && cleared !== undefined && cleared.from > (trimmed?.from ?? 0) && (
 						<div className="tr-trimmed">

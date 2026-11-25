@@ -151,14 +151,26 @@ export function replyText(entries: readonly SessionEntry[]): string {
 	return parts.join("\n\n");
 }
 
-/** The whole session: a title, the day it started, then each turn set off by a rule. */
-export function sessionMarkdown(entries: readonly SessionEntry[], { title }: { title: string }): string {
+/**
+ * The whole session: a title, the day it started, then each turn set off by a rule. `omitted` is how many
+ * entries before `entries[0]` this guest never loaded (a long session joins from its newest turns): the
+ * export then says so instead of passing a partial transcript off as the whole.
+ */
+export function sessionMarkdown(
+	entries: readonly SessionEntry[],
+	{ title, omitted = 0 }: { title: string; omitted?: number },
+): string {
 	const ranges = turnRanges(entries);
 	const segments = [{ from: 0, to: ranges[0]?.from ?? entries.length }, ...ranges];
 	const turns = segments.map(range => turnMarkdown(entries.slice(range.from, range.to))).filter(Boolean);
-	const started = entries[0] === undefined ? Number.NaN : Date.parse(entries[0].timestamp);
+	const started = entries[0] === undefined || omitted > 0 ? Number.NaN : Date.parse(entries[0].timestamp);
 	const head = [`# ${normalizeWs(title) || "Session"}`];
 	if (!Number.isNaN(started)) head.push(`*${new Date(started).toISOString().slice(0, 10)}*`);
+	if (omitted > 0) {
+		head.push(
+			`*Partial export: the first ${omitted.toLocaleString("en-US")} entries of this session were not loaded on this device. Use "Load earlier" in the transcript to load them before exporting.*`,
+		);
+	}
 	return `${head.join("\n\n")}\n\n${turns.join("\n\n---\n\n")}\n`;
 }
 

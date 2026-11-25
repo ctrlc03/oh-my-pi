@@ -45,6 +45,7 @@ import { toWireEvent } from "../session/loop-end-wire";
 import { stripImagesFromMessage, USER_INTERRUPT_LABEL } from "../session/messages";
 import { describeFileRestore } from "../session/file-snapshots";
 import type { SessionEntry as StoredSessionEntry } from "../session/session-entries";
+import { isUserRequestEntry } from "../session/transcript/transcript-entry";
 import { executeBuiltinSlashCommand } from "../slash-commands/builtin-registry";
 import { TASK_SUBAGENT_LIFECYCLE_CHANNEL, TASK_SUBAGENT_PROGRESS_CHANNEL } from "../task/types";
 import { generateRoomKey, generateWriteToken, importRoomKey } from "./crypto";
@@ -73,6 +74,7 @@ import {
 	encodeEventFrame,
 	encodeFrame,
 	encodeSnapshotChunk,
+	encodeHistoryFrame,
 	type EncodedFrame,
 	formatCollabLink,
 	formatCollabWebLink,
@@ -184,6 +186,7 @@ const COLLAB_FEATURES: CollabFeature[] = [
 	"cache-stats",
 	"approval-grants",
 	"pr-watch",
+	"history-paging",
 ];
 
 /** A prompt's message content: the text, plus any images the guest attached. */
@@ -238,6 +241,54 @@ const TRANSCRIPT_ENTRY_TOO_LARGE_ERROR = `transcript entry exceeds transcript fe
  * and the seal step care about — not UTF-16 code units (#11433).
  */
 const SNAPSHOT_CHUNK_BYTES = 512 * 1024;
+/**
+ * Most serialized bytes of the newest entries a welcome carries toward a guest
+ * that pages history (`hello.pagedHistory`). A longer active path is cut to its
+ * newest turns inside this budget and the rest is served by `fetch-history`; a
+ * transcript of tens of MB otherwise outlasts a guest's join patience (the join
+ * sat at "0%" for sessions of 60-120 MB).
+ */
+export const WELCOME_TAIL_BYTES = 8 * 1024 * 1024;
+/** Soft byte cap per `history` reply: one frame, no larger than a snapshot chunk. */
+const HISTORY_PAGE_BYTES = SNAPSHOT_CHUNK_BYTES;
+
+/** What one entry costs on the wire: its JSON size, bounded as the chunker bounds an oversized entry. */
+function replicatedEntryBytes(entry: StoredSessionEntry): number {
+	try {
+		return Math.min(Buffer.byteLength(JSON.stringify(entry), "utf8"), MAX_REPLICATED_PAYLOAD_BYTES);
+	} catch {
+		// `byteLength` throws on the `undefined` a top-level `toJSON` may yield; the chunker ships a placeholder.
+		return MAX_REPLICATED_PAYLOAD_BYTES;
+	}
+}
+
+/**
+ * Start index of the newest window of `entries[floor, end)` that fits `budgetBytes`
+ * (always at least one entry), moved forward to the nearest user request so a
+ * turn is not split; a window holding no request starts where the budget ran
+ * out. `floor` when everything from there to `end` fits.
+ */
+function newestWindowStart(
+	entries: readonly StoredSessionEntry[],
+	end: number,
+	budgetBytes: number,
+	floor = 0,
+): number {
+	let start = end;
+	let bytes = 0;
+	while (start > floor) {
+		const size = replicatedEntryBytes(entries[start - 1]!);
+		if (start < end && bytes + size > budgetBytes) break;
+		bytes += size;
+		start--;
+	}
+	if (start === floor) return floor;
+	for (let i = start; i < end; i++) {
+		if (isUserRequestEntry(entries[i]!)) return i;
+	}
+	return start;
+}
+
 const MAX_PENDING_UI_REQUESTS = 64;
 const RESYNC_MESSAGE = "the host discarded your backlog; rejoin to resync";
 /**
@@ -1144,6 +1195,9 @@ export class CollabHost {
 			case "fetch-transcript":
 				void this.#handleFetchTranscript(frame.reqId, frame.agentId, frame.fromByte, fromPeer);
 				break;
+			case "fetch-history":
+				this.#handleFetchHistory(frame.reqId, frame.beforeEntryId, fromPeer);
+				break;
 			default:
 				logger.debug("collab host ignoring unexpected frame", { type: frame.t, fromPeer });
 		}
@@ -1212,8 +1266,24 @@ export class CollabHost {
 		// searching from the tail is O(1) for the common case of a guest that is
 		// nearly current.
 		const resumeAt = resume?.sessionId === header.id ? entries.findLastIndex(e => e.id === resume.entryId) : -1;
-		const resumed = resumeAt >= 0;
-		const snapshotEntries = this.#serializeSnapshotEntries(resumed ? entries.slice(resumeAt + 1) : entries);
+		let resumed = resumeAt >= 0;
+		let sendFrom = resumed ? resumeAt + 1 : 0;
+		// A very long session goes to a guest that pages history as its newest turns, and so does a delta
+		// larger than that (a stale replica of a session that has since grown): it replaces the replica.
+		let truncated: { omitted: number; firstOmittedId: string } | undefined;
+		if (hello.pagedHistory === true) {
+			const start = newestWindowStart(entries, entries.length, WELCOME_TAIL_BYTES, sendFrom);
+			if (start > sendFrom) {
+				truncated = { omitted: start, firstOmittedId: entries[0]!.id };
+				resumed = false;
+				sendFrom = start;
+				logger.info("collab welcome truncated to the newest turns", {
+					omitted: start,
+					sent: entries.length - start,
+				});
+			}
+		}
+		const snapshotEntries = this.#serializeSnapshotEntries(sendFrom === 0 ? entries : entries.slice(sendFrom));
 		const state = this.#buildState();
 		const welcome = encodeFrame({
 			t: "welcome",
@@ -1223,6 +1293,7 @@ export class CollabHost {
 			agents: this.#snapshotAgents(),
 			entryCount: snapshotEntries.json.length,
 			resumed: resumed ? true : undefined,
+			truncated,
 			readOnly: canWrite ? undefined : true,
 			models: canWrite ? this.#welcomeModels() : undefined,
 			profiles: canWrite ? this.#welcomeProfiles() : undefined,
@@ -1379,6 +1450,25 @@ export class CollabHost {
 			entries.fill("", start, i);
 			yield encodeSnapshotChunk(batch, i >= entries.length);
 		}
+	}
+
+	/** Serve one page of earlier history: the entries just before `beforeEntryId`, bounded and cut at a turn boundary. */
+	#handleFetchHistory(reqId: number, beforeEntryId: string, fromPeer: number): void {
+		if (!Number.isSafeInteger(reqId) || typeof beforeEntryId !== "string") return;
+		if (this.ending || !this.#sessionStillCurrent()) return;
+		const entries = this.#activeWirePath();
+		const end = entries.findLastIndex(entry => entry.id === beforeEntryId);
+		if (end < 0) {
+			this.#send(
+				{ t: "history", reqId, entries: [], remaining: 0, error: "that entry is no longer on the active path" },
+				fromPeer,
+			);
+			return;
+		}
+		const start = newestWindowStart(entries, end, HISTORY_PAGE_BYTES);
+		const page = this.#serializeSnapshotEntries(entries.slice(start, end));
+		this.#flushSuperseding();
+		this.#socket?.send(encodeHistoryFrame(reqId, page.json, start), fromPeer, this.#peerZip(fromPeer));
 	}
 
 	#handleUiResponse(reqId: number, value: CollabUiResponseValue, fromPeer: number): void {

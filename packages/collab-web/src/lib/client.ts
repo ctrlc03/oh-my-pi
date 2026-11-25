@@ -184,6 +184,10 @@ export interface GuestSnapshot {
 	notices: readonly Notice[];
 	/** Snapshot download progress between `welcome` and its final chunk, else null. */
 	loading: { received: number; total: number } | null;
+	/** Host-session entries before the first one this guest holds, not loaded yet; null when the replica holds the whole session. */
+	earlier: number | null;
+	/** A `loadEarlier` is in flight. */
+	loadingEarlier: boolean;
 	/** Prompts typed while not live, oldest first; sent in order once the session is live. */
 	queued: readonly QueuedPrompt[];
 	/** Models the host lets this writer switch to; null when the host predates `session-cmd`. */
@@ -225,6 +229,10 @@ const NO_FEATURES: Readonly<Partial<Record<CollabFeature, true>>> = Object.freez
 const NO_FOLLOW_UPS: readonly string[] = Object.freeze([]);
 const NO_COMMANDS: readonly CollabCommand[] = Object.freeze([]);
 const TRANSCRIPT_TIMEOUT_MS = 10_000;
+/** One `fetch-history` page must come back within this window. */
+const HISTORY_TIMEOUT_MS = 20_000;
+/** Entries one `loadEarlier` brings in (whole pages, so it may overshoot). */
+const EARLIER_STEP_ENTRIES = 300;
 /** A connection the host has not welcomed within this window is dropped and retried. */
 const WELCOME_TIMEOUT_MS = 30_000;
 /** Each snapshot chunk must arrive within this window, or the connection is dropped and retried. */
@@ -265,6 +273,11 @@ interface PendingTranscript {
 	timer: Timer;
 }
 
+interface PendingHistory {
+	resolve: (reply: Extract<HostFrame, { t: "history" }> | null) => void;
+	timer: Timer;
+}
+
 /** A frame buffered behind an in-flight snapshot, replayed in arrival order once it completes. */
 type LiveOp = { entry: SessionEntry } | { keep: string | null; entries: SessionEntry[] };
 
@@ -293,6 +306,15 @@ export class GuestClient {
 	readonly #writeToken: string | undefined;
 	readonly #listeners = new Set<() => void>();
 	readonly #pendingTranscripts = new Map<number, PendingTranscript>();
+	readonly #pendingHistory = new Map<number, PendingHistory>();
+	/**
+	 * Entries of the host session before the replica's first that were never loaded (the host
+	 * sent only the newest turns); null when the replica holds the whole session. Kept in memory
+	 * only: a replica with an unloaded start is never saved, so a saved one is always whole.
+	 */
+	#earlier: number | null = null;
+	/** The in-flight `loadEarlier`, shared by callers that ask meanwhile. */
+	#loadingEarlier: Promise<number> | null = null;
 	#reqSeq = 0;
 	#noticeSeq = 0;
 	#everConnected = false;
@@ -328,6 +350,8 @@ export class GuestClient {
 		total: number;
 		resumed: boolean;
 		sessionId: string;
+		/** What `#earlier` becomes when a full (not resumed) snapshot completes. */
+		earlier: number | null;
 	} | null = null;
 	#state: SessionState | null = null;
 	#agents: readonly AgentSnapshot[] = [];
@@ -447,6 +471,8 @@ export class GuestClient {
 		// session's: completion schedules the write.
 		if (store === null || header === null || this.#pendingSnapshot !== null) return;
 		if (this.#replicaSessionId !== header.id) return;
+		// A replica that lacks the session's start would come back as if it were whole.
+		if (this.#earlier !== null) return;
 		const fail = (err: unknown): void => console.warn("collab: saving the transcript failed", err);
 		if (this.#savedGen !== this.#replicaGen) {
 			const entries = this.#entries.slice();
@@ -639,6 +665,80 @@ export class GuestClient {
 	}
 
 	/**
+	 * Pages in the entries before the first one this guest holds (host feature `history-paging`): about
+	 * {@link EARLIER_STEP_ENTRIES} of them, or the whole rest with `all`. They are prepended to the replica
+	 * in one step. Resolves how many arrived; 0 when nothing was loaded (nothing is missing, the host did not
+	 * answer, or the session changed under the request: a stale replica rejoins for a fresh snapshot).
+	 * Callers that ask while a load runs share it.
+	 */
+	loadEarlier(options: { all?: boolean } = {}): Promise<number> {
+		if (this.#loadingEarlier !== null) return this.#loadingEarlier;
+		const first = this.#entries[0];
+		const omitted = this.#earlier;
+		if (omitted === null || first === undefined || this.#phase !== "live" || this.#pendingSnapshot !== null) {
+			return Promise.resolve(0);
+		}
+		if (!Object.hasOwn(this.#features, "history-paging")) return Promise.resolve(0);
+		const run = this.#fetchEarlier(first.id, omitted, options.all === true).finally(() => {
+			this.#loadingEarlier = null;
+			this.#commit();
+		});
+		this.#loadingEarlier = run;
+		this.#commit();
+		return run;
+	}
+
+	async #fetchEarlier(firstId: string, omitted: number, all: boolean): Promise<number> {
+		const pages: SessionEntry[][] = [];
+		let loaded = 0;
+		let remaining = omitted;
+		let anchor = firstId;
+		while (remaining > 0 && (all || loaded < EARLIER_STEP_ENTRIES)) {
+			const reply = await this.#fetchHistory(anchor);
+			if (reply === null) break;
+			if (reply.error !== undefined) {
+				// The entry we asked before left the host's active path: this replica is stale.
+				this.#rejoinForFullSnapshot(`history request refused (${reply.error}); rejoining for a fresh snapshot`);
+				return 0;
+			}
+			const head = reply.entries[0];
+			if (head === undefined) {
+				remaining = 0;
+				break;
+			}
+			pages.unshift(reply.entries);
+			loaded += reply.entries.length;
+			anchor = head.id;
+			remaining = reply.remaining;
+		}
+		if (loaded === 0) {
+			if (remaining === omitted) this.#pushNotice("warning", "The host did not send earlier history; try again");
+			else this.#earlier = null;
+			return 0;
+		}
+		// A reconnect or a rewind during the request may have replaced the start of the replica.
+		if (this.#entries[0]?.id !== firstId || this.#pendingSnapshot !== null || this.#phase === "ended") return 0;
+		this.#entries = pages.flat().concat(this.#entries);
+		this.#earlier = remaining > 0 ? remaining : null;
+		this.#publishedEntries = [...this.#entries];
+		this.#replicaChanged(true);
+		return loaded;
+	}
+
+	/** One `fetch-history` round trip: the reply, or null on timeout or session end. */
+	#fetchHistory(beforeEntryId: string): Promise<Extract<HostFrame, { t: "history" }> | null> {
+		const reqId = ++this.#reqSeq;
+		const { promise, resolve } = Promise.withResolvers<Extract<HostFrame, { t: "history" }> | null>();
+		const timer = setTimeout(() => {
+			this.#pendingHistory.delete(reqId);
+			resolve(null);
+		}, HISTORY_TIMEOUT_MS);
+		this.#pendingHistory.set(reqId, { resolve, timer });
+		this.#socket.send({ t: "fetch-history", reqId, beforeEntryId });
+		return promise;
+	}
+
+	/**
 	 * Test seam: apply a synthetic host frame through the real apply path. With
 	 * `flush` (default), a commit deferred to the next animation frame is
 	 * published now, so the snapshot reflects the frame on return.
@@ -701,6 +801,7 @@ export class GuestClient {
 			writeToken: this.#writeToken,
 			resume,
 			zip: CAN_INFLATE ? true : undefined,
+			pagedHistory: true,
 		});
 	}
 
@@ -763,6 +864,11 @@ export class GuestClient {
 			pending.resolve(null);
 		}
 		this.#pendingTranscripts.clear();
+		for (const [, pending] of this.#pendingHistory) {
+			clearTimeout(pending.timer);
+			pending.resolve(null);
+		}
+		this.#pendingHistory.clear();
 		this.#clearUiRequests();
 		this.#commit();
 		this.#socket.close();
@@ -836,6 +942,7 @@ export class GuestClient {
 						if (at < 0) {
 							// Unreachable while the replica only grows; a tail-only snapshot cannot repair it.
 							this.#entries = [];
+							this.#earlier = null;
 							this.#publishedEntries = [];
 							this.#replicaSessionId = null;
 							this.#pendingSnapshot = null;
@@ -851,6 +958,7 @@ export class GuestClient {
 						if (!resumed) {
 							this.#entries = [];
 							this.#publishedEntries = [];
+							this.#earlier = null;
 							this.#replicaChanged(true);
 						}
 						this.#replicaSessionId = frame.header.id;
@@ -862,6 +970,7 @@ export class GuestClient {
 							total: frame.entryCount,
 							resumed,
 							sessionId: frame.header.id,
+							earlier: frame.truncated?.omitted ?? null,
 						};
 					}
 				}
@@ -925,9 +1034,12 @@ export class GuestClient {
 						}
 						entries = next;
 						branched = true;
+						// A branch from nothing carries the whole new path.
+						if (op.keep === null) pending.earlier = null;
 					}
 					this.#entries = entries;
 					this.#replicaSessionId = pending.sessionId;
+					if (!pending.resumed) this.#earlier = pending.earlier;
 					this.#publishedEntries = [...this.#entries];
 					this.#pendingSnapshot = null;
 					this.#clearSnapshotProgressTimer();
@@ -968,6 +1080,8 @@ export class GuestClient {
 					return;
 				}
 				this.#entries = next;
+				// A branch from nothing carries the whole new path.
+				if (frame.keep === null) this.#earlier = null;
 				this.#publishedEntries = [...next];
 				this.#replicaChanged(true);
 				break;
@@ -1024,6 +1138,15 @@ export class GuestClient {
 							? { kind: "error", message: frame.error }
 							: { kind: "rows", text: frame.text, newSize: frame.newSize },
 					);
+				}
+				break;
+			}
+			case "history": {
+				const pending = this.#pendingHistory.get(frame.reqId);
+				if (pending) {
+					this.#pendingHistory.delete(frame.reqId);
+					clearTimeout(pending.timer);
+					pending.resolve(frame);
 				}
 				break;
 			}
@@ -1125,6 +1248,7 @@ export class GuestClient {
 	 */
 	#rejoinForFullSnapshot(reason: string): void {
 		this.#entries = [];
+		this.#earlier = null;
 		this.#replicaSessionId = null;
 		this.#pendingSnapshot = null;
 		this.#connWelcomed = false;
@@ -1295,6 +1419,8 @@ export class GuestClient {
 				received: this.#pendingSnapshot.entries.length,
 				total: this.#pendingSnapshot.total,
 			},
+			earlier: this.#earlier,
+			loadingEarlier: this.#loadingEarlier !== null,
 			queued: this.#queue,
 			models: this.#models,
 			profiles: this.#profiles,

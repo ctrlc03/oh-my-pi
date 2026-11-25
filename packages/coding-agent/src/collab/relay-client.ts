@@ -77,6 +77,30 @@ const MAX_RETIRED_PEERS = 256;
 const WS_BACKPRESSURE_THRESHOLD = 64 * 1024;
 const WS_BACKPRESSURE_DRAIN_THRESHOLD = 32 * 1024;
 const WS_BACKPRESSURE_DRAIN_RETRY_MS = 25;
+/**
+ * Most bytes a host lets the relay hold unread. The public relay reads a host's socket only as
+ * fast as it delivers to the room's guests (measured at 25-250 KB/s toward one guest), so the
+ * local socket buffer drains at once and `bufferedAmount` never shows the backlog. Behind
+ * several MB the relay's own ping (every 30 s) waits too: the relay dropped the host about
+ * 10 s later, closing the room on every guest mid-welcome. A ping carrying a sequence number
+ * follows the written bytes; its pong means the relay has read everything before it.
+ */
+export const RELAY_IN_FLIGHT_BYTES = 64 * 1024;
+/** Bytes written between two pacing pings. */
+const RELAY_PACING_PING_BYTES = 16 * 1024;
+/**
+ * Most bytes of acknowledged batch frames (`welcome`, `snapshot-chunk`) a host keeps unacknowledged toward
+ * one guest that acks them (`hello.ackSnapshot`). The relay reads ahead of what a guest has received and
+ * buffers the rest; its ping to the guest waits behind that buffer, and at 25-40 KB/s a buffer of
+ * about 1.5 MB had the relay drop the guest (close 1006) mid-welcome. With this window the buffer stays
+ * under this plus one chunk, a few seconds at the slow end.
+ */
+export const PEER_IN_FLIGHT_BYTES = 64 * 1024;
+/**
+ * A guest that stops acknowledging (hung, or an ack lost with its connection) holds the shared queue
+ * no longer than this: its batch then continues unpaced, as toward a guest that never acked.
+ */
+export const PEER_ACK_TIMEOUT_MS = 20_000;
 
 interface PendingSend {
 	frames: Iterator<CollabFrame | string>;
@@ -97,6 +121,8 @@ interface PendingSend {
 	head?: CollabFrame | string;
 	/** Supersession key from {@link CollabSocket.sendLatest}; a newer send under it cancels this one while queued. */
 	key?: string;
+	/** Frames of a lazy batch the target peer acknowledges; each waits for room under {@link PEER_IN_FLIGHT_BYTES}. */
+	acked?: (frame: CollabFrame | string) => boolean;
 }
 
 export interface CollabSocketOptions {
@@ -141,6 +167,15 @@ export class CollabSocket {
 	#heartbeatTimer: NodeJS.Timeout | undefined;
 	/** When the current socket last received anything, pongs included. */
 	#lastHeard = 0;
+	/** Bytes written to the current socket; host pacing (see {@link RELAY_IN_FLIGHT_BYTES}). */
+	#relayWritten = 0;
+	/** Of {@link #relayWritten}, the bytes a returned pong proves the relay has read. */
+	#relayConfirmed = 0;
+	/** {@link #relayWritten} when the newest ping went out. */
+	#relayPinged = 0;
+	#pingSeq = 0;
+	/** Pings awaiting their pong, oldest first, with the bytes written before each. */
+	#unansweredPings: Array<{ seq: number; written: number }> = [];
 	#sending = false;
 	#sendGeneration = 0;
 	#wakeSender: (() => void) | undefined;
@@ -174,6 +209,11 @@ export class CollabSocket {
 	 * from the old room must not act on the new occupant of the same id.
 	 */
 	#roomGeneration = 0;
+	/**
+	 * Guests that acknowledge batch frames ({@link expectAcks}): sizes of the frames sent and not yet
+	 * acknowledged, oldest first, their sum, and how many were acknowledged on their connection.
+	 */
+	#peerAcks = new Map<number, { unacked: number[]; inFlight: number; acked: number }>();
 
 	constructor(opts: CollabSocketOptions) {
 		this.#opts = opts;
@@ -296,6 +336,8 @@ export class CollabSocket {
 	 * `compress` applies to every frame of the batch, as in {@link send}.
 	 *
 	 * @param retainedBytes bytes {@link frames} keeps reachable until it drains; the batch's charge.
+	 * @param acked frames the peer acknowledges, when it does ({@link expectAcks}): each is sent only while
+	 *   less than {@link PEER_IN_FLIGHT_BYTES} of them are unacknowledged.
 	 * @returns whether the batch was admitted.
 	 */
 	sendBatch(
@@ -303,6 +345,7 @@ export class CollabSocket {
 		targetPeer: number,
 		retainedBytes: number,
 		compress = false,
+		acked?: (frame: CollabFrame | string) => boolean,
 	): boolean {
 		if (this.#closed) return false;
 		return this.#enqueueSend({
@@ -314,7 +357,28 @@ export class CollabSocket {
 			advisory: false,
 			cancelled: false,
 			eager: false,
+			acked,
 		});
+	}
+
+	/**
+	 * `peerId` acknowledges the batch frames {@link sendBatch} marks (`hello.ackSnapshot`). Counting starts
+	 * with its connection; a repeated hello on the same connection keeps the count, as the guest does.
+	 */
+	expectAcks(peerId: number): void {
+		if (peerId === 0 || this.#peerAcks.has(peerId)) return;
+		this.#peerAcks.set(peerId, { unacked: [], inFlight: 0, acked: 0 });
+	}
+
+	/** `peerId` has received `frames` acknowledged frames so far (cumulative). */
+	ackFrames(peerId: number, frames: number): void {
+		const acks = this.#peerAcks.get(peerId);
+		if (!acks || !Number.isSafeInteger(frames)) return;
+		while (acks.acked < frames && acks.unacked.length > 0) {
+			acks.inFlight -= acks.unacked.shift()!;
+			acks.acked++;
+		}
+		this.#wakeSender?.();
 	}
 
 	/** Broadcast carrying no replica state; dropped rather than shedding a peer or ending the room. */
@@ -332,7 +396,11 @@ export class CollabSocket {
 	 */
 	dropPeer(peerId: number): number {
 		if (peerId === 0) return 0;
-		return this.#discardWhere(pending => pending.targetPeer === peerId);
+		this.#peerAcks.delete(peerId);
+		const discarded = this.#discardWhere(pending => pending.targetPeer === peerId);
+		// A batch waiting on this peer's acks resumes to find itself cancelled.
+		this.#wakeSender?.();
+		return discarded;
 	}
 
 	/** Single eviction path: cancels an in-flight head cleanly and refunds its accounting. */
@@ -373,6 +441,7 @@ export class CollabSocket {
 		this.#roomGeneration++;
 		this.#retiredPeers.clear();
 		this.#shedPeers.clear();
+		this.#peerAcks.clear();
 		const discarded = this.#discardWhere(pending => pending.targetPeer !== 0);
 		if (discarded > 0) logger.debug("collab: discarded targeted sends across a reconnect", { discarded });
 	}
@@ -531,6 +600,8 @@ export class CollabSocket {
 					this.#pendingSends.shift();
 					continue;
 				}
+				const acked = pending.acked?.(next.value) === true;
+				if (acked) await this.#waitForPeerRoom(pending, generation);
 				if (!(await this.#waitForWritable(generation))) return;
 				if (this.#closed || generation !== this.#sendGeneration) return;
 				if (pending.cancelled) continue;
@@ -538,8 +609,13 @@ export class CollabSocket {
 				const sealed = await sealSerialized(this.#opts.key, serialized, pending.compress);
 				if (this.#closed || generation !== this.#sendGeneration) return;
 				if (pending.cancelled) continue;
-				if ((await this.#sendEnvelope(pending, packEnvelope(pending.targetPeer, sealed), generation)) === "stop") {
-					return;
+				const envelope = packEnvelope(pending.targetPeer, sealed);
+				const outcome = await this.#sendEnvelope(pending, envelope, generation);
+				if (outcome === "stop") return;
+				const acks = acked && outcome === "sent" ? this.#peerAcks.get(pending.targetPeer) : undefined;
+				if (acks) {
+					acks.unacked.push(envelope.byteLength);
+					acks.inFlight += envelope.byteLength;
 				}
 				continue;
 			}
@@ -583,6 +659,32 @@ export class CollabSocket {
 		}
 	}
 
+	/**
+	 * Until less than {@link PEER_IN_FLIGHT_BYTES} of `pending`'s peer's acknowledged frames are unacknowledged.
+	 * A peer silent for {@link PEER_ACK_TIMEOUT_MS} is no longer paced; one that left cancels `pending`.
+	 */
+	async #waitForPeerRoom(pending: PendingSend, generation: number): Promise<void> {
+		const deadline = Date.now() + PEER_ACK_TIMEOUT_MS;
+		while (!this.#closed && generation === this.#sendGeneration && !pending.cancelled) {
+			const acks = this.#peerAcks.get(pending.targetPeer);
+			if (!acks || acks.inFlight < PEER_IN_FLIGHT_BYTES) return;
+			const left = deadline - Date.now();
+			if (left <= 0) {
+				logger.debug("collab: guest stopped acknowledging its snapshot; sending the rest unpaced", {
+					peer: pending.targetPeer,
+				});
+				this.#peerAcks.delete(pending.targetPeer);
+				return;
+			}
+			const wake = Promise.withResolvers<void>();
+			this.#wakeSender = wake.resolve;
+			const timer = setTimeout(wake.resolve, left);
+			await wake.promise;
+			clearTimeout(timer);
+			if (this.#wakeSender === wake.resolve) this.#wakeSender = undefined;
+		}
+	}
+
 	async #sendEnvelope(
 		pending: PendingSend,
 		envelope: Uint8Array,
@@ -595,6 +697,7 @@ export class CollabSocket {
 			if (pending.cancelled) return "cancelled";
 			if (ws !== this.#ws || !this.#isWritable(ws) || ws.bufferedAmount >= WS_BACKPRESSURE_THRESHOLD) continue;
 			ws.send(envelope);
+			this.#noteWritten(ws, envelope.byteLength);
 			return "sent";
 		}
 		return "stop";
@@ -604,11 +707,12 @@ export class CollabSocket {
 		let threshold = WS_BACKPRESSURE_THRESHOLD;
 		while (!this.#closed && generation === this.#sendGeneration) {
 			const ws = this.#ws;
-			if (this.#isWritable(ws) && !(ws.bufferedAmount >= threshold)) return ws;
+			const buffered = this.#isWritable(ws) && ws.bufferedAmount >= threshold;
+			if (this.#isWritable(ws) && !buffered && this.#relayHasRoom(ws)) return ws;
 			const wake = Promise.withResolvers<void>();
 			this.#wakeSender = wake.resolve;
 			let timer: NodeJS.Timeout | undefined;
-			if (this.#isWritable(ws)) {
+			if (buffered) {
 				threshold = WS_BACKPRESSURE_DRAIN_THRESHOLD;
 				timer = setTimeout(wake.resolve, WS_BACKPRESSURE_DRAIN_RETRY_MS);
 				this.#backpressureDrainTimer = timer;
@@ -618,6 +722,64 @@ export class CollabSocket {
 			if (this.#wakeSender === wake.resolve) this.#wakeSender = undefined;
 		}
 		return undefined;
+	}
+
+	/**
+	 * Whether a host may write more before the relay reads what it holds (see {@link RELAY_IN_FLIGHT_BYTES}).
+	 * When not, bytes no ping follows yet get one, so the pong that wakes the sender is on its way.
+	 */
+	#relayHasRoom(ws: WebSocket): boolean {
+		if (this.#opts.role !== "host" || this.#relayWritten - this.#relayConfirmed < RELAY_IN_FLIGHT_BYTES) return true;
+		if (this.#relayPinged < this.#relayWritten) this.#ping(ws);
+		return false;
+	}
+
+	#noteWritten(ws: WebSocket, bytes: number): void {
+		this.#relayWritten += bytes;
+		if (this.#opts.role === "host" && this.#relayWritten - this.#relayPinged >= RELAY_PACING_PING_BYTES)
+			this.#ping(ws);
+	}
+
+	/** Pings `ws` with a sequence number its pong echoes, recording the bytes written before it. */
+	#ping(ws: WebSocket): void {
+		const seq = ++this.#pingSeq >>> 0;
+		const payload = new Uint8Array(4);
+		new DataView(payload.buffer).setUint32(0, seq);
+		try {
+			ws.ping(payload);
+		} catch {
+			// A failed write surfaces as the socket's own close event.
+			return;
+		}
+		this.#relayPinged = this.#relayWritten;
+		this.#unansweredPings.push({ seq, written: this.#relayWritten });
+	}
+
+	/**
+	 * A pong proves the relay read everything written before its ping. One without the echoed
+	 * sequence number (a relay that drops ping payloads) answers the oldest ping: pongs come in order.
+	 */
+	#handlePong(event: unknown): void {
+		const data = (event as { data?: unknown } | undefined)?.data;
+		let answered = 0;
+		if (data instanceof Uint8Array && data.byteLength === 4) {
+			const seq = new DataView(data.buffer, data.byteOffset, 4).getUint32(0);
+			const index = this.#unansweredPings.findIndex(ping => ping.seq === seq);
+			answered = index + 1;
+		} else if (this.#unansweredPings.length > 0) {
+			answered = 1;
+		}
+		if (answered === 0) return;
+		this.#relayConfirmed = Math.max(this.#relayConfirmed, this.#unansweredPings[answered - 1]!.written);
+		this.#unansweredPings.splice(0, answered);
+		this.#wakeSender?.();
+	}
+
+	#resetRelayPacing(): void {
+		this.#relayWritten = 0;
+		this.#relayConfirmed = 0;
+		this.#relayPinged = 0;
+		this.#unansweredPings = [];
 	}
 
 	/**
@@ -655,6 +817,7 @@ export class CollabSocket {
 		this.#roomGeneration++;
 		this.#retiredPeers.clear();
 		this.#shedPeers.clear();
+		this.#peerAcks.clear();
 	}
 
 	#clearBackpressureDrain(): void {
@@ -704,6 +867,7 @@ export class CollabSocket {
 		const ws: WebSocket = Reflect.construct(WebSocket, [url, options]);
 		ws.binaryType = "arraybuffer";
 		this.#ws = ws;
+		this.#resetRelayPacing();
 		ws.onopen = () => {
 			if (this.#ws !== ws) return;
 			this.#startHeartbeat(ws);
@@ -724,8 +888,10 @@ export class CollabSocket {
 			if (this.#provisional === ws) this.#commitOpen(ws);
 			this.#handleMessage(ws, event.data);
 		};
-		ws.addEventListener("pong", () => {
-			if (this.#ws === ws) this.#lastHeard = Date.now();
+		ws.addEventListener("pong", (event: Event) => {
+			if (this.#ws !== ws) return;
+			this.#lastHeard = Date.now();
+			this.#handlePong(event);
 		});
 		ws.onerror = () => {
 			// The paired close event carries the actionable state; nothing to do here.
@@ -755,11 +921,7 @@ export class CollabSocket {
 				return;
 			}
 			if (Date.now() - this.#lastHeard <= RELAY_SILENCE_LIMIT_MS) {
-				try {
-					ws.ping();
-				} catch {
-					// A failed write surfaces as the socket's own close event.
-				}
+				this.#ping(ws);
 				return;
 			}
 			logger.debug("collab: relay connection went silent; reconnecting", { role: this.#opts.role });

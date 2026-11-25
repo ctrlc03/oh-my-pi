@@ -234,21 +234,25 @@ const CONNECT_TIMEOUT_MS = 15_000;
 export const TRANSCRIPT_READ_CAP = 4 * 1024 * 1024;
 const TRANSCRIPT_ENTRY_TOO_LARGE_ERROR = `transcript entry exceeds transcript fetch cap (${TRANSCRIPT_READ_CAP} bytes)`;
 /**
- * Soft byte cap per `snapshot-chunk` frame. The first MB of a snapshot takes
- * ~3s through the default relay, so a 512 KB chunk lands well under the
- * guest's 30 s per-chunk progress timeout; oversized single entries still
- * ship in a chunk of their own. Measured in UTF-8 bytes — the unit the relay
- * and the seal step care about — not UTF-16 code units (#11433).
+ * Soft byte cap per `snapshot-chunk` frame. Through the public relay one guest
+ * receives 25-250 KB/s, and the relay buffers what it has not delivered: up to
+ * `PEER_IN_FLIGHT_BYTES` plus one chunk toward a guest that acks, and its ping to
+ * the guest waits behind that buffer. A small chunk keeps it to a few seconds
+ * at the slow end, well under the relay's ~10 s pong deadline and the guest's
+ * 30 s per-chunk progress timeout. Oversized single entries still ship in a chunk
+ * of their own. Measured in UTF-8 bytes — the unit the relay and the seal step
+ * care about — not UTF-16 code units (#11433).
  */
-const SNAPSHOT_CHUNK_BYTES = 512 * 1024;
+const SNAPSHOT_CHUNK_BYTES = 64 * 1024;
 /**
  * Most serialized bytes of the newest entries a welcome carries toward a guest
  * that pages history (`hello.pagedHistory`). A longer active path is cut to its
- * newest turns inside this budget and the rest is served by `fetch-history`; a
- * transcript of tens of MB otherwise outlasts a guest's join patience (the join
- * sat at "0%" for sessions of 60-120 MB).
+ * newest turns inside this budget and the rest is served by `fetch-history`.
+ * About 250 KB compressed, which the relay's slow end (25 KB/s) delivers in about
+ * 10 s; 8 MB (about 2 MB on the wire) took 10 s at best and stalled past the
+ * guest's join timeouts at worst.
  */
-export const WELCOME_TAIL_BYTES = 8 * 1024 * 1024;
+export const WELCOME_TAIL_BYTES = 1024 * 1024;
 /** Soft byte cap per `history` reply: one frame, no larger than a snapshot chunk. */
 const HISTORY_PAGE_BYTES = SNAPSHOT_CHUNK_BYTES;
 
@@ -1129,6 +1133,11 @@ export class CollabHost {
 			logger.debug("collab host ignoring frame from a peer it no longer serves", { type: frame.t, fromPeer });
 			return;
 		}
+		// Acks only pace this peer's snapshot; they need no registration and change nothing.
+		if (frame.t === "snapshot-ack") {
+			this.#socket.ackFrames(fromPeer, frame.frames);
+			return;
+		}
 		// Served by the relay but not registered here: shed, or its welcome was
 		// refused. Its frames would otherwise be judged as a read-only peer's.
 		if (frame.t !== "hello" && !this.#peers.has(fromPeer)) {
@@ -1308,8 +1317,16 @@ export class CollabHost {
 		for (const bytes of snapshotEntries.bytes) retainedBytes += bytes;
 		for (const ask of asks) retainedBytes += Buffer.byteLength(ask);
 		this.#flushSuperseding();
+		// A guest that acknowledges what it receives gets the welcome and chunks paced by its acks; the
+		// asks that follow are not acknowledged.
+		let acked: ((frame: CollabFrame | string) => boolean) | undefined;
+		if (hello.ackSnapshot === true) {
+			socket.expectAcks(fromPeer);
+			const unacked = new Set<string>(asks);
+			acked = frame => typeof frame !== "string" || !unacked.has(frame);
+		}
 		// Compression is per recipient: only a peer that said `zip` in its hello can open it.
-		if (!socket.sendBatch(this.#welcomeBatch(welcome, snapshotEntries, asks), fromPeer, retainedBytes, zip)) {
+		if (!socket.sendBatch(this.#welcomeBatch(welcome, snapshotEntries, asks), fromPeer, retainedBytes, zip, acked)) {
 			// The guest applies nothing before a welcome, so record nothing for it either.
 			if (registered) this.#peers.set(fromPeer, registered);
 			else this.#peers.delete(fromPeer);

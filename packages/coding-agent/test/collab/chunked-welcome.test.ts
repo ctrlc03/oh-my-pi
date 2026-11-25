@@ -33,14 +33,15 @@ interface SizedSnapshot {
 
 /**
  * Build a synthetic transcript whose total serialized size comfortably
- * exceeds the host's `SNAPSHOT_CHUNK_BYTES` (512 KB), forcing several
- * chunks. Each entry is ~16 KB of repeated text, so 96 entries → ~1.5 MB,
- * cleanly above three chunks without making the test slow.
+ * exceeds the host's `SNAPSHOT_CHUNK_BYTES` (128 KB), forcing several
+ * chunks, and stays under `WELCOME_TAIL_BYTES` (1 MB), so a paging guest is
+ * still sent the whole session. Each entry is ~16 KB of repeated text, so 48
+ * entries → ~770 KB.
  */
 function makeLargeSnapshot(): SizedSnapshot {
 	const body = "x".repeat(16 * 1024);
 	const entries: SessionEntry[] = [];
-	for (let i = 0; i < 96; i++) {
+	for (let i = 0; i < 48; i++) {
 		entries.push({
 			type: "message",
 			id: `e${i}`,
@@ -276,7 +277,7 @@ describe("collab chunked welcome (#3144)", () => {
 			chunks.push({ entries: f.entries, final: f.final });
 			if (f.final) break;
 		}
-		// Three+ chunks proves we honor the 512 KB cap with the 1.5 MB transcript;
+		// Several chunks prove we honor the 128 KB cap with the ~770 KB transcript;
 		// only the last carries `final: true`.
 		expect(chunks.length).toBeGreaterThan(1);
 		expect(chunks.at(-1)?.final).toBe(true);

@@ -26,11 +26,11 @@ import type { SessionEntry } from "@oh-my-pi/pi-coding-agent/session/session-ent
 import { installInMemoryRelay, uninstallInMemoryRelay } from "./helpers/in-memory-relay";
 
 const SESSION_ID = "sess-history";
-const TURNS = 80;
-const PROMPT = "q".repeat(20 * 1024);
-const REPLY = "a".repeat(100 * 1024);
+const TURNS = 160;
+const PROMPT = "q".repeat(2 * 1024);
+const REPLY = "a".repeat(8 * 1024);
 
-/** 80 turns of a 20 KiB prompt and a 100 KiB reply: ~9.6 MiB, past the welcome budget. */
+/** 160 turns of a 2 KiB prompt and an 8 KiB reply: ~1.6 MiB, past the welcome budget, several turns per history page. */
 const entries: SessionEntry[] = [];
 for (let turn = 0; turn < TURNS; turn++) {
 	entries.push({
@@ -208,7 +208,7 @@ describe("collab history paging", () => {
 			const pageIds = frame.entries.map(entry => entry.id);
 			expect(pageIds.length).toBeGreaterThan(0);
 			// A soft cap: the page fits one snapshot chunk, give or take the entry that crossed it.
-			expect(bytes).toBeLessThanOrEqual(512 * 1024 + 130 * 1024);
+			expect(bytes).toBeLessThanOrEqual(64 * 1024 + 12 * 1024);
 			// Pages end where the previous request began and open at a prompt.
 			expect(pageIds[0]).toMatch(/^u\d+$/);
 			// `remaining` counts what still precedes the page.

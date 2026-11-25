@@ -371,6 +371,7 @@ export class CollabGuestLink {
 				name: collabDisplayName(this.#ctx),
 				writeToken: this.#writeToken,
 				pagedHistory: true,
+				ackSnapshot: true,
 			});
 		};
 		// The host dropped us (or never answered) while the relay link stayed up: say
@@ -397,11 +398,18 @@ export class CollabGuestLink {
 			if (joined) rejoin(message);
 			else firstWelcome.reject(new Error(message));
 		};
+		// Welcome and chunk frames received on the current relay connection; acked so the host paces the snapshot.
+		let snapshotFrames = 0;
 		socket.onOpen = () => {
 			if (this.#left) return;
+			snapshotFrames = 0;
 			introduce();
 		};
 		socket.onFrame = frame => {
+			if (frame.t === "welcome" || frame.t === "snapshot-chunk") {
+				snapshotFrames++;
+				socket.send({ t: "snapshot-ack", frames: snapshotFrames });
+			}
 			this.#applyChain = this.#applyChain
 				.then(async () => {
 					if (this.#left) return;

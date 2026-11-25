@@ -48,7 +48,8 @@ describe("offline prompt queue", () => {
 			},
 		});
 		sendSpy = vi.spyOn(CollabSocket.prototype, "send").mockImplementation((frame: GuestFrame) => {
-			sent.push(frame);
+			// Snapshot acks only pace the welcome; these tests check what the user's prompts send.
+			if (frame.t !== "snapshot-ack") sent.push(frame);
 		});
 	});
 

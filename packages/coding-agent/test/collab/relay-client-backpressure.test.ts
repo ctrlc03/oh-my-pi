@@ -83,19 +83,28 @@ class BackpressuredWebSocket {
 	}
 
 	/** Pong listeners; a scripted relay answers pings only when a test pongs. */
-	pongListeners: Array<() => void> = [];
+	pongListeners: Array<(event?: { data: Uint8Array }) => void> = [];
 	pings = 0;
+	/** Payloads of pings not yet answered, oldest first. */
+	unansweredPings: Uint8Array[] = [];
 
-	addEventListener(type: string, listener: () => void): void {
+	addEventListener(type: string, listener: (event?: { data: Uint8Array }) => void): void {
 		if (type === "pong") this.pongListeners.push(listener);
 	}
 
-	ping(): void {
+	ping(data?: Uint8Array): void {
 		this.pings++;
+		if (data) this.unansweredPings.push(data);
 	}
 
+	/** Answers every ping so far, echoing each payload as a relay does. */
 	pong(): void {
-		for (const listener of this.pongListeners) listener();
+		const answered = this.unansweredPings.splice(0);
+		if (answered.length === 0) {
+			for (const listener of this.pongListeners) listener();
+			return;
+		}
+		for (const data of answered) for (const listener of this.pongListeners) listener({ data });
 	}
 
 	terminate(): void {
@@ -772,6 +781,7 @@ describe("CollabSocket send backpressure", () => {
 			const deadline = Date.now() + 3000;
 			while (ws.sent.length < 301 && Date.now() < deadline) {
 				ws.bufferedAmount = 0;
+				ws.pong();
 				await Bun.sleep(30);
 			}
 			const received: CollabFrame[] = [];
@@ -786,6 +796,130 @@ describe("CollabSocket send backpressure", () => {
 			);
 			expect(snapshot.filter(frame => frame.final)).toEqual([snapshot[299]!]);
 			expect(received.at(-1)).toEqual({ t: "bye", reason: "after snapshot" });
+		} finally {
+			socket.close();
+		}
+	});
+
+	it("holds a host's writes once the relay has not read 64 KB, even with an empty socket buffer, until its pong", async () => {
+		BackpressuredWebSocket.instances = [];
+		BackpressuredWebSocket.initialBufferedAmount = 0;
+		globalThis.WebSocket = BackpressuredWebSocket as unknown as typeof WebSocket;
+		const key = await importRoomKey(generateRoomKey());
+		const socket = new CollabSocket({ wsUrl: "ws://localhost:8788/r/paced", role: "host", key });
+		const frames: CollabFrame[] = Array.from({ length: 40 }, (_, i) => ({
+			t: "snapshot-chunk",
+			entries: [
+				{
+					type: "message",
+					id: `e${i}`,
+					parentId: null,
+					timestamp: "2026-11-25T00:00:00Z",
+					message: { role: "user", content: crypto.randomUUID().repeat(220), timestamp: 0 },
+				},
+			],
+			final: i === 39,
+		}));
+		const writtenBytes = (ws: BackpressuredWebSocket): number =>
+			ws.sent.reduce((sum, bytes) => sum + bytes.byteLength, 0);
+		/** The public relay's case: the local buffer empties at once, whatever the relay still holds. */
+		async function drainLocally(ws: BackpressuredWebSocket): Promise<void> {
+			for (let i = 0; i < 20; i++) {
+				ws.bufferedAmount = 0;
+				await Bun.sleep(5);
+			}
+		}
+		try {
+			socket.connect();
+			const ws = BackpressuredWebSocket.instances[0]!;
+			ws.open();
+			socket.sendBatch(frames, 7, 0);
+			await drainLocally(ws);
+			const held = ws.sent.length;
+			expect(writtenBytes(ws)).toBeGreaterThanOrEqual(64 * 1024);
+			expect(writtenBytes(ws)).toBeLessThan(64 * 1024 + 16 * 1024);
+			expect(ws.unansweredPings.length).toBeGreaterThan(0);
+			await drainLocally(ws);
+			expect(ws.sent.length).toBe(held);
+
+			const deadline = Date.now() + 3000;
+			while (ws.sent.length < frames.length && Date.now() < deadline) {
+				ws.pong();
+				await drainLocally(ws);
+			}
+			const ids: string[] = [];
+			for (const bytes of ws.sent) {
+				const frame = await open(key, unpackEnvelope(bytes)!.payload);
+				if (frame.t === "snapshot-chunk") ids.push(...frame.entries.map(entry => entry.id));
+			}
+			expect(ids).toEqual(frames.map((_, i) => `e${i}`));
+		} finally {
+			socket.close();
+		}
+	});
+
+	it("keeps under 64 KB of a snapshot unacknowledged toward a guest that acks, and frees the queue when it leaves", async () => {
+		BackpressuredWebSocket.instances = [];
+		BackpressuredWebSocket.initialBufferedAmount = 0;
+		globalThis.WebSocket = BackpressuredWebSocket as unknown as typeof WebSocket;
+		const key = await importRoomKey(generateRoomKey());
+		const socket = new CollabSocket({ wsUrl: "ws://localhost:8788/r/acked", role: "host", key });
+		const chunk = (i: number): CollabFrame => ({
+			t: "snapshot-chunk",
+			entries: [
+				{
+					type: "message",
+					id: `e${i}`,
+					parentId: null,
+					timestamp: "2026-11-25T00:00:00Z",
+					message: { role: "user", content: crypto.randomUUID().repeat(460), timestamp: 0 },
+				},
+			],
+			final: i === 19,
+		});
+		/** The relay reads everything at once (pongs answered) and the local buffer empties: only acks hold the batch. */
+		async function relayReadsAll(ws: BackpressuredWebSocket): Promise<void> {
+			for (let i = 0; i < 10; i++) {
+				ws.bufferedAmount = 0;
+				ws.pong();
+				await Bun.sleep(5);
+			}
+		}
+		const chunkIds = async (ws: BackpressuredWebSocket): Promise<string[]> => {
+			const ids: string[] = [];
+			for (const bytes of ws.sent) {
+				const frame = await open(key, unpackEnvelope(bytes)!.payload);
+				if (frame.t === "snapshot-chunk") ids.push(...frame.entries.map(entry => entry.id));
+			}
+			return ids;
+		};
+		try {
+			socket.connect();
+			const ws = BackpressuredWebSocket.instances[0]!;
+			ws.open();
+			socket.expectAcks(7);
+			socket.sendBatch(
+				Array.from({ length: 20 }, (_, i) => chunk(i)),
+				7,
+				0,
+				false,
+				() => true,
+			);
+			await relayReadsAll(ws);
+			// Four chunks of just over 16 KB reach the 64 KB window; the fifth waits for an ack.
+			expect(await chunkIds(ws)).toEqual(["e0", "e1", "e2", "e3"]);
+
+			socket.ackFrames(7, 2);
+			await relayReadsAll(ws);
+			expect(await chunkIds(ws)).toEqual(["e0", "e1", "e2", "e3", "e4", "e5"]);
+
+			// The guest leaves mid-snapshot: its batch is dropped and later traffic is not held behind it.
+			socket.dropPeer(7);
+			socket.send({ t: "bye", reason: "after the guest left" });
+			await relayReadsAll(ws);
+			const last = await open(key, unpackEnvelope(ws.sent.at(-1)!)!.payload);
+			expect(last).toEqual({ t: "bye", reason: "after the guest left" });
+			expect(await chunkIds(ws)).toEqual(["e0", "e1", "e2", "e3", "e4", "e5"]);
 		} finally {
 			socket.close();
 		}

@@ -600,7 +600,7 @@ describe("GuestClient frame apply", () => {
 	it("tracks host UI requests and sends responses", () => {
 		const sent: GuestFrame[] = [];
 		const sendSpy = vi.spyOn(CollabSocket.prototype, "send").mockImplementation((frame: GuestFrame) => {
-			sent.push(frame);
+			if (frame.t !== "snapshot-ack") sent.push(frame);
 		});
 		try {
 			const client = liveClient();
@@ -732,6 +732,28 @@ describe("GuestClient delta resume", () => {
 			client.close();
 			expect(lastHello(sent).resume).toBeUndefined();
 			expect(lastHello(sent).zip).toBe(true);
+		});
+	});
+
+	it("acknowledges every welcome and snapshot chunk, counting afresh on each connection", () => {
+		withSocket((sent, connect) => {
+			const client = new GuestClient(LINK, "tester");
+			connect(client);
+			expect(lastHello(sent).ackSnapshot).toBe(true);
+			client.applyFrameForTest(welcomeFrame(2));
+			client.applyFrameForTest(snapshotChunk([e1], false));
+			client.applyFrameForTest(snapshotChunk([e2]));
+			expect(sent.filter(frame => frame.t === "snapshot-ack")).toEqual([
+				{ t: "snapshot-ack", frames: 1 },
+				{ t: "snapshot-ack", frames: 2 },
+				{ t: "snapshot-ack", frames: 3 },
+			]);
+			// A new relay connection is a new peer to the host, whose count starts over.
+			sent.length = 0;
+			connect(client);
+			client.applyFrameForTest(welcomeFrame(0));
+			expect(sent.filter(frame => frame.t === "snapshot-ack")).toEqual([{ t: "snapshot-ack", frames: 1 }]);
+			client.close();
 		});
 	});
 
@@ -1159,7 +1181,7 @@ describe("GuestClient context items", () => {
 	it("keeps the host's latest ranking and the prune it reports, and sends the commands as given", () => {
 		const sent: GuestFrame[] = [];
 		const sendSpy = vi.spyOn(CollabSocket.prototype, "send").mockImplementation((frame: GuestFrame) => {
-			sent.push(frame);
+			if (frame.t !== "snapshot-ack") sent.push(frame);
 		});
 		try {
 			const client = liveClient();
@@ -1206,7 +1228,7 @@ describe("GuestClient inspect", () => {
 	it("keeps the host's latest timeline and request preview, drops both on reconnect, and sends the commands as given", () => {
 		const sent: GuestFrame[] = [];
 		const sendSpy = vi.spyOn(CollabSocket.prototype, "send").mockImplementation((frame: GuestFrame) => {
-			sent.push(frame);
+			if (frame.t !== "snapshot-ack") sent.push(frame);
 		});
 		try {
 			const client = liveClient();
@@ -1305,7 +1327,7 @@ describe("GuestClient file restore", () => {
 	it("sends the file restore choice with a rewind, and nothing extra otherwise", () => {
 		const sent: GuestFrame[] = [];
 		const sendSpy = vi.spyOn(CollabSocket.prototype, "send").mockImplementation((frame: GuestFrame) => {
-			sent.push(frame);
+			if (frame.t !== "snapshot-ack") sent.push(frame);
 		});
 		try {
 			const client = liveClient();
@@ -1385,7 +1407,7 @@ describe("GuestClient prompts", () => {
 	it("sends prompt images in the prompt frame and omits an empty list", () => {
 		const sent: GuestFrame[] = [];
 		const sendSpy = vi.spyOn(CollabSocket.prototype, "send").mockImplementation((frame: GuestFrame) => {
-			sent.push(frame);
+			if (frame.t !== "snapshot-ack") sent.push(frame);
 		});
 		try {
 			const client = liveClient();

@@ -4,6 +4,7 @@
 
 ### Added
 
+- Paced snapshots: `hello.ackSnapshot` (the guest acknowledges what it receives) and the guest frame `snapshot-ack` (`{ frames }`, the cumulative count of `welcome` and `snapshot-chunk` frames received on the current relay connection), so a host keeps only a few chunks in the relay's buffer toward that guest. An older host ignores both; toward an older guest the host sends unpaced (protocol version unchanged).
 - The `history-paging` feature for long sessions: `hello.pagedHistory` (the guest accepts a truncated snapshot), `welcome.truncated` (`{ omitted, firstOmittedId }`: the host sent only the newest turns), the guest frame `fetch-history` (`{ reqId, beforeEntryId }`) and its reply `history` (`{ reqId, entries, remaining, error? }`, `remaining: 0` ends the session's start). An older host or guest ignores every new field (protocol version unchanged).
 - `PersonalSettings.private` (default `PERSONAL_DEFAULTS.private`, false) and `PersonalSettingsPatch.private`: the Personal agent's _Private (local models only)_ setting, and `PersonalReviewStatus.skipped` gains `"private-unavailable"`. An older companion sends no `private`; the app then hides the choice.
 - `CollabFeature` gains `"private"`, advertised in `welcome.features` by a private session's host.

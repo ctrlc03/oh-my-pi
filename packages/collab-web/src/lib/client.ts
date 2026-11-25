@@ -338,6 +338,8 @@ export class GuestClient {
 	 * than duplicated.
 	 */
 	#connWelcomed = false;
+	/** `welcome` and `snapshot-chunk` frames received on the current relay connection; see {@link #ackSnapshotFrame}. */
+	#snapshotFrames = 0;
 	/**
 	 * Snapshot in flight since `welcome`: chunk entries, plus live `entry`
 	 * frames that arrived meanwhile (published after the snapshot, at the tail).
@@ -750,6 +752,7 @@ export class GuestClient {
 
 	#handleOpen(): void {
 		recordEvent("session", this.#everConnected ? "reconnected" : "connected");
+		this.#snapshotFrames = 0;
 		this.#sendHello();
 		this.#phase = this.#everConnected ? "reconnecting" : "waiting";
 		this.#everConnected = true;
@@ -802,6 +805,7 @@ export class GuestClient {
 			resume,
 			zip: CAN_INFLATE ? true : undefined,
 			pagedHistory: true,
+			ackSnapshot: true,
 		});
 	}
 
@@ -899,6 +903,7 @@ export class GuestClient {
 
 	/** Surfaces apply failures instead of letting the socket's recv chain swallow them. */
 	#applyFrameSafe(frame: HostFrame): void {
+		this.#ackSnapshotFrame(frame);
 		try {
 			this.#applyFrame(frame);
 		} catch (err) {
@@ -915,6 +920,16 @@ export class GuestClient {
 			this.#pushNotice("error", `Failed to apply a ${frame.t} frame`);
 			this.#commit();
 		}
+	}
+
+	/**
+	 * Tell the host how many snapshot frames arrived (`hello.ackSnapshot`), on receipt and before applying: the host
+	 * keeps only a few unacknowledged, so the relay never buffers more than a few seconds of the snapshot for this guest.
+	 */
+	#ackSnapshotFrame(frame: HostFrame): void {
+		if (frame.t !== "welcome" && frame.t !== "snapshot-chunk") return;
+		this.#snapshotFrames++;
+		this.#socket.send({ t: "snapshot-ack", frames: this.#snapshotFrames });
 	}
 
 	#applyFrame(frame: HostFrame): void {

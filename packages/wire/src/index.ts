@@ -543,6 +543,14 @@ export type GuestFrame =
 			 * snapshot, `resumed` absent, which replaces the replica.
 			 */
 			pagedHistory?: true;
+			/**
+			 * The guest sends `snapshot-ack` for every `welcome` and `snapshot-chunk` it receives on
+			 * this relay connection. A host then keeps only a few of them in flight: the public relay
+			 * buffers what a guest has not read, and drops a guest (or the host) whose pong waits
+			 * behind that buffer. Hosts that predate the field send the snapshot unpaced and ignore
+			 * the acks.
+			 */
+			ackSnapshot?: true;
 	  }
 	/**
 	 * `deliver` absent = steer into the running turn. `follow-up`: when the
@@ -581,6 +589,12 @@ export type GuestFrame =
 	 * the guest holds. Served to read-only peers too.
 	 */
 	| { t: "fetch-history"; reqId: number; beforeEntryId: string }
+	/**
+	 * `frames`: how many `welcome` and `snapshot-chunk` frames this guest has received so far
+	 * on its current relay connection (cumulative, so a lost ack is covered by the next). Sent
+	 * only after a hello with `ackSnapshot`.
+	 */
+	| { t: "snapshot-ack"; frames: number }
 	/**
 	 * Run a host session control. `compact`: `arg` is optional custom
 	 * instructions. `model`: `arg` is `provider/id` of one of `welcome.models`.

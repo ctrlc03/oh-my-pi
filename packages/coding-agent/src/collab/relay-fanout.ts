@@ -174,12 +174,13 @@ export class FanoutSocket {
 		return admitted;
 	}
 
-	/** @returns whether the batch was admitted; a broadcast reports the public relay. */
+	/** @returns whether the batch was admitted; a broadcast reports the public relay. `acked`: see {@link CollabSocket.sendBatch}. */
 	sendBatch(
 		frames: Iterable<CollabFrame | EncodedFrame>,
 		targetPeer: number,
 		retainedBytes: number,
 		compress = false,
+		acked?: (frame: CollabFrame | string) => boolean,
 	): boolean {
 		if (targetPeer === 0) {
 			const items = [...frames];
@@ -187,9 +188,23 @@ export class FanoutSocket {
 			if (this.#local !== null && this.#localPeers.size > 0) this.#local.sendBatch(items, 0, retainedBytes);
 			return admitted;
 		}
-		if (!isLocalPeer(targetPeer)) return this.#primary.sendBatch(frames, targetPeer, retainedBytes, compress);
+		if (!isLocalPeer(targetPeer)) return this.#primary.sendBatch(frames, targetPeer, retainedBytes, compress, acked);
 		const local = targetPeer - LOCAL_PEER_BASE;
-		return this.#localPeers.has(local) && (this.#local?.sendBatch(frames, local, retainedBytes, compress) ?? false);
+		return (
+			this.#localPeers.has(local) && (this.#local?.sendBatch(frames, local, retainedBytes, compress, acked) ?? false)
+		);
+	}
+
+	/** See {@link CollabSocket.expectAcks}. */
+	expectAcks(peerId: number): void {
+		if (!isLocalPeer(peerId)) this.#primary.expectAcks(peerId);
+		else this.#local?.expectAcks(peerId - LOCAL_PEER_BASE);
+	}
+
+	/** See {@link CollabSocket.ackFrames}. */
+	ackFrames(peerId: number, frames: number): void {
+		if (!isLocalPeer(peerId)) this.#primary.ackFrames(peerId, frames);
+		else this.#local?.ackFrames(peerId - LOCAL_PEER_BASE, frames);
 	}
 
 	/** Discard what is still queued for a peer that left; see {@link CollabSocket.dropPeer}. */

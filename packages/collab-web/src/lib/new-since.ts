@@ -6,6 +6,7 @@
 import type { SessionEntry } from "@oh-my-pi/pi-wire";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GuestClient } from "./client";
+import { ASYNC_NOTIFY_TYPE } from "./agent-notices";
 import { ASYNC_RESULT_TYPE } from "./async-result";
 import { loadSeen, saveSeen } from "./rooms";
 
@@ -32,6 +33,7 @@ export function newSinceLeft(entries: readonly SessionEntry[], seenId: string | 
 		else if (
 			entry.type === "custom_message" &&
 			entry.customType !== ASYNC_RESULT_TYPE &&
+			entry.customType !== ASYNC_NOTIFY_TYPE &&
 			(entry.customType === "collab-prompt" || entry.display)
 		)
 			count++;

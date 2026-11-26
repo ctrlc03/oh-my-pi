@@ -1,7 +1,7 @@
 import { MessageSquare, Rows3 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { setDefaultChat, useDefaultChat } from "../../lib/chat-view";
+import { setAgentMessagesInChat, setDefaultChat, useAgentMessagesInChat, useDefaultChat } from "../../lib/chat-view";
 import { type EnterWhileRunning, setEnterWhileRunning, useEnterWhileRunning } from "../../lib/composer-prefs";
 import { displayName, MAX_NAME_CHARS, setDisplayName, useDisplayName } from "../../lib/display-name";
 import { SPEECH_RATES, type SpeechRate, setSpeechRate, speechAvailable, useSpeechRate } from "../../lib/speech";
@@ -16,6 +16,11 @@ const ENTER_CHOICES: readonly { value: EnterWhileRunning; label: string; tip: st
 const VIEWS: readonly { value: boolean; label: string; icon: ReactNode }[] = [
 	{ value: true, label: "Chat", icon: <MessageSquare size={14} /> },
 	{ value: false, label: "Full", icon: <Rows3 size={14} /> },
+];
+
+const AGENT_MESSAGES: readonly { value: boolean; label: string }[] = [
+	{ value: true, label: "Show" },
+	{ value: false, label: "Hide" },
 ];
 
 const RATES: readonly { value: SpeechRate; label: string }[] = SPEECH_RATES.map(rate => ({
@@ -48,6 +53,7 @@ function NameField(): ReactNode {
 export function MessagesSection(): ReactNode {
 	const enter = useEnterWhileRunning();
 	const chat = useDefaultChat();
+	const agentMessages = useAgentMessagesInChat();
 	const rate = useSpeechRate();
 	return (
 		<>
@@ -70,6 +76,17 @@ export function MessagesSection(): ReactNode {
 					hint="Chat shows prompts and replies with tool runs folded. A session can switch in its ⋯ menu."
 				>
 					<Choice label="View for new sessions" value={chat} options={VIEWS} onChange={setDefaultChat} />
+				</SettingsRow>
+				<SettingsRow
+					label="Agent messages in chat"
+					hint="Messages between agents (subagents reporting back, peers, work pools) as one-line cards. The full view always shows them."
+				>
+					<Choice
+						label="Agent messages in chat"
+						value={agentMessages}
+						options={AGENT_MESSAGES}
+						onChange={setAgentMessagesInChat}
+					/>
 				</SettingsRow>
 				{speechAvailable() && (
 					<SettingsRow label="Speaking speed" hint="How fast hands-free mode reads replies aloud.">

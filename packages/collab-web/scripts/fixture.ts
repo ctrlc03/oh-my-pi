@@ -620,8 +620,46 @@ export const fixtureEntries: SessionEntry[] = [
 		display: true,
 	},
 	{
-		id: "e09-legacy-call",
+		id: "e09-notify",
 		parentId: "e09-job",
+		timestamp: iso(NOW - 19 * MIN - 20_000),
+		type: "custom_message",
+		customType: "async-notify",
+		content:
+			"<system-notice>\nBackground job bg_7 (bun test --watch) is still running. Its output matched /fail|pass/:\n 412 pass\n(fail) relay > drops a stale peer [12.40ms]\n</system-notice>",
+		details: {
+			reports: [
+				{
+					id: "bg_7",
+					type: "bash",
+					pattern: "fail|pass",
+					lines: [" 412 pass", "(fail) relay > drops a stale peer [12.40ms]"],
+					omitted: 0,
+					running: true,
+					stopped: false,
+				},
+			],
+		},
+		display: true,
+	},
+	{
+		id: "e09-irc",
+		parentId: "e09-notify",
+		timestamp: iso(NOW - 19 * MIN - 10_000),
+		type: "custom_message",
+		customType: "irc:incoming",
+		content: "<system-notice>\n[IRC from RelayProbe]\n…\n</system-notice>",
+		details: {
+			id: "15d774931585f844",
+			from: "RelayProbe",
+			message:
+				"Found it: the stale peer is dropped only after **two** missed heartbeats.\n\n- `relay.ts:212` resets the counter on any frame\n- a guest that only sends acks never trips it\n\nShould I patch `relay.ts` or leave it?",
+		},
+		display: true,
+	},
+	{
+		id: "e09-legacy-call",
+		parentId: "e09-irc",
 		timestamp: iso(NOW - 19 * MIN),
 		type: "message",
 		message: {

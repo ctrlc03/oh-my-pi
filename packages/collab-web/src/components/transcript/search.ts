@@ -6,6 +6,7 @@
 
 import type { ImageContent, SessionEntry, TextContent } from "@oh-my-pi/pi-wire";
 import { ADVISOR_TYPE, advisorNotes } from "../../lib/advisor";
+import { ASYNC_NOTIFY_TYPE, agentMessage } from "../../lib/agent-notices";
 import { replyWriteText, toolResultReplies } from "../../lib/reply-write";
 
 function contentText(content: string | readonly (TextContent | ImageContent)[]): string {
@@ -15,10 +16,16 @@ function contentText(content: string | readonly (TextContent | ImageContent)[]):
 	return text;
 }
 
-/** The prompt or reply text of `entry` (empty for anything else); an advisor's message is its notes, as shown. */
+/**
+ * The prompt or reply text of `entry` (empty for anything else); an advisor's message is its notes and a message
+ * between agents its body, as shown. A background job's reported lines are tool output, so they are left out.
+ */
 export function entryText(entry: SessionEntry): string {
 	if (entry.type === "custom_message") {
 		if (!entry.display && entry.customType !== "collab-prompt") return "";
+		if (entry.customType === ASYNC_NOTIFY_TYPE) return "";
+		const message = agentMessage(entry.customType, entry.details);
+		if (message !== null) return message.body;
 		const notes = entry.customType === ADVISOR_TYPE ? advisorNotes(entry.details) : null;
 		return notes === null ? contentText(entry.content) : notes.map(note => `${note.note}\n`).join("");
 	}

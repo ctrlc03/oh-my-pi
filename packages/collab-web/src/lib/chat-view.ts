@@ -38,3 +38,38 @@ export function useDefaultChat(): boolean {
 		() => true,
 	);
 }
+
+const AGENT_MESSAGES_KEY = "omp.collab.chat-agent-messages";
+
+let agentMessagesStored: boolean | undefined;
+const agentMessagesListeners = new Set<() => void>();
+
+/**
+ * Whether the chat view shows messages between agents (subagents reporting, peers, work pools) as one-line cards.
+ * Kept per device; shown unless turned off. The full view always shows them.
+ */
+export function agentMessagesInChat(): boolean {
+	if (agentMessagesStored === undefined) {
+		const raw = readJson(AGENT_MESSAGES_KEY);
+		agentMessagesStored = typeof raw === "boolean" ? raw : true;
+	}
+	return agentMessagesStored;
+}
+
+export function setAgentMessagesInChat(show: boolean): void {
+	agentMessagesStored = show;
+	writeJson(AGENT_MESSAGES_KEY, show);
+	for (const listener of agentMessagesListeners) listener();
+}
+
+/** {@link agentMessagesInChat}; re-renders when it changes. */
+export function useAgentMessagesInChat(): boolean {
+	return useSyncExternalStore(
+		listener => {
+			agentMessagesListeners.add(listener);
+			return () => agentMessagesListeners.delete(listener);
+		},
+		agentMessagesInChat,
+		() => true,
+	);
+}

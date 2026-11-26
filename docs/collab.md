@@ -343,6 +343,14 @@ A session with advisors (omp's `advisor` settings) gets their notes as `advisor`
 - **Like other messages.** It is a block: selectable, copied as its notes (labelled with the advisor when copied with other blocks), quotable, hideable and readable in full; *Find in session* searches the notes. *Copy reply* still takes the agent's last reply, never a note.
 - **Older hosts.** A message without `details.notes` shows its content under the same *Advisor* label.
 
+### Job notices and agent messages
+
+Two more kinds of custom message are written for the agent, and the app draws them from their `details` instead of that text (`src/lib/agent-notices.ts`):
+
+- **Job notices (`async-notify`).** Output lines a running background job or supervised service was asked to report (`notify` on `bash`), in a `<system-notice>` for the agent. The app shows one card per job or service, like a tool call: `job bg_7` (or `service <name>`), how many lines matched, whether it was still running, and its newest line; opening it shows the regex and every reported line, and *notify off* marks a source that matched too often. The chat view leaves them out, as it does finished-job reports (`async-result`); the full view shows them. They are not counted as new since you left, and *Find in session* skips them, as it skips tool output.
+- **Agent messages (`irc:*`).** Messages between agents: a subagent or peer writing to this session's agent (`irc:incoming`), an automatic reply (`irc:autoreply`), a message between two other agents shown for the record (`irc:relay`), and a work pool handing an agent its next item (`irc:workpool`). The app shows the sender, the recipient when it is not this agent, and the message's first line as plain text; opening it shows the whole message as Markdown. *Find in session* searches the message. The full view always shows them; in chat view they show unless Settings → Messages → *Agent messages in chat* is set to *Hide* (`omp.collab.chat-agent-messages`, per device).
+- **Older hosts.** A message whose `details` lack the fields (no `reports`, or no message body) shows its text under its type, as before.
+
 ### Hiding messages
 
 A message, or a run of them, can be hidden from the chat. Hiding changes only what this app shows: the agent's context, the session file and what other guests see are untouched, so the agent still remembers everything it was told and did. Nothing is sent to the host and nothing is deleted; showing a hidden message again brings it back exactly as it was.

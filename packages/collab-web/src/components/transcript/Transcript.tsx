@@ -1,6 +1,7 @@
 import type { AssistantMessage, ImageContent, SessionEntry, TextContent, ToolResultMessage } from "@oh-my-pi/pi-wire";
 import { STAKES_MARKER_TYPE } from "@oh-my-pi/pi-wire/stakes";
 import {
+	Activity,
 	ArrowDown,
 	ArrowUp,
 	Check,
@@ -8,6 +9,7 @@ import {
 	Copy,
 	FileDiff,
 	Lightbulb,
+	MessagesSquare,
 	Pencil,
 	Share2,
 	ShieldAlert,
@@ -22,6 +24,16 @@ import { type Block, buildBlocks, buildChatBlocks, replyId, toolResults } from "
 import { type HideControl, hiddenSlots, memberIds, withoutHidden } from "../../lib/hidden-messages";
 import { fmtDuration, fmtTokens } from "../../lib/format";
 import { ASYNC_RESULT_TYPE, asyncResultJobs } from "../../lib/async-result";
+import {
+	type AgentMessage,
+	ASYNC_NOTIFY_TYPE,
+	agentMessage,
+	asyncNotifyReports,
+	firstLinePlain,
+	isAgentMessageType,
+	type NotifyReport,
+} from "../../lib/agent-notices";
+import { useAgentMessagesInChat } from "../../lib/chat-view";
 import { linkedFilePath } from "../../lib/file-viewer";
 import { replyWriteText, toolResultReplies } from "../../lib/reply-write";
 import {
@@ -288,6 +300,145 @@ function AsyncResultRow({ entry }: { entry: Extract<SessionEntry, { type: "custo
 					)}
 				</div>
 			</BlockShell>
+		</Row>
+	);
+}
+
+function lineCount(count: number): string {
+	return `${count} line${count === 1 ? "" : "s"}`;
+}
+
+/** One job's or service's reported lines, collapsed to its newest line until opened. */
+function NotifyReportCard({ report }: { report: NotifyReport }): ReactNode {
+	const [open, setOpen] = useState(false);
+	const total = report.lines.length + report.omitted;
+	const newest = report.lines.at(-1);
+	return (
+		<div className="tv-card tr-notify">
+			<div className="tr-block-head tr-block-head--tool">
+				<button
+					type="button"
+					className="tr-block-toggle"
+					aria-expanded={open}
+					aria-label={open ? "Hide the reported lines" : "Show the reported lines"}
+					onClick={() => setOpen(value => !value)}
+				>
+					<ChevronRight size={13} className={`tr-chev${open ? " tr-chev--open" : ""}`} />
+				</button>
+				<Activity size={13} className="tr-mark" aria-hidden="true" />
+				<span className="tr-block-label">
+					<span className="tr-block-name">{report.service ? "service" : "job"}</span>
+					<span className="tr-block-sum">
+						<span className="tv-pattern">{report.id}</span>
+						<span>{lineCount(total)}</span>
+						<span className="tv-faint">{report.running ? "running" : "ended"}</span>
+						{!open && newest !== undefined && <span className="tr-sum-tail tr-sum-tail--mono">{newest}</span>}
+					</span>
+				</span>
+				{report.stopped && (
+					<span className="tr-chip tr-chip--warn" title="It matched too often; later matches are not reported">
+						notify off
+					</span>
+				)}
+			</div>
+			{open && (
+				<div className="tv-body tr-notify-body">
+					{report.pattern && <div className="tr-notify-pattern">matched /{report.pattern}/</div>}
+					<pre className="tr-notify-lines">{report.lines.join("\n")}</pre>
+					{report.omitted > 0 && (
+						<div className="tr-notify-pattern">
+							{report.omitted} more not shown · proc://{report.id}
+						</div>
+					)}
+				</div>
+			)}
+		</div>
+	);
+}
+
+/**
+ * Output a running background job or service was asked to report (`notify`): a card per source,
+ * like a tool call, with its newest line; the lines on request. A message whose details carry no
+ * reports (an older host) shows its text.
+ */
+function AsyncNotifyRow({ entry }: { entry: Extract<SessionEntry, { type: "custom_message" }> }): ReactNode {
+	const reports = asyncNotifyReports(entry.details);
+	if (reports.length === 0) return <CustomRow entry={entry} />;
+	return (
+		<Row kind="custom" gutter="" title={entry.timestamp} entryId={entry.id}>
+			<BlockShell id={null} kind="tool">
+				<div className="tr-notify-stack">
+					{/* A merged notice can name the same job twice; the position keeps each card's open state its own. */}
+					{reports.map((report, i) => (
+						<NotifyReportCard key={`${i}:${report.id}`} report={report} />
+					))}
+				</div>
+			</BlockShell>
+		</Row>
+	);
+}
+
+const AGENT_MESSAGE_NOTE: Readonly<Record<AgentMessage["kind"], string | null>> = {
+	incoming: null,
+	autoreply: "auto-reply",
+	relay: "between agents",
+	workpool: "work pool",
+};
+
+/**
+ * A message between agents (`irc:*`): who wrote to whom and the message's first line, like a tool
+ * call; the whole message, as Markdown, on request. A message whose details carry no body (an older
+ * host) shows its text.
+ */
+function AgentMessageRow({ entry }: { entry: Extract<SessionEntry, { type: "custom_message" }> }): ReactNode {
+	const [open, setOpen] = useState(false);
+	const message = agentMessage(entry.customType, entry.details);
+	if (message === null) return <CustomRow entry={entry} />;
+	const note = AGENT_MESSAGE_NOTE[message.kind];
+	const firstLine = firstLinePlain(message.body);
+	return (
+		<Row kind="custom" gutter="" title={entry.timestamp} entryId={entry.id}>
+			<BlockShell id={null} kind="tool">
+				<div className="tv-card tr-agent-msg">
+					<div className="tr-block-head tr-block-head--tool">
+						<button
+							type="button"
+							className="tr-block-toggle"
+							aria-expanded={open}
+							aria-label={open ? "Hide the message" : "Show the message"}
+							onClick={() => setOpen(value => !value)}
+						>
+							<ChevronRight size={13} className={`tr-chev${open ? " tr-chev--open" : ""}`} />
+						</button>
+						<MessagesSquare size={13} className="tr-mark" aria-hidden="true" />
+						<span className="tr-block-label">
+							<span className="tr-block-name">{message.from ?? "agent"}</span>
+							<span className="tr-block-sum">
+								{message.to !== null && <span className="tv-faint">→ {message.to}</span>}
+								{note !== null && <span className="tv-faint">{note}</span>}
+								{!open && firstLine && <span className="tr-sum-tail">{firstLine}</span>}
+							</span>
+						</span>
+					</div>
+					{open && (
+						<div className="tv-body tr-agent-msg-body">
+							<Markdown text={message.body} />
+						</div>
+					)}
+				</div>
+			</BlockShell>
+		</Row>
+	);
+}
+
+/** A custom message the transcript has no card for: its type as a chip, then its text. */
+function CustomRow({ entry }: { entry: Extract<SessionEntry, { type: "custom_message" }> }): ReactNode {
+	return (
+		<Row kind="custom" gutter="" title={entry.timestamp} entryId={entry.id}>
+			<div className="tr-custom">
+				<span className="tr-chip">{entry.customType}</span>
+				<MsgContent content={entry.content} />
+			</div>
 		</Row>
 	);
 }
@@ -684,6 +835,8 @@ const EntryRow = memo(function EntryRow({
 			if (entry.customType === ASYNC_RESULT_TYPE) return <AsyncResultRow entry={entry} />;
 			if (!entry.display) return null;
 			if (entry.customType === ADVISOR_TYPE) return <AdvisorRow entry={entry} />;
+			if (entry.customType === ASYNC_NOTIFY_TYPE) return <AsyncNotifyRow entry={entry} />;
+			if (isAgentMessageType(entry.customType)) return <AgentMessageRow entry={entry} />;
 			if (entry.customType === STAKES_MARKER_TYPE) {
 				return (
 					<Row kind="custom" gutter="" title={entry.timestamp} entryId={entry.id}>
@@ -694,14 +847,7 @@ const EntryRow = memo(function EntryRow({
 					</Row>
 				);
 			}
-			return (
-				<Row kind="custom" gutter="" title={entry.timestamp} entryId={entry.id}>
-					<div className="tr-custom">
-						<span className="tr-chip">{entry.customType}</span>
-						<MsgContent content={entry.content} />
-					</div>
-				</Row>
-			);
+			return <CustomRow entry={entry} />;
 		}
 		case "compaction":
 			return (
@@ -1151,9 +1297,10 @@ export function Transcript(props: TranscriptProps): ReactNode {
 		return tail;
 	}, [committedToolIds, stream, activeTools]);
 
+	const agentMessages = useAgentMessagesInChat();
 	const chatItems = useMemo(
-		() => (chat ? buildChatItems(visible, stream, streamDone, tailTools) : null),
-		[chat, visible, stream, streamDone, tailTools],
+		() => (chat ? buildChatItems(visible, stream, streamDone, tailTools, agentMessages) : null),
+		[chat, visible, stream, streamDone, tailTools, agentMessages],
 	);
 
 	// Edit action: a stable callback so memoized rows re-render only when editing turns on or off.
@@ -1172,7 +1319,10 @@ export function Transcript(props: TranscriptProps): ReactNode {
 
 	// The blocks the view renders, in order, for selecting and copying. Chat items are built here without
 	// the live stream, so token updates do not churn the list.
-	const blockItems = useMemo(() => (chat ? buildChatItems(visible, null, true, []) : null), [chat, visible]);
+	const blockItems = useMemo(
+		() => (chat ? buildChatItems(visible, null, true, [], agentMessages) : null),
+		[chat, visible, agentMessages],
+	);
 	const allBlocks = useMemo(
 		() => (blockItems === null ? buildBlocks(visible, results) : buildChatBlocks(blockItems, results)),
 		[blockItems, visible, results],

@@ -94,8 +94,16 @@ describe("buildChatItems", () => {
 			display: true,
 			details: { jobs: [{ jobId: "FanOut", type: "task", durationMs: 1000 }] },
 		});
-		const entries = [prompt("p1"), custom("j1", "async-result"), custom("n1", "note")];
-		expect(shape(buildChatItems(entries, null, true, []))).toEqual(["p1", "n1"]);
+		const entries = [
+			prompt("p1"),
+			custom("j1", "async-result"),
+			custom("w1", "async-notify"),
+			custom("i1", "irc:incoming"),
+			custom("n1", "note"),
+		];
+		expect(shape(buildChatItems(entries, null, true, []))).toEqual(["p1", "i1", "n1"]);
+		// Agent messages are optional in the chat view (Settings → Messages); the full view always has them.
+		expect(shape(buildChatItems(entries, null, true, [], false))).toEqual(["p1", "n1"]);
 	});
 
 	it("shows mid-turn out:// replies as reply text instead of folding them into the tool run", () => {

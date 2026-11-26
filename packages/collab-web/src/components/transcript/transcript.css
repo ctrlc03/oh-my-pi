@@ -255,6 +255,80 @@
 	color: var(--fg-muted);
 }
 
+/* Background job notices (`async-notify`): one card per job or service, stacked in one block. */
+.tr-notify-stack {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.tr-notify-stack > .tv-card + .tv-card {
+	border-top: 1px solid var(--border);
+}
+
+/* The newest reported line, or a message's first line, in a collapsed header: last in the line, it takes what is left. */
+.tr-block-sum > .tr-sum-tail {
+	flex: 1 1 0;
+	color: var(--fg-faint);
+}
+
+.tr-sum-tail--mono {
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.tr-notify-body,
+.tr-agent-msg-body {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.tr-notify-pattern {
+	color: var(--fg-faint);
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.tr-notify-lines {
+	margin: 0;
+	max-height: 320px;
+	overflow: auto;
+	color: var(--fg-muted);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 1.45;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.tr-agent-msg-body {
+	color: var(--fg);
+	font-family: var(--font-ui);
+	font-size: calc(13.5px * var(--reading-scale));
+	line-height: var(--reading-leading);
+}
+
+/* A message between agents reads as prose: its head takes the UI font, the sender stands out, the icon is the accent. */
+.tr-agent-msg > .tr-block-head--tool {
+	font-family: var(--font-ui);
+	font-size: 12.5px;
+}
+
+.tr-agent-msg .tr-block-name {
+	font-size: 12.5px;
+	color: var(--fg);
+}
+
+.tr-agent-msg .tr-mark {
+	color: var(--accent);
+}
+
+.tr-agent-msg .tr-block-sum {
+	font-size: 12.5px;
+}
+
 .tr-msg-img {
 	max-height: 240px;
 	max-width: 100%;

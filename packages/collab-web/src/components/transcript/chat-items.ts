@@ -7,6 +7,7 @@
 
 import type { AssistantMessage, SessionEntry } from "@oh-my-pi/pi-wire";
 import type { ActiveTool } from "../../lib/client";
+import { ASYNC_NOTIFY_TYPE, isAgentMessageType } from "../../lib/agent-notices";
 import { ASYNC_RESULT_TYPE } from "../../lib/async-result";
 import { replyWriteText, toolResultReplies } from "../../lib/reply-write";
 
@@ -37,6 +38,8 @@ export function buildChatItems(
 	stream: AssistantMessage | null,
 	streamDone: boolean,
 	tailTools: readonly ActiveTool[],
+	/** Show messages between agents (`irc:*`); see lib/chat-view. */
+	agentMessages = true,
 ): ChatItem[] {
 	const items: ChatItem[] = [];
 	let run: { calls: ChatToolCall[]; lead: boolean; entryId: string | null; entryIds: string[] } | null = null;
@@ -112,8 +115,9 @@ export function buildChatItems(
 				}
 				break;
 			case "custom_message":
-				// Background job reports are model input; the chat view keeps prompts and replies only.
-				if (entry.customType === ASYNC_RESULT_TYPE) break;
+				// Background job results and notices are model input; the chat view keeps prompts and replies only.
+				if (entry.customType === ASYNC_RESULT_TYPE || entry.customType === ASYNC_NOTIFY_TYPE) break;
+				if (!agentMessages && isAgentMessageType(entry.customType)) break;
 				if (entry.customType === "collab-prompt" || entry.display) human(entry);
 				break;
 			case "compaction":

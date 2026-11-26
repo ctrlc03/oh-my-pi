@@ -132,6 +132,20 @@ export function summarizeTodoPhases(
 }
 
 /**
+ * The todo summary a session's snapshot carries. A list with nothing open that an earlier request finished (the user
+ * has prompted since it last changed) is left out: a session list would otherwise keep showing that request's last
+ * task as the session's work, for hours after the agent moved on without a list.
+ */
+export function sessionTodoSummary(session: {
+	getTodoPhases(): readonly { tasks: readonly { content: string; status: string }[] }[];
+	promptedSinceTodoChange(): boolean;
+}): CollabTodoSummary | undefined {
+	const summary = summarizeTodoPhases(session.getTodoPhases());
+	if (summary?.current === null && session.promptedSinceTodoChange()) return undefined;
+	return summary;
+}
+
+/**
  * Non-capability host state, computed by the host process at query time.
  * Free-form strings (session id and name, cwd, model) are bounded to
  * {@link MAX_SNAPSHOT_FIELD_CHARS} characters on the wire.

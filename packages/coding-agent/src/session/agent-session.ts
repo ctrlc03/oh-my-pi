@@ -545,6 +545,7 @@ import { buildSessionMetadata } from "./session-metadata";
 import { digestTools, RequestLedger } from "./request-ledger";
 import { buildInspectRows, type InspectResult } from "./request-inspector";
 import { previewRequest } from "./request-preview";
+import { promptedSinceTodoChange } from "./todo-recency";
 import type { RequestPreview } from "@oh-my-pi/pi-wire";
 import { SessionProviderBoundary, type SessionProviderBoundaryHost } from "./session-provider-boundary";
 import { SessionStatsTracker, type SessionStatsTrackerHost } from "./session-stats";
@@ -13027,6 +13028,11 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 
 	getTodoPhases(): TodoPhase[] {
 		return this.#todo.phases;
+	}
+
+	/** See {@link promptedSinceTodoChange}: whether this session's todo list belongs to an earlier request. */
+	promptedSinceTodoChange(): boolean {
+		return promptedSinceTodoChange(this.sessionManager);
 	}
 
 	setTodoPhases(phases: TodoPhase[]): void {

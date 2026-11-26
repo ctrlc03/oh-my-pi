@@ -158,3 +158,52 @@ APPLE_API_KEY_ID=… APPLE_API_ISSUER_ID=… APPLE_API_KEY=… \
 ```
 
 Without the env vars the same command signs ad hoc.
+
+## Stable self-signed identity (forks without a Developer ID)
+
+An ad-hoc signature's designated requirement is the build's cdhash
+(`designated => cdhash H"…"`), so every build is a different program to macOS.
+Privacy permissions (Documents, Desktop, Full Disk Access) are stored against
+that requirement, so they stop matching on every update. A background process
+such as the collab companion (a LaunchAgent) then waits on a permission prompt
+no one sees: opening a hibernated session in `~/Documents` from the phone did
+nothing until the prompt on the computer was answered.
+
+Without the Developer ID secrets, `scripts/ci-macos-sign.sh` signs with a
+stable self-signed certificate when `OMP_MACOS_SIGNING_PEM` (base64 of a PEM
+holding the private key and its certificate) or `OMP_MACOS_SIGNING_PEM_FILE`
+(its path) is set. Every build it signs has the designated requirement
+`identifier "omp-darwin-<arch>" and certificate root = H"<certificate SHA-1>"`,
+so a permission granted once keeps matching across updates. The binary is not
+notarized and Gatekeeper does not trust the certificate; `curl` installs and
+`omp update` set no quarantine bit, so Gatekeeper is not consulted, as with ad
+hoc. The collab release workflow (`.github/workflows/collab-release.yml`) passes
+the secret to its sign job, and its smoke job fails a macOS binary without that
+requirement while the secret is set.
+
+Create the certificate once and keep the PEM private (mode 0600):
+
+```sh
+umask 077
+cat > cfg.cnf <<'EOF'
+[req]
+distinguished_name = dn
+x509_extensions = ext
+prompt = no
+[dn]
+CN = omp code signing (<owner>)
+[ext]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature
+extendedKeyUsage = critical,codeSigning
+EOF
+openssl req -new -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 7300 -sha256 -config cfg.cnf
+cat key.pem cert.pem > macos-signing.pem && rm key.pem
+base64 < macos-signing.pem | tr -d '\n' | gh secret set OMP_MACOS_SIGNING_PEM -R <owner>/<repo>
+```
+
+A local release build signs the same way when the variable is set:
+`OMP_MACOS_SIGNING_PEM_FILE=~/.config/omp-signing/macos-signing.pem bun scripts/build-collab-binary.ts --target darwin-arm64`.
+Check a binary with `codesign -d -r- <binary>`. Replacing the certificate
+changes the requirement once more, so the permissions are asked for again after
+that update; keep the PEM. Moving to a Developer ID later does the same.

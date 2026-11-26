@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	FolderOpenPendingError,
 	findTmux,
 	foreignHostCommand,
 	killTmuxSession,
@@ -11,6 +12,7 @@ import {
 	launchInTmux,
 	releaseLaunch,
 	screenTail,
+	withinFolderOpenDeadline,
 } from "../scripts/companion-start";
 
 const tmuxBin = await findTmux();
@@ -350,6 +352,24 @@ describe("what a launch that never hosted tells the user", () => {
 		expect(launchFailure("omp stopped before it was ready", "")).toBe("omp stopped before it was ready");
 		expect(launchFailure("omp stopped before it was ready", "Error: boom")).toBe(
 			"omp stopped before it was ready. Last output: Error: boom",
+		);
+	});
+});
+
+describe("a start whose folder does not open", () => {
+	it("gives up with the macOS permission prompt as the reason instead of waiting in silence", async () => {
+		// What macOS does while its privacy prompt for ~/Documents is unanswered: the call never settles.
+		const held = new Promise<string>(() => {});
+		const started = withinFolderOpenDeadline("/Users/me/Documents/app", held, 20, "darwin");
+		await expect(started).rejects.toBeInstanceOf(FolderOpenPendingError);
+		await expect(withinFolderOpenDeadline("/Users/me/Documents/app", held, 20, "darwin")).rejects.toThrow(
+			/macOS is asking on this computer whether omp may open \/Users\/me\/Documents\/app/,
+		);
+	});
+
+	it("passes a folder that opens straight through", async () => {
+		expect(await withinFolderOpenDeadline("/tmp", Promise.resolve("/private/tmp"), 1_000, "darwin")).toBe(
+			"/private/tmp",
 		);
 	});
 });

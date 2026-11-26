@@ -290,6 +290,44 @@ export async function launchInTmux(launch: TmuxLaunch): Promise<{ name: string; 
 	return { name, cwd };
 }
 
+/** How long a start waits for its folder to open before it says why it cannot go on. */
+export const FOLDER_OPEN_WAIT_MS = 15_000;
+
+/**
+ * A start whose folder did not open in time. On macOS that is a privacy prompt (Documents, Desktop, iCloud Drive, a
+ * removable volume) waiting for an answer on the computer's screen: the system holds every file call into the folder
+ * until someone answers, and nobody sees a background service's prompt.
+ */
+export class FolderOpenPendingError extends Error {}
+
+/**
+ * `work` (a first touch of `folder`), or {@link FolderOpenPendingError} once it has not settled within `timeoutMs`.
+ * The held call goes on in the background and is dropped when it ends; the start is abandoned, and opening the
+ * session again once the prompt is answered starts it.
+ */
+export async function withinFolderOpenDeadline<T>(
+	folder: string,
+	work: Promise<T>,
+	timeoutMs = FOLDER_OPEN_WAIT_MS,
+	platform: NodeJS.Platform = process.platform,
+): Promise<T> {
+	const expired = Promise.withResolvers<never>();
+	const timer = setTimeout(() => {
+		expired.reject(
+			new FolderOpenPendingError(
+				platform === "darwin"
+					? `macOS is asking on this computer whether omp may open ${folder}. Answer that prompt on its screen, or turn omp on in System Settings → Privacy & Security → Files and Folders, then open the session again.`
+					: `Opening ${folder} did not finish within ${Math.round(timeoutMs / 1000)} s, so the session was not started.`,
+			),
+		);
+	}, timeoutMs);
+	try {
+		return await Promise.race([work, expired.promise]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 /** Stop a session {@link launchInTmux} started (best effort). */
 export async function killTmuxSession(tmux: string, name: string): Promise<void> {
 	const proc = Bun.spawn([tmux, "kill-session", "-t", name], { stdout: "ignore", stderr: "ignore", stdin: "ignore" });

@@ -1,22 +1,31 @@
 #!/usr/bin/env bash
 #
-# Sign a compiled macOS `omp` binary on Linux: with a Developer ID identity
-# and notarization when the credentials are configured, ad hoc otherwise.
+# Sign a compiled macOS `omp` binary: with a Developer ID identity and
+# notarization when those credentials are configured, with a stable
+# self-signed identity when that one is, ad hoc otherwise.
 #
 # The release build (`ci:release:build-binaries`) cross-compiles the binary on
 # Linux, where Bun's own signature is not usable as shipped: the arm64 binary
 # carries a bare linker signature, and the x86_64 one keeps the Bun runtime's
 # Developer ID signature, which no longer matches the appended payload. This
 # script *replaces* it with
-#   - with credentials: a Developer ID Application signature plus the hardened
-#     runtime, a secure timestamp, and the JIT, Apple Events, and
+#   - with Developer ID credentials: a Developer ID Application signature plus
+#     the hardened runtime, a secure timestamp, and the JIT, Apple Events, and
 #     library-validation entitlements that the Bun runtime, Xcode MCP bridge,
 #     and runtime-extracted native addon require (see
 #     scripts/macos-entitlements.plist), then notarizes the result with App
 #     Store Connect API credentials;
+#   - with a stable identity (OMP_MACOS_SIGNING_PEM): a signature by that
+#     certificate with the same entitlements, not notarized. Its designated
+#     requirement is `identifier "omp-darwin-<arch>" and certificate root =
+#     H"<cert hash>"`, the same for every build signed with the certificate, so
+#     macOS keeps privacy permissions (Documents, Full Disk Access) across
+#     updates. An ad-hoc signature's requirement is the build's cdhash, so each
+#     update is a new program to macOS: its grants stop matching and the
+#     companion, a background service, waits on a prompt nobody sees;
 #   - without any: an ad-hoc signature with the same entitlements, so the
 #     binary runs (forks and releases before the secrets exist).
-# Both go through rcodesign (github.com/indygreg/apple-platform-rs, pinned and
+# All go through rcodesign (github.com/indygreg/apple-platform-rs, pinned and
 # sha256-checked below), the open-source implementation of codesign and
 # notarytool. The signing identifier is the file name (omp-darwin-<arch>),
 # as every release before had it.
@@ -31,21 +40,31 @@
 # .github/workflows/ci.yml); notarization itself rejects a malformed signature
 # first.
 #
-# Credentials (GitHub Actions secrets; all five or none):
+# Developer ID credentials (GitHub Actions secrets; all five or none):
 #   APPLE_CERTIFICATE_P12        base64 of the Developer ID Application .p12 bundle
 #   APPLE_CERTIFICATE_PASSWORD   password protecting that .p12
 #   APPLE_API_KEY_ID             App Store Connect API key id (the "Key ID")
 #   APPLE_API_ISSUER_ID          App Store Connect API issuer id (UUID)
 #   APPLE_API_KEY                base64 of the App Store Connect .p8 private key
+# Stable identity (used only without the Developer ID credentials):
+#   OMP_MACOS_SIGNING_PEM        base64 of a PEM file holding the private key and
+#                                its self-signed code-signing certificate
+#   OMP_MACOS_SIGNING_PEM_FILE   or the path of that PEM file (local builds)
+#
+# Runs on Linux (CI) and macOS (a local release build).
 #
 # Usage: scripts/ci-macos-sign.sh <path-to-binary>
 
 set -euo pipefail
 
-if [[ "$(uname -s)" != Linux ]]; then
-	echo "ci-macos-sign: runs on Linux (the pinned rcodesign build is linux-musl)" >&2
+case "$(uname -s)" in
+Linux) host_os=linux ;;
+Darwin) host_os=darwin ;;
+*)
+	echo "ci-macos-sign: runs on Linux or macOS" >&2
 	exit 1
-fi
+	;;
+esac
 
 BINARY="${1:-}"
 if [[ -z "$BINARY" ]]; then
@@ -75,13 +94,15 @@ if [[ ! -f "$ENTITLEMENTS" ]]; then
 	exit 1
 fi
 
-# rcodesign 0.29.0, linux-musl, per host arch.
+# rcodesign 0.29.0, per host OS and arch.
 RCODESIGN_VERSION=0.29.0
-case "$(uname -m)" in
-x86_64) arch=x86_64 sha=dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002 ;;
-aarch64 | arm64) arch=aarch64 sha=4af92c87ddf52f5f2d1258a3b4e56c7dcb8f1b2468df744976c5f139e031961f ;;
+case "$host_os-$(uname -m)" in
+linux-x86_64) platform=x86_64-unknown-linux-musl sha=dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002 ;;
+linux-aarch64 | linux-arm64) platform=aarch64-unknown-linux-musl sha=4af92c87ddf52f5f2d1258a3b4e56c7dcb8f1b2468df744976c5f139e031961f ;;
+darwin-arm64) platform=aarch64-apple-darwin sha=d1a532150adaf90048260d76359261aa716abafc45c53c5dc18845029184334a ;;
+darwin-x86_64) platform=x86_64-apple-darwin sha=14ef11bedd51a8d95eafd767939ae96d5900e5a61511bef75bb21db6e7c74140 ;;
 *)
-	echo "ci-macos-sign: no pinned rcodesign for $(uname -m)" >&2
+	echo "ci-macos-sign: no pinned rcodesign for $host_os $(uname -m)" >&2
 	exit 1
 	;;
 esac
@@ -92,11 +113,27 @@ trap 'rm -rf "$WORKDIR"' EXIT
 echo "ci-macos-sign: fetching rcodesign $RCODESIGN_VERSION"
 tarball="$WORKDIR/rcodesign.tar.gz"
 curl -fsSL --retry 3 -o "$tarball" \
-	"https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F$RCODESIGN_VERSION/apple-codesign-$RCODESIGN_VERSION-$arch-unknown-linux-musl.tar.gz"
-echo "$sha  $tarball" | sha256sum -c - >/dev/null
+	"https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F$RCODESIGN_VERSION/apple-codesign-$RCODESIGN_VERSION-$platform.tar.gz"
+if [[ "$host_os" == darwin ]]; then
+	echo "$sha  $tarball" | shasum -a 256 -c - >/dev/null
+else
+	echo "$sha  $tarball" | sha256sum -c - >/dev/null
+fi
 tar -xzf "$tarball" -C "$WORKDIR" --strip-components=1
 RCODESIGN="$WORKDIR/rcodesign"
 sign=("$RCODESIGN" sign --binary-identifier "$(basename "$BINARY")" --entitlements-xml-file "$ENTITLEMENTS")
+
+if ((!developer_id)) && [[ -n "${OMP_MACOS_SIGNING_PEM:-}${OMP_MACOS_SIGNING_PEM_FILE:-}" ]]; then
+	PEM_PATH="$WORKDIR/signing.pem"
+	if [[ -n "${OMP_MACOS_SIGNING_PEM:-}" ]]; then
+		(umask 077 && printf '%s' "$OMP_MACOS_SIGNING_PEM" | base64 --decode >"$PEM_PATH")
+	else
+		PEM_PATH="$OMP_MACOS_SIGNING_PEM_FILE"
+	fi
+	echo "ci-macos-sign: signing with the stable self-signed identity"
+	"${sign[@]}" --pem-file "$PEM_PATH" "$BINARY"
+	exit 0
+fi
 
 if ((!developer_id)); then
 	echo "ci-macos-sign: no APPLE_* credentials; signing ad hoc"

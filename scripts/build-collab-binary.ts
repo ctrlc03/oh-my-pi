@@ -117,6 +117,11 @@ async function main(): Promise<void> {
 				outfile,
 			]);
 		}
+		// With the stable identity configured, sign the way the release workflow does, so a locally built binary
+		// keeps the same designated requirement as the released ones (scripts/ci-macos-sign.sh).
+		if (target.platform === "darwin" && (process.env.OMP_MACOS_SIGNING_PEM || process.env.OMP_MACOS_SIGNING_PEM_FILE)) {
+			await runCommand(["bash", path.join(repoRoot, "scripts", "ci-macos-sign.sh"), outfile]);
+		}
 	} finally {
 		await fs.rm(appDir, { recursive: true, force: true });
 		await runCommand(["bun", "run", "gen:stats:reset"]);

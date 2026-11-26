@@ -88,7 +88,7 @@ import {
 	type CollabHostRegistrySource,
 	type CollabHostSnapshot,
 	publishCollabHost,
-	summarizeTodoPhases,
+	sessionTodoSummary,
 } from "./registry";
 import { FanoutSocket } from "./relay-fanout";
 import { cfgCollabLocalRelayEndpointFile } from "./settings";
@@ -961,7 +961,7 @@ export class CollabHost {
 		if (!this.#guestTrafficAllowed()) throw new Error("collab room unavailable");
 		if (this.#ctx.session.isSessionTransitioning) throw new Error("session transition in progress");
 		const model = this.#ctx.session.model;
-		const todo = summarizeTodoPhases(this.#ctx.session.getTodoPhases());
+		const todo = sessionTodoSummary(this.#ctx.session);
 		return {
 			instanceId: this.#instanceId,
 			generation: this.#generation,

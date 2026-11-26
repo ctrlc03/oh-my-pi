@@ -277,6 +277,7 @@ import {
 	releaseLaunch,
 	type RestrictLaunch,
 	tmuxAttached,
+	withinFolderOpenDeadline,
 } from "./companion-start";
 import {
 	fanoutBranch,
@@ -1558,7 +1559,10 @@ async function startSession(
 	}
 	if (resume !== undefined && !SAFE_ID_RE.test(resume)) throw new Error("invalid session id");
 	// A new session needs a folder that exists (`~` and typos are settled here, before tmux); a resumed one keeps the folder its session recorded.
-	const cwd = resume === undefined ? await checkStartFolder(requestedCwd, os.homedir()) : requestedCwd;
+	const cwd =
+		resume === undefined
+			? await withinFolderOpenDeadline(requestedCwd, checkStartFolder(requestedCwd, os.homedir()))
+			: requestedCwd;
 	const plan = await planForeignStart(
 		{
 			agent: foreign?.agent,
@@ -1610,7 +1614,12 @@ async function startSession(
 		const launchCwd = created?.path ?? workCwd;
 		// Sticky, and before omp starts: no cleanup command ever runs in a tree a sandboxed agent could write.
 		if (sandboxed) await settleCleanup.recordSandboxed(launchCwd);
-		const lockKey = await fs.realpath(launchCwd).catch(() => launchCwd);
+		// The first touch of the folder: on macOS a privacy prompt nobody sees can hold it indefinitely, and the device
+		// that asked would wait in silence, so give up with the reason instead.
+		const lockKey = await withinFolderOpenDeadline(
+			launchCwd,
+			fs.realpath(launchCwd).catch(() => launchCwd),
+		);
 		return await startLock(lockKey, async () => {
 			// Under the lock: a start queued behind another (or stalled, e.g. on a macOS folder-access prompt) must
 			// see the session the earlier one opened, not the listing from before it waited.

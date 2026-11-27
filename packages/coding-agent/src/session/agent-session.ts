@@ -475,7 +475,12 @@ import {
 	type PrewalkCoordinatorHost,
 	type PrewalkRestartResult,
 } from "./prewalk";
-import { PROVIDER_REFUSAL_CUSTOM_TYPE, providerRefusalData } from "./provider-refusal";
+import {
+	PROVIDER_REFUSAL_CUSTOM_TYPE,
+	PROVIDER_REFUSAL_NOTICE_TYPE,
+	providerRefusalData,
+	providerRefusalNotice,
+} from "./provider-refusal";
 import {
 	IMAGE_ATTACHMENT_DESCRIPTION_TYPE,
 	isAdvisorCard,
@@ -5872,6 +5877,17 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			if (this.#recovery.isClassifierRefusal(msg)) {
 				this.#prunedTerminalFailure = msg;
 				this.#recovery.removeAssistantMessageFromActiveContext(msg);
+				// Nothing else in the transcript says the turn was refused: shown, never sent to a model.
+				const notice = providerRefusalNotice(msg);
+				this.sessionManager.appendCustomMessageEntry(
+					PROVIDER_REFUSAL_NOTICE_TYPE,
+					notice.text,
+					true,
+					notice.details,
+					"agent",
+					undefined,
+					true,
+				);
 			} else if (!AIError.isContextOverflow(msg, this.model?.contextWindow ?? 0)) {
 				// No retry, fallback, or compaction continuation fired: this errored
 				// turn ends the run. #persistSessionMessageIfMissing dropped it as an

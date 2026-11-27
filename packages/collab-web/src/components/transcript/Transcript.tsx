@@ -32,6 +32,8 @@ import {
 	firstLinePlain,
 	isAgentMessageType,
 	type NotifyReport,
+	PROVIDER_REFUSAL_NOTICE_TYPE,
+	refusalNotice,
 } from "../../lib/agent-notices";
 import { useAgentMessagesInChat } from "../../lib/chat-view";
 import { linkedFilePath } from "../../lib/file-viewer";
@@ -443,6 +445,34 @@ function CustomRow({ entry }: { entry: Extract<SessionEntry, { type: "custom_mes
 	);
 }
 
+/**
+ * The model's provider refused a turn and nothing answered it: a warning card that stays in the transcript, so the
+ * prompt above it is not left without a reply. The explanation is the provider's own (it may link to a program
+ * that lifts the block).
+ */
+function RefusalRow({ entry }: { entry: Extract<SessionEntry, { type: "custom_message" }> }): ReactNode {
+	const notice = refusalNotice(entry.details);
+	const model = notice.model ?? "The model";
+	return (
+		<Row kind="custom" gutter="" title={entry.timestamp} entryId={entry.id}>
+			<div className="tr-refusal" role="status">
+				<div className="tr-refusal-head">
+					<ShieldAlert size={15} aria-hidden="true" />
+					<span>
+						{model} refused this turn{notice.category !== null && <> · {notice.category}</>}
+					</span>
+				</div>
+				{notice.explanation !== null ? (
+					<Markdown text={notice.explanation} />
+				) : (
+					<MsgContent content={entry.content} />
+				)}
+				<div className="tr-refusal-foot">Nothing was answered. The next prompt starts a new turn.</div>
+			</div>
+		</Row>
+	);
+}
+
 function SeverityChip({ severity }: { severity: AdvisorSeverity }): ReactNode {
 	return (
 		<span className="tr-advisor-severity" data-severity={severity}>
@@ -837,6 +867,7 @@ const EntryRow = memo(function EntryRow({
 			if (entry.customType === ADVISOR_TYPE) return <AdvisorRow entry={entry} />;
 			if (entry.customType === ASYNC_NOTIFY_TYPE) return <AsyncNotifyRow entry={entry} />;
 			if (isAgentMessageType(entry.customType)) return <AgentMessageRow entry={entry} />;
+			if (entry.customType === PROVIDER_REFUSAL_NOTICE_TYPE) return <RefusalRow entry={entry} />;
 			if (entry.customType === STAKES_MARKER_TYPE) {
 				return (
 					<Row kind="custom" gutter="" title={entry.timestamp} entryId={entry.id}>

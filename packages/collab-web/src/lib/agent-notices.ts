@@ -1,16 +1,39 @@
 /**
- * Two kinds of custom message the host writes for the model that the transcript draws as cards
- * instead of their agent-facing text (a `<system-notice>` block or an `[IRC …]` envelope):
+ * Custom messages the transcript draws as cards instead of their text:
  *
  * - `async-notify`: output lines a running background job or supervised service was asked to report
  *   (`notify` on the `bash` tool). `details.reports` holds one report per job or service.
  * - `irc:*`: messages between agents (subagents, peers, a work pool) delivered to or relayed through
  *   this session. `details` names the sender and recipient and carries the body.
+ * - `provider-refusal-notice`: the model's provider refused a turn and nothing answered it (no
+ *   resample, retry or fallback). Never sent to a model; shown so the prompt is not left without a reply.
  *
- * Both parsers accept `details` as an object or as its JSON text (older hosts and some replays
+ * The parsers accept `details` as an object or as its JSON text (older hosts and some replays
  * store it serialized), and return null or an empty list for anything else, so the row falls back
  * to the message's text.
  */
+
+export const PROVIDER_REFUSAL_NOTICE_TYPE = "provider-refusal-notice";
+
+export interface RefusalNotice {
+	provider: string | null;
+	model: string | null;
+	/** Policy category such as `cyber`; null when the provider named none. */
+	category: string | null;
+	/** The provider's explanation, which may hold a link. */
+	explanation: string | null;
+}
+
+/** The refusal a `provider-refusal-notice` message reports. */
+export function refusalNotice(details: unknown): RefusalNotice {
+	const fields = record(details);
+	return {
+		provider: str(fields?.provider),
+		model: str(fields?.model),
+		category: str(fields?.category),
+		explanation: str(fields?.explanation),
+	};
+}
 
 export const ASYNC_NOTIFY_TYPE = "async-notify";
 

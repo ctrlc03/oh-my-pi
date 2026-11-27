@@ -58,3 +58,35 @@ export function providerRefusalData(message: AssistantMessage): ProviderRefusalD
 		content: message.content,
 	};
 }
+
+/**
+ * A displayed, never-sent message for a turn that ended in a classifier refusal (no resample, retry or fallback
+ * answered). The refused turn itself is not a session message, so without this a reader of the transcript, in the
+ * app or after a reload, saw the prompt and then nothing.
+ */
+export const PROVIDER_REFUSAL_NOTICE_TYPE = "provider-refusal-notice";
+
+/** `details` of a {@link PROVIDER_REFUSAL_NOTICE_TYPE} message. */
+export interface ProviderRefusalNotice {
+	provider: string;
+	model: string;
+	/** Policy category such as `cyber` or `reasoning_extraction`; absent when the provider names none. */
+	category?: string;
+	/** The provider's own explanation, with any link it gives. */
+	explanation?: string;
+}
+
+export function providerRefusalNotice(message: AssistantMessage): { text: string; details: ProviderRefusalNotice } {
+	const details: ProviderRefusalNotice = {
+		provider: message.provider,
+		model: message.model,
+		category: message.stopDetails?.category ?? undefined,
+		explanation: message.stopDetails?.explanation ?? undefined,
+	};
+	const why = details.explanation ?? message.errorMessage ?? "The provider gave no reason.";
+	const category = details.category === undefined ? "" : ` (${details.category})`;
+	return {
+		text: `${details.provider}/${details.model} refused this turn${category}; nothing was answered. ${why}`,
+		details,
+	};
+}

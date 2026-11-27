@@ -8,7 +8,10 @@ import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
-import { PROVIDER_REFUSAL_CUSTOM_TYPE } from "@oh-my-pi/pi-coding-agent/session/provider-refusal";
+import {
+	PROVIDER_REFUSAL_CUSTOM_TYPE,
+	PROVIDER_REFUSAL_NOTICE_TYPE,
+} from "@oh-my-pi/pi-coding-agent/session/provider-refusal";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
@@ -80,11 +83,18 @@ describe("AgentSession reasoning_extraction refusals", () => {
 				entry.type === "custom" && entry.customType === PROVIDER_REFUSAL_CUSTOM_TYPE ? [entry] : [],
 			);
 		const last = agent.state.messages.at(-1);
-		return { contexts, records, last };
+		const notices = sessionManager
+			.getEntries()
+			.flatMap(entry =>
+				entry.type === "custom_message" && entry.customType === PROVIDER_REFUSAL_NOTICE_TYPE ? [entry] : [],
+			);
+		return { contexts, records, last, notices };
 	}
 
 	it("resamples a mid-stream refusal on the same model without replaying it, and records it on disk", async () => {
-		const { contexts, records, last } = await run([refusal(REFUSED_THINKING), { content: ["Done"] }]);
+		const { contexts, records, last, notices } = await run([refusal(REFUSED_THINKING), { content: ["Done"] }]);
+		// The resample answered, so the transcript does not say the turn was refused.
+		expect(notices).toHaveLength(0);
 
 		expect(contexts).toHaveLength(2);
 		expect(JSON.stringify(contexts[1]?.messages)).not.toContain(REFUSED_THINKING);
@@ -99,17 +109,24 @@ describe("AgentSession reasoning_extraction refusals", () => {
 		expect(JSON.stringify(records[0]?.data)).not.toContain("credit-token");
 	});
 
-	it("resamples only once per turn", async () => {
-		const { contexts, records } = await run([refusal(REFUSED_THINKING), refusal(REFUSED_THINKING)]);
+	it("resamples only once per turn, and says so in the transcript when the refusal ends the turn", async () => {
+		const { contexts, records, notices } = await run([refusal(REFUSED_THINKING), refusal(REFUSED_THINKING)]);
 
 		expect(contexts).toHaveLength(2);
 		expect(records).toHaveLength(2);
+		expect(notices).toHaveLength(1);
+		expect(notices[0]).toMatchObject({
+			display: true,
+			excludeFromContext: true,
+			details: { category: "reasoning_extraction", explanation: "Blocked." },
+		});
 	});
 
 	it("does not resample a refusal of the request itself", async () => {
-		const { contexts, records } = await run([refusal(), { content: ["Done"] }]);
+		const { contexts, records, notices } = await run([refusal(), { content: ["Done"] }]);
 
 		expect(contexts).toHaveLength(1);
 		expect(records).toHaveLength(1);
+		expect(notices).toHaveLength(1);
 	});
 });

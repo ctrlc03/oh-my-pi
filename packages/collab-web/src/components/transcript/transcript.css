@@ -329,6 +329,33 @@
 	font-size: 12.5px;
 }
 
+/* A turn the model's provider refused: an error-toned card, so the prompt above it does not look ignored. */
+.tr-refusal {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 10px 14px;
+	border: 1px solid color-mix(in oklch, var(--err) 45%, var(--border));
+	border-radius: var(--radius-lg);
+	background: color-mix(in oklch, var(--err) 8%, var(--bg-raised));
+	box-shadow: inset 3px 0 0 var(--err);
+	color: var(--fg);
+}
+
+.tr-refusal-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--err);
+	font-weight: 600;
+	font-size: 13px;
+}
+
+.tr-refusal-foot {
+	color: var(--fg-muted);
+	font-size: 12px;
+}
+
 .tr-msg-img {
 	max-height: 240px;
 	max-width: 100%;
